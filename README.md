@@ -2,6 +2,7 @@
 
 # MyLLM
 
+[![PyPI](https://img.shields.io/pypi/v/my-llm-py.svg)](https://pypi.org/project/my-llm-py/)
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python)
 [![License](https://img.shields.io/badge/license-Apache%202.0%20%2B%20MIT-blue.svg)](https://github.com/JJJJSTIYYYY/my-llm/blob/master/LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/tUCQthwK5)

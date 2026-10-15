@@ -1,4 +1,4 @@
-# 构建与验证
+# my-llm-py 构建与验证
 
 使用接口见 [API 使用指南](../reference/api.md)，配置字段见
 [配置指南](../reference/configuration.md)。
@@ -14,15 +14,16 @@ uv build
 Hatchling 从 `src/my_llm/_version.py` 的 `__version__` 读取版本号，根据
 `pyproject.toml` 构建源码包，再从源码包构建 wheel。生成文件如下：
 
-- `dist/my_llm-<version>.tar.gz`：源码包。
-- `dist/my_llm-<version>-py3-none-any.whl`：不依赖平台的纯 Python wheel。
+- `dist/my_llm_py-<version>.tar.gz`：源码包。
+- `dist/my_llm_py-<version>-py3-none-any.whl`：不依赖平台的纯 Python wheel。
 
 升级版本时只修改 `_version.py`，再运行 `uv lock` 更新锁文件。通过
 `my_llm.__version__` 也可读取相同版本；`pyproject.toml` 使用动态版本元数据。
 
 构建依赖仅用于构建环境，不作为用户安装包时的运行依赖。
 wheel 包含 `my_llm` 包和分发元数据，排除目录占位文件。
-源码包还包含 README、构建配置、使用文档、本地示例和测试。
+源码包还包含 README、Apache 2.0 许可证、构建配置、使用文档、本地示例和测试。
+分发名为 `my-llm-py`，构建产物名称规范化为 `my_llm_py`，导入名为 `my_llm`。
 `dist/` 已被 Git 忽略。
 
 ## 安装验证
@@ -30,10 +31,10 @@ wheel 包含 `my_llm` 包和分发元数据，排除目录占位文件。
 在单独的临时虚拟环境中安装本地 wheel，避免覆盖已有开发环境：
 
 ```sh
-uv venv /tmp/my-llm-package-check --python 3.12
+uv venv /tmp/my-llm-py-package-check --python 3.12
 package_version=$(uv run python -c 'from my_llm import __version__; print(__version__)')
-uv pip install --python /tmp/my-llm-package-check/bin/python "dist/my_llm-${package_version}-py3-none-any.whl"
-/tmp/my-llm-package-check/bin/python -I -c 'import my_llm; from importlib.metadata import version; assert my_llm.__version__ == version("my-llm"); print(my_llm.__version__); print(my_llm.__file__)'
+uv pip install --python /tmp/my-llm-py-package-check/bin/python "dist/my_llm_py-${package_version}-py3-none-any.whl"
+/tmp/my-llm-py-package-check/bin/python -I -c 'import my_llm; from importlib.metadata import version; assert my_llm.__version__ == version("my-llm-py"); print(my_llm.__version__); print(my_llm.__file__)'
 ```
 
 输出应为 `_version.py` 中声明的版本，且模块路径位于临时虚拟环境的 `site-packages`。
@@ -42,11 +43,11 @@ uv pip install --python /tmp/my-llm-package-check/bin/python "dist/my_llm-${pack
 检查 PyPI 分发元数据和 README 渲染格式：
 
 ```sh
-uv run twine check --strict "dist/my_llm-${package_version}-py3-none-any.whl" "dist/my_llm-${package_version}.tar.gz"
+uv run twine check --strict "dist/my_llm_py-${package_version}-py3-none-any.whl" "dist/my_llm_py-${package_version}.tar.gz"
 ```
 
-修改源文件、文档或版本后重新运行 `uv build`。发布前确定许可证、确认 PyPI
-名称及版本可用性；本指南只覆盖本地构建与验证。
+修改源文件、文档或版本后重新运行 `uv build`。项目使用 Apache-2.0，
+wheel 和源码包均携带 LICENSE，分发元数据声明同一许可证。
 
 ## 本地测试
 
@@ -65,3 +66,12 @@ uv run python examples/local_demo.py
 [PyPA 的 pyproject.toml 指南](https://packaging.python.org/en/latest/guides/writing-pyproject-toml/)和
 [Hatch 构建配置文档](https://hatch.pypa.io/latest/config/build/)，版本来源参见
 [Hatch 版本配置](https://hatch.pypa.io/latest/version/)。
+
+## GitHub 自动测试（CI）
+
+[ci.yml](https://github.com/JJJJSTIYYYY/my-llm-py/blob/main/.github/workflows/ci.yml) 在分支 push 和 Pull Request 时运行。
+使用锁定的依赖在 Ubuntu 上测试 Python 3.12、3.13、3.14；Python 3.12
+额外检查 Ruff 规则及格式。所有版本均运行完整 pytest 和本地示例，不需要模型 API Key。
+
+测试通过后，CI 从源码包构建 wheel，执行 `twine check --strict`，在隔离环境安装并
+导入 wheel，最后保存 wheel 和源码包为 `python-distributions` artifact，保留 7 天。

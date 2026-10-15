@@ -7,6 +7,8 @@ name = "my-llm-py"
 dynamic = ["version"]
 description = "Profile-driven async LLM adapter for OpenAI, Anthropic, Gemini and Ollama."
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 keywords = ["adapter", "adaptor", "openai", "anthropic", "gemini", "ollama", "llm"]
 authors = [
@@ -29,8 +31,8 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/JJJJSTIYYYY/my-llm"
-Issues = "https://github.com/JJJJSTIYYYY/my-llm/issues"
+Repository = "https://github.com/JJJJSTIYYYY/my-llm-py"
+Issues = "https://github.com/JJJJSTIYYYY/my-llm-py/issues"
 
 [tool.hatch.version]
 path = "src/my_llm/_version.py"
@@ -45,6 +47,7 @@ packages = ["src/my_llm"]
 include = [
     "/src/my_llm",
     "/README.md",
+    "/LICENSE",
     "/pyproject.toml",
     "/docs/guides",
     "/docs/reference",

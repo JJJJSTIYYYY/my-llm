@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.9.7"
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - run: uv sync --locked --group dev
+      - name: Check lint and formatting
+        if: matrix.python-version == '3.12'
+        run: |
+          uv run --no-sync ruff check src tests examples
+          uv run --no-sync ruff format --check src tests examples
+      - run: uv run --no-sync pytest -q
+      - run: uv run --no-sync python examples/local_demo.py
+
+  build:
+    name: Build and verify distributions
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.9.7"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked --group dev
+      - run: uv build
+      - run: uv run --no-sync twine check --strict dist/*
+      - name: Install and import the wheel in an isolated environment
+        shell: bash
+        run: |
+          uv venv "$RUNNER_TEMP/my-llm-py-wheel" --python 3.12
+          uv pip install --python "$RUNNER_TEMP/my-llm-py-wheel/bin/python" dist/*.whl
+          "$RUNNER_TEMP/my-llm-py-wheel/bin/python" -I -c 'import my_llm; from importlib.metadata import version; assert my_llm.__version__ == version("my-llm-py"); assert callable(my_llm.generate)'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: python-distributions
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7

@@ -1,6 +1,6 @@
 # API 使用指南
 
-my-llm 提供异步 `generate()` 和可复用的 `MyLLM`，统一调用 OpenAI
+my-llm-py 提供异步 `generate()` 和可复用的 `MyLLM`，统一调用 OpenAI
 Responses / Chat Completions、Anthropic、Gemini 与 Ollama 原生 API。
 需要 Python 3.12+。导入名为 `my_llm`。
 配置字段的默认值、继承规则和兼容服务适配见[配置指南](configuration.md)。

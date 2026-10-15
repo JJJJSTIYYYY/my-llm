@@ -1,4 +1,4 @@
-"""Provider-independent messages used by the my-llm codec.
+"""Provider-independent messages used by the my-llm-py codec.
 
 The public message format follows OpenAI Chat Completions. Codecs translate
 between this format and each provider's request and response protocol.

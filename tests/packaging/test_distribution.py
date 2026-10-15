@@ -18,7 +18,7 @@ def test_build_contains_runtime_types_and_source_tests(tmp_path, version_overrid
     root = Path(__file__).resolve().parents[2]
     source = tmp_path / "source"
     source.mkdir()
-    for name in ("pyproject.toml", "README.md", ".gitignore"):
+    for name in ("pyproject.toml", "README.md", "LICENSE", ".gitignore"):
         shutil.copy2(root / name, source / name)
     for name in ("src", "docs/guides", "docs/reference", "tests", "examples"):
         shutil.copytree(
@@ -36,8 +36,8 @@ def test_build_contains_runtime_types_and_source_tests(tmp_path, version_overrid
         capture_output=True,
         text=True,
     )
-    wheel = source / f"dist/my_llm-{expected_version}-py3-none-any.whl"
-    dist_info = f"my_llm-{expected_version}.dist-info"
+    wheel = source / f"dist/my_llm_py-{expected_version}-py3-none-any.whl"
+    dist_info = f"my_llm_py-{expected_version}.dist-info"
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
         assert "my_llm/invoke.py" in names
@@ -50,8 +50,15 @@ def test_build_contains_runtime_types_and_source_tests(tmp_path, version_overrid
         assert all(not name.endswith(".gitkeep") for name in names)
         assert all(name.startswith(("my_llm/", f"{dist_info}/")) for name in names)
         metadata = BytesParser().parsebytes(archive.read(f"{dist_info}/METADATA"))
-        assert metadata["Name"] == "my-llm"
+        assert metadata["Name"] == "my-llm-py"
         assert metadata["Version"] == expected_version
+        assert metadata["License-Expression"] == "Apache-2.0"
+        assert metadata.get_all("License-File") == ["LICENSE"]
+        assert archive.read(f"{dist_info}/licenses/LICENSE") == (root / "LICENSE").read_bytes()
+        assert set(metadata.get_all("Project-URL")) == {
+            "Repository, https://github.com/JJJJSTIYYYY/my-llm-py",
+            "Issues, https://github.com/JJJJSTIYYYY/my-llm-py/issues",
+        }
         assert metadata["Requires-Python"] == ">=3.12"
         assert metadata["Description-Content-Type"] == "text/markdown"
         for package in ("openai", "anthropic", "google-genai", "ollama"):
@@ -63,14 +70,14 @@ def test_build_contains_runtime_types_and_source_tests(tmp_path, version_overrid
             sys.executable,
             "-I",
             "-c",
-            f"import sys; sys.path.insert(0, {str(wheel)!r}); import my_llm; from importlib.metadata import version; assert my_llm.__version__ == version('my-llm') == {expected_version!r}; assert my_llm.__file__.startswith({str(wheel)!r}); assert callable(my_llm.generate); assert callable(my_llm.MyLLM.generate); assert not hasattr(my_llm, 'create'); assert not hasattr(my_llm, 'Invoke')",
+            f"import sys; sys.path.insert(0, {str(wheel)!r}); import my_llm; from importlib.metadata import version; assert my_llm.__version__ == version('my-llm-py') == {expected_version!r}; assert my_llm.__file__.startswith({str(wheel)!r}); assert callable(my_llm.generate); assert callable(my_llm.MyLLM.generate); assert not hasattr(my_llm, 'create'); assert not hasattr(my_llm, 'Invoke')",
         ],
         cwd=tmp_path,
         check=True,
         capture_output=True,
         text=True,
     )
-    with tarfile.open(source / f"dist/my_llm-{expected_version}.tar.gz") as archive:
+    with tarfile.open(source / f"dist/my_llm_py-{expected_version}.tar.gz") as archive:
         names = archive.getnames()
         for name in (
             "src/my_llm/invoke.py",
@@ -80,11 +87,18 @@ def test_build_contains_runtime_types_and_source_tests(tmp_path, version_overrid
             "docs/reference/api.md",
             "docs/reference/configuration.md",
             "examples/local_demo.py",
+            "LICENSE",
         ):
-            assert f"my_llm-{expected_version}/{name}" in names
+            assert f"my_llm_py-{expected_version}/{name}" in names
         metadata = BytesParser().parsebytes(
-            archive.extractfile(f"my_llm-{expected_version}/PKG-INFO").read()
+            archive.extractfile(f"my_llm_py-{expected_version}/PKG-INFO").read()
         )
+        assert metadata["Name"] == "my-llm-py"
         assert metadata["Version"] == expected_version
+        assert metadata["License-Expression"] == "Apache-2.0"
+        assert (
+            archive.extractfile(f"my_llm_py-{expected_version}/LICENSE").read()
+            == (root / "LICENSE").read_bytes()
+        )
         assert all(not name.endswith(".gitkeep") for name in names)
         assert all("设计文档" not in name for name in names)

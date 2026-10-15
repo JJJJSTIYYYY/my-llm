@@ -678,7 +678,7 @@ wheels = [
 ]
 
 [[package]]
-name = "my-llm"
+name = "my-llm-py"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },

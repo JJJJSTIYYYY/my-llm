@@ -95,7 +95,7 @@ OpenAI 为 `AsyncOpenAI`，Anthropic 为 `AsyncAnthropic`，Gemini 为 `google.g
 | `content` | 回答文本；没有文本时为 `None` |
 | `reasoning_content` | 可见推理文本，有内容时提供 |
 | `tool_calls` | 完整工具调用列表，有调用时提供 |
-| `finish_reason` | Chat 和原生协议保留完成原因；Responses 为 `stop` 或 `tool_calls` |
+| `finish_reason` | 各协议的等价完成原因统一为 `stop` / `length` / `tool_calls` / `content_filter`，特殊原因保留原值，详见下表 |
 | `usage` | 启用用量后提供供应商原生用量字典，不自行计算 Token |
 | `response_id` | 供应商返回的响应 ID（若提供） |
 | `response_status` | Responses 的完成状态 |
@@ -104,6 +104,24 @@ OpenAI 为 `AsyncOpenAI`，Anthropic 为 `AsyncAnthropic`，Gemini 为 `google.g
 除 `role`、`content` 外，按需提供字段。工具调用形如
 `{"id": "call_1", "type": "function", "function": {"name": "add", "arguments": "{\"a\":2,\"b\":3}"}}`，
 其中 `arguments` 始终是完整的 JSON 字符串。
+
+`finish_reason` 在完整结果和流式最终 Chunk 中使用相同映射：
+
+| 统一值 | OpenAI Chat / Responses | Anthropic | Gemini | Ollama |
+| --- | --- | --- | --- | --- |
+| `stop` | Chat `stop`；Responses 完成且无工具调用 | `end_turn` / `stop_sequence` | `STOP` 且无工具调用 | `stop` 且无工具调用 |
+| `length` | Chat `length` | `max_tokens` / `model_context_window_exceeded` | `MAX_TOKENS` | `length` |
+| `tool_calls` | Chat `tool_calls`；Responses 完成且包含工具调用 | `tool_use` | `STOP` 且包含完整工具调用 | `stop` 且包含完整工具调用 |
+| `content_filter` | Chat `content_filter` | `refusal` | 内容拦截仍抛异常 | — |
+
+Anthropic `pause_turn` 表示暂停后可继续，保留为 `pause_turn`；
+其他未映射的原因（包括 Chat 的旧式 `function_call`）保留原值。
+原生推理和签名块仍通过 `response_output` 回放。
+
+失败和不完整响应仍抛出异常，不作为正常完成结果返回。Responses 的
+`response.incomplete` / `response.failed` 对应异常的 `partial_message` 仍分别使用
+`finish_reason="incomplete"` / `"failed"`，并通过 `details` 保留原生原因。
+长度限制下的工具调用仍需通过完整性检查，不会仅因存在调用就被标为 `tool_calls`。
 
 ## 流式读取与提前停止
 
@@ -344,8 +362,9 @@ Gemini 和 Ollama 使用相同的调用参数，只需更改 Provider 的 `proto
 `api_type` 只选择 OpenAI 的两种 API；原生协议忽略它在请求中的作用。
 非流式结果仍由对应 SDK 的异步流拼接，未实现额外 HTTP、SSE 或重试层。
 `usage_mode="none"` 不返回用量；原生协议的另外两种模式均读取 SDK 原生用量。
-Anthropic 的 `finish_reason` 例如 `end_turn` / `tool_use`，Gemini 例如 `STOP` / `MAX_TOKENS`，
-Ollama 例如 `stop` / `length`。截断流与无效工具 JSON 会抛出 `StreamError` 子类。
+所有协议的 `finish_reason` 使用上文的统一映射：正常结束为 `stop`、
+长度限制为 `length`、完整工具调用为 `tool_calls`。
+截断流与无效工具 JSON 会抛出 `StreamError` 子类。
 
 工具输入仍是本地 Function Tool，参数仍返回完整 JSON 字符串；工具执行由调用者负责。
 回传整个 assistant Message，能保留 Anthropic thinking 签名及 Gemini thought signature。

@@ -203,6 +203,8 @@ class MyLLM:
         Returns:
             A unified assistant-message dictionary, or a MessageStream when
             stream=True. Always await this method before iterating the stream.
+            Equivalent finish reasons use stop, length, tool_calls or
+            content_filter in both modes; other reasons are preserved.
 
         Raises:
             ConfigurationError: Parameters conflict or have invalid values.
@@ -382,6 +384,8 @@ async def generate(
     Returns:
         A unified assistant Message, or a MessageStream for stream=True. The
         streaming form is also awaited: ``stream = await generate(...)``.
+        Equivalent finish reasons use stop, length, tool_calls or content_filter
+        in both modes; other reasons are preserved.
 
     Raises:
         ConfigurationError: Profiles or request parameters are invalid.

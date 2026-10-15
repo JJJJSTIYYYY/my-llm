@@ -97,7 +97,9 @@ class GeminiDecoder:
             raise IncompleteStreamError("Gemini tool calls ended incompletely")
         return MessageChunk(
             tool_calls=final_calls(self.calls),
-            finish_reason=self.reason,
+            finish_reason=(
+                "length" if self.reason == "MAX_TOKENS" else "tool_calls" if self.calls else "stop"
+            ),
             response_id=self.response_id,
             response_output=self.output,
             usage=self.usage if self.profile.get("usage_mode", "none") != "none" else None,

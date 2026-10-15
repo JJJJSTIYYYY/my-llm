@@ -22,6 +22,14 @@ _FIELD_BLOCKS = {
     "signature": "thinking",
     "partial_json": "tool_use",
 }
+_FINISH_REASONS = {
+    "end_turn": "stop",
+    "stop_sequence": "stop",
+    "max_tokens": "length",
+    "model_context_window_exceeded": "length",
+    "tool_use": "tool_calls",
+    "refusal": "content_filter",
+}
 
 
 class AnthropicDecoder:
@@ -155,7 +163,7 @@ class AnthropicDecoder:
             raise IncompleteStreamError("Anthropic tool calls and stop_reason disagree")
         return MessageChunk(
             tool_calls=final_calls(calls),
-            finish_reason=self.reason,
+            finish_reason=_FINISH_REASONS.get(self.reason, self.reason),
             response_id=self.response_id,
             response_output=output,
             usage=self.usage if self.profile.get("usage_mode", "none") != "none" else None,

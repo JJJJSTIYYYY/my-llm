@@ -63,6 +63,6 @@ class OllamaDecoder:
             raise IncompleteStreamError("Ollama tool calls ended incompletely")
         return MessageChunk(
             tool_calls=final_calls(self.calls),
-            finish_reason=self.reason,
+            finish_reason="tool_calls" if self.calls else self.reason,
             usage=self.usage if self.profile.get("usage_mode", "none") != "none" else None,
         )

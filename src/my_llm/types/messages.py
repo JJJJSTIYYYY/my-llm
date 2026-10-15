@@ -42,9 +42,11 @@ class Message(TypedDict):
     dictionaries, or None. Optional name identifies a message sender;
     tool_calls contains complete assistant function calls and tool_call_id
     associates a tool result with its call. reasoning_content contains visible
-    reasoning. finish_reason marks completion and usage preserves native usage
-    fields. Responses results may also include response_id, response_status and
-    response_output for conversation continuation and lossless history replay.
+    reasoning. finish_reason normalizes equivalent provider reasons to stop,
+    length, tool_calls or content_filter; other reasons (such as pause_turn)
+    are preserved. usage preserves native usage fields. Responses results may
+    also include response_id, response_status and response_output for
+    conversation continuation and lossless history replay.
     Native Anthropic/Gemini results reuse response_output for signed content
     blocks/parts; pass these messages unchanged to preserve provider metadata.
 
@@ -81,7 +83,9 @@ class MessageChunk:
         content: Text delta, default "".
         reasoning_content: Visible reasoning delta, default "".
         tool_calls: Complete function calls, emitted in the final chunk; default [].
-        finish_reason: Completion reason, or None before completion.
+        finish_reason: Normalized completion reason (stop, length, tool_calls or
+            content_filter), or None before completion. Other reasons such as
+            pause_turn are preserved.
         usage: Native usage dictionary when configured, otherwise None.
         response_id: Native Responses ID, otherwise None.
         response_output: Native Responses output items for replay, default [].
@@ -137,7 +141,7 @@ class MessageChunk:
 
     @property
     def is_finished(self) -> bool:
-        """Whether finish_reason is present, including provider-specific values."""
+        """Whether finish_reason is present; a paused turn also ends a stream."""
         return self.finish_reason is not None
 
     def to_message(self, *, require_finished: bool = False) -> Message:

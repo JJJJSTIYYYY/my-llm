@@ -316,6 +316,29 @@ def test_missing_native_ids_are_unique_across_turns(protocol):
     assert ids[0] != ids[1]
 
 
+@pytest.mark.parametrize("protocol", ["gemini", "ollama"])
+def test_length_limited_native_tool_calls_are_not_returned_as_complete(protocol):
+    event = {
+        "gemini": {
+            "candidates": [
+                {
+                    "content": {"parts": [{"function_call": {"name": "f", "args": {}}}]},
+                    "finish_reason": "MAX_TOKENS",
+                }
+            ]
+        },
+        "ollama": {
+            "message": {"tool_calls": [{"function": {"name": "f", "arguments": {}}}]},
+            "done": True,
+            "done_reason": "length",
+        },
+    }[protocol]
+    decoder = codec(protocol).decoder()
+    decoder.feed(event)
+    with pytest.raises(IncompleteStreamError, match="incomplete"):
+        decoder.finish()
+
+
 @pytest.mark.parametrize(
     "event",
     [

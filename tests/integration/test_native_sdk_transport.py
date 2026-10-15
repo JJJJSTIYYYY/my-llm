@@ -232,10 +232,7 @@ async def test_native_sdk_content_reasoning_usage_and_omitted_fields(
             result = combined.to_message(require_finished=True)
         assert result["content"] == "你好"
         assert result["reasoning_content"] == "思考"
-        assert (
-            result["finish_reason"]
-            == {"anthropic": "end_turn", "gemini": "STOP", "ollama": "stop"}[protocol]
-        )
+        assert result["finish_reason"] == "stop"
         body = json.loads(requests[0].content)
         assert "stream_options" not in body and "reasoning_effort" not in body
         assert "not_a_native_parameter" not in body
@@ -263,6 +260,57 @@ async def test_native_sdk_content_reasoning_usage_and_omitted_fields(
         await close_client(protocol, client)
 
 
+@pytest.mark.parametrize("stream", [None, False, True])
+@pytest.mark.parametrize(
+    "protocol,reason,calls,expected",
+    [
+        ("anthropic", "end_turn", False, "stop"),
+        ("anthropic", "stop_sequence", False, "stop"),
+        ("anthropic", "max_tokens", False, "length"),
+        ("anthropic", "model_context_window_exceeded", False, "length"),
+        ("anthropic", "tool_use", True, "tool_calls"),
+        ("anthropic", "refusal", False, "content_filter"),
+        ("anthropic", "pause_turn", False, "pause_turn"),
+        ("gemini", "STOP", False, "stop"),
+        ("gemini", "STOP", True, "tool_calls"),
+        ("gemini", "MAX_TOKENS", False, "length"),
+        ("ollama", "stop", False, "stop"),
+        ("ollama", "stop", True, "tool_calls"),
+        ("ollama", "length", False, "length"),
+    ],
+)
+async def test_native_sdk_normalized_finish_reasons(
+    native_sdk_factory, protocol, reason, calls, expected, stream
+):
+    events = native_events(protocol, calls=calls)
+    if protocol == "anthropic":
+        events[-2]["delta"]["stop_reason"] = reason
+    elif protocol == "gemini":
+        events[-1]["candidates"][0]["finishReason"] = reason
+    else:
+        events[-1]["done_reason"] = reason
+    client, _ = native_sdk_factory(protocol, events)
+    llm = MyLLM(
+        provider=ProviderProfile(protocol=protocol),
+        model=ModelProfile(model="demo", max_tokens=2048),
+        client=client,
+    )
+    try:
+        result = await llm.generate(messages=[{"role": "user", "content": "hello"}], stream=stream)
+        if stream:
+            combined = MessageChunk()
+            async with result:
+                async for chunk in result:
+                    assert chunk.finish_reason in (None, expected)
+                    combined += chunk
+            result = combined.to_message(require_finished=True)
+        assert result["finish_reason"] == expected
+        assert bool(result.get("tool_calls")) is calls
+        assert result["content"] == "你好"
+    finally:
+        await close_client(protocol, client)
+
+
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 async def test_native_sdk_multiple_tools_and_signed_history_roundtrip(
     native_sdk_factory, protocol, function_tool
@@ -277,6 +325,7 @@ async def test_native_sdk_multiple_tools_and_signed_history_roundtrip(
             provider=provider, model=model, messages=history, tools=[function_tool], client=client
         )
         calls = result["tool_calls"]
+        assert result["finish_reason"] == "tool_calls"
         assert len(calls) == 2 and len({c["id"] for c in calls}) == 2
         assert all(json.loads(c["function"]["arguments"]) == {"city": "上海"} for c in calls)
         assert "usage" not in result

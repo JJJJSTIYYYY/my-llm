@@ -43,6 +43,13 @@ def test_chat_sdk_chunks_text_reasoning_and_usage(profile_factory):
     assert combined.content == "你好" and combined.reasoning_content == "想法"
 
 
+@pytest.mark.parametrize("reason", ["stop", "length", "content_filter", "function_call"])
+def test_chat_finish_reasons_remain_unchanged(profile_factory, reason):
+    decoder = ChatCompletionsCodec(profile_factory()).decoder()
+    decoder.feed(ChatCompletionChunk.model_validate(chat_event(finish=reason)))
+    assert decoder.finish().finish_reason == reason
+
+
 def test_chat_interleaved_parallel_tools_are_only_emitted_complete(profile_factory):
     decoder = ChatCompletionsCodec(profile_factory()).decoder()
     events = [
@@ -151,6 +158,7 @@ def test_responses_tool_snapshots_do_not_duplicate_fragments(profile_factory):
     for event in events:
         assert decoder.feed(event) == []
     result = decoder.finish()
+    assert result.finish_reason == "tool_calls"
     assert result.tool_calls[0] == {
         "id": "call_1",
         "type": "function",

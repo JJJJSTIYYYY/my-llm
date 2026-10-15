@@ -1,7 +1,8 @@
 import pytest
 
 from my_llm import ConfigurationError, ModelProfile, ProviderProfile, UnsupportedProviderError, omit
-from my_llm.profiles import client_parameters, merge_dicts, resolve_profiles
+from my_llm.profile.utils.common import merge_dicts
+from my_llm.profile.utils.resolution import client_parameters, resolve_profiles
 
 
 def test_protocol_defaults(profile_factory):
@@ -63,10 +64,17 @@ def test_client_parameter_override_and_omission():
     assert "secret" not in repr(provider)
 
 
-@pytest.mark.parametrize("protocol", ["anthropic", "gemini", "ollama", "unknown"])
-def test_reserved_protocols(protocol):
+def test_unknown_protocol():
     with pytest.raises(UnsupportedProviderError):
-        resolve_profiles(ProviderProfile(protocol=protocol), ModelProfile(model="demo"))
+        resolve_profiles(ProviderProfile(protocol="unknown"), ModelProfile(model="demo"))
+
+
+@pytest.mark.parametrize("protocol", ["anthropic", "gemini", "ollama"])
+def test_native_protocols_keep_profile_defaults(protocol):
+    native = resolve_profiles(ProviderProfile(protocol=protocol), ModelProfile(model="demo"))
+    original = resolve_profiles(ProviderProfile(), ModelProfile(model="demo"))
+    assert native.protocol == protocol
+    assert native.values == original.values
 
 
 @pytest.mark.parametrize("disabled", [False, omit])

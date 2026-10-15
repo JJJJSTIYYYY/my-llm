@@ -5,12 +5,12 @@ Encoders create protocol wrappers without copying already-owned nested values.
 
 from typing import Any
 
-from my_llm.codec.content import encode_content
-from my_llm.codec.input import NormalizedMessage, normalize_messages
-from my_llm.codec.validation import validate_messages
-from my_llm.exceptions import MessageValidationError
-from my_llm.profiles import ResolvedProfile
+from my_llm.codec.openai.encoding.content import encode_content
+from my_llm.codec.utils.input import NormalizedMessage, normalize_messages
+from my_llm.codec.utils.validation import validate_messages
+from my_llm.profile.utils.resolution import ResolvedProfile
 from my_llm.types import Message, ToolCall
+from my_llm.types.exceptions import MessageValidationError
 
 
 def encode_messages(

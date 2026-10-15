@@ -6,65 +6,15 @@ from typing import Any
 
 from openai import Omit
 
-from my_llm.codec.common import (
-    path_value,
-    plain,
-    read,
-    request_parameters,
-    text_delta,
-)
-from my_llm.codec.messages import encode_messages
-from my_llm.codec.tools import encode_tools
-from my_llm.codec.validation import validate_tool_call
-from my_llm.exceptions import (
+from my_llm.codec.utils.common import path_value, plain, read, text_delta
+from my_llm.codec.utils.validation import validate_tool_call
+from my_llm.profile.utils.resolution import ResolvedProfile
+from my_llm.types import MessageChunk
+from my_llm.types.exceptions import (
     IncompleteStreamError,
-    MessageValidationError,
     ResponseFailedError,
     ResponseIncompleteError,
 )
-from my_llm.profiles import ResolvedProfile
-from my_llm.types import MessageChunk
-
-
-class ResponsesCodec:
-    """Advanced adapter for encoding requests and decoding Responses streams.
-
-    Most applications should use MyLLM.generate(). Direct callers provide a
-    resolved profile and request-owned message dictionaries; encode() does not
-    isolate mutable input. Create a fresh decoder for each response stream.
-    """
-
-    def __init__(self, profile: ResolvedProfile) -> None:
-        """Use a validated profile returned by resolve_profiles()."""
-        self.profile = profile
-
-    def encode(
-        self, messages: Any, *, tools: Any, previous_response_id: Any = None, **parameters: Any
-    ) -> dict[str, Any]:
-        """Encode messages/tools in either input format as SDK request keywords.
-
-        parameters accepts generation reasoning, token and extra-field options.
-        previous_response_id permits tool results whose calls are in server-side
-        history. Invalid input raises ConfigurationError subclasses.
-        """
-        has_previous = previous_response_id is not None and not isinstance(
-            previous_response_id, Omit
-        )
-        if has_previous and (not isinstance(previous_response_id, str) or not previous_response_id):
-            raise MessageValidationError("previous_response_id must be a non-empty string")
-        history = encode_messages(messages, self.profile, allow_external_calls=has_previous)
-        encoded_tools = encode_tools(tools, self.profile)
-        kwargs = request_parameters(self.profile, **parameters)
-        kwargs.update(model=self.profile.model, input=history, stream=True)
-        if not isinstance(encoded_tools, Omit):
-            kwargs["tools"] = encoded_tools
-        if has_previous:
-            kwargs["previous_response_id"] = previous_response_id
-        return kwargs
-
-    def decoder(self) -> ResponsesDecoder:
-        """Return a fresh stateful decoder for one Responses stream."""
-        return ResponsesDecoder(self.profile)
 
 
 class ResponsesDecoder:

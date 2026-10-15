@@ -11,7 +11,7 @@ from my_llm import (
     omit,
 )
 from my_llm.codec import ChatCompletionsCodec, ResponsesCodec
-from my_llm.profiles import resolve_profiles
+from my_llm.profile.utils.resolution import resolve_profiles
 
 
 def test_previous_response_id_links_external_tool_result(profile_factory):

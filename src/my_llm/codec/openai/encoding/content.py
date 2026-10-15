@@ -2,10 +2,9 @@
 
 from typing import Any
 
-from my_llm.exceptions import MessageValidationError
-from my_llm.profiles import APIType
-
-RESPONSE_BLOCKS = frozenset({"input_text", "output_text", "input_image", "input_file"})
+from my_llm.codec.utils.common import RESPONSE_BLOCKS
+from my_llm.profile import APIType
+from my_llm.types.exceptions import MessageValidationError
 
 
 def encode_content(content: Any, role: str, api_type: APIType) -> Any:

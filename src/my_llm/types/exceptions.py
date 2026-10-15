@@ -1,6 +1,6 @@
 """Errors from configuration, protocol conversion and streamed responses.
 
-OpenAI SDK transport and HTTP errors retain their original types.
+Official SDK transport and HTTP errors retain their original types.
 """
 
 from typing import Any

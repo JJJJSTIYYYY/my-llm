@@ -3,8 +3,8 @@
 import json
 from typing import Any
 
-from my_llm.exceptions import IncompleteStreamError, MessageValidationError
 from my_llm.types import Message, ToolCall
+from my_llm.types.exceptions import IncompleteStreamError, MessageValidationError
 
 
 def validate_tool_call(call: Any, *, streamed: bool = False) -> ToolCall:

@@ -14,10 +14,10 @@ from my_llm import (
     ProviderProfile,
     generate,
 )
-from my_llm.codec.chat import ChatCompletionsCodec
-from my_llm.codec.common import request_parameters
-from my_llm.codec.validation import validate_messages
-from my_llm.profiles import resolve_profiles
+from my_llm.codec.openai import ChatCompletionsCodec
+from my_llm.codec.openai.encoding.parameters import request_parameters
+from my_llm.codec.utils.validation import validate_messages
+from my_llm.profile.utils.resolution import resolve_profiles
 
 
 class TrackedDict(dict):

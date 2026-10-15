@@ -45,6 +45,8 @@ class Message(TypedDict):
     reasoning. finish_reason marks completion and usage preserves native usage
     fields. Responses results may also include response_id, response_status and
     response_output for conversation continuation and lossless history replay.
+    Native Anthropic/Gemini results reuse response_output for signed content
+    blocks/parts; pass these messages unchanged to preserve provider metadata.
 
     Optional refusal, audio and legacy function_call fields support native Chat
     input where applicable. A TypedDict describes ordinary dictionaries; it does

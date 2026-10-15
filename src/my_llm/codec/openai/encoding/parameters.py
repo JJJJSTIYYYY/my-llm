@@ -1,59 +1,14 @@
-"""SDK field access, lightweight paths and shared request parameters."""
+"""OpenAI request keyword construction with profile-based reasoning bindings."""
 
-from __future__ import annotations
-
-import re
 from copy import deepcopy
 from typing import Any
 
 from openai import Omit
 
-from my_llm.exceptions import ConfigurationError, IncompleteStreamError
-from my_llm.profiles import EFFORTS, ResolvedProfile, merge_dicts, validate_max_tokens
-
-
-def read(value: Any, key: str, default: Any = None) -> Any:
-    return value.get(key, default) if isinstance(value, dict) else getattr(value, key, default)
-
-
-def plain(value: Any) -> Any:
-    if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json", exclude_none=True)
-    return value.copy() if isinstance(value, (dict, list)) else value
-
-
-_PATH = re.compile(r"([A-Za-z_][A-Za-z_0-9]*)(?:\[(\d+)\])?")
-
-
-def path_value(value: Any, path: str | Omit) -> Any:
-    """Read dotted attributes/mapping keys and numeric indexes, without dumping SDK objects."""
-    if isinstance(path, Omit):
-        return None
-    if path.startswith("$."):
-        path = path[2:]
-    for component in path.split("."):
-        match = _PATH.fullmatch(component)
-        if not match:
-            raise ConfigurationError(f"unsupported path syntax: {path!r}")
-        value = read(value, match[1])
-        if value is None:
-            return None
-        if match[2] is not None:
-            index = int(match[2])
-            if not isinstance(value, (list, tuple)) or index >= len(value):
-                return None
-            value = value[index]
-    return value
-
-
-def _expand(value: Any, effort: str) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: _expand(item, effort) for key, item in value.items() if not isinstance(item, Omit)
-        }
-    if isinstance(value, list):
-        return [_expand(item, effort) for item in value]
-    return effort if value == "{effort}" else value
+from my_llm.codec.utils.common import _expand
+from my_llm.profile.utils.common import EFFORTS, merge_dicts
+from my_llm.profile.utils.resolution import ResolvedProfile, validate_max_tokens
+from my_llm.types.exceptions import ConfigurationError
 
 
 def request_parameters(
@@ -65,7 +20,7 @@ def request_parameters(
     reasoning_effort: str = "none",
     reasoning: bool | None = None,
 ) -> dict[str, Any]:
-    from my_llm.exceptions import UnsupportedCapabilityError
+    from my_llm.types.exceptions import UnsupportedCapabilityError
 
     if reasoning_effort not in EFFORTS:
         raise ConfigurationError(f"unsupported reasoning_effort: {reasoning_effort!r}")
@@ -152,11 +107,3 @@ def request_parameters(
     # Named reasoning parameters are newly constructed; only extras may borrow
     # nested values from a profile or caller-owned configuration.
     return deepcopy(kwargs) if body or headers else kwargs
-
-
-def text_delta(value: Any) -> str:
-    if value is None:
-        return ""
-    if not isinstance(value, str):
-        raise IncompleteStreamError("configured text path did not return a string")
-    return value

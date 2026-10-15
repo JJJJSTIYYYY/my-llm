@@ -5,14 +5,24 @@ build-backend = "hatchling.build"
 [project]
 name = "my-llm"
 dynamic = ["version"]
-description = "Profile-driven async LLM adapter for OpenAI Responses and Chat Completions."
+description = "Profile-driven async LLM adapter for OpenAI, Anthropic, Gemini and Ollama."
 readme = "README.md"
 requires-python = ">=3.12"
+keywords = ["adapter", "adaptor", "openai", "anthropic", "gemini", "ollama", "llm"]
+authors = [
+    { name = "JJJJSTIYYYY", email = "wavejustiy@gmail.com" },
+]
+maintainers = [
+    { name = "JJJJSTIYYYY", email = "wavejustiy@gmail.com" },
+]
 dependencies = [
+    "anthropic>=0.76,<1",
+    "google-genai>=1.56,<2",
+    "ollama>=0.6.3,<1",
     "openai>=2.0,<3",
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Topic :: Software Development :: Libraries :: Python Modules",

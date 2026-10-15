@@ -2,7 +2,7 @@ import pytest
 from conftest import FakeClient, chat_event, response_completed
 
 from my_llm import ConfigurationError, ModelProfile, ProviderProfile, generate
-from my_llm.profiles import resolve_profiles
+from my_llm.profile.utils.resolution import resolve_profiles
 
 
 def test_context_window_default():

@@ -11,7 +11,8 @@
 
 </div>
 
-通过配置统一调用 OpenAI Responses 和 Chat Completions 协议的异步 Python 库。
+通过配置统一调用 OpenAI（Responses / Chat Completions）、Anthropic Messages、
+Gemini 和 Ollama 原生协议的异步 Python 库，四种协议均使用官方 SDK。
 兼容服务使用相同的 OpenAI SDK，通过 `ProviderProfile` 和 `ModelProfile` 描述差异，
 不内置厂商或模型清单。需要 Python 3.12+。
 
@@ -81,7 +82,9 @@ Responses 结果保留原生 output items，支持工具调用后的历史回放
 [API 使用指南](https://github.com/JJJJSTIYYYY/my-llm/blob/main/docs/reference/api.md)；
 Profile 字段、默认值、继承规则及兼容服务适配见
 [配置指南](https://github.com/JJJJSTIYYYY/my-llm/blob/main/docs/reference/configuration.md)。
-Anthropic、Gemini、Ollama 原生协议为预留扩展点，当前仅实现 OpenAI 两套协议。
+通过 `ProviderProfile(protocol="anthropic" / "gemini" / "ollama")` 选择原生协议。
+Anthropic 必须设置 `ModelProfile.max_tokens` 或调用时的 `max_tokens`。
+原生协议的参数映射、推理配置和 SDK Client 类型见
 
 ## 本地开发与验证
 
@@ -95,7 +98,3 @@ uv build
 package_version=$(uv run python -c 'from my_llm import __version__; print(__version__)')
 uv run twine check --strict "dist/my_llm-${package_version}-py3-none-any.whl" "dist/my_llm-${package_version}.tar.gz"
 ```
-
-测试使用真实 OpenAI SDK 和本地模拟 HTTP/SSE 传输，无需密钥或访问供应商服务。
-`examples/local_demo.py` 离线演示两套 API、流式拼接和本地工具调用回合。
-本地安装项目可运行 `uv sync`，或在构建后安装 `dist/` 中的 wheel。

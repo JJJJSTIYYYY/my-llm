@@ -1,9 +1,9 @@
 import pytest
 
 from my_llm import MessageChunk
-from my_llm.codec.common import path_value
-from my_llm.codec.validation import validate_messages
-from my_llm.exceptions import ConfigurationError, MessageValidationError
+from my_llm.codec.utils.common import path_value
+from my_llm.codec.utils.validation import validate_messages
+from my_llm.types.exceptions import ConfigurationError, MessageValidationError
 
 
 def test_chunk_addition_and_message_finalization(tool_call):

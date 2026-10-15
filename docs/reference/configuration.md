@@ -29,7 +29,7 @@ def make_llm():
     return MyLLM(provider=provider, model=model)
 ```
 
-两套 API 均通过 OpenAI SDK 调用；兼容服务通过 `base_url` 和下文的参数、能力
+OpenAI 两套 API 均通过 OpenAI SDK 调用；兼容服务通过 `base_url` 和下文的参数、能力
 配置适配。`api_type` 选择请求 API，不限制 `messages` 或 `tools` 的输入格式。
 配置声明能力不代表服务端实际支持该能力，请按使用的模型填写。
 
@@ -78,8 +78,8 @@ llm = MyLLM(provider=provider, model=updated_model)
 
 | 字段 | 声明默认值 | 配置值与作用 |
 | --- | --- | --- |
-| `api_type` | `"chat_completions"` | `"chat_completions"` / `"responses"`，选择 API |
-| `protocol` | `"openai"` | 当前仅实现 OpenAI 协议；`anthropic`/`gemini`/`ollama` 为预留值，使用会报错 |
+| `api_type` | `"chat_completions"` | `"chat_completions"` / `"responses"`，选择 OpenAI API |
+| `protocol` | `"openai"` | `openai` / `anthropic` / `gemini` / `ollama`；各自使用官方 SDK |
 | `base_url` | `None` | 非空字符串服务地址；未配置时使用 SDK 默认地址 |
 | `api_key` | `None` | 非空字符串凭据；未配置时使用 SDK 环境配置；Profile 的 repr 不显示此字段 |
 | `timeout` | `None` | 正数秒数，未配置时使用 SDK 默认超时 |
@@ -104,7 +104,7 @@ llm = MyLLM(provider=provider, model=updated_model)
 | `supports_function_calling` | `None` | 最终默认 `False`；传非空 tools 前需设为 `True` |
 | `supports_message_name` | `None` | 最终默认 `True`；`False`/`omit` 时不发送消息 name |
 
-`max_context_window` 允许零、负数，不接受 `bool` 或非整数。
+`max_context_window` 允许任意整数，不接受 `bool` 或非整数。
 它不限制历史长度，不计算 Token，不截断消息，也不作为请求参数发送。
 `max_tokens` 是独立的输出限制，Responses 使用 `max_output_tokens`，
 Chat 使用 `max_completion_tokens`；调用时传 `None` 继承 Model、传 `omit` 不设置限制。
@@ -280,3 +280,58 @@ provider.delete_model(["first", "third"])
 无效值抛 `ConfigurationError` 或其子类，尚未实现的协议抛
 `UnsupportedProviderError`，未启用的模型能力抛 `UnsupportedCapabilityError`。
 具体异常和资源管理参见 [API 使用指南](api.md#错误处理)。
+
+
+## 原生协议配置
+
+Provider / Model 的字段、默认值、`None` 继承、`omit` 删除与按键覆盖规则保持一致。
+`api_type`、消息 `name`、OpenAI 的增量路径及 `stream_options` 不适用于三种原生请求，
+Codec 忽略这些请求字段，不修改 Profile。各 SDK 的缺省参数使用其原生省略机制：
+Anthropic 使用 `anthropic.omit`；Gemini / Ollama 不接受 OpenAI 的 Omit 对象，因此不传对应参数。
+原生 `extra_body` 只选取当前 SDK 支持的生成字段，不向 SDK 透传不兼容的参数。
+`tools`、历史及模型等库管理字段不能通过 extras 或推理绑定覆盖。
+
+| 配置 | Anthropic | Gemini | Ollama |
+| --- | --- | --- | --- |
+| SDK | `anthropic.AsyncAnthropic` | `google.genai.Client.aio` | `ollama.AsyncClient` |
+| `max_tokens` | 必填，发送 `max_tokens` | `max_output_tokens` | `options.num_predict` |
+| `timeout` | 秒 | 转换为毫秒 | 秒 |
+| `max_retries` | SDK 原生重试 | SDK `attempts = max_retries + 1` | SDK 不提供该选项，忽略 |
+| `extra_headers` | 请求头 | `HttpOptions.headers` | 自建 Client 时传入；注入 Client 时由调用者配置 |
+| `reasoning=True` | 默认 thinking budget 1024，输出上限须大于 budget | 开启可见 thoughts，默认动态 budget | `think=True` |
+| 支持强度时 | `output_config.effort`：low/medium/high/xhigh/max | `thinking_level`：minimal/low/medium/high | `think`：low/medium/high |
+| 原生 extras | temperature/top_p/top_k/stop_sequences/thinking/output_config | temperature/top_p/top_k/stop_sequences/seed/thinking_config/response_mime_type/response_schema/response_json_schema/presence_penalty/frequency_penalty | format/keep_alive/think/options |
+
+仅在模型确实支持强度时设置 `supports_reasoning_effort=True`。沿用原有
+`reasoning_effort_mapping` 将统一强度映射到模型支持的值；未映射的 xhigh/max 等
+会明确报错。模型真实能力由配置声明，供应商拒绝未知模型或未声明的差异时保留 SDK 异常。
+`supports_reasoning=False/omit` 或 `supports_function_calling=False/omit` 仍拒绝相应请求。
+通过现有推理绑定字段可设置原生推理参数，例如 Anthropic 的 budget 或 adaptive：
+
+```python
+from my_llm import ModelProfile, ProviderProfile
+
+provider = ProviderProfile(protocol="anthropic", usage_mode="native")
+model = ModelProfile(
+    model="your-model-id", max_tokens=8192,
+    reasoning_enable_parameter={
+        "extra_body": {"thinking": {"type": "enabled", "budget_tokens": 2048}},
+    },
+)
+# 支持 adaptive 和 effort 的模型可改为 thinking={"type": "adaptive"}，
+# 并显式设置 supports_reasoning_effort=True。
+```
+
+Gemini 强度模式会使用 `thinking_level`，省略互斥的 `thinking_budget`。
+所有原生协议都只接收显式传入的本地函数定义，Gemini 自动函数执行始终关闭。
+消息支持统一文本块；Anthropic / Gemini 还转换 image/file 的 URL 或 base64 data URI，
+Ollama 接收 base64 data URI 图片。不下载远程媒体，也不跨厂商转换上传文件的 file_id；
+无法表达的内容块直接报错。签名等原生元数据保存在现有 `response_output` 中，
+多轮调用应回传完整返回消息。
+
+原生用量默认关闭。`usage_mode="native"` 或 `"stream_options"` 都读取原生返回值，
+后者不会向原生 SDK 发送 OpenAI 的 stream_options。
+
+官方 SDK 参考：[Anthropic](https://github.com/anthropics/anthropic-sdk-python)、
+[Google Gen AI](https://github.com/googleapis/python-genai)、
+[Ollama](https://github.com/ollama/ollama-python)。

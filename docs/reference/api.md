@@ -1,7 +1,8 @@
 # API 使用指南
 
 my-llm 提供异步 `generate()` 和可复用的 `MyLLM`，统一调用 OpenAI
-Responses 与 Chat Completions API。需要 Python 3.12+。导入名为 `my_llm`。
+Responses / Chat Completions、Anthropic、Gemini 与 Ollama 原生 API。
+需要 Python 3.12+。导入名为 `my_llm`。
 配置字段的默认值、继承规则和兼容服务适配见[配置指南](configuration.md)。
 
 ## 一次调用
@@ -31,7 +32,7 @@ if __name__ == "__main__":
 `generate()` 的所有参数都是关键字参数。`provider`、`model`、`messages` 必填。
 `model` 可以是模型 ID 字符串，也可以是 `ModelProfile`。字符串相当于
 `ModelProfile(model=该字符串)`，不会查询 Provider 的模型列表。
-API Key 未在配置中指定时，由 OpenAI SDK 读取环境配置。
+API Key 未在配置中指定时，由对应官方 SDK 读取环境配置。
 
 ## 复用 Provider 和 Model
 
@@ -63,7 +64,7 @@ Provider、Model 和 SDK Client，不再接受 `provider`、`model`、`client`�
 | 参数 | 默认值 | 使用方式 |
 | --- | --- | --- |
 | `messages` | 必填 | 非空字典序列，支持列表、元组；格式见下文 |
-| `protocol` | `"openai"` | 当前只支持此值；API 类型在 Provider 中选择 |
+| `protocol` | `"openai"` | 默认值跟随 Provider；其他值须与 `ProviderProfile.protocol` 一致 |
 | `stream` | `None` | `True` 返回 `MessageStream`；`False`/`None` 返回完整 `Message` |
 | `tools` | `omit` | Responses 或 Chat 的本地函数描述列表；`None`/`omit` 不传工具，`[]` 传空列表 |
 | `max_tokens` | `None` | 正整数输出限制；`None` 继承 Model，`omit` 不设置限制 |
@@ -77,7 +78,9 @@ Provider、Model 和 SDK Client，不再接受 `provider`、`model`、`client`�
 | `timeout` | `None` | 正数，单位秒；`None` 继承，`omit` 使用 SDK 默认值 |
 | `max_retries` | `None` | 非负整数重试次数；`None` 继承，`omit` 使用 SDK 默认值 |
 
-模块级函数还接受 `client=None`，用于注入调用者管理的 `AsyncOpenAI`。
+模块级函数还接受 `client=None`，用于注入调用者管理的官方 SDK Client：
+OpenAI 为 `AsyncOpenAI`，Anthropic 为 `AsyncAnthropic`，Gemini 为 `google.genai.Client`
+（内部使用 `.aio`），Ollama 为 `ollama.AsyncClient`。
 注入 Client 后，四个连接覆盖参数必须保持 `None`，不能传 `omit` 或其他值。
 `reasoning=False` 与非 `none` 强度冲突；推理字段、能力及 extras 的规则见
 [配置指南](configuration.md#推理配置)。库不自动执行工具或管理应用的对话历史。
@@ -92,11 +95,11 @@ Provider、Model 和 SDK Client，不再接受 `provider`、`model`、`client`�
 | `content` | 回答文本；没有文本时为 `None` |
 | `reasoning_content` | 可见推理文本，有内容时提供 |
 | `tool_calls` | 完整工具调用列表，有调用时提供 |
-| `finish_reason` | Chat 保留原值；Responses 完成时为 `stop` 或 `tool_calls` |
+| `finish_reason` | Chat 和原生协议保留完成原因；Responses 为 `stop` 或 `tool_calls` |
 | `usage` | 启用用量后提供供应商原生用量字典，不自行计算 Token |
-| `response_id` | Responses 返回的响应 ID |
+| `response_id` | 供应商返回的响应 ID（若提供） |
 | `response_status` | Responses 的完成状态 |
-| `response_output` | Responses 原生 output items，用于后续历史回放 |
+| `response_output` | 原生历史元数据，包含 Responses items、Anthropic 签名块或 Gemini parts |
 
 除 `role`、`content` 外，按需提供字段。工具调用形如
 `{"id": "call_1", "type": "function", "function": {"name": "add", "arguments": "{\"a\":2,\"b\":3}"}}`，
@@ -291,7 +294,7 @@ async def ask_with_partial_output(llm: MyLLM, question: str):
 `ConfigurationError`；后三种流异常继承 `StreamError`，
 `ResponseIncompleteError` 也继承 `IncompleteStreamError`。
 流式模式下，网络或响应错误可能在迭代过程中才发生。
-OpenAI SDK 的 HTTP、认证、超时等异常保留原类型，按 SDK 异常处理。
+四种官方 SDK 的 HTTP、认证、超时等异常保留原类型，按 SDK 异常处理。
 
 ## 共享 SDK Client
 
@@ -321,3 +324,30 @@ Client 本身由调用者关闭。不注入时，库在每次请求完成、失�
 相应更名为 `MyLLM.generate()`。旧公开名称不再导出。
 离线可运行的完整演示见 [local_demo.py](../../examples/local_demo.py)；
 开发构建步骤见[构建指南](../guides/building.md)。
+
+
+## 原生协议调用
+
+```python
+from my_llm import ModelProfile, ProviderProfile, generate
+
+
+async def ask_anthropic(model_id: str):
+    return await generate(
+        provider=ProviderProfile(protocol="anthropic", usage_mode="native"),
+        model=ModelProfile(model=model_id, max_tokens=4096),
+        messages=[{"role": "user", "content": "你好"}],
+    )
+```
+
+Gemini 和 Ollama 使用相同的调用参数，只需更改 Provider 的 `protocol` 与模型 ID。
+`api_type` 只选择 OpenAI 的两种 API；原生协议忽略它在请求中的作用。
+非流式结果仍由对应 SDK 的异步流拼接，未实现额外 HTTP、SSE 或重试层。
+`usage_mode="none"` 不返回用量；原生协议的另外两种模式均读取 SDK 原生用量。
+Anthropic 的 `finish_reason` 例如 `end_turn` / `tool_use`，Gemini 例如 `STOP` / `MAX_TOKENS`，
+Ollama 例如 `stop` / `length`。截断流与无效工具 JSON 会抛出 `StreamError` 子类。
+
+工具输入仍是本地 Function Tool，参数仍返回完整 JSON 字符串；工具执行由调用者负责。
+回传整个 assistant Message，能保留 Anthropic thinking 签名及 Gemini thought signature。
+Gemini / Ollama 缺少原生调用 ID 时生成本地唯一 ID，结果仍用 `tool_call_id` 关联。
+`previous_response_id` 只适用于 OpenAI Responses，原生协议须传完整本地历史。

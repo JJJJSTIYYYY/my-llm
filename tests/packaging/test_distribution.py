@@ -42,7 +42,9 @@ def test_build_contains_runtime_types_and_source_tests(tmp_path, version_overrid
         names = archive.namelist()
         assert "my_llm/invoke.py" in names
         assert "my_llm/_version.py" in names
-        assert "my_llm/codec/responses.py" in names
+        assert "my_llm/codec/openai/decoding/responses.py" in names
+        for protocol in ("anthropic", "gemini", "ollama"):
+            assert f"my_llm/codec/{protocol}/__init__.py" in names
         assert "my_llm/types/messages.py" in names
         assert "my_llm/py.typed" in names
         assert all(not name.endswith(".gitkeep") for name in names)
@@ -52,9 +54,10 @@ def test_build_contains_runtime_types_and_source_tests(tmp_path, version_overrid
         assert metadata["Version"] == expected_version
         assert metadata["Requires-Python"] == ">=3.12"
         assert metadata["Description-Content-Type"] == "text/markdown"
-        assert any(
-            requirement.startswith("openai") for requirement in metadata.get_all("Requires-Dist")
-        )
+        for package in ("openai", "anthropic", "google-genai", "ollama"):
+            assert any(
+                requirement.startswith(package) for requirement in metadata.get_all("Requires-Dist")
+            )
     subprocess.run(
         [
             sys.executable,

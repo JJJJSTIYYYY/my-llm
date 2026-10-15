@@ -1,4 +1,4 @@
-"""Request execution using AsyncOpenAI streaming for both public modes."""
+"""Request execution using official asynchronous SDK streams for both public modes."""
 
 from __future__ import annotations
 
@@ -8,19 +8,24 @@ from copy import deepcopy
 from dataclasses import replace
 from typing import Any
 
+from anthropic import AsyncAnthropic
+from google import genai
+from google.genai import types as genai_types
+from ollama import AsyncClient as AsyncOllama
 from openai import AsyncOpenAI, Omit, omit
 
-from my_llm.codec import ChatCompletionsCodec, ResponsesCodec
-from my_llm.exceptions import ConfigurationError, StreamError, UnsupportedProviderError
-from my_llm.profiles import (
-    ModelProfile,
-    Protocol,
-    ProviderProfile,
-    ReasoningEffort,
-    client_parameters,
-    resolve_profiles,
+from my_llm.codec import (
+    AnthropicCodec,
+    ChatCompletionsCodec,
+    GeminiCodec,
+    OllamaCodec,
+    ResponsesCodec,
 )
+from my_llm.profile import ModelProfile, Protocol, ProviderProfile, ReasoningEffort
+from my_llm.profile.utils.common import merge_dicts
+from my_llm.profile.utils.resolution import client_parameters, resolve_profiles
 from my_llm.types import Message, MessageChunk, MessageInput
+from my_llm.types.exceptions import ConfigurationError, StreamError, UnsupportedProviderError
 
 
 class _MessageAccumulator:
@@ -111,7 +116,7 @@ class MyLLM:
         provider: Connection, API selection and provider-wide defaults.
         model: Explicit ModelProfile to use for every generation. The provider's
             model catalogue is not searched automatically.
-        client: Optional caller-owned AsyncOpenAI client. Configure and close
+        client: Optional caller-owned official SDK client. Configure and close
             this client yourself; per-call connection overrides are unavailable
             when it is supplied.
 
@@ -131,15 +136,24 @@ class MyLLM:
     """
 
     def __init__(
-        self, *, provider: ProviderProfile, model: ModelProfile, client: AsyncOpenAI | None = None
+        self,
+        *,
+        provider: ProviderProfile,
+        model: ModelProfile,
+        client: AsyncOpenAI | AsyncAnthropic | genai.Client | AsyncOllama | None = None,
     ) -> None:
         """Capture provider/model settings and optionally borrow an SDK client."""
         self.profile = resolve_profiles(provider, model)
         self.client = client
+        native = {"anthropic": AnthropicCodec, "gemini": GeminiCodec, "ollama": OllamaCodec}
         self.codec = (
-            ResponsesCodec(self.profile)
-            if self.profile.api_type == "responses"
-            else ChatCompletionsCodec(self.profile)
+            native[self.profile.protocol](self.profile)
+            if self.profile.protocol in native
+            else (
+                ResponsesCodec(self.profile)
+                if self.profile.api_type == "responses"
+                else ChatCompletionsCodec(self.profile)
+            )
         )
 
     async def generate(
@@ -165,7 +179,8 @@ class MyLLM:
         Args:
             messages: Non-empty sequence of Chat Completions messages, Responses
                 items, or a mixture. Roles are system/user/assistant/tool.
-            protocol: Reserved protocol selector; currently only "openai".
+            protocol: Optional consistency check against ProviderProfile.protocol.
+                The default "openai" follows the configured provider protocol.
             base_url: Connection URL override; None uses the provider setting.
             api_key: Credential override; None uses the provider setting.
             timeout: Positive timeout in seconds; None uses the provider setting.
@@ -201,8 +216,8 @@ class MyLLM:
         Input history is isolated when this method is awaited. Use the returned
         stream as an async context manager to release resources after early exit.
         """
-        if protocol != "openai":
-            raise UnsupportedProviderError(f"protocol {protocol!r} is reserved")
+        if protocol not in ("openai", self.profile.protocol):
+            raise UnsupportedProviderError("protocol must match ProviderProfile.protocol")
         if stream is not None and not isinstance(stream, bool):
             raise ConfigurationError("stream must be True, False or None")
         overrides = {
@@ -216,6 +231,10 @@ class MyLLM:
                 "client initialization overrides cannot be used with an injected SDK client"
             )
         sdk_kwargs = client_parameters(self.profile, **overrides)
+        if self.profile.protocol == "ollama" and self.client is None:
+            headers = merge_dicts(self.profile.values["extra_headers"], extra_headers)
+            if headers:
+                sdk_kwargs["headers"] = deepcopy(headers)
         request = self.codec.encode(
             deepcopy(messages),
             tools=tools,
@@ -243,15 +262,46 @@ class MyLLM:
         upstream = None
         combined = _MessageAccumulator()
         decoder = self.codec.decoder()
+        protocol = self.profile.protocol
         try:
             if client is None:
-                client = AsyncOpenAI(**sdk_kwargs)
-            endpoint = (
-                client.responses
-                if self.profile.api_type == "responses"
-                else client.chat.completions
-            )
-            upstream = await endpoint.create(**request)
+                if protocol == "anthropic":
+                    client = AsyncAnthropic(**sdk_kwargs)
+                elif protocol == "gemini":
+                    options = {k: v for k, v in sdk_kwargs.items() if k == "base_url"}
+                    if "timeout" in sdk_kwargs:
+                        options["timeout"] = max(1, round(sdk_kwargs["timeout"] * 1000))
+                    if "max_retries" in sdk_kwargs:
+                        options["retry_options"] = genai_types.HttpRetryOptions(
+                            attempts=sdk_kwargs["max_retries"] + 1
+                        )
+                    client = genai.Client(
+                        **({"api_key": sdk_kwargs["api_key"]} if "api_key" in sdk_kwargs else {}),
+                        http_options=genai_types.HttpOptions(**options),
+                    )
+                elif protocol == "ollama":
+                    options = {k: v for k, v in sdk_kwargs.items() if k == "timeout"}
+                    headers = sdk_kwargs.get("headers", {})
+                    if "api_key" in sdk_kwargs:
+                        headers = {"Authorization": f"Bearer {sdk_kwargs['api_key']}", **headers}
+                    if headers:
+                        options["headers"] = headers
+                    client = AsyncOllama(host=sdk_kwargs.get("base_url"), **options)
+                else:
+                    client = AsyncOpenAI(**sdk_kwargs)
+            if protocol == "anthropic":
+                upstream = await client.messages.create(**request)
+            elif protocol == "gemini":
+                upstream = await client.aio.models.generate_content_stream(**request)
+            elif protocol == "ollama":
+                upstream = await client.chat(**request)
+            else:
+                endpoint = (
+                    client.responses
+                    if self.profile.api_type == "responses"
+                    else client.chat.completions
+                )
+                upstream = await endpoint.create(**request)
             async for event in upstream:
                 for chunk in decoder.feed(event):
                     combined.add(chunk)
@@ -265,10 +315,19 @@ class MyLLM:
         finally:
             try:
                 if upstream is not None:
-                    await upstream.close()
+                    if protocol in ("gemini", "ollama"):
+                        await upstream.aclose()
+                    else:
+                        await upstream.close()
             finally:
                 if owned and client is not None:
-                    await client.close()
+                    if protocol == "gemini":
+                        try:
+                            await client.aio.aclose()
+                        finally:
+                            client.close()
+                    else:
+                        await client.close()
 
 
 async def generate(
@@ -289,7 +348,7 @@ async def generate(
     stream: bool | None = None,
     tools: list[dict[str, Any]] | Omit | None = omit,
     previous_response_id: str | Omit | None = None,
-    client: AsyncOpenAI | None = None,
+    client: AsyncOpenAI | AsyncAnthropic | genai.Client | AsyncOllama | None = None,
 ) -> MessageStream | Message:
     """Generate an assistant message without explicitly constructing MyLLM.
 
@@ -299,7 +358,8 @@ async def generate(
             A string does not look up the provider's model catalogue.
         messages: Non-empty sequence of Chat Completions messages, Responses
             items, or a mixture. Native SDK items must first be made dictionaries.
-        protocol: Reserved selector; currently only "openai" is supported.
+        protocol: Optional consistency check; the default "openai" follows the
+            provider protocol. Other values must match ProviderProfile.protocol.
         base_url: Override the provider URL; None inherits, omit leaves it unset.
         api_key: Override credentials; None inherits, omit leaves them unset.
         timeout: Positive timeout in seconds; None inherits the provider value.
@@ -315,7 +375,8 @@ async def generate(
             None/omit leaves them unspecified. The caller executes tool calls.
         previous_response_id: Responses-only reference for continuing with new
             messages or tool results rather than resending the old history.
-        client: Optional caller-owned AsyncOpenAI; connection overrides must be
+        client: Optional caller-owned AsyncOpenAI, AsyncAnthropic, genai.Client
+            or ollama.AsyncClient; connection overrides must be
             omitted and the caller is responsible for closing this client.
 
     Returns:

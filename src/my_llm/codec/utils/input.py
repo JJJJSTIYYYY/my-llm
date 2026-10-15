@@ -4,9 +4,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from my_llm.codec.content import RESPONSE_BLOCKS
-from my_llm.exceptions import MessageValidationError
+from my_llm.codec.utils.common import RESPONSE_BLOCKS
 from my_llm.types import Message
+from my_llm.types.exceptions import MessageValidationError
 
 
 @dataclass(frozen=True, slots=True)

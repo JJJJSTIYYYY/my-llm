@@ -10,8 +10,8 @@ from my_llm import (
     omit,
 )
 from my_llm.codec import ChatCompletionsCodec, ResponsesCodec
-from my_llm.exceptions import MessageValidationError
-from my_llm.profiles import resolve_profiles
+from my_llm.profile.utils.resolution import resolve_profiles
+from my_llm.types.exceptions import MessageValidationError
 
 
 def codec(profile):

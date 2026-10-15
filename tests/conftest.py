@@ -8,7 +8,7 @@ import pytest
 from openai import AsyncOpenAI
 
 from my_llm import ModelProfile, ProviderProfile
-from my_llm.profiles import resolve_profiles
+from my_llm.profile.utils.resolution import resolve_profiles
 
 
 @pytest.fixture

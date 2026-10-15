@@ -1,7 +1,61 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
 [project]
 name = "my-llm"
 version = "0.1.0"
-description = "Add your description here"
+description = "Profile-driven async LLM adapter for OpenAI Responses and Chat Completions."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "openai>=2.0,<3",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Repository = "https://github.com/JJJJSTIYYYY/my-llm"
+Issues = "https://github.com/JJJJSTIYYYY/my-llm/issues"
+
+[tool.hatch.build]
+exclude = ["**/.gitkeep"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/my_llm"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/my_llm",
+    "/README.md",
+    "/pyproject.toml",
+    "/docs/guides",
+    "/docs/reference",
+    "/tests",
+    "/examples",
+]
+
+[dependency-groups]
+dev = [
+    "hatchling>=1.26",
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.9",
+    "twine>=6",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

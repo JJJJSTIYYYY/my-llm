@@ -62,7 +62,8 @@ uv run ruff check src tests examples
 uv run ruff format --check src tests examples
 uv run python examples/local_demo.py
 uv build
-uv run twine check --strict dist/my_llm-0.1.0-py3-none-any.whl dist/my_llm-0.1.0.tar.gz
+package_version=$(uv run python -c 'from my_llm import __version__; print(__version__)')
+uv run twine check --strict "dist/my_llm-${package_version}-py3-none-any.whl" "dist/my_llm-${package_version}.tar.gz"
 ```
 
 测试使用真实 OpenAI SDK 和本地模拟 HTTP/SSE 传输，无需密钥或访问供应商服务。
@@ -72,3 +73,6 @@ uv run twine check --strict dist/my_llm-0.1.0-py3-none-any.whl dist/my_llm-0.1.0
 构建说明见
 [构建指南](https://github.com/JJJJSTIYYYY/my-llm/blob/main/docs/guides/building.md)。
 发布名暂用 `my-llm`；本地构建不会发布到 PyPI。
+
+版本号统一在 `src/my_llm/_version.py` 的 `__version__` 中维护，打包元数据与
+`my_llm.__version__` 均使用该值。升级版本时只修改此文件，再运行 `uv lock` 更新锁文件。

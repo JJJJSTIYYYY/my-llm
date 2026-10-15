@@ -2,6 +2,7 @@
 
 from openai import Omit, omit
 
+from ._version import __version__
 from .exceptions import (
     ConfigurationError,
     IncompleteStreamError,
@@ -39,6 +40,7 @@ __all__ = [
     "ToolCall",
     "UnsupportedCapabilityError",
     "UnsupportedProviderError",
+    "__version__",
     "create",
     "omit",
 ]

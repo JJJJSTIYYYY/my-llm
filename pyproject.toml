@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "my-llm"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Profile-driven async LLM adapter for OpenAI Responses and Chat Completions."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -21,6 +21,9 @@ classifiers = [
 [project.urls]
 Repository = "https://github.com/JJJJSTIYYYY/my-llm"
 Issues = "https://github.com/JJJJSTIYYYY/my-llm/issues"
+
+[tool.hatch.version]
+path = "src/my_llm/_version.py"
 
 [tool.hatch.build]
 exclude = ["**/.gitkeep"]

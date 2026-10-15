@@ -3,7 +3,7 @@ requires = ["hatchling>=1.26"]
 build-backend = "hatchling.build"
 
 [project]
-name = "my-llm"
+name = "my-llm-py"
 dynamic = ["version"]
 description = "Profile-driven async LLM adapter for OpenAI, Anthropic, Gemini and Ollama."
 readme = "README.md"

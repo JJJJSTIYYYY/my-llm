@@ -6,11 +6,11 @@ from conftest import FakeClient, chat_event
 from my_llm import (
     ConfigurationError,
     IncompleteStreamError,
-    Invoke,
     ModelProfile,
+    MyLLM,
     ProviderProfile,
     UnsupportedProviderError,
-    create,
+    generate,
 )
 
 
@@ -23,7 +23,7 @@ async def test_owned_client_parameters_and_cleanup(monkeypatch):
         return client
 
     monkeypatch.setattr("my_llm.invoke.AsyncOpenAI", factory)
-    result = await create(
+    result = await generate(
         provider=ProviderProfile(
             api_key="profile", base_url="https://example.test", timeout=30, max_retries=2
         ),
@@ -41,7 +41,7 @@ async def test_owned_client_parameters_and_cleanup(monkeypatch):
 
 async def test_borrowed_client_not_closed():
     client = FakeClient([chat_event(finish="stop")])
-    await create(
+    await generate(
         provider=ProviderProfile(),
         model="demo",
         messages=[{"role": "user", "content": "x"}],
@@ -54,7 +54,7 @@ async def test_early_exit_closes_stream():
     client = FakeClient(
         [chat_event(content="one"), chat_event(content="two"), chat_event(finish="stop")]
     )
-    stream = await create(
+    stream = await generate(
         provider=ProviderProfile(),
         model="demo",
         messages=[{"role": "user", "content": "x"}],
@@ -75,7 +75,7 @@ async def test_early_exit_closes_stream():
 async def test_truncated_stream_has_partial_message_and_cleanup():
     client = FakeClient([chat_event(content="partial")])
     with pytest.raises(IncompleteStreamError) as error:
-        await create(
+        await generate(
             provider=ProviderProfile(),
             model="demo",
             messages=[{"role": "user", "content": "x"}],
@@ -88,7 +88,7 @@ async def test_truncated_stream_has_partial_message_and_cleanup():
 async def test_transport_failure_closes_stream():
     client = FakeClient([chat_event(content="partial")], failure=RuntimeError("transport failed"))
     with pytest.raises(RuntimeError, match="transport failed"):
-        await create(
+        await generate(
             provider=ProviderProfile(),
             model="demo",
             messages=[{"role": "user", "content": "x"}],
@@ -109,7 +109,7 @@ async def test_cancellation_closes_upstream():
     monkeypatch.setattr(type(client.upstream), "__anext__", waiting_next)
     try:
         task = asyncio.create_task(
-            create(
+            generate(
                 provider=ProviderProfile(),
                 model="demo",
                 messages=[{"role": "user", "content": "x"}],
@@ -127,11 +127,11 @@ async def test_cancellation_closes_upstream():
 
 async def test_reserved_protocol_and_invalid_stream_fail_before_request():
     client = FakeClient([])
-    invoke = Invoke(provider=ProviderProfile(), model=ModelProfile(model="demo"), client=client)
+    invoke = MyLLM(provider=ProviderProfile(), model=ModelProfile(model="demo"), client=client)
     with pytest.raises(UnsupportedProviderError):
-        await invoke.create(messages=[{"role": "user", "content": "x"}], protocol="anthropic")
+        await invoke.generate(messages=[{"role": "user", "content": "x"}], protocol="anthropic")
     with pytest.raises(ConfigurationError):
-        await invoke.create(messages=[{"role": "user", "content": "x"}], stream="yes")
+        await invoke.generate(messages=[{"role": "user", "content": "x"}], stream="yes")
     with pytest.raises(ConfigurationError, match="injected"):
-        await invoke.create(messages=[{"role": "user", "content": "x"}], timeout=2)
+        await invoke.generate(messages=[{"role": "user", "content": "x"}], timeout=2)
     assert not client.requests

@@ -1,0 +1,144 @@
+"""Run user-guide examples against the real SDK with local HTTP responses."""
+
+import ast
+import json
+import re
+from dataclasses import fields
+from pathlib import Path
+
+import httpx
+import pytest
+from openai import AsyncOpenAI
+
+from my_llm import ModelProfile, MyLLM, ProviderProfile
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def python_blocks(path):
+    return re.findall(r"^```python\n(.*?)^```", path.read_text(), re.MULTILINE | re.DOTALL)
+
+
+@pytest.mark.parametrize(
+    "relative_path", ["README.md", "docs/reference/api.md", "docs/reference/configuration.md"]
+)
+def test_documented_python_is_valid(relative_path):
+    blocks = python_blocks(ROOT / relative_path)
+    assert blocks
+    for index, source in enumerate(blocks):
+        compile(source, f"{relative_path}:block{index}", "exec")
+
+
+def test_configuration_guide_covers_profile_fields_and_local_links():
+    config = (ROOT / "docs/reference/configuration.md").read_text()
+    for profile in (ProviderProfile, ModelProfile):
+        for field in fields(profile):
+            assert f"`{field.name}`" in config, field.name
+    for path in (ROOT / "docs/reference").glob("*.md"):
+        prose = re.sub(r"^```.*?^```", "", path.read_text(), flags=re.MULTILINE | re.DOTALL)
+        for target in re.findall(r"\]\(([^)]+)\)", prose):
+            if "://" not in target and not target.startswith("#"):
+                assert (path.parent / target.split("#")[0]).is_file(), target
+
+
+def api_example(name):
+    for source in python_blocks(ROOT / "docs/reference/api.md"):
+        tree = ast.parse(source)
+        if any(isinstance(node, ast.AsyncFunctionDef) and node.name == name for node in tree.body):
+            namespace = {"__name__": "documentation_example"}
+            exec(compile(tree, "api.md", "exec"), namespace)
+            return namespace[name]
+    raise AssertionError(f"Missing API example: {name}")
+
+
+@pytest.mark.parametrize("api_type", ["chat_completions", "responses"])
+async def test_guide_text_stream_input_conversion_and_tool_round_trip(api_type):
+    requests = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        history = body.get("messages", body.get("input"))
+        has_result = any(
+            item.get("role") == "tool" or item.get("type") == "function_call_output"
+            for item in history
+        )
+        needs_tool = bool(body.get("tools")) and not has_result
+        text = "5" if has_result else "Hello"
+        if api_type == "responses":
+            output = (
+                [
+                    {
+                        "type": "function_call",
+                        "id": "fc_1",
+                        "call_id": "call_add",
+                        "status": "completed",
+                        "name": "add",
+                        "arguments": '{"a":2,"b":3}',
+                    }
+                ]
+                if needs_tool
+                else []
+            )
+            events = [] if needs_tool else [{"type": "response.output_text.delta", "delta": text}]
+            events.append(
+                {
+                    "type": "response.completed",
+                    "response": {"id": "resp_docs", "status": "completed", "output": output},
+                }
+            )
+        else:
+            delta = (
+                {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_add",
+                            "type": "function",
+                            "function": {"name": "add", "arguments": '{"a":2,"b":3}'},
+                        }
+                    ]
+                }
+                if needs_tool
+                else {"content": text}
+            )
+            events = [
+                {"choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": "tool_calls" if needs_tool else "stop",
+                        }
+                    ]
+                },
+            ]
+        payload = "".join(f"data: {json.dumps(event)}\n\n" for event in events)
+        return httpx.Response(
+            200, text=payload + "data: [DONE]\n\n", headers={"Content-Type": "text/event-stream"}
+        )
+
+    async with AsyncOpenAI(
+        api_key="local-doc-test",
+        base_url="https://docs.test/v1",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    ) as client:
+        provider = ProviderProfile(api_type=api_type)
+        llm = MyLLM(provider=provider, model=ModelProfile(model="demo"), client=client)
+        for name in ("ask", "print_stream", "ask_with_partial_output"):
+            result = await api_example(name)(llm, "Hello")
+            assert result["content"] == "Hello"
+        result = await api_example("ask_with_response_input")(llm)
+        assert result["content"] == "Hello"
+        encoded = requests[-1].get("messages", requests[-1].get("input"))
+        expected = "text" if api_type == "chat_completions" else "input_text"
+        assert encoded[-1]["content"][0]["type"] == expected
+        final = await api_example("add_round_trip")(provider, "demo", client=client)
+        assert final["content"] == "5"
+        if api_type == "responses":
+            result = await api_example("continue_response")(llm)
+            assert result["content"] == "Hello"
+            assert requests[-1]["previous_response_id"] == "resp_docs"
+            assert len(requests[-1]["input"]) == 1

@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
+from copy import deepcopy
+from dataclasses import replace
 from typing import Any
 
 from openai import AsyncOpenAI, Omit, omit
 
-from .codec import ChatCompletionsCodec, ResponsesCodec
-from .exceptions import ConfigurationError, StreamError, UnsupportedProviderError
-from .profiles import (
+from my_llm.codec import ChatCompletionsCodec, ResponsesCodec
+from my_llm.exceptions import ConfigurationError, StreamError, UnsupportedProviderError
+from my_llm.profiles import (
     ModelProfile,
     Protocol,
     ProviderProfile,
@@ -18,20 +20,63 @@ from .profiles import (
     client_parameters,
     resolve_profiles,
 )
-from .types import Message, MessageChunk
+from my_llm.types import Message, MessageChunk, MessageInput
+
+
+class _MessageAccumulator:
+    """Buffer text fragments; join and snapshot only when producing a message."""
+
+    def __init__(self) -> None:
+        self._content: list[str] = []
+        self._reasoning: list[str] = []
+        self._metadata = MessageChunk()
+
+    def add(self, chunk: MessageChunk) -> None:
+        if chunk.content:
+            self._content.append(chunk.content)
+        if chunk.reasoning_content:
+            self._reasoning.append(chunk.reasoning_content)
+        if (
+            chunk.tool_calls
+            or chunk.is_finished
+            or chunk.usage is not None
+            or chunk.response_id is not None
+            or chunk.response_output
+            or chunk.response_status is not None
+        ):
+            self._metadata += replace(chunk, content="", reasoning_content="")
+
+    def to_message(self, *, require_finished: bool = False) -> Message:
+        return replace(
+            self._metadata,
+            content="".join(self._content),
+            reasoning_content="".join(self._reasoning),
+        ).to_message(require_finished=require_finished)
 
 
 class MessageStream(AsyncIterator[MessageChunk]):
-    """Closable result iterator; use async with for deterministic early cleanup."""
+    """An asynchronous stream of assistant-message fragments.
+
+    Returned by ``await generate(..., stream=True)`` and
+    ``await llm.generate(..., stream=True)``. Use ``async with stream`` when
+    consuming it, especially if iteration may stop early. Text and reasoning
+    arrive incrementally; tool calls are returned only when complete.
+
+    Args:
+        iterator: A closable asynchronous iterator yielding MessageChunk values.
+    """
 
     def __init__(self, iterator: AsyncIterator[MessageChunk]) -> None:
+        """Wrap a chunk iterator that provides an asynchronous ``aclose()``."""
         self._iterator = iterator
         self._closed = False
 
     def __aiter__(self) -> MessageStream:
+        """Return this stream for use in ``async for``."""
         return self
 
     async def __anext__(self) -> MessageChunk:
+        """Read the next chunk, closing the stream on completion or failure."""
         if self._closed:
             raise StopAsyncIteration
         try:
@@ -41,27 +86,54 @@ class MessageStream(AsyncIterator[MessageChunk]):
             raise
 
     async def aclose(self) -> None:
+        """Release this request's resources; repeated calls are safe.
+
+        Closing an unconsumed stream does not start a request. A caller-supplied
+        SDK client remains open and must be closed by its owner.
+        """
         if not self._closed:
             self._closed = True
             await self._iterator.aclose()
 
     async def __aenter__(self) -> MessageStream:
+        """Enter a context that closes the stream automatically on exit."""
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
+        """Close the stream after normal completion, early exit or an error."""
         await self.aclose()
 
 
-class Invoke:
-    """Codec/execution boundary, configured exclusively through user profiles.
+class MyLLM:
+    """Generate assistant messages using a configured provider and model.
 
-    A supplied AsyncOpenAI is borrowed and never closed. Without one, a fresh
-    SDK client is created lazily for each stream and always closed afterwards.
+    Args:
+        provider: Connection, API selection and provider-wide defaults.
+        model: Explicit ModelProfile to use for every generation. The provider's
+            model catalogue is not searched automatically.
+        client: Optional caller-owned AsyncOpenAI client. Configure and close
+            this client yourself; per-call connection overrides are unavailable
+            when it is supplied.
+
+    Configuration is captured at construction. To change it, create a new
+    instance with updated profiles. Concurrent calls have independent histories
+    and result streams. Without an injected client, each request's client is
+    created and closed automatically.
+
+    Raises:
+        ConfigurationError: The supplied profiles are invalid.
+        UnsupportedProviderError: The provider uses an unsupported protocol or
+            does not support upstream streaming.
+
+    Example:
+        llm = MyLLM(provider=ProviderProfile(), model=ModelProfile(model="your-model"))
+        message = await llm.generate(messages=[{"role": "user", "content": "Hello"}])
     """
 
     def __init__(
         self, *, provider: ProviderProfile, model: ModelProfile, client: AsyncOpenAI | None = None
     ) -> None:
+        """Capture provider/model settings and optionally borrow an SDK client."""
         self.profile = resolve_profiles(provider, model)
         self.client = client
         self.codec = (
@@ -70,10 +142,10 @@ class Invoke:
             else ChatCompletionsCodec(self.profile)
         )
 
-    async def create(
+    async def generate(
         self,
         *,
-        messages: list[Message],
+        messages: Sequence[MessageInput],
         protocol: Protocol = "openai",
         base_url: str | Omit | None = None,
         api_key: str | Omit | None = None,
@@ -88,6 +160,47 @@ class Invoke:
         tools: list[dict[str, Any]] | Omit | None = omit,
         previous_response_id: str | Omit | None = None,
     ) -> MessageStream | Message:
+        """Generate one assistant message or return its asynchronous stream.
+
+        Args:
+            messages: Non-empty sequence of Chat Completions messages, Responses
+                items, or a mixture. Roles are system/user/assistant/tool.
+            protocol: Reserved protocol selector; currently only "openai".
+            base_url: Connection URL override; None uses the provider setting.
+            api_key: Credential override; None uses the provider setting.
+            timeout: Positive timeout in seconds; None uses the provider setting.
+            max_retries: Non-negative SDK retry count; None inherits the provider.
+            extra_headers: Request headers merged over profile defaults.
+            extra_body: Extra JSON fields merged over profile defaults. Generated
+                reasoning parameters take precedence over matching fields.
+            max_tokens: Positive output-token limit; None inherits the model,
+                while omit removes the explicit limit.
+            reasoning: Optional switch. True selects medium when effort is none;
+                False conflicts with a non-none effort.
+            reasoning_effort: One of none/low/medium/high/xhigh/max. Model
+                capability flags and effort mappings determine availability.
+            stream: True returns MessageStream; False or None returns Message.
+            tools: Local function descriptions in either supported API format.
+                None or omit leaves tools unspecified. Tools are not executed.
+            previous_response_id: Responses-only conversation reference. Send
+                only the new messages or function results when using it.
+
+        Returns:
+            A unified assistant-message dictionary, or a MessageStream when
+            stream=True. Always await this method before iterating the stream.
+
+        Raises:
+            ConfigurationError: Parameters conflict or have invalid values.
+            MessageValidationError: Messages/tools cannot be converted safely.
+            UnsupportedCapabilityError: The model lacks a requested capability.
+            StreamError: The response failed or ended incompletely. For streaming
+                calls this may be raised while iterating. SDK errors propagate
+                with their original types.
+
+        Connection overrides cannot be used with an injected SDK client.
+        Input history is isolated when this method is awaited. Use the returned
+        stream as an async context manager to release resources after early exit.
+        """
         if protocol != "openai":
             raise UnsupportedProviderError(f"protocol {protocol!r} is reserved")
         if stream is not None and not isinstance(stream, bool):
@@ -104,7 +217,7 @@ class Invoke:
             )
         sdk_kwargs = client_parameters(self.profile, **overrides)
         request = self.codec.encode(
-            messages,
+            deepcopy(messages),
             tools=tools,
             extra_headers=extra_headers,
             extra_body=extra_body,
@@ -116,10 +229,10 @@ class Invoke:
         result = MessageStream(self._stream(request, sdk_kwargs))
         if stream:
             return result
-        combined = MessageChunk()
+        combined = _MessageAccumulator()
         async with aclosing(result):
             async for chunk in result:
-                combined += chunk
+                combined.add(chunk)
         return combined.to_message(require_finished=True)
 
     async def _stream(
@@ -128,7 +241,7 @@ class Invoke:
         client = self.client
         owned = client is None
         upstream = None
-        combined = MessageChunk()
+        combined = _MessageAccumulator()
         decoder = self.codec.decoder()
         try:
             if client is None:
@@ -141,10 +254,10 @@ class Invoke:
             upstream = await endpoint.create(**request)
             async for event in upstream:
                 for chunk in decoder.feed(event):
-                    combined += chunk
+                    combined.add(chunk)
                     yield chunk
             final = decoder.finish()
-            combined += final
+            combined.add(final)
             yield final
         except StreamError as exc:
             exc.partial_message = {**combined.to_message(), **(exc.partial_message or {})}
@@ -158,11 +271,11 @@ class Invoke:
                     await client.close()
 
 
-async def create(
+async def generate(
     *,
     provider: ProviderProfile,
     model: ModelProfile | str,
-    messages: list[Message],
+    messages: Sequence[MessageInput],
     protocol: Protocol = "openai",
     base_url: str | Omit | None = None,
     api_key: str | Omit | None = None,
@@ -178,15 +291,55 @@ async def create(
     previous_response_id: str | Omit | None = None,
     client: AsyncOpenAI | None = None,
 ) -> MessageStream | Message:
-    """Invoke a configured model; stream=None/False collects the same stream.
+    """Generate an assistant message without explicitly constructing MyLLM.
 
-    tools describes caller-owned local functions; my-llm returns function calls
-    and never executes tools or enables provider-native cloud services.
+    Args:
+        provider: ProviderProfile selecting the API and provider defaults.
+        model: A ModelProfile, or a model ID string using default model settings.
+            A string does not look up the provider's model catalogue.
+        messages: Non-empty sequence of Chat Completions messages, Responses
+            items, or a mixture. Native SDK items must first be made dictionaries.
+        protocol: Reserved selector; currently only "openai" is supported.
+        base_url: Override the provider URL; None inherits, omit leaves it unset.
+        api_key: Override credentials; None inherits, omit leaves them unset.
+        timeout: Positive timeout in seconds; None inherits the provider value.
+        max_retries: Non-negative SDK retry count; None inherits the provider.
+        extra_headers: Request headers overriding model/provider dictionary keys.
+        extra_body: Extra request fields overriding model/provider keys. Generated
+            reasoning parameters have priority over matching fields.
+        max_tokens: Positive output-token limit; None inherits, omit leaves unset.
+        reasoning: Optional boolean switch; True with effort=none uses medium.
+        reasoning_effort: none/low/medium/high/xhigh/max, subject to model support.
+        stream: True returns MessageStream; False or None returns Message.
+        tools: Local function tools in Responses or Chat Completions format;
+            None/omit leaves them unspecified. The caller executes tool calls.
+        previous_response_id: Responses-only reference for continuing with new
+            messages or tool results rather than resending the old history.
+        client: Optional caller-owned AsyncOpenAI; connection overrides must be
+            omitted and the caller is responsible for closing this client.
+
+    Returns:
+        A unified assistant Message, or a MessageStream for stream=True. The
+        streaming form is also awaited: ``stream = await generate(...)``.
+
+    Raises:
+        ConfigurationError: Profiles or request parameters are invalid.
+        MessageValidationError: Messages/tools are invalid or cannot be converted.
+        UnsupportedProviderError: The requested protocol/provider is unsupported.
+        UnsupportedCapabilityError: The model lacks a requested capability.
+        StreamError: The response fails or ends incompletely. With stream=True,
+            failures may occur during iteration. SDK errors retain their types.
+
+    Example:
+        message = await generate(
+            provider=ProviderProfile(), model="your-model",
+            messages=[{"role": "user", "content": "Hello"}],
+        )
     """
     if isinstance(model, str):
         model = ModelProfile(model=model)
-    invoke = Invoke(provider=provider, model=model, client=client)
-    return await invoke.create(
+    llm = MyLLM(provider=provider, model=model, client=client)
+    return await llm.generate(
         messages=messages,
         protocol=protocol,
         base_url=base_url,

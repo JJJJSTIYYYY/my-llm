@@ -23,13 +23,20 @@ class UnsupportedCapabilityError(ConfigurationError):
 
 
 class MessageValidationError(ConfigurationError):
-    """A message or tool is not in the supported unified format."""
+    """A message/tool is invalid or cannot be converted to the selected API."""
 
 
 class StreamError(MyLLMError):
-    """A streamed response failed, carrying native details and partial output."""
+    """A response failed in streaming or collected-message mode.
+
+    Attributes:
+        details: Native error/status payload when available, otherwise None.
+        partial_message: Unified message containing output received before the
+            failure, when available. It is not a completed successful result.
+    """
 
     def __init__(self, message: str, *, details: Any = None, partial_message: Any = None) -> None:
+        """Set the error message and optional native details/partial output."""
         super().__init__(message)
         self.details = details
         self.partial_message = partial_message

@@ -2,54 +2,52 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import Any
 
 from openai import Omit
 
-from ..exceptions import IncompleteStreamError, ResponseFailedError
-from ..profiles import ResolvedProfile
-from ..types import MessageChunk
-from .common import (
+from my_llm.codec.common import (
     path_value,
     plain,
     read,
     request_parameters,
     text_delta,
-    validate_messages,
-    validate_tool_call,
-    validate_tools,
 )
+from my_llm.codec.messages import encode_messages
+from my_llm.codec.tools import encode_tools
+from my_llm.codec.validation import validate_tool_call
+from my_llm.exceptions import IncompleteStreamError, ResponseFailedError
+from my_llm.profiles import ResolvedProfile
+from my_llm.types import MessageChunk
 
 
 class ChatCompletionsCodec:
+    """Advanced adapter for encoding requests and decoding Chat Completions.
+
+    Most applications should use MyLLM.generate(). Direct callers provide a
+    resolved profile and request-owned message dictionaries; encode() does not
+    isolate mutable input. Create a fresh decoder for each response stream.
+    """
+
     def __init__(self, profile: ResolvedProfile) -> None:
+        """Use a validated profile returned by resolve_profiles()."""
         self.profile = profile
 
     def encode(
         self, messages: Any, *, tools: Any, previous_response_id: Any = None, **parameters: Any
     ) -> dict[str, Any]:
-        from ..exceptions import ConfigurationError
+        """Encode messages/tools in either input format as SDK request keywords.
+
+        parameters accepts the generation reasoning, token and extra-field
+        options. previous_response_id must be None/omit for this API.
+        Invalid configuration or input raises ConfigurationError subclasses.
+        """
+        from my_llm.exceptions import ConfigurationError
 
         if previous_response_id is not None and not isinstance(previous_response_id, Omit):
             raise ConfigurationError("previous_response_id requires Responses API")
-        history = []
-        for message in validate_messages(messages):
-            encoded = {
-                key: deepcopy(message[key])
-                for key in ("role", "content", "tool_call_id", "tool_calls")
-                if key in message
-            }
-            if self.profile.get("supports_message_name", False) and "name" in message:
-                encoded["name"] = message["name"]
-            if (
-                message.get("tool_calls")
-                and self.profile.get("replay_reasoning_content_when_tool_calls", False)
-                and "reasoning_content" in message
-            ):
-                encoded["reasoning_content"] = message["reasoning_content"]
-            history.append(encoded)
-        encoded_tools = validate_tools(tools, self.profile)
+        history = encode_messages(messages, self.profile)
+        encoded_tools = encode_tools(tools, self.profile)
         kwargs = request_parameters(self.profile, **parameters)
         kwargs.update(model=self.profile.model, messages=history, stream=True)
         if not isinstance(encoded_tools, Omit):
@@ -57,11 +55,15 @@ class ChatCompletionsCodec:
         return kwargs
 
     def decoder(self) -> ChatDecoder:
+        """Return a fresh stateful decoder for one Chat Completions stream."""
         return ChatDecoder(self.profile)
 
 
 class ChatDecoder:
+    """Incrementally decode one stream; call finish() once after exhaustion."""
+
     def __init__(self, profile: ResolvedProfile) -> None:
+        """Set delta paths and usage settings from the resolved profile."""
         self.profile = profile
         self.calls: dict[int, dict[str, Any]] = {}
         self.finish_reason: str | None = None
@@ -69,6 +71,11 @@ class ChatDecoder:
         self.closed = False
 
     def feed(self, event: Any) -> list[MessageChunk]:
+        """Read one SDK event/dictionary and return any text/reasoning chunks.
+
+        Tool argument fragments are buffered until finish(). StreamError
+        subclasses report invalid events or upstream error payloads.
+        """
         error = read(event, "error")
         if error is not None:
             raise ResponseFailedError("Chat Completions error", details=plain(error))
@@ -118,6 +125,11 @@ class ChatDecoder:
         )
 
     def finish(self) -> MessageChunk:
+        """Validate completion and return final tools, usage and finish reason.
+
+        Raises IncompleteStreamError for missing completion, invalid tool calls
+        or a repeated finish() call.
+        """
         if self.closed:
             raise IncompleteStreamError("decoder was already finalized")
         self.closed = True

@@ -2,8 +2,8 @@
 
 from openai import Omit, omit
 
-from ._version import __version__
-from .exceptions import (
+from my_llm._version import __version__
+from my_llm.exceptions import (
     ConfigurationError,
     IncompleteStreamError,
     MessageValidationError,
@@ -14,18 +14,19 @@ from .exceptions import (
     UnsupportedCapabilityError,
     UnsupportedProviderError,
 )
-from .invoke import Invoke, MessageStream, create
-from .profiles import APIType, ModelProfile, Protocol, ProviderProfile, ReasoningEffort
-from .types import FunctionCall, Message, MessageChunk, ToolCall
+from my_llm.invoke import MessageStream, MyLLM, generate
+from my_llm.profiles import APIType, ModelProfile, Protocol, ProviderProfile, ReasoningEffort
+from my_llm.types import FunctionCall, Message, MessageChunk, MessageInput, ToolCall
 
 __all__ = [
     "APIType",
     "ConfigurationError",
     "FunctionCall",
     "IncompleteStreamError",
-    "Invoke",
+    "MyLLM",
     "Message",
     "MessageChunk",
+    "MessageInput",
     "MessageStream",
     "MessageValidationError",
     "ModelProfile",
@@ -41,6 +42,6 @@ __all__ = [
     "UnsupportedCapabilityError",
     "UnsupportedProviderError",
     "__version__",
-    "create",
+    "generate",
     "omit",
 ]

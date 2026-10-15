@@ -7,7 +7,7 @@ from my_llm import (
     ModelProfile,
     ProviderProfile,
     ResponseIncompleteError,
-    create,
+    generate,
     omit,
 )
 from my_llm.codec import ChatCompletionsCodec, ResponsesCodec
@@ -123,7 +123,7 @@ async def test_responses_error_preserves_native_status_and_partial_content():
     ]
     client = FakeClient(events)
     with pytest.raises(ResponseIncompleteError) as error:
-        await create(
+        await generate(
             provider=ProviderProfile(api_type="responses"),
             model="demo",
             messages=[{"role": "user", "content": "x"}],
@@ -149,7 +149,7 @@ async def test_owned_client_closes_on_failure_and_unconsumed_stream(monkeypatch)
         return client
 
     monkeypatch.setattr("my_llm.invoke.AsyncOpenAI", factory)
-    stream = await create(
+    stream = await generate(
         provider=ProviderProfile(),
         model="demo",
         messages=[{"role": "user", "content": "x"}],
@@ -158,7 +158,7 @@ async def test_owned_client_closes_on_failure_and_unconsumed_stream(monkeypatch)
     await stream.aclose()
     assert clients == []
     with pytest.raises(RuntimeError):
-        await create(
+        await generate(
             provider=ProviderProfile(), model="demo", messages=[{"role": "user", "content": "x"}]
         )
     assert clients[0].closed and clients[0].upstream.closed

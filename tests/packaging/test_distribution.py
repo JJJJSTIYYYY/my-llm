@@ -60,7 +60,7 @@ def test_build_contains_runtime_types_and_source_tests(tmp_path, version_overrid
             sys.executable,
             "-I",
             "-c",
-            f"import sys; sys.path.insert(0, {str(wheel)!r}); import my_llm; from importlib.metadata import version; assert my_llm.__version__ == version('my-llm') == {expected_version!r}; assert my_llm.__file__.startswith({str(wheel)!r})",
+            f"import sys; sys.path.insert(0, {str(wheel)!r}); import my_llm; from importlib.metadata import version; assert my_llm.__version__ == version('my-llm') == {expected_version!r}; assert my_llm.__file__.startswith({str(wheel)!r}); assert callable(my_llm.generate); assert callable(my_llm.MyLLM.generate); assert not hasattr(my_llm, 'create'); assert not hasattr(my_llm, 'Invoke')",
         ],
         cwd=tmp_path,
         check=True,
@@ -75,6 +75,7 @@ def test_build_contains_runtime_types_and_source_tests(tmp_path, version_overrid
             "src/my_llm/py.typed",
             "tests/integration/test_sdk_transport.py",
             "docs/reference/api.md",
+            "docs/reference/configuration.md",
             "examples/local_demo.py",
         ):
             assert f"my_llm-{expected_version}/{name}" in names

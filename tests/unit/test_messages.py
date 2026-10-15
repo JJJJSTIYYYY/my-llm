@@ -1,7 +1,8 @@
 import pytest
 
 from my_llm import MessageChunk
-from my_llm.codec.common import path_value, validate_messages
+from my_llm.codec.common import path_value
+from my_llm.codec.validation import validate_messages
 from my_llm.exceptions import ConfigurationError, MessageValidationError
 
 

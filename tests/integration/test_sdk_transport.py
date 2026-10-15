@@ -6,7 +6,7 @@ import pytest
 from conftest import chat_event, response_completed
 from openai import AuthenticationError
 
-from my_llm import Invoke, MessageChunk, ModelProfile, ProviderProfile, ResponseFailedError, create
+from my_llm import MessageChunk, ModelProfile, MyLLM, ProviderProfile, ResponseFailedError, generate
 
 
 @pytest.mark.parametrize("stream", [None, False, True])
@@ -19,7 +19,7 @@ async def test_actual_chat_sdk_wire_request_and_modes(sdk_factory, stream):
         ]
     )
     async with sdk:
-        result = await create(
+        result = await generate(
             provider=ProviderProfile(),
             model="demo",
             messages=[{"role": "user", "content": "hello"}],
@@ -79,7 +79,7 @@ async def test_actual_responses_sdk_tool_wire_format_and_replay(sdk_factory, fun
     ]
     sdk, requests = sdk_factory(events)
     async with sdk:
-        result = await create(
+        result = await generate(
             provider=ProviderProfile(api_type="responses", usage_mode="native"),
             model=ModelProfile(model="demo", supports_function_calling=True),
             messages=[{"role": "user", "content": "weather?"}],
@@ -115,7 +115,7 @@ async def test_actual_chat_usage_chunk_with_empty_choices(sdk_factory):
     ]
     sdk, requests = sdk_factory(events)
     async with sdk:
-        result = await create(
+        result = await generate(
             provider=ProviderProfile(usage_mode="stream_options"),
             model="demo",
             messages=[{"role": "user", "content": "x"}],
@@ -129,7 +129,7 @@ async def test_sdk_http_errors_remain_sdk_types(sdk_factory):
     sdk, _ = sdk_factory([], status=401)
     async with sdk:
         with pytest.raises(AuthenticationError):
-            await create(
+            await generate(
                 provider=ProviderProfile(),
                 model="demo",
                 messages=[{"role": "user", "content": "x"}],
@@ -176,7 +176,7 @@ async def test_real_sdk_two_turn_local_tool_roundtrip(sdk_factory, api_type, fun
     model = ModelProfile(model="demo", supports_function_calling=True)
     history = [{"role": "user", "content": "weather?"}]
     async with sdk:
-        result = await create(
+        result = await generate(
             provider=provider, model=model, messages=history, tools=[function_tool], client=sdk
         )
         history.extend(
@@ -192,7 +192,7 @@ async def test_real_sdk_two_turn_local_tool_roundtrip(sdk_factory, api_type, fun
             ]
         else:
             events[:] = [chat_event(content="sunny"), chat_event(finish="stop")]
-        final = await create(
+        final = await generate(
             provider=provider, model=model, messages=history, tools=[function_tool], client=sdk
         )
         assert final["content"] == "sunny"
@@ -216,10 +216,10 @@ async def test_real_sdk_parallel_invocations_have_independent_state(sdk_factory)
         [chat_event(content="a"), chat_event(content="b"), chat_event(finish="stop")]
     )
     async with sdk:
-        invoke = Invoke(provider=ProviderProfile(), model=ModelProfile(model="demo"), client=sdk)
+        invoke = MyLLM(provider=ProviderProfile(), model=ModelProfile(model="demo"), client=sdk)
         results = await asyncio.gather(
             *(
-                invoke.create(messages=[{"role": "user", "content": str(index)}])
+                invoke.generate(messages=[{"role": "user", "content": str(index)}])
                 for index in range(4)
             )
         )
@@ -250,7 +250,7 @@ async def test_real_sdk_responses_stream_text_and_reasoning(sdk_factory):
     ]
     sdk, _ = sdk_factory(events)
     async with sdk:
-        stream = await create(
+        stream = await generate(
             provider=ProviderProfile(api_type="responses"),
             model="demo",
             messages=[{"role": "user", "content": "x"}],
@@ -281,7 +281,7 @@ async def test_real_sdk_native_failed_event(sdk_factory):
     sdk, _ = sdk_factory(events)
     async with sdk:
         with pytest.raises(ResponseFailedError) as failure:
-            await create(
+            await generate(
                 provider=ProviderProfile(api_type="responses"),
                 model="demo",
                 messages=[{"role": "user", "content": "x"}],
@@ -333,7 +333,7 @@ async def test_real_sdk_accepts_both_tool_templates_and_returns_unified_calls(
     )
     sdk, requests = sdk_factory(events)
     async with sdk:
-        result = await create(
+        result = await generate(
             provider=ProviderProfile(api_type=api_type),
             model=ModelProfile(model="demo", supports_function_calling=True),
             messages=[{"role": "user", "content": "weather?"}],

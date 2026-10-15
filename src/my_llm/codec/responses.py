@@ -2,114 +2,58 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import Any
 
 from openai import Omit
 
-from ..exceptions import (
-    IncompleteStreamError,
-    MessageValidationError,
-    ResponseFailedError,
-    ResponseIncompleteError,
-)
-from ..profiles import ResolvedProfile
-from ..types import MessageChunk
-from .common import (
+from my_llm.codec.common import (
     path_value,
     plain,
     read,
     request_parameters,
     text_delta,
-    validate_messages,
-    validate_tool_call,
-    validate_tools,
 )
-
-
-def _content(content: Any, role: str) -> Any:
-    if isinstance(content, str):
-        return content
-    if content is None:
-        return []
-    result = []
-    for block in content:
-        kind = block.get("type")
-        if kind == "text":
-            if not isinstance(block.get("text"), str):
-                raise MessageValidationError("text content blocks require text")
-            result.append(
-                {
-                    "type": "output_text" if role == "assistant" else "input_text",
-                    "text": block["text"],
-                    **({"annotations": []} if role == "assistant" else {}),
-                }
-            )
-        elif kind == "image_url" and role == "user":
-            image = block.get("image_url", {})
-            if not isinstance(image, dict) or not isinstance(image.get("url"), str):
-                raise MessageValidationError("image_url needs a URL")
-            result.append(
-                {
-                    "type": "input_image",
-                    "image_url": image["url"],
-                    "detail": image.get("detail", "auto"),
-                }
-            )
-        else:
-            raise MessageValidationError(f"unsupported Responses content block: {kind!r}")
-    return result
+from my_llm.codec.messages import encode_messages
+from my_llm.codec.tools import encode_tools
+from my_llm.codec.validation import validate_tool_call
+from my_llm.exceptions import (
+    IncompleteStreamError,
+    MessageValidationError,
+    ResponseFailedError,
+    ResponseIncompleteError,
+)
+from my_llm.profiles import ResolvedProfile
+from my_llm.types import MessageChunk
 
 
 class ResponsesCodec:
+    """Advanced adapter for encoding requests and decoding Responses streams.
+
+    Most applications should use MyLLM.generate(). Direct callers provide a
+    resolved profile and request-owned message dictionaries; encode() does not
+    isolate mutable input. Create a fresh decoder for each response stream.
+    """
+
     def __init__(self, profile: ResolvedProfile) -> None:
+        """Use a validated profile returned by resolve_profiles()."""
         self.profile = profile
 
     def encode(
         self, messages: Any, *, tools: Any, previous_response_id: Any = None, **parameters: Any
     ) -> dict[str, Any]:
-        history = []
+        """Encode messages/tools in either input format as SDK request keywords.
+
+        parameters accepts generation reasoning, token and extra-field options.
+        previous_response_id permits tool results whose calls are in server-side
+        history. Invalid input raises ConfigurationError subclasses.
+        """
         has_previous = previous_response_id is not None and not isinstance(
             previous_response_id, Omit
         )
         if has_previous and (not isinstance(previous_response_id, str) or not previous_response_id):
             raise MessageValidationError("previous_response_id must be a non-empty string")
-        for message in validate_messages(messages, allow_external_calls=has_previous):
-            role = message["role"]
-            if role == "tool":
-                output = message["content"]
-                if not isinstance(output, str):
-                    raise MessageValidationError("Responses tool output must be a string")
-                history.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": message["tool_call_id"],
-                        "output": output,
-                    }
-                )
-                continue
-            if role == "assistant" and message.get("response_output"):
-                # Native items preserve reasoning IDs/encrypted content and original function items.
-                for item in message["response_output"]:
-                    if item.get("type") not in ("message", "reasoning", "function_call"):
-                        raise MessageValidationError(
-                            "only message, reasoning and function_call replay items are supported"
-                        )
-                    history.append(deepcopy(item))
-                continue
-            content = message.get("content")
-            if content is not None:
-                history.append({"role": role, "content": _content(content, role)})
-            for call in message.get("tool_calls", []):
-                history.append(
-                    {
-                        "type": "function_call",
-                        "call_id": call["id"],
-                        "name": call["function"]["name"],
-                        "arguments": call["function"]["arguments"],
-                    }
-                )
-        encoded_tools = validate_tools(tools, self.profile)
+        history = encode_messages(messages, self.profile, allow_external_calls=has_previous)
+        encoded_tools = encode_tools(tools, self.profile)
         kwargs = request_parameters(self.profile, **parameters)
         kwargs.update(model=self.profile.model, input=history, stream=True)
         if not isinstance(encoded_tools, Omit):
@@ -119,16 +63,18 @@ class ResponsesCodec:
         return kwargs
 
     def decoder(self) -> ResponsesDecoder:
+        """Return a fresh stateful decoder for one Responses stream."""
         return ResponsesDecoder(self.profile)
 
 
 class ResponsesDecoder:
+    """Incrementally decode one stream and retain native output for replay."""
+
     def __init__(self, profile: ResolvedProfile) -> None:
+        """Set delta selectors and usage settings from the resolved profile."""
         self.profile = profile
         self.items: dict[int, dict[str, Any]] = {}
         self.completed: Any = None
-        self.content = ""
-        self.reasoning = ""
         self.closed = False
 
     def _extract(self, event: Any, selector: str | Omit) -> str:
@@ -139,6 +85,11 @@ class ResponsesDecoder:
         return text_delta(read(event, "delta")) if read(event, "type") == selector else ""
 
     def feed(self, event: Any) -> list[MessageChunk]:
+        """Read one SDK event/dictionary and return any text/reasoning chunks.
+
+        Native items and tool arguments are buffered. Failed/incomplete events
+        raise ResponseFailedError/ResponseIncompleteError with native details.
+        """
         kind = read(event, "type")
         if kind in ("response.failed", "error", "response.incomplete"):
             response = read(event, "response")
@@ -190,8 +141,6 @@ class ResponsesDecoder:
                 item["arguments"] = text_delta(read(event, "arguments"))
         content = self._extract(event, self.profile.values["content_path"])
         reasoning = self._extract(event, self.profile.values["reasoning_content_path"])
-        self.content += content
-        self.reasoning += reasoning
         return (
             [MessageChunk(content=content, reasoning_content=reasoning)]
             if content or reasoning
@@ -199,6 +148,11 @@ class ResponsesDecoder:
         )
 
     def finish(self) -> MessageChunk:
+        """Return final tools, status, usage and native Responses output items.
+
+        Raises IncompleteStreamError for missing completion, invalid tool calls,
+        unsupported output items or a repeated finish() call.
+        """
         if self.closed:
             raise IncompleteStreamError("decoder was already finalized")
         self.closed = True
@@ -234,6 +188,6 @@ class ResponsesDecoder:
             if self.profile.get("usage_mode", "none") == "native"
             else None,
             response_id=read(self.completed, "id"),
-            response_output=deepcopy(output),
+            response_output=output,
             response_status="completed",
         )

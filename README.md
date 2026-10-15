@@ -1,4 +1,15 @@
-# my-llm
+<div align="center">
+
+# MyLLM
+
+![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python)
+[![License](https://img.shields.io/badge/license-Apache%202.0%20%2B%20MIT-blue.svg)](https://github.com/JJJJSTIYYYY/my-llm/blob/master/LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Us-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/tUCQthwK5)
+[![QQ群](https://custom-icon-badges.demolab.com/badge/QQ群-639459172-00BFFF?style=flat&logo=tencent-qq)](https://qun.qq.com/universal-share/share?ac=1&authKey=ommoQrT2zhzHU%2FUxv8pfGCJbNifW%2BJyUAFBkNdzkHTPUxdxCnlgxm5aNgGslTmdE&busi_data=eyJncm91cENvZGUiOiI2Mzk0NTkxNzIiLCJ0b2tlbiI6Im9ZZkdNUWZnSVV1Y2REeUhKNnlTbWEwc05Bb093djRzUXdXNE55dklBVnlBQk9XbGNpS0ZXSDlzK3orSW1sQ3YiLCJ1aW4iOiIzMTI5NDI0NTcyIn0%3D&data=OGTchcr80RAQg8Z8_GZTdvBb7kZDeM9B3hHcNqLaAX2ZK_KYq260C4CubblEBT1bK5fP6zgtnCk2D8fIoph1ZQ&svctype=4&tempid=h5_group_info)
+
+**通用的 LLM Provider 协议适配器**
+
+</div>
 
 通过配置统一调用 OpenAI Responses 和 Chat Completions 协议的异步 Python 库。
 兼容服务使用相同的 OpenAI SDK，通过 `ProviderProfile` 和 `ModelProfile` 描述差异，
@@ -10,7 +21,7 @@
 import asyncio
 import os
 
-from my_llm import ModelProfile, ProviderProfile, create
+from my_llm import ModelProfile, ProviderProfile, generate
 
 
 async def main():
@@ -20,7 +31,7 @@ async def main():
         usage_mode="native",
     )
     model = ModelProfile(model=os.environ["LLM_MODEL"])
-    message = await create(
+    message = await generate(
         provider=provider,
         model=model,
         messages=[{"role": "user", "content": "你好"}],
@@ -33,24 +44,43 @@ async def main():
 asyncio.run(main())
 ```
 
-`stream=True` 返回可关闭的异步流；底层 SDK 在两种模式下都执行流式请求：
+重复调用时可复用 `MyLLM`，构造时显式传入模型配置：
 
 ```python
-stream = await create(provider=provider, model=model, messages=messages, stream=True)
-async with stream:
-    async for chunk in stream:
-        print(chunk.content, end="", flush=True)
-        if chunk.tool_calls:
-            print(chunk.tool_calls)  # 仅返回完整工具调用，由调用者执行本地函数
+from my_llm import ModelProfile, MyLLM, ProviderProfile
+
+llm = MyLLM(
+    provider=ProviderProfile(api_type="responses"),
+    model=ModelProfile(model="your-model-id", max_tokens=2048),
+)
+# 在异步函数中调用：
+# message = await llm.generate(messages=[{"role": "user", "content": "你好"}])
+```
+
+`stream=True` 返回可关闭的异步流，调用时同样需要先 `await`：
+
+```python
+async def print_answer(llm):
+    stream = await llm.generate(
+        messages=[{"role": "user", "content": "你好"}], stream=True,
+    )
+    async with stream:
+        async for chunk in stream:
+            print(chunk.content, end="", flush=True)
+            if chunk.tool_calls:
+                print(chunk.tool_calls)  # 完整工具调用，由调用者执行本地函数
 ```
 
 推理开启方式、强度映射、输出路径、消息名称与用量模式均可配置。Omit 可禁用
 配置或删除某个字典键。流异常和缺少完成状态会明确报错。
-Tools 可传 Responses 或 Chat Completions 格式，Codec 自动识别并按目标 API 转换。
+Tools 可传 Responses 或 Chat Completions 格式，自动识别并按目标 API 转换。
+Messages 同样支持两种格式：自动转换内容块、工具调用及工具结果，并允许混合历史。
 Responses 结果保留原生 output items，支持工具调用后的历史回放。
 
-完整参数、配置默认值及资源管理见
-[API 文档](https://github.com/JJJJSTIYYYY/my-llm/blob/main/docs/reference/api.md)。
+调用参数、流式消费、工具回合及资源管理见
+[API 使用指南](https://github.com/JJJJSTIYYYY/my-llm/blob/main/docs/reference/api.md)；
+Profile 字段、默认值、继承规则及兼容服务适配见
+[配置指南](https://github.com/JJJJSTIYYYY/my-llm/blob/main/docs/reference/configuration.md)。
 Anthropic、Gemini、Ollama 原生协议为预留扩展点，当前仅实现 OpenAI 两套协议。
 
 ## 本地开发与验证
@@ -69,10 +99,3 @@ uv run twine check --strict "dist/my_llm-${package_version}-py3-none-any.whl" "d
 测试使用真实 OpenAI SDK 和本地模拟 HTTP/SSE 传输，无需密钥或访问供应商服务。
 `examples/local_demo.py` 离线演示两套 API、流式拼接和本地工具调用回合。
 本地安装项目可运行 `uv sync`，或在构建后安装 `dist/` 中的 wheel。
-
-构建说明见
-[构建指南](https://github.com/JJJJSTIYYYY/my-llm/blob/main/docs/guides/building.md)。
-发布名暂用 `my-llm`；本地构建不会发布到 PyPI。
-
-版本号统一在 `src/my_llm/_version.py` 的 `__version__` 中维护，打包元数据与
-`my_llm.__version__` 均使用该值。升级版本时只修改此文件，再运行 `uv lock` 更新锁文件。

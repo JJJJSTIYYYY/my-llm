@@ -10,7 +10,7 @@ import json
 import httpx
 from openai import AsyncOpenAI
 
-from my_llm import MessageChunk, ModelProfile, ProviderProfile, create
+from my_llm import MessageChunk, ModelProfile, MyLLM, ProviderProfile, generate
 
 
 def chat(content=None, finish=None, calls=None):
@@ -74,10 +74,22 @@ async def main():
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     ) as sdk:
         for api_type in ("chat_completions", "responses"):
-            stream = await create(
+            # Exercise automatic conversion in both directions.
+            messages = (
+                [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "Hello"}],
+                    }
+                ]
+                if api_type == "chat_completions"
+                else [{"role": "user", "content": "Hello"}]
+            )
+            stream = await generate(
                 provider=ProviderProfile(api_type=api_type),
                 model="demo",
-                messages=[{"role": "user", "content": "Hello"}],
+                messages=messages,
                 stream=True,
                 client=sdk,
             )
@@ -100,10 +112,9 @@ async def main():
             }
         ]
         model = ModelProfile(model="demo", supports_function_calling=True)
+        llm = MyLLM(provider=ProviderProfile(), model=model, client=sdk)
         history = [{"role": "user", "content": "What is 2 + 3?"}]
-        response = await create(
-            provider=ProviderProfile(), model=model, messages=history, tools=tools, client=sdk
-        )
+        response = await llm.generate(messages=history, tools=tools)
         history.append(response)
         for call in response["tool_calls"]:
             if call["function"]["name"] != "add":
@@ -111,9 +122,7 @@ async def main():
             arguments = json.loads(call["function"]["arguments"])
             output = arguments["a"] + arguments["b"]
             history.append({"role": "tool", "tool_call_id": call["id"], "content": str(output)})
-        final = await create(
-            provider=ProviderProfile(), model=model, messages=history, tools=tools, client=sdk
-        )
+        final = await llm.generate(messages=history, tools=tools)
         print("Local tool result:", final["content"])
 
 

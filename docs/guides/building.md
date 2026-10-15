@@ -1,3 +1,8 @@
+# 构建与验证
+
+使用接口见 [API 使用指南](../reference/api.md)，配置字段见
+[配置指南](../reference/configuration.md)。
+
 ## 构建
 
 使用 Python 3.12 或更高版本及 uv，在仓库根目录运行：

@@ -45,6 +45,33 @@ async def test_actual_chat_sdk_wire_request_and_modes(sdk_factory, stream):
         assert requests[0].headers["x-local-test"] == "yes"
 
 
+async def test_chat_sdk_sends_empty_reasoning_for_every_assistant(sdk_factory, tool_call):
+    history = [
+        {"role": "system", "content": "Be helpful."},
+        {"role": "user", "content": "weather?"},
+        {"role": "assistant", "content": "checking"},
+        {"role": "assistant", "tool_calls": [tool_call]},
+        {"role": "tool", "tool_call_id": "call_1", "content": "sunny"},
+        {"role": "assistant", "content": "sunny", "reasoning_content": "reason"},
+        {"role": "user", "content": "anything else?"},
+    ]
+    sdk, requests = sdk_factory([chat_event(content="done"), chat_event(finish="stop")])
+    async with sdk:
+        await generate(
+            provider=ProviderProfile(replay_reasoning_content_when_tool_calls=True),
+            model="demo",
+            messages=history,
+            client=sdk,
+        )
+    messages = json.loads(requests[0].content)["messages"]
+    assert messages == [
+        {**message, "reasoning_content": message.get("reasoning_content", "")}
+        if message["role"] == "assistant"
+        else message
+        for message in history
+    ]
+
+
 async def test_actual_responses_sdk_tool_wire_format_and_replay(sdk_factory, function_tool):
     item = {
         "type": "function_call",

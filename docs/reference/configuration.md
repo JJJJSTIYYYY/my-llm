@@ -128,7 +128,7 @@ Chat 使用 `max_completion_tokens`；调用时传 `None` 继承 Model、传 `om
 | `supports_reasoning_effort` | Responses 为 `True`，Chat 为 `False` |
 | `content_path` | 标准文本增量位置，见输出字段配置 |
 | `reasoning_content_path` | 标准推理增量位置，见输出字段配置 |
-| `replay_reasoning_content_when_tool_calls` | `True`，Chat 工具调用历史回传可见 reasoning_content；`False`/`omit` 不回传 |
+| `replay_reasoning_content_when_tool_calls` | `True`，每条 Chat/Ollama assistant 消息回传可见推理，缺失时补空字符串；`False`/`omit` 不回传 |
 
 ### 额外请求字段
 
@@ -205,7 +205,10 @@ provider = ProviderProfile(
 )
 ```
 
-`replay_reasoning_content_when_tool_calls` 控制 Chat 工具调用历史中的可见推理。
+`replay_reasoning_content_when_tool_calls=True` 时，每条 Chat assistant 消息都会携带
+`reasoning_content`，已有推理原样回传，缺失时补 `""`，没有工具调用的消息也一样。
+Ollama 对应回传 `thinking` 字段。`False`/`omit` 时不回传这些字段。
+system、user、tool 消息不补推理字段。
 Responses 返回的原生 reasoning items 通过完整历史回放保留，包括加密字段；
 该开关不用于解密、改写或删除原生 reasoning items。
 

@@ -37,7 +37,8 @@ class ModelProfile(_Overrides):
         content_path: Override the text-delta selector.
         reasoning_content_path: Override the reasoning-delta selector.
         replay_reasoning_content_when_tool_calls: Override whether visible
-            reasoning accompanies Chat tool-call history.
+            reasoning accompanies every Chat/Ollama assistant message, using
+            an empty string when absent, even without tool calls.
 
     All fields except model default to None unless stated otherwise. None
     inherits provider/protocol settings; omit disables an inherited setting.

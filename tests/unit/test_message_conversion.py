@@ -84,7 +84,11 @@ def test_untyped_responses_assistant_phase_is_preserved(profile_factory):
     message = {"role": "assistant", "phase": "commentary", "content": "working"}
     assert encode(profile_factory, "responses", [message]) == [message]
     assert encode(profile_factory, "chat_completions", [message]) == [
-        {"role": "assistant", "content": [{"type": "text", "text": "working"}]}
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "working"}],
+            "reasoning_content": "",
+        }
     ]
 
 
@@ -218,7 +222,9 @@ def test_same_format_chat_assistant_messages_are_not_combined(profile_factory):
         {"role": "assistant", "content": "first"},
         {"role": "assistant", "content": "second"},
     ]
-    assert encode(profile_factory, "chat_completions", history) == history
+    assert encode(profile_factory, "chat_completions", history) == [
+        {**message, "reasoning_content": ""} for message in history
+    ]
 
 
 @pytest.mark.parametrize("summary", [[], [{"type": "summary_text", "text": "reason"}]])
@@ -240,7 +246,7 @@ def test_native_reasoning_between_chat_calls_keeps_a_single_assistant_turn(
     result = encode(profile_factory, "chat_completions", history)
     assert len(result) == 3
     assert result[0]["tool_calls"] == [tool_call, second]
-    assert ("reasoning_content" in result[0]) is bool(summary)
+    assert result[0]["reasoning_content"] == ("reason" if summary else "")
 
 
 @pytest.mark.parametrize("text_format", ["chat_completions", "responses"])
@@ -413,7 +419,7 @@ def test_native_refusals_convert_without_losing_text(profile_factory):
         "content": [{"type": "refusal", "refusal": "cannot comply"}],
     }
     assert encode(profile_factory, "chat_completions", [native]) == [
-        {"role": "assistant", "content": native["content"]}
+        {"role": "assistant", "content": native["content"], "reasoning_content": ""}
     ]
     assert encode(
         profile_factory,

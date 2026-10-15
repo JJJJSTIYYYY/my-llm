@@ -47,8 +47,9 @@ class ProviderProfile(_Overrides):
         content_path: Text delta selector; defaults to the API's standard field.
         reasoning_content_path: Reasoning delta selector; defaults to the API's
             standard reasoning-summary/reasoning-content field.
-        replay_reasoning_content_when_tool_calls: Replay visible reasoning with
-            Chat tool-call history; defaults True.
+        replay_reasoning_content_when_tool_calls: Include visible reasoning on
+            every Chat/Ollama assistant message, using an empty string when
+            absent, including messages without tool calls; defaults True.
 
     Raises:
         ConfigurationError: The model catalogue contains invalid entries.

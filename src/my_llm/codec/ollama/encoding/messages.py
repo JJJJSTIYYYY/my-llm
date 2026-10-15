@@ -27,10 +27,8 @@ def _encode_assistant(message: dict[str, Any], profile: ResolvedProfile) -> dict
     encoded = encode_content(message)
     if message.get("tool_calls"):
         encoded["tool_calls"] = [encode_function_call(call) for call in message["tool_calls"]]
-        if profile.get("replay_reasoning_content_when_tool_calls", False) and message.get(
-            "reasoning_content"
-        ):
-            encoded["thinking"] = message["reasoning_content"]
+    if profile.get("replay_reasoning_content_when_tool_calls", False):
+        encoded["thinking"] = message.get("reasoning_content", "")
     return encoded
 
 

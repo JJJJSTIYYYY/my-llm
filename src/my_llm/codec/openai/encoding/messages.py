@@ -120,12 +120,10 @@ def encode_chat_message(message: Message, profile: ResolvedProfile) -> dict[str,
         encoded["content"] = encode_content(encoded["content"], message["role"], "chat_completions")
     if profile.get("supports_message_name", False) and "name" in message:
         encoded["name"] = message["name"]
-    if (
-        message.get("tool_calls")
-        and profile.get("replay_reasoning_content_when_tool_calls", False)
-        and "reasoning_content" in message
+    if message["role"] == "assistant" and profile.get(
+        "replay_reasoning_content_when_tool_calls", False
     ):
-        encoded["reasoning_content"] = message["reasoning_content"]
+        encoded["reasoning_content"] = message.get("reasoning_content", "")
     return encoded
 
 

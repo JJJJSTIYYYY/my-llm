@@ -9,7 +9,7 @@ from my_llm import (
     UnsupportedCapabilityError,
     omit,
 )
-from my_llm.codec import ChatCompletionsCodec, ResponsesCodec
+from my_llm.codec import ChatCompletionsCodec, OllamaCodec, ResponsesCodec
 from my_llm.profile.utils.resolution import resolve_profiles
 from my_llm.types.exceptions import MessageValidationError
 
@@ -277,6 +277,38 @@ def test_chat_reasoning_replay_and_message_names(profile_factory, tool_call, rep
     assert ("reasoning_content" in request["messages"][0]) is (replay is True)
     assert "finish_reason" not in request["messages"][0]
     assert "usage" not in request["messages"][0]
+
+
+@pytest.mark.parametrize("protocol", ["openai", "ollama"])
+@pytest.mark.parametrize("replay", [None, True, False, omit])
+@pytest.mark.parametrize("reasoning", [None, "", "reason"])
+def test_reasoning_replay_fills_every_assistant_message(protocol, replay, reasoning, tool_call):
+    history = [
+        {"role": "system", "content": "Be helpful."},
+        {"role": "user", "content": "weather?"},
+        {"role": "assistant", "content": "checking"},
+        {"role": "assistant", "tool_calls": [tool_call]},
+        {"role": "tool", "tool_call_id": "call_1", "content": "sunny"},
+        {"role": "assistant", "content": "It is sunny."},
+    ]
+    if reasoning is not None:
+        for message in history:
+            if message["role"] == "assistant":
+                message["reasoning_content"] = reasoning
+    before = copy.deepcopy(history)
+    profile = resolve_profiles(
+        ProviderProfile(protocol=protocol, replay_reasoning_content_when_tool_calls=replay),
+        ModelProfile(model="demo"),
+    )
+    instance = ChatCompletionsCodec(profile) if protocol == "openai" else OllamaCodec(profile)
+    request = instance.encode(history, tools=omit)
+    key = "reasoning_content" if protocol == "openai" else "thinking"
+    for message in request["messages"]:
+        if message["role"] == "assistant" and (replay is None or replay is True):
+            assert message[key] == (reasoning or "")
+        else:
+            assert key not in message
+    assert history == before
 
 
 def test_responses_history_native_replay(profile_factory, tool_call):

@@ -56,37 +56,14 @@ def encode(chunks: list, profile: ResolvedProfile | None = None, **parameters: A
         for candidate in event.get("candidates", []):
             if candidate.get("index", 0) not in (None, 0):
                 raise ConfigurationError("only one generated candidate is supported")
-            for index, part in enumerate(candidate.get("content", {}).get("parts", [])):
-                if "function_call" in part:
-                    ops.append(
-                        {
-                            "type": "tool_complete",
-                            "block": messages.encode_part(part, ""),
-                            "index": None,
-                        }
-                    )
-                elif "text" in part:
-                    thinking = part.get("thought", False)
-                    kind = "thinking" if thinking else "text"
-                    ops.append(
-                        {
-                            "type": "delta",
-                            "index": None,
-                            "kind": kind,
-                            "field": kind,
-                            "value": part["text"],
-                            "extras": {
-                                k: v for k, v in part.items() if k not in ("text", "thought")
-                            },
-                        }
-                    )
-                else:
-                    ops.append(
-                        {
-                            "type": "complete_block",
-                            "block": messages.encode_part(part, f"call_{index}"),
-                        }
-                    )
+            # GenerateContent Parts have no stable cross-chunk block address.
+            # Append each part explicitly, including empty signed text parts.
+            for part in candidate.get("content", {}).get("parts", []):
+                block = messages.encode_part(part, "")
+                if "text" in part and not part.get("thought"):
+                    # Native extensions cannot introduce translated thinking.
+                    block.pop("thought", None)
+                ops.append({"type": "block_append", "block": block})
             reason = candidate.get("finish_reason")
             if reason not in (None, "FINISH_REASON_UNSPECIFIED"):
                 if reason not in ("STOP", "MAX_TOKENS"):

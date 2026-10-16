@@ -3,7 +3,7 @@
 from typing import Any
 
 from my_llm.codec.anthropic._constants import _REASONS
-from my_llm.codec.utils.chunks import batch, check_error, metadata
+from my_llm.codec.utils.chunks import BlockRef, batch, check_error, metadata
 from my_llm.codec.utils.conversion import dictionaries
 from my_llm.profile import ResolvedProfile
 
@@ -48,7 +48,7 @@ def encode(chunks: list, profile: ResolvedProfile | None = None, **parameters: A
                 ops.append({"type": "usage", "usage": message["usage"]})
         elif kind == "content_block_start":
             block = event["content_block"]
-            ops.append({"type": "source_block", "index": index, "block": block})
+            ops.append({"type": "block_set", "ref": BlockRef("content", index), "block": block})
         elif kind == "content_block_delta":
             delta = event["delta"]
             field = {
@@ -60,15 +60,17 @@ def encode(chunks: list, profile: ResolvedProfile | None = None, **parameters: A
             if field:
                 ops.append(
                     {
-                        "type": "delta",
-                        "index": index,
+                        "type": "block_delta",
+                        "ref": BlockRef("content", index),
                         "field": field,
-                        "kind": "thinking" if field in ("thinking", "signature") else "text",
+                        "kind": {"arguments": "tool_use", "signature": "thinking"}.get(
+                            field, field
+                        ),
                         "value": delta.get("partial_json" if field == "arguments" else field, ""),
                     }
                 )
         elif kind == "content_block_stop":
-            ops.append({"type": "source_stop", "index": index})
+            ops.append({"type": "block_stop", "ref": BlockRef("content", index)})
         elif kind == "message_delta":
             delta = event.get("delta", {})
             if delta.get("stop_reason"):

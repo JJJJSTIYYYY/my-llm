@@ -1,27 +1,68 @@
-"""Request-owned stream accumulation. Protocol codecs themselves hold no state."""
+"""Request-owned accumulation of explicit, provider-independent stream operations."""
 
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from my_llm.codec.utils.chunks import operations
+from my_llm.codec.utils.chunks import BlockRef, operations
 from my_llm.codec.utils.conversion import arguments, dictionaries, extras, source_protocol
 from my_llm.exceptions import IncompleteStreamError
 
 
+@dataclass(slots=True)
+class BlockState:
+    """Content and lifecycle for one block; extensions never hold control data."""
+
+    index: int
+    content: dict
+    fragments: dict[str, list[str]] = field(default_factory=dict)
+    argument_parts: list[str] | None = None
+    emitted: bool = False
+    closed: bool = False
+    source_closed: bool = False
+    text_sent: int = 0
+
+    @property
+    def text_field(self) -> str | None:
+        kind = self.content.get("type")
+        return kind if kind in ("text", "thinking") else None
+
+    def materialize(self) -> dict:
+        block = deepcopy(self.content)
+        for name, parts in self.fragments.items():
+            block[name] = block.get(name, "") + "".join(parts)
+        if block.get("type") == "tool_use":
+            if self.argument_parts is not None:
+                block["input"] = arguments("".join(self.argument_parts) or "{}")
+            block.setdefault("input", {})
+        return block
+
+    def replace(self, content: dict) -> None:
+        name = self.text_field
+        if name and self.text_sent:
+            previous = self.materialize().get(name, "")[: self.text_sent]
+            if not content.get(name, "").startswith(previous):
+                raise IncompleteStreamError("final block contradicts already emitted text")
+        self.content = deepcopy(content)
+        self.fragments.clear()
+        self.argument_parts = None
+
+
 class StreamState:
-    """Accumulate one response and release only complete function calls."""
+    """Accumulate one response; tools and following blocks wait for successful EOF.
+
+    Source references address updates, while list position fixes output order.
+    Independent blocks are appended explicitly, without synthetic source keys.
+    """
 
     def __init__(self, model: str) -> None:
         self.metadata: dict[str, Any] = {"response_id": f"generated_{uuid4().hex}", "model": model}
-        self.blocks: dict[Any, dict] = {}
-        # Buffer fragments outside native blocks so extensions cannot alter them.
-        self.arguments: dict[Any, str] = {}
-        self.order: list[Any] = []
-        self.emitted: dict[Any, int] = {}
-        self.closed_blocks: set[Any] = set()
+        self._blocks: list[BlockState] = []
+        self._references: dict[BlockRef, BlockState] = {}
+        self._deferred_from: int | None = None
         self.snapshot: list[dict] | None = None
         self.reason: str | None = None
         self.usage: dict | None = None
@@ -32,11 +73,19 @@ class StreamState:
         self.sequence_number = 0
         self.result: Any = None
 
-    def _block(self, key: Any, kind: str = "text") -> dict:
-        if key not in self.blocks:
-            self.blocks[key] = {"type": kind}
-            self.order.append(key)
-        return self.blocks[key]
+    def _new_block(self, content: dict) -> BlockState:
+        block = BlockState(len(self._blocks), deepcopy(content))
+        self._blocks.append(block)
+        if content.get("type") == "tool_use" and self._deferred_from is None:
+            self._deferred_from = block.index
+        return block
+
+    def _block(self, ref: BlockRef | list, kind: str = "text") -> BlockState:
+        # JSON round trips turn the named tuple into a list.
+        ref = BlockRef(*ref)
+        if ref not in self._references:
+            self._references[ref] = self._new_block({"type": kind})
+        return self._references[ref]
 
     def _start(self) -> list[dict]:
         if self.started:
@@ -46,182 +95,165 @@ class StreamState:
             {"type": "start", "usage": deepcopy(self.usage), "usage_protocol": self.usage_protocol}
         ]
 
-    def _start_block(self, key: Any, block: dict) -> list[dict]:
-        if key in self.emitted:
-            return []
-        self.emitted[key] = len(self.emitted)
-        return [{"type": "block_start", "index": self.emitted[key], "block": deepcopy(block)}]
+    def _deferred(self, block: BlockState) -> bool:
+        return self._deferred_from is not None and block.index >= self._deferred_from
 
     def feed(self, chunks: list[dict]) -> list[dict]:
+        if self.finished:
+            raise IncompleteStreamError("stream has already been finalized")
         result = []
         for chunk in chunks:
             for event in operations(chunk):
-                kind = event.get("type")
-                if kind == "metadata":
-                    self.metadata.update(
-                        {
-                            ("response_id" if k == "id" else k): v
-                            for k, v in event.items()
-                            if k != "type" and v is not None
-                        }
-                    )
-                elif kind == "usage":
-                    self.usage = {**(self.usage or {}), **event["usage"]}
+                if event["type"] == "usage":
                     self.usage_protocol = source_protocol(chunk) or self.usage_protocol
-                elif kind == "snapshot":
-                    if event["messages"]:
-                        self.snapshot = event["messages"]
-                elif kind in ("reason", "finish"):
-                    self.reason = event.get("reason") or self.reason
-                    if kind == "finish":
-                        self.terminal = True
-                elif kind == "source_block":
-                    key = event["index"]
-                    block = deepcopy(event["block"])
-                    self._block(key).update(block)
-                    if block.get("type") in ("text", "thinking"):
-                        field = "text" if block["type"] == "text" else "thinking"
-                        value = block.get(field, "")
-                        # Route initial text through _delta once, just like later
-                        # fragments, without appending it to itself.
-                        self.blocks[key][field] = ""
-                        result.extend(self._delta(key, field, value, block["type"]))
-                elif kind == "delta":
-                    key, field, value = event["index"], event["field"], event["value"]
-                    # Gemini parts have no stable stream index; keep each part
-                    # distinct so signatures stay attached to their own text.
-                    if key is None:
-                        key = f"part_{len(self.order)}"
-                    if field == "arguments":
-                        self._block(key, "tool_use")
-                        self.arguments[key] = self.arguments.get(key, "") + value
-                    elif field == "signature":
-                        block = self._block(key, "thinking")
-                        block[field] = block.get(field, "") + value
-                    else:
-                        result.extend(self._delta(key, field, value, event.get("kind", "text")))
-                        # Native extensions must not overwrite translated type/text.
-                        self.blocks[key].update(extras(event.get("extras", {}), "type", field))
-                elif kind == "tool_delta":
-                    block = self._block(event["index"], "tool_use")
-                    if event.get("id"):
-                        block["id"] = event["id"]
-                    block.update(extras(event, "type", "index", "id", "function", "name", "input"))
-                    fn = event.get("function", {})
-                    extensions = extras(fn, "name", "arguments")
-                    if extensions:
-                        block.setdefault("function", {}).update(extensions)
-                    if fn.get("name"):
-                        block["name"] = fn["name"]
-                    key = event["index"]
-                    self.arguments[key] = self.arguments.get(key, "") + fn.get("arguments", "")
-                elif kind in ("tool_complete", "complete_block"):
-                    key = event.get("index")
-                    if key is None:
-                        key = f"complete_{len(self.order)}"
-                    block = self._block(key, event["block"].get("type", "unknown"))
-                    block.clear()
-                    # A complete block supersedes any argument fragments for it.
-                    self.arguments.pop(key, None)
-                    block.update(deepcopy(event["block"]))
-                    if block.get("type") == "tool_use" and not block.get("id"):
-                        block["id"] = f"call_{uuid4().hex}"
-                elif kind == "source_stop":
-                    result.extend(self._stop_block(event["index"]))
-                elif kind == "opaque":
-                    result.append(deepcopy(event))
+                result.extend(_HANDLERS[event["type"]](self, event))
         return result
 
-    def _delta(self, key: Any, field: str, value: str, kind: str) -> list[dict]:
-        block = self._block(key, kind)
-        block[field] = block.get(field, "") + value
-        if not value:
+    def _metadata(self, event: dict) -> list[dict]:
+        self.metadata.update(
+            {
+                ("response_id" if k == "id" else k): v
+                for k, v in event.items()
+                if k != "type" and v is not None
+            }
+        )
+        return []
+
+    def _usage(self, event: dict) -> list[dict]:
+        self.usage = {**(self.usage or {}), **event["usage"]}
+        return []
+
+    def _reason(self, event: dict) -> list[dict]:
+        self.reason = event.get("reason") or self.reason
+        self.terminal |= event["type"] == "finish"
+        return []
+
+    def _snapshot(self, event: dict) -> list[dict]:
+        references = {BlockRef(*entry["ref"]) for entry in event["blocks"]}
+        if self._references.keys() - references:
+            raise IncompleteStreamError("final snapshot omits streamed blocks")
+        # Equal text can carry distinct citations. Identity comes from encoders.
+        for entry in event["blocks"]:
+            block = self._block(entry["ref"], entry["block"].get("type", "unknown"))
+            block.replace(entry["block"])
+        if event["messages"]:
+            self.snapshot = dictionaries(event["messages"])
+        return []
+
+    def _set_block(self, event: dict) -> list[dict]:
+        content = event["block"]
+        block = self._block(event["ref"], content.get("type", "unknown"))
+        block.replace(content)
+        if content.get("type") == "tool_use" and not block.content.get("id"):
+            block.content["id"] = f"call_{uuid4().hex}"
+        return self._publish(block)
+
+    def _append_block(self, event: dict) -> list[dict]:
+        block = self._new_block(event["block"])
+        if block.content.get("type") == "tool_use" and not block.content.get("id"):
+            block.content["id"] = f"call_{uuid4().hex}"
+        block.source_closed = True
+        return self._publish(block)
+
+    def _update_block(self, event: dict) -> list[dict]:
+        patch = deepcopy(event["block"])
+        block = self._block(event["ref"], patch.get("type", "unknown"))
+        if "function" in patch:
+            block.content.setdefault("function", {}).update(patch.pop("function"))
+        block.content.update(patch)
+        return []
+
+    def _delta(self, event: dict) -> list[dict]:
+        name, value = event["field"], event["value"]
+        block = self._block(event["ref"], event["kind"])
+        if name == "arguments":
+            if block.argument_parts is None:
+                block.argument_parts = []
+            block.argument_parts.append(value)
             return []
+        block.fragments.setdefault(name, []).append(value)
+        block.content.update(extras(event.get("extras", {}), "type", name))
+        if name == "signature" or self._deferred(block):
+            return []
+        return self._emit_text(block, value)
+
+    def _stop_block(self, event: dict) -> list[dict]:
+        block = self._references.get(BlockRef(*event["ref"]))
+        if block is None:
+            return []
+        block.source_closed = True
+        return [] if self._deferred(block) else self._close(block)
+
+    def _opaque(self, event: dict) -> list[dict]:
+        return [deepcopy(event)]
+
+    def _emit_text(self, block: BlockState, value: str) -> list[dict]:
         result = self._start()
-        result.extend(self._start_block(key, block))
-        result.append({"type": "delta", "index": self.emitted[key], "field": field, "value": value})
+        if not block.emitted:
+            block.emitted = True
+            result.append(
+                {"type": "block_start", "index": block.index, "block": deepcopy(block.content)}
+            )
+        if value:
+            block.text_sent += len(value)
+            result.append(
+                {"type": "delta", "index": block.index, "field": block.text_field, "value": value}
+            )
         return result
 
-    def _stop_block(self, key: Any) -> list[dict]:
-        if key not in self.emitted or key in self.closed_blocks:
+    def _close(self, block: BlockState) -> list[dict]:
+        if not block.emitted or block.closed or block.text_field is None:
             return []
-        self.closed_blocks.add(key)
-        return [
-            {"type": "block_stop", "index": self.emitted[key], "block": deepcopy(self.blocks[key])}
-        ]
+        block.closed = True
+        return [{"type": "block_stop", "index": block.index, "block": block.materialize()}]
+
+    def _publish(
+        self, block: BlockState, *, final: bool = False, tool_index: int = 0
+    ) -> list[dict]:
+        if not final and self._deferred(block):
+            return []
+        if block.text_field is not None:
+            content = block.materialize()
+            result = self._emit_text(block, content.get(block.text_field, "")[block.text_sent :])
+            if final or block.source_closed:
+                result.extend(self._close(block))
+            return result
+        if block.emitted:
+            return []
+        block.emitted = True
+        content = extras(block.materialize())
+        event = {"type": "block", "index": block.index, "block": content}
+        if content.get("type") == "tool_use":
+            event.update(type="tool", tool_index=tool_index)
+        return [*self._start(), event]
 
     def messages(self, *, partial: bool = False) -> list[dict]:
         if self.snapshot is not None:
             return dictionaries(self.snapshot)
-        content = []
-        for key in self.order:
-            block = deepcopy(self.blocks[key])
-            if block.get("type") == "tool_use":
-                # Error reporting must not parse unfinished JSON and mask the
-                # provider failure, or expose a call that cannot yet be executed.
-                if partial:
-                    continue
-                if key in self.arguments:
-                    block["input"] = arguments(self.arguments[key] or "{}")
-                block.setdefault("input", {})
-            content.append(block)
+        # Never parse unfinished tool JSON while reporting the original failure.
+        content = [
+            block.materialize()
+            for block in self._blocks
+            if not partial or block.content.get("type") != "tool_use"
+        ]
         return [{"role": "assistant", "content": content}]
 
     def finish(self) -> list[dict]:
-        # EOF alone is not successful completion; require a protocol terminal event.
-        if self.finished or not self.terminal:
+        if self.finished:
+            raise IncompleteStreamError("stream has already been finalized")
+        if not self.terminal:
             raise IncompleteStreamError("stream ended without its protocol's terminal event")
-        self.finished = True
+        # Validate every call before publishing any of them or marking success.
         messages = self.messages()
-        content = [block for message in messages for block in message.get("content", [])]
+        output_blocks = [
+            {"index": block.index, "block": block.materialize()} for block in self._blocks
+        ]
         result = self._start()
-        # A final authoritative snapshot can contain text without delta events.
-        for kind, field in (("text", "text"), ("thinking", "thinking")):
-            if not any(block.get("type") == kind for block in self.blocks.values()):
-                for block in content:
-                    if block.get("type") == kind and block.get(field):
-                        key = f"final_{len(self.order)}"
-                        result.extend(self._delta(key, field, block[field], kind))
-                        self.blocks[key].update(extras(block))
-        output_blocks = []
-        for key, index in self.emitted.items():
-            block = self.blocks[key]
-            # Prefer authoritative annotations/signatures when the snapshot and
-            # streamed text describe the same block.
-            authoritative = next(
-                (
-                    b
-                    for b in content
-                    if b.get("type") == block.get("type")
-                    and b.get("text", b.get("thinking")) == block.get("text", block.get("thinking"))
-                ),
-                block,
-            )
-            self.blocks[key] = {**block, **authoritative}
-            result.extend(self._stop_block(key))
-            output_blocks.append({"index": index, "block": deepcopy(self.blocks[key])})
         tool_index = 0
-        for block in content:
-            kind = block.get("type")
-            if kind in ("text", "thinking"):
-                continue
-            index = len(output_blocks)
-            output_blocks.append({"index": index, "block": extras(block)})
-            # Publish calls only after arguments are complete and validated.
-            if kind == "tool_use":
-                result.append(
-                    {
-                        "type": "tool",
-                        "index": index,
-                        "tool_index": tool_index,
-                        "block": extras(block),
-                    }
-                )
-                tool_index += 1
-            else:
-                result.append({"type": "block", "index": index, "block": extras(block)})
+        for block in self._blocks:
+            result.extend(self._publish(block, final=True, tool_index=tool_index))
+            tool_index += block.content.get("type") == "tool_use"
         reason = self.reason or "stop"
-        # Infer tool_calls only from normal completion; preserve length/special exits.
         if tool_index and reason == "stop":
             reason = "tool_calls"
         result.append(
@@ -230,8 +262,24 @@ class StreamState:
                 "reason": reason,
                 "messages": messages,
                 "output_blocks": output_blocks,
-                "usage": self.usage,
+                "usage": deepcopy(self.usage),
                 "usage_protocol": self.usage_protocol,
             }
         )
+        self.finished = True
         return result
+
+
+_HANDLERS = {
+    "metadata": StreamState._metadata,
+    "usage": StreamState._usage,
+    "snapshot": StreamState._snapshot,
+    "reason": StreamState._reason,
+    "finish": StreamState._reason,
+    "block_set": StreamState._set_block,
+    "block_append": StreamState._append_block,
+    "block_update": StreamState._update_block,
+    "block_delta": StreamState._delta,
+    "block_stop": StreamState._stop_block,
+    "opaque": StreamState._opaque,
+}

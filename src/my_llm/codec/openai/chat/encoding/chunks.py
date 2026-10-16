@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from my_llm.codec.utils.chunks import batch, check_error, metadata
+from my_llm.codec.utils.chunks import BlockRef, batch, check_error, metadata, tool_operations
 from my_llm.codec.utils.common import path_value
 from my_llm.codec.utils.conversion import dictionaries
 from my_llm.codec.utils.preservation import CALL
@@ -54,21 +54,15 @@ def encode(chunks: list, profile: ResolvedProfile | None = None, **parameters: A
                 if value:
                     ops.append(
                         {
-                            "type": "delta",
-                            "index": kind,
+                            "type": "block_delta",
+                            "ref": BlockRef(kind),
                             "field": "text" if kind == "text" else "thinking",
                             "value": value,
                             "kind": kind,
                         }
                     )
             for call in delta.get("tool_calls") or []:
-                ops.append(
-                    {
-                        "type": "tool_delta",
-                        "index": f"tool_{call.get('index', 0)}",
-                        **{k: v for k, v in call.items() if k not in ("index", "type")},
-                    }
-                )
+                ops.extend(tool_operations(BlockRef("tool_use", call.get("index", 0)), call))
             if choice.get("finish_reason") is not None:
                 ops.append({"type": "finish", "reason": choice["finish_reason"]})
         result.append(batch(event, ops, PROTOCOL, consumed_fields(event)))

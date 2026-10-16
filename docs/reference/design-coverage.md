@@ -42,6 +42,8 @@ encode 的方向是标准协议 → 中间态，decode 的方向是中间态 →
 [转换器](../../src/my_llm/codec/converter.py)不引用 MyLLM；完整离线流批次可使用本次调用内的
 局部累积器，实时流的状态由 MyLLM 为每次请求创建并持有。
 [MessageStream](../../src/my_llm/stream/message_stream.py)只管理迭代、关闭和结果快照，不定义消息格式。
+请求累积器使用结构化源引用和显式的独立块追加操作；每块的片段、参数与发布状态
+由 `BlockState` 统一管理，`feed()` 只分派操作。详见[流状态设计](stream-state.md)。
 `exceptions.py` 取代已经没有消息类型的 types 包；没有旧目录的兼容转发模块。
 
 测试按职责放在 `tests/unit/`、`tests/contract/`、`tests/integration/`、`tests/packaging/`。

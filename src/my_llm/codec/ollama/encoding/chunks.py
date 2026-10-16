@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from my_llm.codec.utils.chunks import batch, check_error
+from my_llm.codec.utils.chunks import BlockRef, batch, check_error
 from my_llm.codec.utils.conversion import dictionaries, tool_block
 from my_llm.codec.utils.preservation import CALL
 from my_llm.profile import ResolvedProfile
@@ -33,15 +33,15 @@ def encode(chunks: list, profile: ResolvedProfile | None = None, **parameters: A
             if message.get(field):
                 ops.append(
                     {
-                        "type": "delta",
-                        "index": kind,
+                        "type": "block_delta",
+                        "ref": BlockRef(kind),
                         "field": kind,
                         "kind": kind,
                         "value": message[field],
                     }
                 )
         for call in message.get("tool_calls") or []:
-            ops.append({"type": "tool_complete", "index": None, "block": tool_block(call)})
+            ops.append({"type": "block_append", "block": tool_block(call)})
         if event.get("done"):
             ops.append({"type": "finish", "reason": event.get("done_reason", "stop")})
             if profile is None or profile.get("usage_mode") != "none":

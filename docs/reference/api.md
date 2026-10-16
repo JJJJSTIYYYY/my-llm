@@ -82,11 +82,14 @@ async def print_stream(llm, prompt):
 ```
 
 `stream.result` 在完整消费后提供与非流式模式相同的标准消息/items，读取时返回独立副本。
-文本和可见思考增量即时输出；工具参数保存在请求状态中，完整后再生成目标协议的工具事件。
+工具调用之前的文本和可见思考增量即时输出；工具参数保存在请求状态中，
+整条响应成功结束后再生成目标协议的工具事件。为保留内容顺序，工具调用之后出现的块
+一并暂存到完成时发布；失败或中断不会发布这些待完成调用。
 Anthropic/Gemini 的签名内容保留在完成消息和对应的原生流字段中。
 启用用量时，Chat 先发送结束 choice，再发送 `choices=[]` 的独立 usage 尾块。
 跨协议输出到 Responses 时，输出限制与内容过滤分别生成相应的 `response.incomplete`，
 成功结束才生成 `response.completed`；协议字段依据与校验范围见[协议复核](protocol-conformance.md)。
+块引用、快照协调及发布规则见[流状态设计](stream-state.md)。
 
 ## 工具回合
 

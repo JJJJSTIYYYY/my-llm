@@ -1,10 +1,46 @@
 """Stateless stream conversion helpers."""
 
-from typing import Any
+from typing import Any, NamedTuple
 
-from my_llm.codec.utils.conversion import dictionaries, original, remember, residual
+from my_llm.codec.utils.conversion import dictionaries, extras, original, remember, residual
 from my_llm.codec.utils.keys import SOURCE
 from my_llm.exceptions import ResponseFailedError, ResponseIncompleteError
+
+
+class BlockRef(NamedTuple):
+    """JSON-safe source address, independent of output order; append needs no ref."""
+
+    scope: str
+    index: int = 0
+    part: int = 0
+
+
+def tool_operations(ref: BlockRef, call: dict) -> list[dict]:
+    """Translate Chat-shaped call fragments into provider-independent operations."""
+    fn = call.get("function", {})
+    block = {
+        **extras(call, "type", "index", "id", "function", "name", "input"),
+        "type": "tool_use",
+    }
+    if call.get("id"):
+        block["id"] = call["id"]
+    if fn.get("name"):
+        block["name"] = fn["name"]
+    extensions = extras(fn, "name", "arguments")
+    if extensions:
+        block["function"] = extensions
+    result = [{"type": "block_update", "ref": ref, "block": block}]
+    if "arguments" in fn:
+        result.append(
+            {
+                "type": "block_delta",
+                "ref": ref,
+                "kind": "tool_use",
+                "field": "arguments",
+                "value": fn["arguments"],
+            }
+        )
+    return result
 
 
 def batch(event: dict, operations: list[dict], protocol: str, consumed: dict | None = None) -> dict:

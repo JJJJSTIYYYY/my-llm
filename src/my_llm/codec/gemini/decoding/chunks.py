@@ -32,7 +32,13 @@ def decode(chunks: list, profile: ResolvedProfile | None = None, **parameters: A
         elif kind == "block_stop":
             signature = event["block"].get("thought_signature")
             if signature:
-                parts = [{"thought_signature": signature}]
+                parts = [
+                    {
+                        "text": "",
+                        "thought_signature": signature,
+                        **({"thought": True} if event["block"].get("type") == "thinking" else {}),
+                    }
+                ]
         elif kind == "finish":
             reason = "MAX_TOKENS" if event["reason"] == "length" else "STOP"
         if parts or reason:

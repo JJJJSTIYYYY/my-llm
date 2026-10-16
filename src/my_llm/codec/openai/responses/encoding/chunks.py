@@ -5,13 +5,42 @@ from typing import Any
 from openai import Omit
 
 from my_llm.codec.openai.responses.encoding import messages
-from my_llm.codec.utils.chunks import batch, check_error, metadata
+from my_llm.codec.utils.chunks import BlockRef, batch, check_error, metadata, tool_operations
 from my_llm.codec.utils.common import path_value
-from my_llm.codec.utils.conversion import dictionaries
+from my_llm.codec.utils.conversion import dictionaries, from_chat_content
+from my_llm.codec.utils.keys import OPAQUE
 from my_llm.codec.utils.preservation import response_fields
 from my_llm.profile import ResolvedProfile
 
 PROTOCOL = "openai_responses"
+
+
+def snapshot(output: list) -> dict:
+    """Address final blocks with the same item/part coordinates as live deltas."""
+    encoded = messages.encode(output)
+    blocks = []
+    for index, (item, message) in enumerate(zip(output, dictionaries(encoded))):
+        if message.get(OPAQUE):
+            continue
+        for part, block in enumerate(message.get("content", [])):
+            kind = block.get("type", "unknown")
+            if kind == "thinking":
+                # Message conversion groups summaries; live operations address
+                # each summary part separately using the native summary_index.
+                for summary_index, summary in enumerate(item.get("summary") or [{}]):
+                    blocks.append(
+                        {
+                            "ref": BlockRef(kind, index, summary_index),
+                            "block": {
+                                **block,
+                                "thinking": summary.get("text", ""),
+                                "summary": [summary] if summary else [],
+                            },
+                        }
+                    )
+            else:
+                blocks.append({"ref": BlockRef(kind, index, part), "block": block})
+    return {"type": "snapshot", "messages": encoded, "blocks": blocks}
 
 
 def response_metadata(response: dict) -> dict:
@@ -65,35 +94,64 @@ def encode(chunks: list, profile: ResolvedProfile | None = None, **parameters: A
             and event.get("item", {}).get("type") == "function_call"
         ):
             item = event["item"]
-            ops.append(
-                {
-                    "type": "tool_delta",
-                    "index": f"tool_{index}",
-                    "id": item.get("call_id"),
-                    "function": {"name": item.get("name"), "arguments": item.get("arguments", "")},
-                }
+            ops.extend(
+                tool_operations(
+                    BlockRef("tool_use", index),
+                    {
+                        "id": item.get("call_id"),
+                        "function": {
+                            "name": item.get("name"),
+                            "arguments": item.get("arguments", ""),
+                        },
+                    },
+                )
             )
         elif kind == "response.function_call_arguments.delta":
-            ops.append(
-                {
-                    "type": "tool_delta",
-                    "index": f"tool_{index}",
-                    "function": {"arguments": event.get("delta", "")},
-                }
+            ops.extend(
+                tool_operations(
+                    BlockRef("tool_use", index),
+                    {"function": {"arguments": event.get("delta", "")}},
+                )
             )
         elif (
             kind == "response.output_item.done"
             and event.get("item", {}).get("type") == "function_call"
         ):
             block = dictionaries(messages.encode([event["item"]]))[0]["content"][0]
-            ops.append({"type": "tool_complete", "index": f"tool_{index}", "block": block})
+            ops.append({"type": "block_set", "ref": BlockRef("tool_use", index), "block": block})
+        elif kind in ("response.content_part.added", "response.content_part.done"):
+            part = event.get("part", {})
+            if part.get("type") == "output_text":
+                ops.append(
+                    {
+                        "type": "block_set",
+                        "ref": BlockRef("text", index, event.get("content_index", 0)),
+                        "block": from_chat_content([part])[0],
+                    }
+                )
+        elif kind in (
+            "response.reasoning_summary_part.added",
+            "response.reasoning_summary_part.done",
+        ):
+            part = event["part"]
+            ops.append(
+                {
+                    "type": "block_set",
+                    "ref": BlockRef("thinking", index, event.get("summary_index", 0)),
+                    "block": {
+                        "type": "thinking",
+                        "thinking": part.get("text", ""),
+                        "summary": [part],
+                    },
+                }
+            )
         elif kind == "response.completed":
             response = event["response"]
             output = response.get("output", [])
             ops.extend(
                 [
                     {"type": "metadata", **response_metadata(response)},
-                    {"type": "snapshot", "messages": messages.encode(output)},
+                    snapshot(output),
                     {
                         "type": "finish",
                         "reason": "tool_calls"
@@ -121,11 +179,17 @@ def encode(chunks: list, profile: ResolvedProfile | None = None, **parameters: A
                 if kind == selector
                 else None
             )
-            if value:
+            if value is not None:
                 ops.append(
                     {
-                        "type": "delta",
-                        "index": f"{block_kind}_{index}_{event.get('content_index', 0)}",
+                        "type": "block_delta",
+                        "ref": BlockRef(
+                            block_kind,
+                            index,
+                            event.get(
+                                "summary_index" if block_kind == "thinking" else "content_index", 0
+                            ),
+                        ),
                         "kind": block_kind,
                         "field": "text" if block_kind == "text" else "thinking",
                         "value": value,

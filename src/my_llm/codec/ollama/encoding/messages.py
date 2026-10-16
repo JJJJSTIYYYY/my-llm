@@ -1,36 +1,104 @@
-"""Ollama role-specific history encoding and local tool-result association."""
+"""ollama messages: encoding conversion."""
 
 from typing import Any
 
-from my_llm.codec.ollama.encoding.content import encode_content
-from my_llm.codec.ollama.encoding.tools import encode_function_call
-from my_llm.codec.utils.native import native_messages
-from my_llm.profile.utils.resolution import ResolvedProfile
+from my_llm.codec.utils.conversion import (
+    allocate_call_id,
+    associate_tool_result,
+    dictionaries,
+    extras,
+    from_chat_content,
+    remember,
+    residual,
+    tool_block,
+)
+from my_llm.codec.utils.preservation import CALL, content_fields
+from my_llm.exceptions import MessageValidationError
+from my_llm.profile import ResolvedProfile
+
+PROTOCOL = "ollama"
 
 
-def encode_messages(messages: Any, profile: ResolvedProfile) -> list[dict[str, Any]]:
-    history = []
-    names = {}
-    for message in native_messages(messages):
-        if message["role"] == "assistant":
-            encoded = _encode_assistant(message, profile)
-            names.update({c["id"]: c["function"]["name"] for c in message.get("tool_calls", [])})
-        elif message["role"] == "tool":
-            encoded = _encode_tool_result(message, names)
-        else:
-            encoded = encode_content(message)
-        history.append(encoded)
-    return history
-
-
-def _encode_assistant(message: dict[str, Any], profile: ResolvedProfile) -> dict[str, Any]:
-    encoded = encode_content(message)
-    if message.get("tool_calls"):
-        encoded["tool_calls"] = [encode_function_call(call) for call in message["tool_calls"]]
-    if profile.get("replay_reasoning_content_when_tool_calls", False):
-        encoded["thinking"] = message.get("reasoning_content", "")
-    return encoded
-
-
-def _encode_tool_result(message: dict[str, Any], names: dict[str, str]) -> dict[str, Any]:
-    return {**encode_content(message), "tool_name": names[message["tool_call_id"]]}
+def encode(messages: list, profile: ResolvedProfile | None = None, **parameters: Any) -> list[dict]:
+    pending = []
+    result = []
+    messages = dictionaries(messages)
+    # Reserve explicit IDs first so ID-less calls cannot shadow a later native ID.
+    used_ids = {
+        call["id"]
+        for message in messages
+        for call in (message.get("tool_calls") or [])
+        if call.get("id")
+    }
+    for index, message in enumerate(messages):
+        if (
+            message.get("role") not in ("system", "user", "assistant", "tool")
+            or "parts" in message
+            or "type" in message
+        ):
+            raise MessageValidationError("message does not use the bound ollama protocol")
+        content = from_chat_content(message.get("content"))
+        content.extend(
+            {
+                "type": "image",
+                "source": {"type": "base64", "media_type": "image/png", "data": image},
+            }
+            for image in (message.get("images") or [])
+        )
+        # Appending preserves the original indices of content-block extensions.
+        if message.get("thinking"):
+            content.append({"type": "thinking", "thinking": message["thinking"]})
+        for call_index, call in enumerate(message.get("tool_calls") or []):
+            call_id = call.get("id") or allocate_call_id(used_ids, f"call_{index}_{call_index}")
+            block = tool_block(call, call_id=call_id)
+            content.append(block)
+            pending.append(block)
+        role = message.get("role")
+        if role == "tool":
+            name = message.get("tool_name")
+            call_id = associate_tool_result(pending, message.get("tool_call_id"), name)
+            content = [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": call_id,
+                    "name": name,
+                    "content": message.get("content"),
+                }
+            ]
+            role = "user"
+        result.append(
+            remember(
+                {
+                    **extras(
+                        message,
+                        "role",
+                        "content",
+                        "images",
+                        "thinking",
+                        "tool_calls",
+                        "tool_name",
+                        "tool_call_id",
+                    ),
+                    "role": role,
+                    "content": content,
+                },
+                [message],
+                PROTOCOL,
+                preserve=residual(
+                    message,
+                    {
+                        "role": True,
+                        "content": [content_fields]
+                        if isinstance(message.get("content"), list)
+                        else True,
+                        "tool_calls": [CALL],
+                        "tool_call_id": True,
+                        "reasoning_content": True,
+                        "thinking": True,
+                        "images": True,
+                        "tool_name": True,
+                    },
+                ),
+            )
+        )
+    return result

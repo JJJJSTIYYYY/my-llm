@@ -7,8 +7,8 @@ from typing import ClassVar
 
 from openai import Omit
 
+from my_llm.exceptions import ConfigurationError
 from my_llm.profile.utils.common import _Overrides
-from my_llm.types.exceptions import ConfigurationError
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -36,9 +36,8 @@ class ModelProfile(_Overrides):
         supports_reasoning_effort: Override the provider's effort capability.
         content_path: Override the text-delta selector.
         reasoning_content_path: Override the reasoning-delta selector.
-        replay_reasoning_content_when_tool_calls: Override whether visible
-            reasoning accompanies every Chat/Ollama assistant message, using
-            an empty string when absent, even without tool calls.
+        replay_reasoning_content_when_tool_calls: Override whether visible reasoning is replayed. Empty reasoning
+            is added only for tool calls while thinking is enabled.
 
     All fields except model default to None unless stated otherwise. None
     inherits provider/protocol settings; omit disables an inherited setting.

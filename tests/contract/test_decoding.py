@@ -1,274 +1,284 @@
-from types import SimpleNamespace
+"""Stream semantics and vendor/opaque extension retention through all protocol pairs.
+
+Official native schemas and lifecycle assertions are checked independently in
+test_protocol_conformance.py; opaque/vendor cases below test preservation only.
+"""
+
+import json
+from copy import deepcopy
 
 import pytest
-from conftest import chat_event, response_completed
-from openai.types.chat import ChatCompletionChunk
+from conftest import PROTOCOLS, stream_events
 
-from my_llm import (
-    IncompleteStreamError,
-    MessageChunk,
-    ProviderProfile,
-    ResponseFailedError,
-    ResponseIncompleteError,
-    omit,
-)
-from my_llm.codec import ChatCompletionsCodec, ResponsesCodec
+from my_llm import IncompleteStreamError, MyCodec, ResponseFailedError, ResponseIncompleteError
+from my_llm.stream._state import StreamState
 
 
-def test_chat_sdk_chunks_text_reasoning_and_usage(profile_factory):
-    decoder = ChatCompletionsCodec(
-        profile_factory(provider=ProviderProfile(usage_mode="stream_options"))
-    ).decoder()
-    chunks = []
-    for event in [
-        chat_event(content="你", reasoning="想"),
-        chat_event(content="好", reasoning="法"),
-        chat_event(finish="stop"),
-        {
-            "id": "chat_1",
-            "object": "chat.completion.chunk",
-            "created": 1,
-            "model": "demo",
-            "choices": [],
-            "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
-        },
-    ]:
-        chunks.extend(decoder.feed(ChatCompletionChunk.model_validate(event)))
-    final = decoder.finish()
-    assert final.finish_reason == "stop"
-    assert final.usage["total_tokens"] == 5
-    combined = MessageChunk()
-    for chunk in [*chunks, final]:
-        combined += chunk
-    assert combined.content == "你好" and combined.reasoning_content == "想法"
+def render(source, target, incoming):
+    codec = MyCodec()
+    state = StreamState("demo")
+    output = []
+    for event in incoming:
+        chunks = codec.encode(chunks=[event], input_format=source)["chunks"]
+        converted = codec.decode(
+            chunks=state.feed(chunks),
+            target_format=target,
+            sequence_number=state.sequence_number,
+            **state.metadata,
+        )["chunks"]
+        output.extend(converted)
+        state.sequence_number += len(converted)
+    output.extend(
+        codec.decode(
+            chunks=state.finish(),
+            target_format=target,
+            sequence_number=state.sequence_number,
+            **state.metadata,
+        )["chunks"]
+    )
+    return output, state
 
 
-@pytest.mark.parametrize("reason", ["stop", "length", "content_filter", "function_call"])
-def test_chat_finish_reasons_remain_unchanged(profile_factory, reason):
-    decoder = ChatCompletionsCodec(profile_factory()).decoder()
-    decoder.feed(ChatCompletionChunk.model_validate(chat_event(finish=reason)))
-    assert decoder.finish().finish_reason == reason
+@pytest.mark.parametrize("source", PROTOCOLS)
+@pytest.mark.parametrize("target", PROTOCOLS)
+@pytest.mark.parametrize("tool", [False, True])
+def test_native_streams_convert_to_complete_target_streams(source, target, tool):
+    incoming = stream_events(source, tool=tool)
+    before = deepcopy(incoming)
+    output, state = render(source, target, incoming)
+    assert incoming == before
+    assert state.finished
+    normalized = MyCodec().encode(chunks=output, input_format=target)["chunks"]
+    reconstructed = StreamState("demo")
+    reconstructed.feed(normalized)
+    reconstructed.finish()
+    messages = MyCodec().decode(reconstructed.messages(), target_format="openai_chat")["messages"]
+    assert "Hello" in str(messages[0]["content"])
+    calls = [c for m in messages for c in m.get("tool_calls", [])]
+    assert bool(calls) is tool
+    if tool:
+        assert calls[0]["function"]["name"] == "weather"
+        assert json.loads(calls[0]["function"]["arguments"]) == {"city": "上海"}
+    if target == "openai_responses":
+        assert [e["sequence_number"] for e in output] == list(range(len(output)))
+        assert output[0]["type"] == "response.created"
+        assert output[-1]["type"] == "response.completed"
+    if target == "anthropic":
+        assert output[0]["type"] == "message_start"
+        assert output[-1]["type"] == "message_stop"
 
 
-def test_chat_interleaved_parallel_tools_are_only_emitted_complete(profile_factory):
-    decoder = ChatCompletionsCodec(profile_factory()).decoder()
-    events = [
-        chat_event(
-            calls=[
-                {
-                    "index": 1,
-                    "id": "b",
-                    "type": "function",
-                    "function": {"name": "second", "arguments": '{"b":'},
-                },
-                {
-                    "index": 0,
-                    "id": "a",
-                    "type": "function",
-                    "function": {"name": "first", "arguments": '{"a":'},
-                },
-            ]
-        ),
-        chat_event(
-            calls=[
-                {"index": 0, "function": {"arguments": "1}"}},
-                {"index": 1, "function": {"arguments": "2}"}},
-            ]
-        ),
-        chat_event(finish="tool_calls"),
-    ]
-    for event in events:
-        assert decoder.feed(event) == []
-    calls = decoder.finish().tool_calls
-    assert [call["id"] for call in calls] == ["a", "b"]
-    assert [call["function"]["arguments"] for call in calls] == ['{"a":1}', '{"b":2}']
+@pytest.mark.parametrize("protocol", PROTOCOLS)
+def test_chunk_conversion_is_stateless_and_lossless_with_native_input(protocol):
+    codec = MyCodec().codecs[protocol]
+    incoming = stream_events(protocol, tool=True)
+    assert codec.decode_chunks(codec.encode_chunks(incoming)) == incoming
+    other = stream_events(protocol)
+    assert codec.decode_chunks(codec.encode_chunks(other)) == other
+
+
+@pytest.mark.parametrize("protocol", PROTOCOLS)
+def test_missing_terminal_event_is_a_message_stream_error(protocol):
+    events = stream_events(protocol)
+    with pytest.raises(IncompleteStreamError):
+        render(protocol, "openai_chat", events[:-2] if protocol == "openai_chat" else events[:-1])
 
 
 @pytest.mark.parametrize(
-    "finish,arguments", [(None, "{}"), ("length", '{"x":'), ("tool_calls", '{"x":'), ("stop", "{}")]
+    "event,error",
+    [
+        (
+            {"type": "response.failed", "response": {"error": {"message": "failed"}}},
+            ResponseFailedError,
+        ),
+        (
+            {
+                "type": "response.incomplete",
+                "response": {"incomplete_details": {"reason": "max_output_tokens"}},
+            },
+            ResponseIncompleteError,
+        ),
+        ({"error": "offline"}, ResponseFailedError),
+    ],
 )
-def test_chat_incomplete_tool_results_are_never_returned(profile_factory, finish, arguments):
-    decoder = ChatCompletionsCodec(profile_factory()).decoder()
-    decoder.feed(
-        chat_event(
-            calls=[
-                {
-                    "index": 0,
-                    "id": "call",
-                    "type": "function",
-                    "function": {"name": "tool", "arguments": arguments},
-                }
-            ],
-            finish=finish,
-        )
-    )
-    with pytest.raises(IncompleteStreamError):
-        decoder.finish()
+def test_explicit_provider_failures(event, error):
+    with pytest.raises(error):
+        MyCodec().encode(chunks=[event], input_format="openai_responses")
 
 
-def test_chat_no_finish_and_error(profile_factory):
-    decoder = ChatCompletionsCodec(profile_factory()).decoder()
-    decoder.feed(chat_event(content="partial"))
-    with pytest.raises(IncompleteStreamError, match="finish_reason"):
-        decoder.finish()
-    with pytest.raises(ResponseFailedError) as error:
-        ChatCompletionsCodec(profile_factory()).decoder().feed({"error": {"message": "bad"}})
-    assert error.value.details == {"message": "bad"}
+def test_function_argument_fragments_are_not_emitted():
+    codec = MyCodec()
+    state = StreamState("demo")
+    for event in stream_events("openai_chat", tool=True):
+        converted = state.feed(codec.encode(chunks=[event], input_format="openai_chat")["chunks"])
+        assert all(c["type"] not in ("tool", "tool_delta") for c in converted)
+    tools = [c for c in state.finish() if c["type"] == "tool"]
+    assert tools[0]["block"]["input"] == {"city": "上海"}
 
 
-def test_chat_custom_paths_and_omit(profile_factory):
-    decoder = ChatCompletionsCodec(
-        profile_factory(content_path="$.choices[0].delta.custom.text", reasoning_content_path=omit)
-    ).decoder()
-    event = SimpleNamespace(
-        choices=[
-            SimpleNamespace(
-                delta=SimpleNamespace(custom=SimpleNamespace(text="custom")), finish_reason="stop"
-            )
-        ]
-    )
-    chunks = decoder.feed(event)
-    assert chunks[0].content == "custom" and chunks[0].reasoning_content == ""
-    assert decoder.finish().finish_reason == "stop"
-
-
-def test_responses_tool_snapshots_do_not_duplicate_fragments(profile_factory):
-    decoder = ResponsesCodec(profile_factory("responses")).decoder()
-    item = {
-        "type": "function_call",
-        "id": "fc_1",
-        "call_id": "call_1",
-        "name": "weather",
-        "arguments": "",
-        "status": "in_progress",
-    }
-    final_item = {**item, "arguments": '{"city":"上海"}', "status": "completed"}
-    events = [
-        {"type": "response.output_item.added", "output_index": 0, "item": item},
-        {"type": "response.function_call_arguments.delta", "output_index": 0, "delta": '{"city":'},
-        {"type": "response.function_call_arguments.delta", "output_index": 0, "delta": '"上海"}'},
+def test_gemini_thought_signature_and_anthropic_signature_survive_stream_collection():
+    _, gemini = render("gemini", "gemini", stream_events("gemini", tool=True))
+    block = next(b for m in gemini.messages() for b in m["content"] if b.get("type") == "tool_use")
+    assert block["thought_signature"] == "c2lnbmVk"
+    incoming = stream_events("anthropic")
+    incoming[1]["content_block"] = {"type": "thinking", "thinking": "", "signature": ""}
+    incoming[2]["delta"] = {"type": "thinking_delta", "thinking": "Hello"}
+    incoming.insert(
+        3,
         {
-            "type": "response.function_call_arguments.done",
-            "output_index": 0,
-            "arguments": final_item["arguments"],
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "signature_delta", "signature": "signed"},
         },
-        {"type": "response.output_item.done", "output_index": 0, "item": final_item},
-        response_completed([final_item]),
-    ]
-    for event in events:
-        assert decoder.feed(event) == []
-    result = decoder.finish()
-    assert result.finish_reason == "tool_calls"
-    assert result.tool_calls[0] == {
-        "id": "call_1",
-        "type": "function",
-        "function": {"name": "weather", "arguments": final_item["arguments"]},
-    }
-    assert result.response_output == [final_item]
-    assert result.response_id == "resp_1"
-
-
-def test_responses_text_reasoning_native_usage_and_replay(profile_factory):
-    from my_llm import ProviderProfile
-
-    decoder = ResponsesCodec(
-        profile_factory(
-            "responses", provider=ProviderProfile(api_type="responses", usage_mode="native")
-        )
-    ).decoder()
-    assert (
-        decoder.feed({"type": "response.output_text.delta", "delta": "hello"})[0].content == "hello"
     )
-    assert (
-        decoder.feed({"type": "response.reasoning_summary_text.delta", "delta": "reason"})[
-            0
-        ].reasoning_content
-        == "reason"
-    )
-    native = [
+    _, anthropic = render("anthropic", "anthropic", incoming)
+    assert anthropic.messages()[0]["content"][0]["signature"] == "signed"
+
+
+def test_distinct_gemini_signatures_stay_on_their_original_parts():
+    incoming = [
         {
-            "type": "reasoning",
-            "id": "rs_1",
-            "summary": [{"type": "summary_text", "text": "reason"}],
-            "encrypted_content": "secret",
+            "candidates": [
+                {
+                    "content": {
+                        "role": "model",
+                        "parts": [
+                            {"text": "first", "thought_signature": "c2lnMQ=="},
+                            {"text": "second", "thought_signature": "c2lnMg=="},
+                        ],
+                    }
+                }
+            ]
+        },
+        {"candidates": [{"finish_reason": "STOP"}]},
+    ]
+    _, state = render("gemini", "gemini", incoming)
+    message = MyCodec().decode(state.messages(), target_format="gemini")["messages"][0]
+    assert message["parts"] == incoming[0]["candidates"][0]["content"]["parts"]
+
+
+@pytest.mark.parametrize("source", PROTOCOLS)
+@pytest.mark.parametrize("target", PROTOCOLS)
+def test_standalone_converter_handles_complete_stream_batches(source, target):
+    codec = MyCodec()
+    incoming = stream_events(source, tool=True)
+    result = codec.convert(chunks=incoming, input_format=source, target_format=target)["chunks"]
+    state = StreamState("demo")
+    state.feed(codec.encode(chunks=result, input_format=target)["chunks"])
+    state.finish()
+    chat = codec.decode(state.messages(), target_format="openai_chat")["messages"]
+    assert "Hello" in str(chat)
+    assert chat[0]["tool_calls"][0]["function"]["name"] == "weather"
+    # Reusing the same converter retains no state from the prior batch.
+    assert codec.convert(chunks=stream_events(target), input_format=target, target_format=target)[
+        "chunks"
+    ] == stream_events(target)
+
+
+def test_responses_completed_output_matches_emitted_item_ids_and_content():
+    output, _ = render("openai_chat", "openai_responses", stream_events("openai_chat", tool=True))
+    done = [event["item"] for event in output if event["type"] == "response.output_item.done"]
+    assert output[-1]["response"]["output"] == done
+    assert done[0]["content"][0]["annotations"] == []
+    assert any(event["type"] == "response.content_part.done" for event in output)
+
+
+def test_redacted_anthropic_block_survives_collected_and_streamed_output():
+    incoming = [
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "redacted_thinking", "data": "opaque"},
+        },
+        {"type": "content_block_stop", "index": 0},
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
+        {"type": "message_stop"},
+    ]
+    output, state = render("anthropic", "anthropic", incoming)
+    assert state.messages()[0]["content"] == [{"type": "redacted_thinking", "data": "opaque"}]
+    block_event = next(e for e in output if e["type"] == "content_block_start")
+    assert block_event["content_block"] == {"type": "redacted_thinking", "data": "opaque"}
+
+
+@pytest.mark.parametrize("source", PROTOCOLS)
+@pytest.mark.parametrize("target", PROTOCOLS)
+def test_unknown_stream_events_keep_their_original_dictionary(source, target):
+    unknown = {"type": "vendor.future_event", "payload": {"nested": [{"data": 1}]}}
+    incoming = [unknown, *stream_events(source)]
+    output, _ = render(source, target, incoming)
+    assert unknown in output
+
+
+def test_unknown_responses_output_item_stays_at_output_root_in_stream():
+    item = {"type": "future_output", "id": "future_1", "payload": {"nested": [1, 2]}}
+    from conftest import response_completed
+
+    output, _ = render("openai_responses", "openai_responses", [response_completed([item])])
+    assert output[-1]["response"]["output"] == [item]
+
+
+@pytest.mark.parametrize("target", PROTOCOLS)
+def test_buffered_tool_extensions_survive_stream_conversion(target):
+    incoming = stream_events("openai_chat", tool=True)
+    incoming[1]["choices"][0]["delta"]["tool_calls"][0]["function"]["future"] = {"nested": [1, 2]}
+    converted, _ = render("openai_chat", target, incoming)
+    restored, _ = render(target, "openai_chat", converted)
+    calls = [
+        call
+        for event in restored
+        for choice in event.get("choices", [])
+        for call in choice["delta"].get("tool_calls", [])
+    ]
+    assert calls[0]["function"]["future"] == {"nested": [1, 2]}
+
+
+def test_gemini_text_extension_cannot_change_the_translated_block_type():
+    incoming = [
+        {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": "Hello",
+                                "type": "tool_use",
+                                "id": "wrong",
+                                "name": "wrong",
+                                "input": {},
+                            },
+                        ]
+                    },
+                    "finish_reason": "STOP",
+                }
+            ]
         }
     ]
-    decoder.feed(
-        response_completed(native, {"input_tokens": 2, "output_tokens": 3, "total_tokens": 5})
-    )
-    result = decoder.finish()
-    assert result.finish_reason == "stop" and result.response_status == "completed"
-    assert result.usage["total_tokens"] == 5
-    assert result.response_output == native
+    _, state = render("gemini", "openai_chat", incoming)
+    assert state.messages()[0]["content"][0]["type"] == "text"
+    chat = MyCodec().decode(state.messages(), target_format="openai_chat")["messages"]
+    assert "tool_calls" not in chat[0]
+    assert chat[0]["content"][0]["text"] == "Hello"
 
 
-@pytest.mark.parametrize(
-    "kind,error_type",
-    [
-        ("response.failed", ResponseFailedError),
-        ("error", ResponseFailedError),
-        ("response.incomplete", ResponseIncompleteError),
-    ],
-)
-def test_responses_failure_statuses(profile_factory, kind, error_type):
-    decoder = ResponsesCodec(profile_factory("responses")).decoder()
-    with pytest.raises(error_type):
-        decoder.feed(
-            {
-                "type": kind,
-                "response": {
-                    "error": {"code": "server_error"},
-                    "incomplete_details": {"reason": "max_output_tokens"},
-                },
-            }
+@pytest.mark.parametrize("source", ["openai_chat", "anthropic"])
+def test_native_argument_named_extension_does_not_modify_stream_buffer(source):
+    incoming = stream_events(source, tool=True)
+    if source == "openai_chat":
+        call = incoming[1]["choices"][0]["delta"]["tool_calls"][0]
+        call["__arguments__"] = {"vendor": True}
+    else:
+        event = next(
+            event for event in incoming if event.get("content_block", {}).get("type") == "tool_use"
         )
+        event["content_block"]["__arguments__"] = {"vendor": True}
+    _, state = render(source, "openai_chat", incoming)
+    call = next(block for block in state.messages()[0]["content"] if block["type"] == "tool_use")
+    assert call["input"] == {"city": "上海"}
 
 
-def test_responses_truncation_and_unknown_call(profile_factory):
-    decoder = ResponsesCodec(profile_factory("responses")).decoder()
-    with pytest.raises(IncompleteStreamError, match="unknown"):
-        decoder.feed(
-            {"type": "response.function_call_arguments.delta", "output_index": 0, "delta": "{}"}
-        )
-    with pytest.raises(IncompleteStreamError, match="response.completed"):
-        decoder.finish()
-
-
-@pytest.mark.parametrize(
-    "item",
-    [
-        {
-            "type": "function_call",
-            "call_id": "a",
-            "name": "f",
-            "arguments": "{",
-            "status": "completed",
-        },
-        {
-            "type": "function_call",
-            "call_id": "a",
-            "name": "f",
-            "arguments": "{}",
-            "status": "incomplete",
-        },
-        {"type": "web_search_call", "id": "web_1"},
-    ],
-)
-def test_invalid_response_output_items(profile_factory, item):
-    decoder = ResponsesCodec(profile_factory("responses")).decoder()
-    decoder.feed(response_completed([item]))
-    with pytest.raises(IncompleteStreamError):
-        decoder.finish()
-
-
-@pytest.mark.parametrize("api_type", ["responses", "chat_completions"])
-def test_usage_none_never_exposes_native_usage(profile_factory, api_type):
-    decoder = (ResponsesCodec if api_type == "responses" else ChatCompletionsCodec)(
-        profile_factory(api_type)
-    ).decoder()
-    decoder.feed(
-        response_completed(usage={"total_tokens": 9})
-        if api_type == "responses"
-        else chat_event(finish="stop", usage={"total_tokens": 9})
-    )
-    assert decoder.finish().usage is None
+def test_native_root_call_name_cannot_override_a_previously_translated_name():
+    incoming = stream_events("openai_chat", tool=True)
+    incoming[2]["choices"][0]["delta"]["tool_calls"][0]["name"] = "wrong"
+    _, state = render("openai_chat", "openai_chat", incoming)
+    call = next(block for block in state.messages()[0]["content"] if block["type"] == "tool_use")
+    assert call["name"] == "weather"

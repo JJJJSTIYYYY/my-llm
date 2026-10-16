@@ -11,10 +11,11 @@ from typing import Any, Literal
 
 from openai import Omit
 
-from my_llm.types.exceptions import ConfigurationError
+from my_llm.exceptions import ConfigurationError
 
-type APIType = Literal["responses", "chat_completions"]
-type Protocol = Literal["openai", "anthropic", "gemini", "ollama"]
+type Protocol = Literal["openai_chat", "openai_responses", "anthropic", "gemini", "ollama"]
+
+PROTOCOLS = ("openai_chat", "openai_responses", "anthropic", "gemini", "ollama")
 type ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
 type Parameter = dict[str, Any] | Omit | None
 

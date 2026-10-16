@@ -1,372 +1,172 @@
 # API 使用指南
 
-my-llm-py 提供异步 `generate()` 和可复用的 `MyLLM`，统一调用 OpenAI
-Responses / Chat Completions、Anthropic、Gemini 与 Ollama 原生 API。
-需要 Python 3.12+。导入名为 `my_llm`。
-配置字段的默认值、继承规则和兼容服务适配见[配置指南](configuration.md)。
+`MyLLM` 构造时接收 `provider: ProviderProfile`、`model: ModelProfile` 和可选的
+`stdio_protocol: Protocol`。实例保留 `provider` / `model` 的副本、`resolved_profile`、
+无状态的 `codec: MyCodec` 和输入输出协议 `stdio_protocol`。
+`generate(provider=..., model=..., messages=..., stdio_protocol=..., **parameters)`
+是创建临时实例的一次性入口，其中 model 也可传模型 ID 字符串。
 
-## 一次调用
+## 协议与返回值
 
-安装构建好的包后，设置 `OPENAI_API_KEY` 和供应商提供的 `LLM_MODEL`：
+| stdio_protocol | messages 标准格式 | 非流式返回 | 流式事件 |
+| --- | --- | --- | --- |
+| `openai_chat` | Chat 消息列表 | assistant 消息字典 | ChatCompletionChunk 字典 |
+| `openai_responses` | Responses input/output items | output items 列表 | Responses 事件字典 |
+| `anthropic` | role/content Messages 列表 | assistant role/content 字典 | Messages 事件字典 |
+| `gemini` | role/parts Content 列表 | model role/parts 字典 | GenerateContentResponse 字典 |
+| `ollama` | 原生 role/content 消息列表 | assistant 消息字典 | ChatResponse 字典 |
 
-```python
-import asyncio
-import os
+返回的是消息或 items，可直接追加到相同协议的历史；不额外包一层统一结果对象。
+Responses 使用 `history.extend(result)`，其他协议使用 `history.append(result)`。
+完成原因和用量出现在各协议标准流事件的位置，不增加自定义消息字段。
+所有输入可使用普通字典或可转为字典的官方 SDK 模型。
 
-from my_llm import ProviderProfile, generate
-
-
-async def main():
-    message = await generate(
-        provider=ProviderProfile(api_type="responses"),
-        model=os.environ["LLM_MODEL"],
-        messages=[{"role": "user", "content": "你好"}],
-    )
-    print(message["content"])
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-`generate()` 的所有参数都是关键字参数。`provider`、`model`、`messages` 必填。
-`model` 可以是模型 ID 字符串，也可以是 `ModelProfile`。字符串相当于
-`ModelProfile(model=该字符串)`，不会查询 Provider 的模型列表。
-API Key 未在配置中指定时，由对应官方 SDK 读取环境配置。
-
-## 复用 Provider 和 Model
+`stdio_protocol` 与 `ProviderProfile.protocol` 独立。前者未指定时，
+`guess_stdio_protocol(messages_or_tools)` 从整个列表识别并绑定一次；空列表或无法识别的
+输入报 `MessageValidationError`。纯文本 Chat / Responses / Anthropic / Ollama 输入有重叠，
+默认按 `openai_chat`；显式指定可消除歧义。绑定后不会重新猜测。
+messages 和 tools 都遵循这个协议，历史不混用不同协议格式。
 
 ```python
 from my_llm import ModelProfile, MyLLM, ProviderProfile
 
+llm = MyLLM(
+    provider=ProviderProfile(protocol="openai_responses"),
+    model=ModelProfile(model="your-model", max_tokens=2048),
+    stdio_protocol="openai_chat",
+)
 
-def make_llm(model_id: str):
-    return MyLLM(
-        provider=ProviderProfile(api_type="chat_completions"),
-        model=ModelProfile(model=model_id, max_tokens=2048),
-    )
-
-
-async def ask(llm: MyLLM, question: str):
-    return await llm.generate(messages=[{"role": "user", "content": question}])
+async def ask(llm, prompt):
+    return await llm.generate(messages=[{"role": "user", "content": prompt}])
 ```
 
-`MyLLM(provider=..., model=..., client=None)` 的 `model` 必须是 `ModelProfile`。
-构造时保存配置；需要更改配置时，用更新后的 Profile 创建新实例。
-同一实例可并发调用，每次调用分别传入自己的历史消息。
-Provider 模型列表用于配置管理，选择方式见[模型列表](configuration.md#模型列表)。
+## 生成选项
 
-## generate 参数
+`MyLLM.generate()` 只接受以下 keyword 参数：
 
-以下参数适用于模块级 `generate()` 和 `MyLLM.generate()`；实例方法使用构造时的
-Provider、Model 和 SDK Client，不再接受 `provider`、`model`、`client`。
-
-| 参数 | 默认值 | 使用方式 |
+| 参数 | 默认值 | 含义 |
 | --- | --- | --- |
-| `messages` | 必填 | 非空字典序列，支持列表、元组；格式见下文 |
-| `protocol` | `"openai"` | 默认值跟随 Provider；其他值须与 `ProviderProfile.protocol` 一致 |
-| `stream` | `None` | `True` 返回 `MessageStream`；`False`/`None` 返回完整 `Message` |
-| `tools` | `omit` | Responses 或 Chat 的本地函数描述列表；`None`/`omit` 不传工具，`[]` 传空列表 |
-| `max_tokens` | `None` | 正整数输出限制；`None` 继承 Model，`omit` 不设置限制 |
-| `reasoning` | `None` | 可选布尔开关；`True` 且强度为 `none` 时使用 `medium` |
-| `reasoning_effort` | `"none"` | `none`/`low`/`medium`/`high`/`xhigh`/`max`；受模型能力与映射约束 |
-| `previous_response_id` | `None` | Responses 的服务端历史引用；不能用于 Chat |
-| `extra_headers` | `None` | 按键覆盖 Profile 中的请求头；支持 `omit` |
-| `extra_body` | `None` | 按键覆盖 Profile 中的额外请求字段；支持 `omit` |
-| `base_url` | `None` | 覆盖服务地址；`None` 继承，`omit` 使用 SDK 默认配置 |
-| `api_key` | `None` | 覆盖凭据；`None` 继承，`omit` 使用 SDK 环境配置 |
-| `timeout` | `None` | 正数，单位秒；`None` 继承，`omit` 使用 SDK 默认值 |
-| `max_retries` | `None` | 非负整数重试次数；`None` 继承，`omit` 使用 SDK 默认值 |
+| `messages` | 必填 | 非空、同协议的消息或 items 列表 |
+| `tools` | `omit` | 同协议的工具声明列表；None/omit 不发送，[] 发送空列表 |
+| `stream` | False | True 返回需异步消费的 MessageStream |
+| `max_tokens` | None | 继承模型；omit 取消输出 token 限制 |
+| `reasoning` | None | True 在 effort=none 时使用 medium；False 与非 none effort 冲突 |
+| `reasoning_effort` | `none` | none/low/medium/high/xhigh/max，经 profile 映射 |
+| `extra_headers` | None | 按键覆盖 profile headers |
+| `extra_body` | None | 按键覆盖 profile body，不能覆盖协议核心字段 |
+| `previous_response_id` | None | 仅上游 openai_responses 支持的服务端历史引用 |
 
-模块级函数还接受 `client=None`，用于注入调用者管理的官方 SDK Client：
-OpenAI 为 `AsyncOpenAI`，Anthropic 为 `AsyncAnthropic`，Gemini 为 `google.genai.Client`
-（内部使用 `.aio`），Ollama 为 `ollama.AsyncClient`。
-注入 Client 后，四个连接覆盖参数必须保持 `None`，不能传 `omit` 或其他值。
-`reasoning=False` 与非 `none` 强度冲突；推理字段、能力及 extras 的规则见
-[配置指南](configuration.md#推理配置)。库不自动执行工具或管理应用的对话历史。
+provider、model、protocol、连接参数和 SDK client 不作为实例 generate 的动态参数。
+改变连接或模型时构造新实例。配置默认值和协议参数映射见 [配置指南](configuration.md)。
 
-## 读取完整结果
+## 流与资源
 
-返回的 `Message` 是普通字典，使用统一的 Chat 风格：
-
-| 字段 | 含义 |
-| --- | --- |
-| `role` | 固定为 `"assistant"` |
-| `content` | 回答文本；没有文本时为 `None` |
-| `reasoning_content` | 可见推理文本，有内容时提供 |
-| `tool_calls` | 完整工具调用列表，有调用时提供 |
-| `finish_reason` | 各协议的等价完成原因统一为 `stop` / `length` / `tool_calls` / `content_filter`，特殊原因保留原值，详见下表 |
-| `usage` | 启用用量后提供供应商原生用量字典，不自行计算 Token |
-| `response_id` | 供应商返回的响应 ID（若提供） |
-| `response_status` | Responses 的完成状态 |
-| `response_output` | 原生历史元数据，包含 Responses items、Anthropic 签名块或 Gemini parts |
-
-除 `role`、`content` 外，按需提供字段。工具调用形如
-`{"id": "call_1", "type": "function", "function": {"name": "add", "arguments": "{\"a\":2,\"b\":3}"}}`，
-其中 `arguments` 始终是完整的 JSON 字符串。
-
-`finish_reason` 在完整结果和流式最终 Chunk 中使用相同映射：
-
-| 统一值 | OpenAI Chat / Responses | Anthropic | Gemini | Ollama |
-| --- | --- | --- | --- | --- |
-| `stop` | Chat `stop`；Responses 完成且无工具调用 | `end_turn` / `stop_sequence` | `STOP` 且无工具调用 | `stop` 且无工具调用 |
-| `length` | Chat `length` | `max_tokens` / `model_context_window_exceeded` | `MAX_TOKENS` | `length` |
-| `tool_calls` | Chat `tool_calls`；Responses 完成且包含工具调用 | `tool_use` | `STOP` 且包含完整工具调用 | `stop` 且包含完整工具调用 |
-| `content_filter` | Chat `content_filter` | `refusal` | 内容拦截仍抛异常 | — |
-
-Anthropic `pause_turn` 表示暂停后可继续，保留为 `pause_turn`；
-其他未映射的原因（包括 Chat 的旧式 `function_call`）保留原值。
-原生推理和签名块仍通过 `response_output` 回放。
-
-失败和不完整响应仍抛出异常，不作为正常完成结果返回。Responses 的
-`response.incomplete` / `response.failed` 对应异常的 `partial_message` 仍分别使用
-`finish_reason="incomplete"` / `"failed"`，并通过 `details` 保留原生原因。
-长度限制下的工具调用仍需通过完整性检查，不会仅因存在调用就被标为 `tool_calls`。
-
-## 流式读取与提前停止
-
-流式调用也需要先 `await`。返回流后，第一次迭代才开始请求。
+调用 `await llm.generate(..., stream=True)` 后使用 `async with stream`。
+未消费的流不启动请求；提前退出、取消、SDK 失败和正常结束都会关闭上游流和请求 client。
+`aclose()` 可重复调用。并发请求有独立的累积状态和 client；
+同一实例的并发请求使用同一个 stdio 协议，一路取消或失败不会关闭其他请求，
+验证范围见[并发复核](concurrency.md)。
 
 ```python
-from my_llm import MessageChunk, MyLLM
-
-
-async def print_stream(llm: MyLLM, question: str):
-    stream = await llm.generate(
-        messages=[{"role": "user", "content": question}], stream=True,
-    )
-    combined = MessageChunk()
+async def print_stream(llm, prompt):
+    # llm 的 stdio_protocol 是 openai_chat。
+    stream = await llm.generate(messages=[{"role": "user", "content": prompt}], stream=True)
     async with stream:
-        async for chunk in stream:
-            print(chunk.content, end="", flush=True)
-            combined += chunk
-    return combined.to_message(require_finished=True)
+        async for event in stream:
+            for choice in event.get("choices", []):
+                delta = choice["delta"]
+                print(delta.get("content", ""), end="")
+                if delta.get("tool_calls"):
+                    print(delta["tool_calls"])  # 参数已经完整
+    return stream.result
 ```
 
-`MessageChunk.content` 和 `reasoning_content` 是增量文本；最后一个 Chunk 才携带
-完整 `tool_calls`，同时提供完成原因和可用的用量、原生输出信息。
-`chunk.has_delta` 判断是否有文本、推理或工具内容，`chunk.is_finished` 判断是否有
-完成原因。`to_message(require_finished=True)` 在未完成时抛 `ValueError`。
-Chunk 的嵌套数据按只读使用；需要修改结果时使用 `to_message()` 返回的独立字典。
+`stream.result` 在完整消费后提供与非流式模式相同的标准消息/items，读取时返回独立副本。
+文本和可见思考增量即时输出；工具参数保存在请求状态中，完整后再生成目标协议的工具事件。
+Anthropic/Gemini 的签名内容保留在完成消息和对应的原生流字段中。
+启用用量时，Chat 先发送结束 choice，再发送 `choices=[]` 的独立 usage 尾块。
+跨协议输出到 Responses 时，输出限制与内容过滤分别生成相应的 `response.incomplete`，
+成功结束才生成 `response.completed`；协议字段依据与校验范围见[协议复核](protocol-conformance.md)。
 
-使用 `async with stream`，可在 `break`、异常、取消时关闭单次请求。
-也可显式 `await stream.aclose()`，重复关闭是安全的。单独使用 `async for` 后
-`break` 不保证立即释放连接。完整结果模式会自动消费并关闭流。
+## 工具回合
 
-## 输入消息格式
-
-`messages` 接受 Chat Completions 消息、Responses input/output items，也可混合。
-库根据结构自动识别，按 Provider 的 `api_type` 转换，无需选择输入模板。
-公共输入类型 `MessageInput` 表示这些字典；允许角色为
-`system`、`user`、`assistant`、`tool`。
-
-```python
-from my_llm import MyLLM
-
-
-async def ask_with_response_input(llm: MyLLM):
-    # llm 可以使用任意一种 api_type。
-    return await llm.generate(messages=[
-        {"role": "system", "content": "请简短回答"},
-        {"type": "message", "role": "user", "content": [
-            {"type": "input_text", "text": "你好"},
-        ]},
-    ])
-```
-
-| 输入内容 | 自动转换行为 |
-| --- | --- |
-| 文本 `role/content` | 两套 API 均可使用 |
-| `text`、`input_text`、`output_text` | 转为目标 API 的文本内容块 |
-| `image_url`、`input_image` | 在可表示的情况下转换图片内容块 |
-| `file`、`input_file` | 在可表示的情况下转换文件内容块 |
-| Chat `tool_calls` / `role="tool"` | 转为 Responses `function_call` / `function_call_output` |
-| Responses `function_call` / `function_call_output` | 转为 Chat 工具调用/结果，按 `call_id` 关联 |
-| Responses `message` / `reasoning` | 转为 Chat assistant 内容及工具调用历史中的可见推理 |
-
-同协议原生项保留 ID、status、phase 等字段。SDK 的 output 对象需先转为字典，
-如 `[item.model_dump(exclude_none=True) for item in response.output]`。
-加密推理仅在 Responses 中原样回放，不转为可见文本。
-
-跨协议缺少对应表示时抛 `MessageValidationError`，例如 Chat 不支持
-`item_reference`、仅含 `file_id` 的图片、仅含 `file_url` 的文件；Responses
-不支持 Chat 音频块。Chat 工具结果只支持文本内容块。
-历史还会检查重复调用 ID、缺失调用、未完成参数及结果关联，避免发送无效工具历史。
-
-## 工具调用：描述、执行、回传
-
-先设置 `ModelProfile(supports_function_calling=True)`。`tools` 支持两种 API
-官方函数格式，列表中每项分别识别，同协议保持其字段，跨协议自动转换。
-只支持调用者执行的函数工具，不提供独立模板配置。
-
-```python
-# Responses 扁平格式
-responses_tool = {
-    "type": "function", "name": "add",
-    "parameters": {"type": "object", "properties": {
-        "a": {"type": "integer"}, "b": {"type": "integer"},
-    }, "required": ["a", "b"]},
-}
-# Chat Completions 嵌套格式，同样可用于任意一种 API
-chat_tool = {
-    "type": "function",
-    "function": {key: value for key, value in responses_tool.items() if key != "type"},
-}
-```
-
-下面完成一个工具回合。调用者按已知函数名执行本地工具，并为每个调用回传结果。
-模型在后续回复中仍可能请求工具，应用可按相同方式继续循环。
+调用者执行工具；本库只转换声明、调用和结果，并校验消息间的 ID 对应关系。
+重复调用 ID、重复结果、未知结果 ID 和缺少结果均报错。
+Gemini/Ollama 中没有 ID 的调用按历史顺序建立局部 ID；无 ID 的结果按名称关联待完成调用。
 
 ```python
 import json
 
-from my_llm import ModelProfile, MyLLM, ProviderProfile
-
-
-async def add_round_trip(provider: ProviderProfile, model_id: str, *, client=None):
+async def add_round_trip(provider, model_id):
+    from my_llm import ModelProfile, MyLLM
     llm = MyLLM(
         provider=provider,
         model=ModelProfile(model=model_id, supports_function_calling=True),
-        client=client,
+        stdio_protocol="openai_chat",
     )
-    tools = [{
-        "type": "function", "name": "add",
-        "parameters": {"type": "object", "properties": {
-            "a": {"type": "integer"}, "b": {"type": "integer"},
-        }, "required": ["a", "b"]},
-    }]
-    history = [{"role": "user", "content": "2 加 3 是多少？请调用 add。"}]
-    first = await llm.generate(messages=history, tools=tools)
-    if not first.get("tool_calls"):
-        return first
-    history.append(first)
-    local_tools = {"add": lambda a, b: a + b}
-    for call in first["tool_calls"]:
-        function = call["function"]
-        output = local_tools[function["name"]](**json.loads(function["arguments"]))
-        history.append({
-            "role": "tool", "tool_call_id": call["id"],
-            "content": json.dumps(output, ensure_ascii=False),
-        })
+    tools = [{"type": "function", "function": {
+        "name": "add", "parameters": {
+            "type": "object", "properties": {
+                "a": {"type": "integer"}, "b": {"type": "integer"},
+            }, "required": ["a", "b"],
+        },
+    }}]
+    history = [{"role": "user", "content": "What is 2 + 3?"}]
+    response = await llm.generate(messages=history, tools=tools)
+    history.append(response)
+    for call in response.get("tool_calls", []):
+        if call["function"]["name"] != "add":
+            raise ValueError("Unknown local tool")
+        arguments = json.loads(call["function"]["arguments"])
+        output = arguments["a"] + arguments["b"]
+        history.append({"role": "tool", "tool_call_id": call["id"], "content": str(output)})
     return await llm.generate(messages=history, tools=tools)
 ```
 
-工具返回统一的 `ToolCall` 字典，`FunctionCall` 描述其中 `name/arguments`。
-用 `tool_call_id=call["id"]` 关联结果；Responses 原生函数结果使用 `call_id`，
-不能使用 item 自身的 `id` 替代它。
+`previous_response_id` 允许发送仅包含新消息/结果的历史，并允许结果引用服务端已保存的调用 ID。
+仅上游 API 为 `openai_responses` 时可用，不作为 input item 发送。
+原生 Responses 的 reasoning / encrypted_content / item_reference 等字段同协议回放保留。
 
-## Responses 历史续接
+## 独立 Codec
 
-有两种方式，由应用选择：
+`BaseCodec` 只声明协议和对应的 `BaseEncoder` / `BaseDecoder`；它们不保存 profile、
+流片段或识别结果。每种协议独立一对 encoder/decoder。
 
-1. **本地保存历史**：将返回的完整 `Message` 原样追加到原历史，再追加工具结果或
-   下一条用户消息。上面的工具示例适用于两套 API。保留 `response_output` 可完整
-   回放 Responses 的 message、reasoning 和 function_call 项。
-2. **使用服务端历史**：下一次调用传 `previous_response_id`，只提供新消息或工具
-   结果。服务端必须支持并保留对应历史。此时不要重复发送整段旧历史。
+- `encode_messages` / `decode_messages`
+- `encode_tools` / `decode_tools`
+- `encode_chunks` / `decode_chunks`
 
-```python
-from my_llm import MyLLM
-
-
-async def continue_response(llm: MyLLM):
-    # llm 的 Provider 必须使用 api_type="responses"。
-    first = await llm.generate(messages=[{"role": "user", "content": "介绍一下 Python"}])
-    return await llm.generate(
-        previous_response_id=first["response_id"],
-        messages=[{"role": "user", "content": "再给一个简单例子"}],
-    )
-```
-
-第一种方式中不要只保留 `content` 而丢失工具调用或原生输出。
-若编辑返回消息中的统一工具调用，需同步原生 `response_output`；两者冲突会报错。
-第二种方式中先前工具调用 ID 的存在性由服务端验证，库仍检查结果 ID 非空且不重复。
-
-## 错误处理
+以上方法签名均为 `(values: list, profile: ResolvedProfile | None = None, **parameters)`。
+encode 从标准协议到内部开放字典；decode 从内部字典到标准协议。
+`profile=None` 表示标准协议，有 profile 时应用厂商配置。
+BaseCodec 的 `match_protocol(values)` 返回协议名或 None。
 
 ```python
-from my_llm import MyLLM, StreamError
+from my_llm import MyCodec
 
+codec = MyCodec()
+intermediate = codec.encode(
+    messages=[{"role": "user", "content": "Hello"}],
+    input_format="openai_chat",
+)
+native = codec.decode(**intermediate, target_format="gemini")
+assert native["messages"] == [{"role": "user", "parts": [{"text": "Hello"}]}]
 
-async def ask_with_partial_output(llm: MyLLM, question: str):
-    try:
-        return await llm.generate(messages=[{"role": "user", "content": question}])
-    except StreamError as exc:
-        print("已收到的部分消息：", exc.partial_message)
-        print("供应商错误详情：", exc.details)
-        raise
+# 同样可用 codec.convert(..., input_format=..., target_format=...) 一步转换。
 ```
 
-| 异常 | 含义 |
-| --- | --- |
-| `ConfigurationError` | Profile、参数类型、组合或配置值无效；也继承 `ValueError` |
-| `UnsupportedProviderError` | 协议未实现，或供应商不支持必需的上游流式请求 |
-| `UnsupportedCapabilityError` | 请求的推理强度、工具等能力未启用或不受支持 |
-| `MessageValidationError` | 消息、工具或跨协议转换无效 |
-| `StreamError` | 响应失败，提供 `details` 和 `partial_message` |
-| `IncompleteStreamError` | 流缺少完成状态，或工具调用不完整 |
-| `ResponseFailedError` | 响应出现失败/错误事件 |
-| `ResponseIncompleteError` | Responses 明确报告 incomplete |
+MyCodec 同时持有五个 Codec，可在不同调用中复用。中间态是内部实现，不是应用消息协议；
+源编码将未知字段保留在中间态的原层级，字段冲突时转换值优先；标准格式（`profile=None`）下，同协议与未经修改的中间态之间无损。跨协议输出可能丢弃目标协议不支持的字段，不保证跨协议往返无损。详见[保留规则与验证](lossless-audit.md)。目标 SDK 对不支持的扩展仍可能报错。
+增量 encode/decode 不累积片段；需要完整消息或完整工具时由 MyLLM 的请求状态负责累积。
 
-所有上述异常都继承 `MyLLMError`。前三种配置细分类及消息校验异常继承
-`ConfigurationError`；后三种流异常继承 `StreamError`，
-`ResponseIncompleteError` 也继承 `IncompleteStreamError`。
-流式模式下，网络或响应错误可能在迭代过程中才发生。
-四种官方 SDK 的 HTTP、认证、超时等异常保留原类型，按 SDK 异常处理。
+## 异常边界
 
-## 共享 SDK Client
+`ConfigurationError` 表示配置错误，`MessageValidationError` 表示标准输入/消息关联错误；
+`UnsupportedCapabilityError` 表示模型禁用了所需能力。SDK HTTP/传输错误保持原有类型。
+`StreamError` 及其子类包含原生 `details` 和相同 stdio 协议的 `partial_message`。
+缺少消息级终止事件报 `IncompleteStreamError`；Responses failed/incomplete 使用对应子类。
+本库不提供消息内部中断恢复、工具执行或部分 JSON 工具调用接口。
 
-```python
-from openai import AsyncOpenAI
-
-from my_llm import ModelProfile, MyLLM, ProviderProfile
-
-
-async def with_shared_client(model_id: str):
-    async with AsyncOpenAI() as client:
-        llm = MyLLM(
-            provider=ProviderProfile(api_type="responses"),
-            model=ModelProfile(model=model_id),
-            client=client,
-        )
-        return await llm.generate(messages=[{"role": "user", "content": "你好"}])
-```
-
-注入 Client 时，在该 Client 上配置 URL、密钥、超时与重试。库关闭每次请求的流，
-Client 本身由调用者关闭。不注入时，库在每次请求完成、失败、取消或显式关闭后
-释放自行创建的 Client。
-
-## 接口迁移
-
-旧接口 `create()` 更名为 `generate()`，`Invoke` 更名为 `MyLLM`，实例方法
-相应更名为 `MyLLM.generate()`。旧公开名称不再导出。
-离线可运行的完整演示见 [local_demo.py](../../examples/local_demo.py)；
-开发构建步骤见[构建指南](../guides/building.md)。
-
-
-## 原生协议调用
-
-```python
-from my_llm import ModelProfile, ProviderProfile, generate
-
-
-async def ask_anthropic(model_id: str):
-    return await generate(
-        provider=ProviderProfile(protocol="anthropic", usage_mode="native"),
-        model=ModelProfile(model=model_id, max_tokens=4096),
-        messages=[{"role": "user", "content": "你好"}],
-    )
-```
-
-Gemini 和 Ollama 使用相同的调用参数，只需更改 Provider 的 `protocol` 与模型 ID。
-`api_type` 只选择 OpenAI 的两种 API；原生协议忽略它在请求中的作用。
-非流式结果仍由对应 SDK 的异步流拼接，未实现额外 HTTP、SSE 或重试层。
-`usage_mode="none"` 不返回用量；原生协议的另外两种模式均读取 SDK 原生用量。
-所有协议的 `finish_reason` 使用上文的统一映射：正常结束为 `stop`、
-长度限制为 `length`、完整工具调用为 `tool_calls`。
-截断流与无效工具 JSON 会抛出 `StreamError` 子类。
-
-工具输入仍是本地 Function Tool，参数仍返回完整 JSON 字符串；工具执行由调用者负责。
-回传整个 assistant Message，能保留 Anthropic thinking 签名及 Gemini thought signature。
-Gemini / Ollama 缺少原生调用 ID 时生成本地唯一 ID，结果仍用 `tool_call_id` 关联。
-`previous_response_id` 只适用于 OpenAI Responses，原生协议须传完整本地历史。
+`MyCodec.convert(chunks=完整事件列表, input_format=..., target_format=...)` 也可离线转换
+整个流；跨协议的完整 batch 在本次调用内组装，不保存到转换器。
+实时消费使用 MyLLM，由每次请求持有累积状态；BaseEncoder/BaseDecoder 仍只转换单次传入的块。

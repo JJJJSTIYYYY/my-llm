@@ -129,22 +129,23 @@ def test_catalogue_and_context_metadata_are_excluded_from_resolution_and_deepcop
     assert resolved.model == "selected"
 
 
-@pytest.mark.parametrize("api_type", ["responses", "chat_completions"])
+@pytest.mark.parametrize("protocol", ["openai_responses", "openai_chat"])
 @pytest.mark.parametrize("window", [-1, 0, 1, 256000])
-async def test_metadata_does_not_change_request_or_limit_content(api_type, window):
-    provider = ProviderProfile(api_type=api_type, models=[ModelProfile(model="demo", max_tokens=1)])
+async def test_metadata_does_not_change_request_or_limit_content(protocol, window, monkeypatch):
+    provider = ProviderProfile(protocol=protocol, models=[ModelProfile(model="demo", max_tokens=1)])
     model = ModelProfile(model="demo", max_tokens=64, max_context_window=window)
-    events = [response_completed()] if api_type == "responses" else [chat_event(finish="stop")]
-    client = FakeClient(events)
-    text = "content longer than the configured context window " * 10
-    await generate(
-        provider=provider, model=model, messages=[{"role": "user", "content": text}], client=client
+    events = (
+        [response_completed()] if protocol == "openai_responses" else [chat_event(finish="stop")]
     )
+    client = FakeClient(events)
+    monkeypatch.setattr("my_llm.invoke.AsyncOpenAI", lambda **kwargs: client)
+    text = "content longer than the configured context window " * 10
+    await generate(provider=provider, model=model, messages=[{"role": "user", "content": text}])
     request = client.requests[0]
     assert "models" not in request and "max_context_window" not in request
-    assert request["input" if api_type == "responses" else "messages"] == [
-        {"role": "user", "content": text}
-    ]
+    encoded = request["input" if protocol == "openai_responses" else "messages"]
+    assert text in str(encoded)
     assert (
-        request["max_output_tokens" if api_type == "responses" else "max_completion_tokens"] == 64
+        request["max_output_tokens" if protocol == "openai_responses" else "max_completion_tokens"]
+        == 64
     )

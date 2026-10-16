@@ -1,12 +1,10 @@
-"""Profile-driven asynchronous OpenAI, Anthropic, Gemini and Ollama adapter."""
+"""Profile-driven asynchronous standard-protocol LLM conversion and execution."""
 
 from openai import Omit, omit
 
 from my_llm._version import __version__
-from my_llm.invoke import MessageStream, MyLLM, generate
-from my_llm.profile import APIType, ModelProfile, Protocol, ProviderProfile, ReasoningEffort
-from my_llm.types import FunctionCall, Message, MessageChunk, MessageInput, ToolCall
-from my_llm.types.exceptions import (
+from my_llm.codec import BaseCodec, BaseDecoder, BaseEncoder, MyCodec
+from my_llm.exceptions import (
     ConfigurationError,
     IncompleteStreamError,
     MessageValidationError,
@@ -17,31 +15,41 @@ from my_llm.types.exceptions import (
     UnsupportedCapabilityError,
     UnsupportedProviderError,
 )
+from my_llm.invoke import MyLLM, generate
+from my_llm.profile import (
+    ModelProfile,
+    Protocol,
+    ProviderProfile,
+    ReasoningEffort,
+    ResolvedProfile,
+    resolve_profiles,
+)
+from my_llm.stream import MessageStream
 
 __all__ = [
-    "APIType",
-    "ConfigurationError",
-    "FunctionCall",
-    "IncompleteStreamError",
+    "BaseCodec",
+    "BaseDecoder",
+    "BaseEncoder",
+    "MyCodec",
     "MyLLM",
-    "Message",
-    "MessageChunk",
-    "MessageInput",
     "MessageStream",
-    "MessageValidationError",
     "ModelProfile",
-    "MyLLMError",
-    "Omit",
-    "Protocol",
     "ProviderProfile",
+    "ResolvedProfile",
+    "resolve_profiles",
+    "Protocol",
     "ReasoningEffort",
+    "Omit",
+    "omit",
+    "generate",
+    "__version__",
+    "ConfigurationError",
+    "IncompleteStreamError",
+    "MessageValidationError",
+    "MyLLMError",
     "ResponseFailedError",
     "ResponseIncompleteError",
     "StreamError",
-    "ToolCall",
     "UnsupportedCapabilityError",
     "UnsupportedProviderError",
-    "__version__",
-    "generate",
-    "omit",
 ]

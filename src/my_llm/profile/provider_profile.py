@@ -7,9 +7,9 @@ from typing import Literal
 
 from openai import Omit
 
+from my_llm.exceptions import ConfigurationError
 from my_llm.profile.model_profile import ModelProfile
-from my_llm.profile.utils.common import APIType, Protocol, _Overrides
-from my_llm.types.exceptions import ConfigurationError
+from my_llm.profile.utils.common import Protocol, _Overrides
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -22,8 +22,7 @@ class ProviderProfile(_Overrides):
     build a changed configuration. The model catalogue has explicit mutators.
 
     Args:
-        api_type: "chat_completions" (default) or "responses".
-        protocol: "openai" (default), "anthropic", "gemini" or "ollama".
+        protocol: openai_chat (default), openai_responses, anthropic, gemini or ollama.
         base_url: Optional service URL passed to the selected official SDK.
         api_key: Optional SDK credential; excluded from repr.
         timeout: Positive SDK timeout in seconds, or None for the SDK default.
@@ -47,17 +46,15 @@ class ProviderProfile(_Overrides):
         content_path: Text delta selector; defaults to the API's standard field.
         reasoning_content_path: Reasoning delta selector; defaults to the API's
             standard reasoning-summary/reasoning-content field.
-        replay_reasoning_content_when_tool_calls: Include visible reasoning on
-            every Chat/Ollama assistant message, using an empty string when
-            absent, including messages without tool calls; defaults True.
+        replay_reasoning_content_when_tool_calls: Replay existing visible reasoning; add an empty
+            value only on assistant tool calls when thinking is enabled. Defaults True.
 
     Raises:
         ConfigurationError: The model catalogue contains invalid entries.
             Other settings are validated when constructing MyLLM or generating.
     """
 
-    api_type: APIType = "chat_completions"
-    protocol: Protocol = "openai"
+    protocol: Protocol = "openai_chat"
     base_url: str | Omit | None = None
     api_key: str | Omit | None = field(default=None, repr=False)
     timeout: float | Omit | None = None

@@ -14,7 +14,7 @@ from my_llm import __version__
 
 
 @pytest.mark.parametrize("version_override", [None, "9.8.7"])
-def test_build_contains_runtime_types_and_source_tests(tmp_path, version_override):
+def test_build_contains_runtime_modules_and_source_tests(tmp_path, version_override):
     root = Path(__file__).resolve().parents[2]
     source = tmp_path / "source"
     source.mkdir()
@@ -42,10 +42,15 @@ def test_build_contains_runtime_types_and_source_tests(tmp_path, version_overrid
         names = archive.namelist()
         assert "my_llm/invoke.py" in names
         assert "my_llm/_version.py" in names
-        assert "my_llm/codec/openai/decoding/responses.py" in names
+        assert "my_llm/codec/openai/responses/decoding/__init__.py" in names
         for protocol in ("anthropic", "gemini", "ollama"):
             assert f"my_llm/codec/{protocol}/__init__.py" in names
-        assert "my_llm/types/messages.py" in names
+        assert not any(name.startswith("my_llm/types/") for name in names)
+        assert "my_llm/exceptions.py" in names
+        assert "my_llm/stream/message_stream.py" in names
+        assert "my_llm/stream/_state.py" in names
+        assert "my_llm/codec/base/codec.py" in names
+        assert "my_llm/codec/converter.py" in names
         assert "my_llm/py.typed" in names
         assert all(not name.endswith(".gitkeep") for name in names)
         assert all(name.startswith(("my_llm/", f"{dist_info}/")) for name in names)

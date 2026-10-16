@@ -8,10 +8,10 @@ from typing import Any
 
 from openai import Omit
 
+from my_llm.exceptions import ConfigurationError, UnsupportedProviderError
 from my_llm.profile.model_profile import ModelProfile
 from my_llm.profile.provider_profile import ProviderProfile
-from my_llm.profile.utils.common import EFFORTS, APIType, Protocol, merge_dicts
-from my_llm.types.exceptions import ConfigurationError, UnsupportedProviderError
+from my_llm.profile.utils.common import EFFORTS, PROTOCOLS, Protocol, merge_dicts
 
 
 @dataclass(frozen=True)
@@ -22,7 +22,6 @@ class ResolvedProfile:
     Treat values and their nested payloads as read-only.
     """
 
-    api_type: APIType
     protocol: Protocol
     model: str
     values: dict[str, Any]
@@ -41,13 +40,11 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
     """
     if not isinstance(provider, ProviderProfile) or not isinstance(model, ModelProfile):
         raise ConfigurationError("provider and model must be profile instances")
-    if provider.protocol not in ("openai", "anthropic", "gemini", "ollama"):
+    if provider.protocol not in PROTOCOLS:
         raise UnsupportedProviderError(f"unsupported protocol: {provider.protocol!r}")
-    if provider.api_type not in ("responses", "chat_completions"):
-        raise UnsupportedProviderError(f"unknown API type: {provider.api_type!r}")
     if not isinstance(model.model, str) or not model.model.strip():
         raise ConfigurationError("model must be a non-empty string")
-    responses = provider.api_type == "responses"
+    responses = provider.protocol == "openai_responses"
     values: dict[str, Any] = {
         "extra_headers": {},
         "extra_body": {},
@@ -73,7 +70,7 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
     }
     for profile in (provider, model):
         for item in fields(profile):
-            if item.name in ("api_type", "protocol", "model", "models", "max_context_window"):
+            if item.name in ("protocol", "model", "models", "max_context_window"):
                 continue
             value = getattr(profile, item.name)
             if value is None:
@@ -83,7 +80,7 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
             else:
                 values[item.name] = value
     # Snapshot configuration once, after all layers have been merged.
-    resolved = ResolvedProfile(provider.api_type, provider.protocol, model.model, deepcopy(values))
+    resolved = ResolvedProfile(provider.protocol, model.model, deepcopy(values))
     for key in (
         "supports_stream",
         "supports_reasoning",
@@ -100,7 +97,7 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
     usage = resolved.get("usage_mode", "none")
     if usage not in ("none", "native", "stream_options"):
         raise ConfigurationError("invalid usage_mode")
-    if provider.protocol == "openai" and (
+    if provider.protocol in ("openai_chat", "openai_responses") and (
         (responses and usage == "stream_options") or (not responses and usage == "native")
     ):
         raise ConfigurationError("usage_mode is incompatible with the selected API")
@@ -129,17 +126,15 @@ def validate_max_tokens(value: Any) -> None:
         raise ConfigurationError("max_tokens must be a positive integer or omit")
 
 
-def client_parameters(profile: ResolvedProfile, **overrides: Any) -> dict[str, Any]:
-    """Validate SDK connection fields, applying non-None per-call overrides.
+def client_parameters(profile: ResolvedProfile) -> dict[str, Any]:
+    """Validate SDK connection fields from the construction-time profile.
 
     Returns base_url/api_key/timeout/max_retries keyword arguments, excluding
     unset/omitted values. Invalid values raise ConfigurationError.
     """
     result = {}
     for key in ("base_url", "api_key", "timeout", "max_retries"):
-        value = overrides.get(key)
-        if value is None:
-            value = profile.get(key)
+        value = profile.get(key)
         if value is None or isinstance(value, Omit):
             continue
         if key in ("api_key", "base_url") and (not isinstance(value, str) or not value.strip()):

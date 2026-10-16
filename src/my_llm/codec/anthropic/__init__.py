@@ -1,6 +1,5 @@
-"""Public interfaces for the Anthropic codec."""
+"""anthropic conversion."""
 
 from my_llm.codec.anthropic.codec import AnthropicCodec
-from my_llm.codec.anthropic.decoding.stream import AnthropicDecoder
 
-__all__ = ["AnthropicCodec", "AnthropicDecoder"]
+__all__ = ["AnthropicCodec"]

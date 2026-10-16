@@ -1,88 +1,103 @@
-"""Gemini role-specific content history and signed model-part replay."""
+"""gemini messages: encoding conversion."""
 
-import json
 from typing import Any
 
-from google.genai import types
+from my_llm.codec.utils.conversion import (
+    allocate_call_id,
+    associate_tool_result,
+    dictionaries,
+    extras,
+    remember,
+    residual,
+)
+from my_llm.codec.utils.preservation import part_fields
+from my_llm.exceptions import MessageValidationError
+from my_llm.profile import ResolvedProfile
 
-from my_llm.codec.gemini.encoding.content import encode_content
-from my_llm.codec.gemini.encoding.tools import encode_function_call
-from my_llm.codec.utils.native import native_messages, text_content, validate_replay_calls
-from my_llm.types.exceptions import ConfigurationError
-
-
-def encode_messages(messages: Any) -> tuple[list[types.Content], list[str]]:
-    history = []
-    system = []
-    names = {}
-    for message in native_messages(messages):
-        if message["role"] == "system":
-            system.append(text_content(message["content"]))
-            continue
-        encoded = encode_message(message, names)
-        names.update({c["id"]: c["function"]["name"] for c in message.get("tool_calls", [])})
-        if history and history[-1].role == encoded.role:
-            history[-1].parts.extend(encoded.parts)
-        else:
-            history.append(encoded)
-    if not history:
-        raise ConfigurationError("Gemini requires a non-system message")
-    return history, system
+PROTOCOL = "gemini"
 
 
-def encode_message(message: dict[str, Any], names: dict[str, str]) -> types.Content:
-    role = message["role"]
-    if role == "tool":
-        encoded = _encode_tool_result(message, names)
-    elif role == "assistant":
-        encoded = _encode_assistant(message)
-    else:
-        encoded = types.Content(role="user", parts=encode_content(message.get("content"), role))
-    if not encoded.parts:
-        raise ConfigurationError("Gemini messages must contain text or function parts")
-    return encoded
+def encode_part(part: dict, call_id: str) -> dict:
+    if "function_call" in part:
+        call = part["function_call"]
+        return {
+            **residual(part, part_fields(part)),
+            "type": "tool_use",
+            "id": call.get("id") or call_id,
+            "name": call.get("name"),
+            "input": call.get("args", {}),
+        }
+    if "function_response" in part:
+        call = part["function_response"]
+        return {
+            **residual(part, part_fields(part)),
+            "type": "tool_result",
+            "name": call.get("name"),
+            "tool_use_id": call.get("id"),
+            "content": call.get("response", {}),
+        }
+    if "text" in part:
+        if part.get("thought"):
+            return {**extras(part, "text", "thought"), "type": "thinking", "thinking": part["text"]}
+        return {**part, "type": "text"}
+    if "inline_data" in part or "file_data" in part:
+        data = part.get("inline_data", part.get("file_data"))
+        mime = data.get("mime_type", "application/octet-stream")
+        source = (
+            {"type": "base64", "media_type": mime, "data": data.get("data")}
+            if "inline_data" in part
+            else {"type": "url", "url": data.get("file_uri"), "media_type": mime}
+        )
+        return {
+            **residual(part, part_fields(part)),
+            "type": "image" if mime.startswith("image/") else "document",
+            "source": source,
+        }
+    return part
 
 
-def _encode_tool_result(message: dict[str, Any], names: dict[str, str]) -> types.Content:
-    return types.Content(
-        role="user",
-        parts=[
-            types.Part(
-                function_response=types.FunctionResponse(
-                    id=message["tool_call_id"],
-                    name=names[message["tool_call_id"]],
-                    response={"result": text_content(message["content"])},
-                )
+def encode(messages: list, profile: ResolvedProfile | None = None, **parameters: Any) -> list[dict]:
+    result = []
+    pending: list[dict] = []
+    messages = dictionaries(messages)
+    if any(not isinstance(message.get("parts"), list) for message in messages):
+        raise MessageValidationError("message does not use the bound gemini protocol")
+    # Reserve IDs from later messages too, before synthesizing any missing IDs.
+    used_ids = {
+        part["function_call"]["id"]
+        for message in messages
+        for part in message["parts"]
+        if part.get("function_call", {}).get("id")
+    }
+    for index, message in enumerate(messages):
+        content = []
+        for part_index, part in enumerate(message["parts"]):
+            call = part.get("function_call")
+            call_id = (
+                call.get("id") or allocate_call_id(used_ids, f"call_{index}_{part_index}")
+                if call is not None
+                else ""
             )
-        ],
-    )
-
-
-def _encode_assistant(message: dict[str, Any]) -> types.Content:
-    native = message.get("response_output", [])
-    if native and all(block.get("type") == "gemini_part" for block in native):
-        parts = _replay_output(message, native)
-    else:
-        parts = encode_content(message.get("content"), "assistant")
-        parts.extend(encode_function_call(call) for call in message.get("tool_calls", []))
-    return types.Content(role="model", parts=parts)
-
-
-def _replay_output(message: dict[str, Any], output: list[dict[str, Any]]) -> list[types.Part]:
-    parts = [types.Part.model_validate(block["part"]) for block in output]
-    validate_replay_calls(
-        message,
-        [
-            {
-                "id": part.function_call.id,
-                "type": "function",
-                "function": {
-                    "name": part.function_call.name,
-                    "arguments": json.dumps(part.function_call.args or {}),
+            block = encode_part(part, call_id)
+            if block.get("type") == "tool_use":
+                pending.append(block)
+            elif block.get("type") == "tool_result":
+                block["tool_use_id"] = associate_tool_result(
+                    pending, block.get("tool_use_id"), block.get("name")
+                )
+            content.append(block)
+        result.append(
+            remember(
+                {
+                    **extras(message, "role", "parts"),
+                    "role": "assistant"
+                    if message.get("role") == "model"
+                    else message.get("role", "user"),
+                    "content": content,
                 },
-            }
-            for part in parts
-            if part.function_call is not None
-        ],
-    )
-    return parts
+                [message],
+                PROTOCOL,
+                preserve=residual(message, {"role": True, "parts": [part_fields]}),
+            )
+        )
+    return result

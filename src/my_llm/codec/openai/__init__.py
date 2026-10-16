@@ -1,7 +1,6 @@
-"""OpenAI Responses and Chat Completions codecs."""
+"""Independent OpenAI Chat Completions and Responses codecs."""
 
-from my_llm.codec.openai.codec import ChatCompletionsCodec, ResponsesCodec
-from my_llm.codec.openai.decoding.chat import ChatDecoder
-from my_llm.codec.openai.decoding.responses import ResponsesDecoder
+from my_llm.codec.openai.chat import ChatCompletionsCodec
+from my_llm.codec.openai.responses import ResponsesCodec
 
-__all__ = ["ChatCompletionsCodec", "ChatDecoder", "ResponsesCodec", "ResponsesDecoder"]
+__all__ = ["ChatCompletionsCodec", "ResponsesCodec"]

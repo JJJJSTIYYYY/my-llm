@@ -6,132 +6,165 @@ from conftest import FakeClient, chat_event
 from my_llm import (
     ConfigurationError,
     IncompleteStreamError,
+    MessageValidationError,
     ModelProfile,
     MyLLM,
     ProviderProfile,
-    UnsupportedProviderError,
     generate,
 )
 
 
-async def test_owned_client_parameters_and_cleanup(monkeypatch):
-    client = FakeClient([chat_event(content="ok"), chat_event(finish="stop")])
-    parameters = []
+def patch_client(monkeypatch, events, failure=None):
+    client = FakeClient(events, failure=failure)
+    captured = []
 
     def factory(**kwargs):
-        parameters.append(kwargs)
+        captured.append(kwargs)
         return client
 
     monkeypatch.setattr("my_llm.invoke.AsyncOpenAI", factory)
+    return client, captured
+
+
+async def test_owned_client_configuration_and_cleanup(monkeypatch):
+    client, captured = patch_client(
+        monkeypatch, [chat_event(content="ok"), chat_event(finish="stop")]
+    )
     result = await generate(
-        provider=ProviderProfile(
-            api_key="profile", base_url="https://example.test", timeout=30, max_retries=2
-        ),
+        provider=ProviderProfile(api_key="profile", timeout=30, max_retries=0),
         model="demo",
         messages=[{"role": "user", "content": "x"}],
-        api_key="override",
-        max_retries=0,
     )
-    assert result["content"] == "ok"
-    assert parameters == [
-        {"api_key": "override", "base_url": "https://example.test", "timeout": 30, "max_retries": 0}
-    ]
+    assert result == {"role": "assistant", "content": "ok"}
+    assert captured == [{"api_key": "profile", "timeout": 30, "max_retries": 0}]
     assert client.closed and client.upstream.closed
 
 
-async def test_borrowed_client_not_closed():
-    client = FakeClient([chat_event(finish="stop")])
-    await generate(
-        provider=ProviderProfile(),
-        model="demo",
-        messages=[{"role": "user", "content": "x"}],
-        client=client,
+async def test_unstarted_and_early_closed_streams_release_resources(monkeypatch):
+    client, captured = patch_client(
+        monkeypatch,
+        [chat_event(content="one"), chat_event(content="two"), chat_event(finish="stop")],
     )
-    assert client.upstream.closed and not client.closed
-
-
-async def test_early_exit_closes_stream():
-    client = FakeClient(
-        [chat_event(content="one"), chat_event(content="two"), chat_event(finish="stop")]
-    )
-    stream = await generate(
-        provider=ProviderProfile(),
-        model="demo",
-        messages=[{"role": "user", "content": "x"}],
-        stream=True,
-        client=client,
-    )
-    assert not client.requests  # Request/SDK client creation is lazy.
+    llm = MyLLM(provider=ProviderProfile(), model=ModelProfile(model="demo"))
+    stream = await llm.generate(messages=[{"role": "user", "content": "x"}], stream=True)
+    await stream.aclose()
+    assert captured == []
+    stream = await llm.generate(messages=[{"role": "user", "content": "x"}], stream=True)
     async with stream:
-        async for chunk in stream:
-            assert chunk.content == "one"
-            break
-    assert client.upstream.closed
+        async for event in stream:
+            if event["choices"][0]["delta"].get("content"):
+                break
+    assert client.closed and client.upstream.closed
     await stream.aclose()
     with pytest.raises(StopAsyncIteration):
         await anext(stream)
 
 
-async def test_truncated_stream_has_partial_message_and_cleanup():
-    client = FakeClient([chat_event(content="partial")])
+async def test_missing_terminal_event_preserves_partial_message(monkeypatch):
+    client, _ = patch_client(monkeypatch, [chat_event(content="partial")])
     with pytest.raises(IncompleteStreamError) as error:
         await generate(
-            provider=ProviderProfile(),
-            model="demo",
-            messages=[{"role": "user", "content": "x"}],
-            client=client,
+            provider=ProviderProfile(), model="demo", messages=[{"role": "user", "content": "x"}]
         )
     assert error.value.partial_message == {"role": "assistant", "content": "partial"}
-    assert client.upstream.closed
+    assert client.closed and client.upstream.closed
 
 
-async def test_transport_failure_closes_stream():
-    client = FakeClient([chat_event(content="partial")], failure=RuntimeError("transport failed"))
+async def test_transport_error_closes_everything(monkeypatch):
+    client, _ = patch_client(monkeypatch, [], RuntimeError("transport failed"))
     with pytest.raises(RuntimeError, match="transport failed"):
         await generate(
-            provider=ProviderProfile(),
-            model="demo",
-            messages=[{"role": "user", "content": "x"}],
-            client=client,
+            provider=ProviderProfile(), model="demo", messages=[{"role": "user", "content": "x"}]
         )
-    assert client.upstream.closed
+    assert client.closed and client.upstream.closed
 
 
-async def test_cancellation_closes_upstream():
-    client = FakeClient([])
+async def test_cancellation_closes_everything(monkeypatch):
+    client, _ = patch_client(monkeypatch, [])
     started = asyncio.Event()
 
-    async def waiting_next(self):
+    async def wait(self):
         started.set()
         await asyncio.Future()
 
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(type(client.upstream), "__anext__", waiting_next)
-    try:
-        task = asyncio.create_task(
-            generate(
-                provider=ProviderProfile(),
-                model="demo",
-                messages=[{"role": "user", "content": "x"}],
-                client=client,
-            )
+    monkeypatch.setattr(type(client.upstream), "__anext__", wait)
+    task = asyncio.create_task(
+        generate(
+            provider=ProviderProfile(), model="demo", messages=[{"role": "user", "content": "x"}]
         )
-        await started.wait()
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        assert client.upstream.closed
-    finally:
-        monkeypatch.undo()
+    )
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert client.closed and client.upstream.closed
 
 
-async def test_reserved_protocol_and_invalid_stream_fail_before_request():
-    client = FakeClient([])
-    invoke = MyLLM(provider=ProviderProfile(), model=ModelProfile(model="demo"), client=client)
-    with pytest.raises(UnsupportedProviderError):
-        await invoke.generate(messages=[{"role": "user", "content": "x"}], protocol="anthropic")
+async def test_stdio_protocol_binds_once_and_rejects_other_formats(monkeypatch):
+    patch_client(monkeypatch, [chat_event(finish="stop")])
+    llm = MyLLM(provider=ProviderProfile(), model=ModelProfile(model="demo"))
+    await llm.generate(messages=[{"role": "user", "content": "x"}])
+    assert llm.stdio_protocol == "openai_chat"
+    with pytest.raises(MessageValidationError, match="bound"):
+        await llm.generate(messages=[{"role": "user", "parts": [{"text": "x"}]}])
+
+
+async def test_configuration_errors_happen_before_sdk_creation(monkeypatch):
+    _, captured = patch_client(monkeypatch, [])
+    llm = MyLLM(provider=ProviderProfile(), model=ModelProfile(model="demo"))
     with pytest.raises(ConfigurationError):
-        await invoke.generate(messages=[{"role": "user", "content": "x"}], stream="yes")
-    with pytest.raises(ConfigurationError, match="injected"):
-        await invoke.generate(messages=[{"role": "user", "content": "x"}], timeout=2)
-    assert not client.requests
+        await llm.generate(messages=[{"role": "user", "content": "x"}], stream="yes")
+    for option in ("provider", "model", "client", "api_key", "timeout", "protocol"):
+        with pytest.raises(TypeError):
+            await llm.generate(messages=[{"role": "user", "content": "x"}], **{option: object()})
+    assert captured == []
+
+
+async def test_provider_error_is_not_masked_by_partial_tool_json(monkeypatch):
+    from my_llm import ResponseFailedError
+
+    events = [
+        chat_event(
+            content="partial",
+            calls=[{"index": 0, "id": "call_1", "function": {"name": "tool", "arguments": "{"}}],
+        ),
+        {"error": {"message": "provider failure"}},
+    ]
+    client, _ = patch_client(monkeypatch, events)
+    with pytest.raises(ResponseFailedError) as failure:
+        await generate(
+            provider=ProviderProfile(), model="demo", messages=[{"role": "user", "content": "hi"}]
+        )
+    assert failure.value.partial_message["content"] == "partial"
+    assert failure.value.details == {"message": "provider failure"}
+    assert client.closed and client.upstream.closed
+
+
+async def test_bound_stdio_protocol_does_not_detect_again(monkeypatch):
+    patch_client(monkeypatch, [chat_event(finish="stop")])
+    llm = MyLLM(
+        provider=ProviderProfile(), model=ModelProfile(model="demo"), stdio_protocol="openai_chat"
+    )
+
+    def fail(*args):
+        raise AssertionError("bound protocol must not be guessed again")
+
+    monkeypatch.setattr(type(llm.codec), "match_protocol", fail)
+    await llm.generate(messages=[{"role": "user", "content": "hi"}])
+
+
+async def test_provider_paths_apply_before_standard_output_decoding(monkeypatch):
+    from my_llm import omit
+
+    event = chat_event(content="standard", reasoning="ignored")
+    event["choices"][0]["delta"]["provider_text"] = "configured"
+    patch_client(monkeypatch, [event, chat_event(finish="stop")])
+    llm = MyLLM(
+        provider=ProviderProfile(
+            content_path="$.choices[0].delta.provider_text", reasoning_content_path=omit
+        ),
+        model=ModelProfile(model="demo"),
+        stdio_protocol="gemini",
+    )
+    result = await llm.generate(messages=[{"role": "user", "parts": [{"text": "hi"}]}])
+    assert result == {"role": "model", "parts": [{"text": "configured"}]}

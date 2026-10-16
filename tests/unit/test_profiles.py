@@ -7,7 +7,7 @@ from my_llm.profile.utils.resolution import client_parameters, resolve_profiles
 
 def test_protocol_defaults(profile_factory):
     chat = profile_factory()
-    responses = profile_factory("responses")
+    responses = profile_factory("openai_responses")
     assert chat.get("supports_reasoning") is True
     assert chat.get("supports_function_calling") is False
     assert chat.get("supports_reasoning_effort") is False
@@ -37,7 +37,7 @@ def test_model_overrides_provider_and_dict_keys():
 
 def test_omit_disables_defaults_and_none_inherits(profile_factory):
     result = profile_factory(
-        "responses",
+        "openai_responses",
         reasoning_effort_parameter=omit,
         reasoning_content_path=omit,
         supports_reasoning=omit,
@@ -49,18 +49,19 @@ def test_omit_disables_defaults_and_none_inherits(profile_factory):
     assert merge_dicts({"a": 1}, None) == {"a": 1}
 
 
-def test_client_parameter_override_and_omission():
+def test_client_parameters_use_the_resolved_profile_and_omit_unset_values():
     provider = ProviderProfile(
         api_key="secret", base_url="https://example.test/v1", timeout=30, max_retries=2
     )
     resolved = resolve_profiles(provider, ModelProfile(model="demo"))
-    assert client_parameters(resolved, api_key=None, max_retries=0) == {
+    assert client_parameters(resolved) == {
         "api_key": "secret",
         "base_url": "https://example.test/v1",
         "timeout": 30,
-        "max_retries": 0,
+        "max_retries": 2,
     }
-    assert "timeout" not in client_parameters(resolved, timeout=omit)
+    without_timeout = resolve_profiles(ProviderProfile(timeout=omit), ModelProfile(model="demo"))
+    assert "timeout" not in client_parameters(without_timeout)
     assert "secret" not in repr(provider)
 
 
@@ -114,12 +115,12 @@ def test_bad_provider_configuration(field, value):
 
 
 @pytest.mark.parametrize(
-    "api_type,usage", [("responses", "stream_options"), ("chat_completions", "native")]
+    "protocol,usage", [("openai_responses", "stream_options"), ("openai_chat", "native")]
 )
-def test_incompatible_usage_modes(api_type, usage):
+def test_incompatible_usage_modes(protocol, usage):
     with pytest.raises(ConfigurationError):
         resolve_profiles(
-            ProviderProfile(api_type=api_type, usage_mode=usage), ModelProfile(model="demo")
+            ProviderProfile(protocol=protocol, usage_mode=usage), ModelProfile(model="demo")
         )
 
 

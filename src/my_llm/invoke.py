@@ -1,11 +1,10 @@
-"""Request execution using official asynchronous SDK streams for both public modes."""
+"""Official SDK execution with request-owned stream and history state."""
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
-from contextlib import aclosing
+from contextlib import AsyncExitStack, aclosing
 from copy import deepcopy
-from dataclasses import replace
 from typing import Any
 
 from anthropic import AsyncAnthropic
@@ -14,125 +13,31 @@ from google.genai import types as genai_types
 from ollama import AsyncClient as AsyncOllama
 from openai import AsyncOpenAI, Omit, omit
 
-from my_llm.codec import (
-    AnthropicCodec,
-    ChatCompletionsCodec,
-    GeminiCodec,
-    OllamaCodec,
-    ResponsesCodec,
+from my_llm.codec import MyCodec
+from my_llm.codec.utils.conversion import dictionaries
+from my_llm.codec.utils.validation import validate_history
+from my_llm.exceptions import ConfigurationError, MessageValidationError, StreamError
+from my_llm.profile import (
+    ModelProfile,
+    Protocol,
+    ProviderProfile,
+    ReasoningEffort,
+    resolve_profiles,
 )
-from my_llm.profile import ModelProfile, Protocol, ProviderProfile, ReasoningEffort
-from my_llm.profile.utils.common import merge_dicts
-from my_llm.profile.utils.resolution import client_parameters, resolve_profiles
-from my_llm.types import Message, MessageChunk, MessageInput
-from my_llm.types.exceptions import ConfigurationError, StreamError, UnsupportedProviderError
-
-
-class _MessageAccumulator:
-    """Buffer text fragments; join and snapshot only when producing a message."""
-
-    def __init__(self) -> None:
-        self._content: list[str] = []
-        self._reasoning: list[str] = []
-        self._metadata = MessageChunk()
-
-    def add(self, chunk: MessageChunk) -> None:
-        if chunk.content:
-            self._content.append(chunk.content)
-        if chunk.reasoning_content:
-            self._reasoning.append(chunk.reasoning_content)
-        if (
-            chunk.tool_calls
-            or chunk.is_finished
-            or chunk.usage is not None
-            or chunk.response_id is not None
-            or chunk.response_output
-            or chunk.response_status is not None
-        ):
-            self._metadata += replace(chunk, content="", reasoning_content="")
-
-    def to_message(self, *, require_finished: bool = False) -> Message:
-        return replace(
-            self._metadata,
-            content="".join(self._content),
-            reasoning_content="".join(self._reasoning),
-        ).to_message(require_finished=require_finished)
-
-
-class MessageStream(AsyncIterator[MessageChunk]):
-    """An asynchronous stream of assistant-message fragments.
-
-    Returned by ``await generate(..., stream=True)`` and
-    ``await llm.generate(..., stream=True)``. Use ``async with stream`` when
-    consuming it, especially if iteration may stop early. Text and reasoning
-    arrive incrementally; tool calls are returned only when complete.
-
-    Args:
-        iterator: A closable asynchronous iterator yielding MessageChunk values.
-    """
-
-    def __init__(self, iterator: AsyncIterator[MessageChunk]) -> None:
-        """Wrap a chunk iterator that provides an asynchronous ``aclose()``."""
-        self._iterator = iterator
-        self._closed = False
-
-    def __aiter__(self) -> MessageStream:
-        """Return this stream for use in ``async for``."""
-        return self
-
-    async def __anext__(self) -> MessageChunk:
-        """Read the next chunk, closing the stream on completion or failure."""
-        if self._closed:
-            raise StopAsyncIteration
-        try:
-            return await anext(self._iterator)
-        except BaseException:
-            await self.aclose()
-            raise
-
-    async def aclose(self) -> None:
-        """Release this request's resources; repeated calls are safe.
-
-        Closing an unconsumed stream does not start a request. A caller-supplied
-        SDK client remains open and must be closed by its owner.
-        """
-        if not self._closed:
-            self._closed = True
-            await self._iterator.aclose()
-
-    async def __aenter__(self) -> MessageStream:
-        """Enter a context that closes the stream automatically on exit."""
-        return self
-
-    async def __aexit__(self, *exc: Any) -> None:
-        """Close the stream after normal completion, early exit or an error."""
-        await self.aclose()
+from my_llm.profile.utils.common import PROTOCOLS, merge_dicts
+from my_llm.profile.utils.resolution import client_parameters
+from my_llm.stream import MessageStream
+from my_llm.stream._state import StreamState
 
 
 class MyLLM:
-    """Generate assistant messages using a configured provider and model.
+    """Generate in any standard I/O protocol using a fixed provider/model snapshot.
 
-    Args:
-        provider: Connection, API selection and provider-wide defaults.
-        model: Explicit ModelProfile to use for every generation. The provider's
-            model catalogue is not searched automatically.
-        client: Optional caller-owned official SDK client. Configure and close
-            this client yourself; per-call connection overrides are unavailable
-            when it is supplied.
-
-    Configuration is captured at construction. To change it, create a new
-    instance with updated profiles. Concurrent calls have independent histories
-    and result streams. Without an injected client, each request's client is
-    created and closed automatically.
-
-    Raises:
-        ConfigurationError: The supplied profiles are invalid.
-        UnsupportedProviderError: The provider uses an unsupported protocol or
-            does not support upstream streaming.
-
-    Example:
-        llm = MyLLM(provider=ProviderProfile(), model=ModelProfile(model="your-model"))
-        message = await llm.generate(messages=[{"role": "user", "content": "Hello"}])
+    ``stdio_protocol`` is independent of the provider's ``protocol``. When unset,
+    the first awaited generation guesses it once from the whole history/tools.
+    Ambiguous text-only histories prefer openai_chat. Set it explicitly for
+    native Anthropic/Ollama or Responses text-only input. Each concurrent request
+    owns its stream state and SDK client. Configuration copies are captured here.
     """
 
     def __init__(
@@ -140,179 +45,171 @@ class MyLLM:
         *,
         provider: ProviderProfile,
         model: ModelProfile,
-        client: AsyncOpenAI | AsyncAnthropic | genai.Client | AsyncOllama | None = None,
+        stdio_protocol: Protocol | None = None,
     ) -> None:
-        """Capture provider/model settings and optionally borrow an SDK client."""
-        self.profile = resolve_profiles(provider, model)
-        self.client = client
-        native = {"anthropic": AnthropicCodec, "gemini": GeminiCodec, "ollama": OllamaCodec}
-        self.codec = (
-            native[self.profile.protocol](self.profile)
-            if self.profile.protocol in native
-            else (
-                ResponsesCodec(self.profile)
-                if self.profile.api_type == "responses"
-                else ChatCompletionsCodec(self.profile)
-            )
-        )
+        if stdio_protocol is not None and stdio_protocol not in PROTOCOLS:
+            raise ConfigurationError(f"unsupported stdio_protocol: {stdio_protocol!r}")
+        self.resolved_profile = resolve_profiles(provider, model)
+        self.provider = deepcopy(provider)
+        self.model = deepcopy(model)
+        self.codec = MyCodec()
+        self.stdio_protocol = stdio_protocol
+
+    def guess_stdio_protocol(self, messages_or_tools: list[Any]) -> Protocol:
+        """Bind the I/O format once. Ambiguous standard messages prefer Chat."""
+        if self.stdio_protocol is None:
+            guessed = self.codec.match_protocol(messages_or_tools)
+            if guessed is None:
+                raise MessageValidationError(
+                    "cannot recognize a uniform standard protocol; set stdio_protocol explicitly"
+                )
+            self.stdio_protocol = guessed
+        return self.stdio_protocol
 
     async def generate(
         self,
         *,
-        messages: Sequence[MessageInput],
-        protocol: Protocol = "openai",
-        base_url: str | Omit | None = None,
-        api_key: str | Omit | None = None,
-        timeout: float | Omit | None = None,
-        max_retries: int | Omit | None = None,
-        extra_headers: dict[str, Any] | Omit | None = None,
-        extra_body: dict[str, Any] | Omit | None = None,
-        max_tokens: int | Omit | None = None,
+        messages: Sequence[Any],
+        stream: bool = False,
+        tools: Any = omit,
+        max_tokens: Any = None,
         reasoning: bool | None = None,
         reasoning_effort: ReasoningEffort = "none",
-        stream: bool | None = None,
-        tools: list[dict[str, Any]] | Omit | None = omit,
-        previous_response_id: str | Omit | None = None,
-    ) -> MessageStream | Message:
-        """Generate one assistant message or return its asynchronous stream.
+        extra_headers: Any = None,
+        extra_body: Any = None,
+        previous_response_id: Any = None,
+    ) -> MessageStream | dict | list:
+        """Generate a native message, or await and consume a native event stream.
 
-        Args:
-            messages: Non-empty sequence of Chat Completions messages, Responses
-                items, or a mixture. Roles are system/user/assistant/tool.
-            protocol: Optional consistency check against ProviderProfile.protocol.
-                The default "openai" follows the configured provider protocol.
-            base_url: Connection URL override; None uses the provider setting.
-            api_key: Credential override; None uses the provider setting.
-            timeout: Positive timeout in seconds; None uses the provider setting.
-            max_retries: Non-negative SDK retry count; None inherits the provider.
-            extra_headers: Request headers merged over profile defaults.
-            extra_body: Extra JSON fields merged over profile defaults. Generated
-                reasoning parameters take precedence over matching fields.
-            max_tokens: Positive output-token limit; None inherits the model,
-                while omit removes the explicit limit.
-            reasoning: Optional switch. True selects medium when effort is none;
-                False conflicts with a non-none effort.
-            reasoning_effort: One of none/low/medium/high/xhigh/max. Model
-                capability flags and effort mappings determine availability.
-            stream: True returns MessageStream; False or None returns Message.
-            tools: Local function descriptions in either supported API format.
-                None or omit leaves tools unspecified. Tools are not executed.
-            previous_response_id: Responses-only conversation reference. Send
-                only the new messages or function results when using it.
-
-        Returns:
-            A unified assistant-message dictionary, or a MessageStream when
-            stream=True. Always await this method before iterating the stream.
-            Equivalent finish reasons use stop, length, tool_calls or
-            content_filter in both modes; other reasons are preserved.
-
-        Raises:
-            ConfigurationError: Parameters conflict or have invalid values.
-            MessageValidationError: Messages/tools cannot be converted safely.
-            UnsupportedCapabilityError: The model lacks a requested capability.
-            StreamError: The response failed or ended incompletely. For streaming
-                calls this may be raised while iterating. SDK errors propagate
-                with their original types.
-
-        Connection overrides cannot be used with an injected SDK client.
-        Input history is isolated when this method is awaited. Use the returned
-        stream as an async context manager to release resources after early exit.
+        Provider/model and connection settings belong to construction profiles.
+        Messages and tools use one standard protocol per instance. Tools are
+        described but never executed. Responses previous_response_id allows
+        result messages whose calls are stored on the server. Histories and
+        mutable request options are isolated when this method is awaited.
         """
-        if protocol not in ("openai", self.profile.protocol):
-            raise UnsupportedProviderError("protocol must match ProviderProfile.protocol")
-        if stream is not None and not isinstance(stream, bool):
-            raise ConfigurationError("stream must be True, False or None")
-        overrides = {
-            "base_url": base_url,
-            "api_key": api_key,
-            "timeout": timeout,
-            "max_retries": max_retries,
-        }
-        if self.client is not None and any(value is not None for value in overrides.values()):
-            raise ConfigurationError(
-                "client initialization overrides cannot be used with an injected SDK client"
-            )
-        sdk_kwargs = client_parameters(self.profile, **overrides)
-        if self.profile.protocol == "ollama" and self.client is None:
-            headers = merge_dicts(self.profile.values["extra_headers"], extra_headers)
-            if headers:
-                sdk_kwargs["headers"] = deepcopy(headers)
-        request = self.codec.encode(
-            deepcopy(messages),
-            tools=tools,
-            extra_headers=extra_headers,
-            extra_body=extra_body,
-            max_tokens=max_tokens,
-            reasoning=reasoning,
-            reasoning_effort=reasoning_effort,
-            previous_response_id=previous_response_id,
+        if not isinstance(stream, bool):
+            raise ConfigurationError("stream must be a bool")
+        history = dictionaries(messages)
+        tool_values = None if tools is None or isinstance(tools, Omit) else dictionaries(tools)
+        # Tool declarations can disambiguate otherwise identical text-only histories.
+        protocol = self.guess_stdio_protocol([*history, *(tool_values or [])])
+        intermediate = self.codec.encode(history, tool_values, input_format=protocol)
+        profile = self.resolved_profile
+        has_previous = previous_response_id is not None and not isinstance(
+            previous_response_id, Omit
         )
-        result = MessageStream(self._stream(request, sdk_kwargs))
+        # Only Responses can resolve omitted local calls from a previous server turn.
+        validate_history(
+            intermediate["messages"],
+            allow_external_calls=has_previous and profile.protocol == "openai_responses",
+        )
+        options = deepcopy(
+            dict(
+                max_tokens=max_tokens,
+                reasoning=reasoning,
+                reasoning_effort=reasoning_effort,
+                extra_headers=extra_headers,
+                extra_body=extra_body,
+                previous_response_id=previous_response_id,
+            )
+        )
+        request = self.codec.request(intermediate, profile, **options)
+        sdk_kwargs = client_parameters(profile)
+        # Ollama accepts headers on the client rather than on each chat request.
+        if profile.protocol == "ollama":
+            sdk_kwargs["headers"] = deepcopy(
+                merge_dicts(profile.get("extra_headers", {}), extra_headers)
+            )
+        state = StreamState(profile.model)
+        result = MessageStream(self._stream(request, sdk_kwargs, state, protocol), state)
         if stream:
             return result
-        combined = _MessageAccumulator()
+        # Collected and streaming results share one execution and cleanup path.
         async with aclosing(result):
-            async for chunk in result:
-                combined.add(chunk)
-        return combined.to_message(require_finished=True)
+            async for _ in result:
+                pass
+        return result.result
+
+    def _render(self, events: list[dict], state: StreamState, protocol: Protocol) -> list[dict]:
+        output = self.codec.decode(
+            chunks=events,
+            target_format=protocol,
+            sequence_number=state.sequence_number,
+            **state.metadata,
+        )["chunks"]
+        state.sequence_number += len(output)
+        return output
 
     async def _stream(
-        self, request: dict[str, Any], sdk_kwargs: dict[str, Any]
-    ) -> AsyncIterator[MessageChunk]:
-        client = self.client
-        owned = client is None
+        self, request: dict, sdk_kwargs: dict, state: StreamState, stdio_protocol: Protocol
+    ) -> AsyncIterator[dict]:
+        profile = self.resolved_profile
+        protocol = profile.protocol
+        client = None
         upstream = None
-        combined = _MessageAccumulator()
-        decoder = self.codec.decoder()
-        protocol = self.profile.protocol
+        responses = AsyncExitStack()
         try:
-            if client is None:
-                if protocol == "anthropic":
-                    client = AsyncAnthropic(**sdk_kwargs)
-                elif protocol == "gemini":
-                    options = {k: v for k, v in sdk_kwargs.items() if k == "base_url"}
-                    if "timeout" in sdk_kwargs:
-                        options["timeout"] = max(1, round(sdk_kwargs["timeout"] * 1000))
-                    if "max_retries" in sdk_kwargs:
-                        options["retry_options"] = genai_types.HttpRetryOptions(
-                            attempts=sdk_kwargs["max_retries"] + 1
-                        )
-                    client = genai.Client(
-                        **({"api_key": sdk_kwargs["api_key"]} if "api_key" in sdk_kwargs else {}),
-                        http_options=genai_types.HttpOptions(**options),
-                    )
-                elif protocol == "ollama":
-                    options = {k: v for k, v in sdk_kwargs.items() if k == "timeout"}
-                    headers = sdk_kwargs.get("headers", {})
-                    if "api_key" in sdk_kwargs:
-                        headers = {"Authorization": f"Bearer {sdk_kwargs['api_key']}", **headers}
-                    if headers:
-                        options["headers"] = headers
-                    client = AsyncOllama(host=sdk_kwargs.get("base_url"), **options)
-                else:
-                    client = AsyncOpenAI(**sdk_kwargs)
             if protocol == "anthropic":
+                client = AsyncAnthropic(**sdk_kwargs)
                 upstream = await client.messages.create(**request)
             elif protocol == "gemini":
+                options = {k: v for k, v in sdk_kwargs.items() if k == "base_url"}
+
+                async def track_response(response: Any) -> None:
+                    responses.push_async_callback(response.aclose)
+
+                # GenAI wraps nested async generators; closing the outer one
+                # may leave an HTTPX body suspended until garbage collection.
+                # Track responses through its public HTTP options so early exit
+                # closes every body (including retries) within this request.
+                options["async_client_args"] = {"event_hooks": {"response": [track_response]}}
+                # GenAI uses milliseconds; its attempt count includes the initial request.
+                if "timeout" in sdk_kwargs:
+                    options["timeout"] = max(1, round(sdk_kwargs["timeout"] * 1000))
+                if "max_retries" in sdk_kwargs:
+                    options["retry_options"] = genai_types.HttpRetryOptions(
+                        attempts=sdk_kwargs["max_retries"] + 1
+                    )
+                client = genai.Client(
+                    **({"api_key": sdk_kwargs["api_key"]} if "api_key" in sdk_kwargs else {}),
+                    http_options=genai_types.HttpOptions(**options),
+                )
                 upstream = await client.aio.models.generate_content_stream(**request)
             elif protocol == "ollama":
+                options = {k: v for k, v in sdk_kwargs.items() if k == "timeout"}
+                headers = sdk_kwargs.get("headers", {})
+                if "api_key" in sdk_kwargs:
+                    headers = {"Authorization": f"Bearer {sdk_kwargs['api_key']}", **headers}
+                if headers:
+                    options["headers"] = headers
+                client = AsyncOllama(host=sdk_kwargs.get("base_url"), **options)
                 upstream = await client.chat(**request)
             else:
+                client = AsyncOpenAI(**sdk_kwargs)
                 endpoint = (
-                    client.responses
-                    if self.profile.api_type == "responses"
-                    else client.chat.completions
+                    client.responses if protocol == "openai_responses" else client.chat.completions
                 )
                 upstream = await endpoint.create(**request)
             async for event in upstream:
-                for chunk in decoder.feed(event):
-                    combined.add(chunk)
-                    yield chunk
-            final = decoder.finish()
-            combined.add(final)
-            yield final
+                encoded = self.codec.encode(chunks=[event], input_format=protocol, profile=profile)[
+                    "chunks"
+                ]
+                for output in self._render(state.feed(encoded), state, stdio_protocol):
+                    yield output
+            final = state.finish()
+            converted = self.codec.decode(messages=state.messages(), target_format=stdio_protocol)[
+                "messages"
+            ]
+            state.result = converted if stdio_protocol == "openai_responses" else converted[0]
+            for output in self._render(final, state, stdio_protocol):
+                yield output
         except StreamError as exc:
-            exc.partial_message = {**combined.to_message(), **(exc.partial_message or {})}
+            converted = self.codec.decode(
+                messages=state.messages(partial=True), target_format=stdio_protocol
+            )["messages"]
+            exc.partial_message = (
+                converted if stdio_protocol == "openai_responses" else converted[0]
+            )
             raise
         finally:
             try:
@@ -321,13 +218,18 @@ class MyLLM:
                         await upstream.aclose()
                     else:
                         await upstream.close()
+            # A failed stream close must not prevent closing the owned client.
             finally:
-                if owned and client is not None:
+                if client is not None:
+                    # GenAI exposes separate asynchronous and synchronous clients.
                     if protocol == "gemini":
                         try:
-                            await client.aio.aclose()
+                            await responses.aclose()
                         finally:
-                            client.close()
+                            try:
+                                await client.aio.aclose()
+                            finally:
+                                client.close()
                     else:
                         await client.close()
 
@@ -336,87 +238,12 @@ async def generate(
     *,
     provider: ProviderProfile,
     model: ModelProfile | str,
-    messages: Sequence[MessageInput],
-    protocol: Protocol = "openai",
-    base_url: str | Omit | None = None,
-    api_key: str | Omit | None = None,
-    timeout: float | Omit | None = None,
-    max_retries: int | Omit | None = None,
-    extra_headers: dict[str, Any] | Omit | None = None,
-    extra_body: dict[str, Any] | Omit | None = None,
-    max_tokens: int | Omit | None = None,
-    reasoning: bool | None = None,
-    reasoning_effort: ReasoningEffort = "none",
-    stream: bool | None = None,
-    tools: list[dict[str, Any]] | Omit | None = omit,
-    previous_response_id: str | Omit | None = None,
-    client: AsyncOpenAI | AsyncAnthropic | genai.Client | AsyncOllama | None = None,
-) -> MessageStream | Message:
-    """Generate an assistant message without explicitly constructing MyLLM.
-
-    Args:
-        provider: ProviderProfile selecting the API and provider defaults.
-        model: A ModelProfile, or a model ID string using default model settings.
-            A string does not look up the provider's model catalogue.
-        messages: Non-empty sequence of Chat Completions messages, Responses
-            items, or a mixture. Native SDK items must first be made dictionaries.
-        protocol: Optional consistency check; the default "openai" follows the
-            provider protocol. Other values must match ProviderProfile.protocol.
-        base_url: Override the provider URL; None inherits, omit leaves it unset.
-        api_key: Override credentials; None inherits, omit leaves them unset.
-        timeout: Positive timeout in seconds; None inherits the provider value.
-        max_retries: Non-negative SDK retry count; None inherits the provider.
-        extra_headers: Request headers overriding model/provider dictionary keys.
-        extra_body: Extra request fields overriding model/provider keys. Generated
-            reasoning parameters have priority over matching fields.
-        max_tokens: Positive output-token limit; None inherits, omit leaves unset.
-        reasoning: Optional boolean switch; True with effort=none uses medium.
-        reasoning_effort: none/low/medium/high/xhigh/max, subject to model support.
-        stream: True returns MessageStream; False or None returns Message.
-        tools: Local function tools in Responses or Chat Completions format;
-            None/omit leaves them unspecified. The caller executes tool calls.
-        previous_response_id: Responses-only reference for continuing with new
-            messages or tool results rather than resending the old history.
-        client: Optional caller-owned AsyncOpenAI, AsyncAnthropic, genai.Client
-            or ollama.AsyncClient; connection overrides must be
-            omitted and the caller is responsible for closing this client.
-
-    Returns:
-        A unified assistant Message, or a MessageStream for stream=True. The
-        streaming form is also awaited: ``stream = await generate(...)``.
-        Equivalent finish reasons use stop, length, tool_calls or content_filter
-        in both modes; other reasons are preserved.
-
-    Raises:
-        ConfigurationError: Profiles or request parameters are invalid.
-        MessageValidationError: Messages/tools are invalid or cannot be converted.
-        UnsupportedProviderError: The requested protocol/provider is unsupported.
-        UnsupportedCapabilityError: The model lacks a requested capability.
-        StreamError: The response fails or ends incompletely. With stream=True,
-            failures may occur during iteration. SDK errors retain their types.
-
-    Example:
-        message = await generate(
-            provider=ProviderProfile(), model="your-model",
-            messages=[{"role": "user", "content": "Hello"}],
-        )
-    """
-    if isinstance(model, str):
-        model = ModelProfile(model=model)
-    llm = MyLLM(provider=provider, model=model, client=client)
-    return await llm.generate(
-        messages=messages,
-        protocol=protocol,
-        base_url=base_url,
-        api_key=api_key,
-        timeout=timeout,
-        max_retries=max_retries,
-        extra_headers=extra_headers,
-        extra_body=extra_body,
-        max_tokens=max_tokens,
-        reasoning=reasoning,
-        reasoning_effort=reasoning_effort,
-        stream=stream,
-        tools=tools,
-        previous_response_id=previous_response_id,
+    messages: Sequence[Any],
+    stdio_protocol: Protocol | None = None,
+    **parameters: Any,
+) -> MessageStream | dict | list:
+    """One-shot generation with the same standard I/O as MyLLM.generate()."""
+    selected = ModelProfile(model=model) if isinstance(model, str) else model
+    return await MyLLM(provider=provider, model=selected, stdio_protocol=stdio_protocol).generate(
+        messages=messages, **parameters
     )

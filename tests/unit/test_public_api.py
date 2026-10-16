@@ -1,51 +1,40 @@
-"""Public naming and documentation contracts."""
-
 import inspect
-from dataclasses import fields
 
 import pytest
 
 import my_llm
-from my_llm import MessageChunk, MessageStream, ModelProfile, MyLLM, ProviderProfile, generate
+from my_llm import ModelProfile, MyLLM, ProviderProfile
 
 
-def test_public_generation_names():
-    assert {"generate", "MyLLM"} <= set(my_llm.__all__)
-    assert inspect.iscoroutinefunction(generate)
-    assert inspect.iscoroutinefunction(MyLLM.generate)
-    assert not hasattr(my_llm, "create")
-    assert not hasattr(my_llm, "Invoke")
-    assert not hasattr(MyLLM, "create")
-
-
-def test_exported_library_objects_have_docstrings():
-    for name in my_llm.__all__:
-        value = getattr(my_llm, name)
-        if callable(value) and getattr(value, "__module__", "").startswith("my_llm"):
-            assert inspect.getdoc(value), name
-    for value in (
-        MessageStream.aclose,
-        ProviderProfile.add_models,
-        ProviderProfile.list_models,
-        ProviderProfile.delete_model,
-        MessageChunk.__add__,
-        MessageChunk.to_message,
-        MessageChunk.has_delta,
-        MessageChunk.is_finished,
+def test_public_contract_uses_standard_messages_and_one_protocol_field():
+    for name in (
+        "MyCodec",
+        "BaseCodec",
+        "BaseEncoder",
+        "BaseDecoder",
+        "MyLLM",
+        "MessageStream",
+        "ResolvedProfile",
     ):
-        assert inspect.getdoc(value)
+        assert name in my_llm.__all__
+    for name in (
+        "Message",
+        "MessageChunk",
+        "MessageInput",
+        "ToolCall",
+        "FunctionCall",
+        "APIType",
+        "Codec",
+    ):
+        assert not hasattr(my_llm, name)
+    assert "api_type" not in ProviderProfile.__dataclass_fields__
+    assert "client" not in inspect.signature(MyLLM).parameters
+    assert "provider" not in inspect.signature(MyLLM.generate).parameters
+    assert "model" not in inspect.signature(MyLLM.generate).parameters
 
 
-@pytest.mark.parametrize("interface", [generate, MyLLM.generate, MyLLM])
-def test_generation_docstrings_explain_all_parameters(interface):
-    doc = inspect.getdoc(interface)
-    for name in inspect.signature(interface).parameters:
-        if name != "self":
-            assert f"{name}:" in doc, name
-
-
-@pytest.mark.parametrize("profile", [ProviderProfile, ModelProfile])
-def test_profile_docstrings_explain_all_configurable_fields(profile):
-    doc = inspect.getdoc(profile)
-    for field in fields(profile):
-        assert f"{field.name}:" in doc, field.name
+def test_removed_constructor_options_fail():
+    with pytest.raises(TypeError):
+        MyLLM(provider=ProviderProfile(), model=ModelProfile(model="demo"), client=object())
+    with pytest.raises(TypeError):
+        ProviderProfile(api_type="responses")

@@ -7,9 +7,7 @@ from typing import Any
 
 from openai import Omit
 
-from my_llm.types.exceptions import ConfigurationError, IncompleteStreamError
-
-RESPONSE_BLOCKS = frozenset({"input_text", "output_text", "input_image", "input_file"})
+from my_llm.exceptions import ConfigurationError
 
 
 def read(value: Any, key: str, default: Any = None) -> Any:
@@ -54,11 +52,3 @@ def _expand(value: Any, effort: str) -> Any:
     if isinstance(value, list):
         return [_expand(item, effort) for item in value]
     return effort if value == "{effort}" else value
-
-
-def text_delta(value: Any) -> str:
-    if value is None:
-        return ""
-    if not isinstance(value, str):
-        raise IncompleteStreamError("configured text path did not return a string")
-    return value

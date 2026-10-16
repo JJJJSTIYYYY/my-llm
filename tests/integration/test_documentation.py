@@ -1,4 +1,4 @@
-"""Run user-guide examples against the real SDK with local HTTP responses."""
+"""Compile documented snippets and execute examples against the official SDK."""
 
 import ast
 import json
@@ -8,6 +8,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from conftest import chat_event, sse
 from openai import AsyncOpenAI
 
 from my_llm import ModelProfile, MyLLM, ProviderProfile
@@ -51,46 +52,18 @@ def api_example(name):
     raise AssertionError(f"Missing API example: {name}")
 
 
-@pytest.mark.parametrize("api_type", ["chat_completions", "responses"])
-async def test_guide_text_stream_input_conversion_and_tool_round_trip(api_type):
-    requests = []
+async def test_guide_text_stream_and_tool_round_trip(monkeypatch):
+    clients, requests = [], []
 
     def handler(request):
         body = json.loads(request.content)
         requests.append(body)
-        history = body.get("messages", body.get("input"))
-        has_result = any(
-            item.get("role") == "tool" or item.get("type") == "function_call_output"
-            for item in history
-        )
-        needs_tool = bool(body.get("tools")) and not has_result
-        text = "5" if has_result else "Hello"
-        if api_type == "responses":
-            output = (
-                [
-                    {
-                        "type": "function_call",
-                        "id": "fc_1",
-                        "call_id": "call_add",
-                        "status": "completed",
-                        "name": "add",
-                        "arguments": '{"a":2,"b":3}',
-                    }
-                ]
-                if needs_tool
-                else []
-            )
-            events = [] if needs_tool else [{"type": "response.output_text.delta", "delta": text}]
-            events.append(
-                {
-                    "type": "response.completed",
-                    "response": {"id": "resp_docs", "status": "completed", "output": output},
-                }
-            )
-        else:
-            delta = (
-                {
-                    "tool_calls": [
+        history = body["messages"]
+        has_result = any(m["role"] == "tool" for m in history)
+        if body.get("tools") and not has_result:
+            events = [
+                chat_event(
+                    calls=[
                         {
                             "index": 0,
                             "id": "call_add",
@@ -98,47 +71,25 @@ async def test_guide_text_stream_input_conversion_and_tool_round_trip(api_type):
                             "function": {"name": "add", "arguments": '{"a":2,"b":3}'},
                         }
                     ]
-                }
-                if needs_tool
-                else {"content": text}
-            )
-            events = [
-                {"choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
-                {
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {},
-                            "finish_reason": "tool_calls" if needs_tool else "stop",
-                        }
-                    ]
-                },
+                ),
+                chat_event(finish="tool_calls"),
             ]
-        payload = "".join(f"data: {json.dumps(event)}\n\n" for event in events)
-        return httpx.Response(
-            200, text=payload + "data: [DONE]\n\n", headers={"Content-Type": "text/event-stream"}
-        )
+        else:
+            events = [chat_event(content="5" if has_result else "Hello"), chat_event(finish="stop")]
+        return httpx.Response(200, text=sse(events), headers={"Content-Type": "text/event-stream"})
 
-    async with AsyncOpenAI(
-        api_key="local-doc-test",
-        base_url="https://docs.test/v1",
-        max_retries=0,
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
-    ) as client:
-        provider = ProviderProfile(api_type=api_type)
-        llm = MyLLM(provider=provider, model=ModelProfile(model="demo"), client=client)
-        for name in ("ask", "print_stream", "ask_with_partial_output"):
-            result = await api_example(name)(llm, "Hello")
-            assert result["content"] == "Hello"
-        result = await api_example("ask_with_response_input")(llm)
-        assert result["content"] == "Hello"
-        encoded = requests[-1].get("messages", requests[-1].get("input"))
-        expected = "text" if api_type == "chat_completions" else "input_text"
-        assert encoded[-1]["content"][0]["type"] == expected
-        final = await api_example("add_round_trip")(provider, "demo", client=client)
-        assert final["content"] == "5"
-        if api_type == "responses":
-            result = await api_example("continue_response")(llm)
-            assert result["content"] == "Hello"
-            assert requests[-1]["previous_response_id"] == "resp_docs"
-            assert len(requests[-1]["input"]) == 1
+    def factory(**kwargs):
+        client = AsyncOpenAI(
+            **kwargs, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        )
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr("my_llm.invoke.AsyncOpenAI", factory)
+    provider = ProviderProfile(api_key="local-doc-test")
+    llm = MyLLM(provider=provider, model=ModelProfile(model="demo"))
+    for name in ("ask", "print_stream"):
+        assert (await api_example(name)(llm, "Hello"))["content"] == "Hello"
+    assert (await api_example("add_round_trip")(provider, "demo"))["content"] == "5"
+    assert requests[-1]["messages"][-1]["role"] == "tool"
+    assert all(c.is_closed() for c in clients)

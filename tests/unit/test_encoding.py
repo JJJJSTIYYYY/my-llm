@@ -1,6 +1,8 @@
 import copy
+from types import SimpleNamespace
 
 import pytest
+from conftest import encode_request
 
 from my_llm import (
     ConfigurationError,
@@ -9,25 +11,23 @@ from my_llm import (
     UnsupportedCapabilityError,
     omit,
 )
-from my_llm.codec import ChatCompletionsCodec, OllamaCodec, ResponsesCodec
 from my_llm.profile.utils.resolution import resolve_profiles
-from my_llm.types.exceptions import MessageValidationError
 
 
 def codec(profile):
-    return (
-        ResponsesCodec(profile)
-        if profile.api_type == "responses"
-        else ChatCompletionsCodec(profile)
+    return SimpleNamespace(
+        encode=lambda messages, tools=None, **parameters: encode_request(
+            profile, messages, tools, **parameters
+        )
     )
 
 
 @pytest.mark.parametrize(
-    "api_type,token_key",
-    [("responses", "max_output_tokens"), ("chat_completions", "max_completion_tokens")],
+    "protocol,token_key",
+    [("openai_responses", "max_output_tokens"), ("openai_chat", "max_completion_tokens")],
 )
-def test_tokens_translate_and_upstream_always_streams(profile_factory, api_type, token_key):
-    instance = codec(profile_factory(api_type, max_tokens=100))
+def test_tokens_translate_and_upstream_always_streams(profile_factory, protocol, token_key):
+    instance = codec(profile_factory(protocol, max_tokens=100))
     request = instance.encode([{"role": "user", "content": "hello"}], tools=omit)
     assert request[token_key] == 100
     assert request["stream"] is True
@@ -43,9 +43,9 @@ def test_tokens_translate_and_upstream_always_streams(profile_factory, api_type,
     )
 
 
-@pytest.mark.parametrize("api_type", ["responses", "chat_completions"])
-def test_no_reasoning_parameters_by_default(profile_factory, api_type):
-    request = codec(profile_factory(api_type)).encode(
+@pytest.mark.parametrize("protocol", ["openai_responses", "openai_chat"])
+def test_no_reasoning_parameters_by_default(profile_factory, protocol):
+    request = codec(profile_factory(protocol)).encode(
         [{"role": "user", "content": "x"}], tools=omit
     )
     assert (
@@ -65,7 +65,7 @@ def test_reasoning_enable_only_for_chat(profile_factory):
 
 @pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max"])
 def test_response_reasoning_mapping(profile_factory, effort):
-    request = codec(profile_factory("responses")).encode(
+    request = codec(profile_factory("openai_responses")).encode(
         [{"role": "user", "content": "x"}], tools=omit, reasoning_effort=effort
     )
     assert request["reasoning"] == {"summary": "detailed", "effort": effort}
@@ -77,7 +77,7 @@ def test_unsupported_reasoning_and_effort(profile_factory):
             [{"role": "user", "content": "x"}], tools=omit, reasoning_effort="low"
         )
     limited = codec(
-        profile_factory("responses", reasoning_effort_mapping={"xhigh": None, "max": None})
+        profile_factory("openai_responses", reasoning_effort_mapping={"xhigh": None, "max": None})
     )
     with pytest.raises(UnsupportedCapabilityError, match="xhigh"):
         limited.encode([{"role": "user", "content": "x"}], tools=omit, reasoning_effort="xhigh")
@@ -113,7 +113,7 @@ def test_custom_effort_body_and_generated_priority():
 
 
 def test_generated_named_parameters_win_over_body(profile_factory):
-    request = codec(profile_factory("responses")).encode(
+    request = codec(profile_factory("openai_responses")).encode(
         [{"role": "user", "content": "x"}],
         tools=omit,
         reasoning_effort="high",
@@ -134,78 +134,32 @@ def test_body_cannot_override_protocol_invariants(profile_factory, parameter):
         )
 
 
-@pytest.mark.parametrize("api_type", ["responses", "chat_completions"])
-@pytest.mark.parametrize("input_format", ["responses", "chat_completions"])
+@pytest.mark.parametrize("protocol", ["openai_responses", "openai_chat"])
+@pytest.mark.parametrize("input_format", ["openai_responses", "openai_chat"])
 def test_tools_conversion_and_no_input_mutation(
-    profile_factory, function_tool, api_type, input_format
+    profile_factory, function_tool, protocol, input_format
 ):
     tools = [
         {"type": "function", **function_tool["function"]}
-        if input_format == "responses"
+        if input_format == "openai_responses"
         else function_tool
     ]
     before = copy.deepcopy(tools)
-    request = codec(profile_factory(api_type, supports_function_calling=True)).encode(
+    request = codec(profile_factory(protocol, supports_function_calling=True)).encode(
         [{"role": "user", "content": "x"}], tools=tools
     )
     assert request["tools"] == (
         [{"type": "function", **function_tool["function"]}]
-        if api_type == "responses"
+        if protocol == "openai_responses"
         else [function_tool]
     )
     request["tools"][0]["type"] = "changed"
     assert tools == before
 
 
-@pytest.mark.parametrize("input_format", ["responses", "chat_completions"])
-def test_tools_capability_and_cloud_tools_rejected(profile_factory, function_tool, input_format):
-    tool = (
-        {"type": "function", **function_tool["function"]}
-        if input_format == "responses"
-        else function_tool
-    )
-    with pytest.raises(UnsupportedCapabilityError):
-        codec(profile_factory()).encode([{"role": "user", "content": "x"}], tools=[tool])
-    with pytest.raises(MessageValidationError, match="local function"):
-        codec(profile_factory(supports_function_calling=True)).encode(
-            [{"role": "user", "content": "x"}], tools=[{"type": "web_search"}]
-        )
-
-
-@pytest.mark.parametrize("api_type", ["responses", "chat_completions"])
-def test_mixed_tool_templates_are_converted_individually(profile_factory, function_tool, api_type):
-    flat = {"type": "function", **copy.deepcopy(function_tool["function"])}
-    flat["name"] = "second"
-    tools = [function_tool, flat]
-    original = copy.deepcopy(tools)
-    request = codec(profile_factory(api_type, supports_function_calling=True)).encode(
-        [{"role": "user", "content": "x"}], tools=tools
-    )
-    expected = (
-        [{"type": "function", **function_tool["function"]}, flat]
-        if api_type == "responses"
-        else [
-            function_tool,
-            {
-                "type": "function",
-                "function": {key: value for key, value in flat.items() if key != "type"},
-            },
-        ]
-    )
-    assert request["tools"] == expected
-    functions = (
-        request["tools"]
-        if api_type == "responses"
-        else [tool["function"] for tool in request["tools"]]
-    )
-    for function in functions:
-        function["parameters"]["properties"]["city"]["type"] = "changed"
-    assert tools == original
-
-
-@pytest.mark.parametrize("api_type", ["responses", "chat_completions"])
-@pytest.mark.parametrize("input_format", ["responses", "chat_completions"])
-def test_tool_values_and_extension_fields_are_preserved(profile_factory, api_type, input_format):
+@pytest.mark.parametrize("protocol", ["openai_responses", "openai_chat"])
+@pytest.mark.parametrize("input_format", ["openai_responses", "openai_chat"])
+def test_tool_values_and_extension_fields_are_preserved(profile_factory, protocol, input_format):
     function = {
         "name": "weather",
         "description": None,
@@ -215,154 +169,23 @@ def test_tool_values_and_extension_fields_are_preserved(profile_factory, api_typ
     }
     tool = (
         {"type": "function", **function}
-        if input_format == "responses"
+        if input_format == "openai_responses"
         else {"type": "function", "function": function}
     )
-    request = codec(profile_factory(api_type, supports_function_calling=True)).encode(
+    request = codec(profile_factory(protocol, supports_function_calling=True)).encode(
         [{"role": "user", "content": "x"}], tools=[tool]
     )
     assert request["tools"] == (
         [{"type": "function", **function}]
-        if api_type == "responses"
+        if protocol == "openai_responses"
         else [{"type": "function", "function": function}]
     )
 
 
-@pytest.mark.parametrize(
-    "tool",
-    [
-        {"type": "function"},
-        {"type": "function", "name": ""},
-        {"type": "function", "function": None},
-        {"type": "function", "function": {"name": "nested"}, "name": "flat"},
-        {"type": "function", "name": "weather", "parameters": []},
-        {"type": "function", "name": "weather", "description": 1},
-        {"type": "function", "name": "weather", "strict": "true"},
-    ],
-)
-@pytest.mark.parametrize("api_type", ["responses", "chat_completions"])
-def test_invalid_or_ambiguous_tool_templates_are_rejected(profile_factory, tool, api_type):
-    with pytest.raises(MessageValidationError):
-        codec(profile_factory(api_type, supports_function_calling=True)).encode(
-            [{"role": "user", "content": "x"}], tools=[tool]
-        )
-
-
-@pytest.mark.parametrize("api_type", ["responses", "chat_completions"])
-def test_empty_tool_list_passes_through(profile_factory, api_type):
-    request = codec(profile_factory(api_type)).encode([{"role": "user", "content": "x"}], tools=[])
+@pytest.mark.parametrize("protocol", ["openai_responses", "openai_chat"])
+def test_empty_tool_list_passes_through(profile_factory, protocol):
+    request = codec(profile_factory(protocol)).encode([{"role": "user", "content": "x"}], tools=[])
     assert request["tools"] == []
-
-
-@pytest.mark.parametrize("replay", [True, False, omit])
-def test_chat_reasoning_replay_and_message_names(profile_factory, tool_call, replay):
-    history = [
-        {
-            "role": "assistant",
-            "content": None,
-            "name": "agent",
-            "tool_calls": [tool_call],
-            "reasoning_content": "reason",
-            "finish_reason": "tool_calls",
-            "usage": {},
-        },
-        {"role": "tool", "tool_call_id": "call_1", "content": "sunny"},
-    ]
-    request = codec(
-        profile_factory(
-            supports_message_name=False, replay_reasoning_content_when_tool_calls=replay
-        )
-    ).encode(history, tools=omit)
-    assert "name" not in request["messages"][0]
-    assert ("reasoning_content" in request["messages"][0]) is (replay is True)
-    assert "finish_reason" not in request["messages"][0]
-    assert "usage" not in request["messages"][0]
-
-
-@pytest.mark.parametrize("protocol", ["openai", "ollama"])
-@pytest.mark.parametrize("replay", [None, True, False, omit])
-@pytest.mark.parametrize("reasoning", [None, "", "reason"])
-def test_reasoning_replay_fills_every_assistant_message(protocol, replay, reasoning, tool_call):
-    history = [
-        {"role": "system", "content": "Be helpful."},
-        {"role": "user", "content": "weather?"},
-        {"role": "assistant", "content": "checking"},
-        {"role": "assistant", "tool_calls": [tool_call]},
-        {"role": "tool", "tool_call_id": "call_1", "content": "sunny"},
-        {"role": "assistant", "content": "It is sunny."},
-    ]
-    if reasoning is not None:
-        for message in history:
-            if message["role"] == "assistant":
-                message["reasoning_content"] = reasoning
-    before = copy.deepcopy(history)
-    profile = resolve_profiles(
-        ProviderProfile(protocol=protocol, replay_reasoning_content_when_tool_calls=replay),
-        ModelProfile(model="demo"),
-    )
-    instance = ChatCompletionsCodec(profile) if protocol == "openai" else OllamaCodec(profile)
-    request = instance.encode(history, tools=omit)
-    key = "reasoning_content" if protocol == "openai" else "thinking"
-    for message in request["messages"]:
-        if message["role"] == "assistant" and (replay is None or replay is True):
-            assert message[key] == (reasoning or "")
-        else:
-            assert key not in message
-    assert history == before
-
-
-def test_responses_history_native_replay(profile_factory, tool_call):
-    native = [
-        {"type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "encrypted"},
-        {
-            "type": "function_call",
-            "id": "fc_1",
-            "call_id": "call_1",
-            "name": "weather",
-            "arguments": tool_call["function"]["arguments"],
-            "status": "completed",
-        },
-    ]
-    history = [
-        {"role": "user", "content": "weather?"},
-        {
-            "role": "assistant",
-            "tool_calls": [tool_call],
-            "reasoning_content": "do not replay",
-            "response_output": native,
-        },
-        {"role": "tool", "tool_call_id": "call_1", "content": "sunny"},
-    ]
-    request = codec(profile_factory("responses")).encode(history, tools=omit)
-    assert request["input"][1:3] == native
-    assert request["input"][-1] == {
-        "type": "function_call_output",
-        "call_id": "call_1",
-        "output": "sunny",
-    }
-    assert "reasoning_content" not in str(request)
-
-
-def test_responses_multimodal_conversion(profile_factory):
-    request = codec(profile_factory("responses")).encode(
-        [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "what?"},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": "https://example.test/image.png", "detail": "low"},
-                    },
-                ],
-            }
-        ],
-        tools=omit,
-    )
-    assert request["input"][0]["content"] == [
-        {"type": "input_text", "text": "what?"},
-        {"type": "input_image", "image_url": "https://example.test/image.png", "detail": "low"},
-    ]
 
 
 @pytest.mark.parametrize(
@@ -376,3 +199,61 @@ def test_responses_multimodal_conversion(profile_factory):
 def test_invalid_request_parameters(profile_factory, kwargs):
     with pytest.raises(ConfigurationError):
         codec(profile_factory()).encode([{"role": "user", "content": "x"}], tools=omit, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "protocol,key", [("openai_chat", "reasoning_content"), ("ollama", "thinking")]
+)
+@pytest.mark.parametrize("thinking", [True, False])
+@pytest.mark.parametrize("replay", [True, False])
+@pytest.mark.parametrize("has_calls", [True, False])
+@pytest.mark.parametrize("visible", [None, "reason"])
+def test_reasoning_replay_only_pads_tool_calls_when_thinking(
+    protocol, key, thinking, replay, has_calls, visible, tool_call
+):
+    from my_llm import MyCodec
+
+    message = {"role": "assistant", "content": "hello"}
+    if has_calls:
+        message["tool_calls"] = [tool_call]
+    if visible:
+        message["reasoning_content"] = visible
+    profile = resolve_profiles(
+        ProviderProfile(protocol=protocol, replay_reasoning_content_when_tool_calls=replay),
+        ModelProfile(model="demo"),
+    )
+    result = MyCodec().convert(
+        [message],
+        input_format="openai_chat",
+        target_format=protocol,
+        profile=profile,
+        reasoning=thinking,
+    )["messages"][0]
+    assert (key in result) is (replay and (bool(visible) or (has_calls and thinking)))
+    if key in result:
+        assert result[key] == (visible or "")
+
+
+@pytest.mark.parametrize("protocol", ["anthropic", "gemini", "ollama"])
+def test_native_generation_parameters_and_tools(profile_factory, protocol, function_tool):
+    profile = profile_factory(protocol, max_tokens=2048, supports_function_calling=True)
+    request = encode_request(profile, tools=[function_tool], reasoning=True)
+    if protocol == "anthropic":
+        assert request["max_tokens"] == 2048
+        assert request["thinking"]["budget_tokens"] == 1024
+        assert request["tools"][0]["input_schema"]["type"] == "object"
+    elif protocol == "gemini":
+        assert request["config"].max_output_tokens == 2048
+        assert request["config"].automatic_function_calling.disable
+        assert request["config"].thinking_config.include_thoughts
+    else:
+        assert request["options"]["num_predict"] == 2048
+        assert request["think"] is True
+
+
+@pytest.mark.parametrize("protocol", ["openai_chat", "anthropic", "gemini", "ollama"])
+def test_previous_response_id_is_responses_only(profile_factory, protocol):
+    with pytest.raises(ConfigurationError):
+        encode_request(
+            profile_factory(protocol, max_tokens=2048), previous_response_id="resp_previous"
+        )

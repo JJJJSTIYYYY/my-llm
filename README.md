@@ -12,90 +12,84 @@
 
 </div>
 
-通过配置统一调用 OpenAI（Responses / Chat Completions）、Anthropic Messages、
-Gemini 和 Ollama 原生协议的异步 Python 库，四种协议均使用官方 SDK。
-兼容服务使用相同的 OpenAI SDK，通过 `ProviderProfile` 和 `ModelProfile` 描述差异，
-不内置厂商或模型清单。需要 Python 3.12+。
+异步调用 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages、Gemini 和
+Ollama。请求使用官方 SDK，输入、输出与流事件采用五种协议的标准字典，不另定义消息类型。
+需要 Python 3.12+，不内置厂商或模型清单。
 
 ## 安装
 
 ```sh
 pip install my-llm-py
-# 或
-uv add my-llm-py
+# 或 uv add my-llm-py
 ```
 
-PyPI 分发名为 `my-llm-py`，Python 导入名为 `my_llm`。
+## 调用
 
-## 使用
+`ProviderProfile.protocol` 选择上游 API，`stdio_protocol` 选择调用者的输入输出协议。
+两者独立；例如用 Chat 消息调用 Responses API，并继续收到 Chat 消息。
 
 ```python
 import asyncio
 import os
-
-from my_llm import ModelProfile, ProviderProfile, generate
-
+from my_llm import ModelProfile, MyLLM, ProviderProfile
 
 async def main():
-    provider = ProviderProfile(
-        api_type="responses",
-        api_key=os.environ["OPENAI_API_KEY"],
-        usage_mode="native",
+    llm = MyLLM(
+        provider=ProviderProfile(
+            protocol="openai_responses",
+            api_key=os.environ["OPENAI_API_KEY"],
+        ),
+        model=ModelProfile(model=os.environ["LLM_MODEL"]),
+        stdio_protocol="openai_chat",
     )
-    model = ModelProfile(model=os.environ["LLM_MODEL"])
-    message = await generate(
-        provider=provider,
-        model=model,
-        messages=[{"role": "user", "content": "你好"}],
-        reasoning_effort="none",
-        stream=False,
-    )
+    message = await llm.generate(messages=[{"role": "user", "content": "你好"}])
     print(message["content"])
-
 
 asyncio.run(main())
 ```
 
-重复调用时可复用 `MyLLM`，构造时显式传入模型配置：
-
-```python
-from my_llm import ModelProfile, MyLLM, ProviderProfile
-
-llm = MyLLM(
-    provider=ProviderProfile(api_type="responses"),
-    model=ModelProfile(model="your-model-id", max_tokens=2048),
-)
-# 在异步函数中调用：
-# message = await llm.generate(messages=[{"role": "user", "content": "你好"}])
-```
-
-`stream=True` 返回可关闭的异步流，调用时同样需要先 `await`：
+五个协议名为 `openai_chat`、`openai_responses`、`anthropic`、`gemini`、`ollama`。
+省略 `stdio_protocol` 时，首次调用从整个 messages/tools 列表识别一次并绑定到实例。
+纯文本消息等重叠输入默认使用 `openai_chat`；需要其他格式时显式指定。
+同一实例的 messages 与 tools 使用同一种协议，不混用历史格式。
 
 ```python
 async def print_answer(llm):
+    # 此示例的 llm 使用 stdio_protocol="openai_chat"。
     stream = await llm.generate(
         messages=[{"role": "user", "content": "你好"}], stream=True,
     )
     async with stream:
-        async for chunk in stream:
-            print(chunk.content, end="", flush=True)
-            if chunk.tool_calls:
-                print(chunk.tool_calls)  # 完整工具调用，由调用者执行本地函数
+        async for event in stream:
+            for choice in event.get("choices", []):
+                print(choice["delta"].get("content", ""), end="", flush=True)
+    return stream.result  # 完成后的标准消息字典
 ```
 
-推理开启方式、强度映射、输出路径、消息名称与用量模式均可配置。Omit 可禁用
-配置或删除某个字典键。流异常和缺少完成状态会明确报错。
-Tools 可传 Responses 或 Chat Completions 格式，自动识别并按目标 API 转换。
-Messages 同样支持两种格式：自动转换内容块、工具调用及工具结果，并允许混合历史。
-Responses 结果保留原生 output items，支持工具调用后的历史回放。
+流式工具调用完整后才返回；本库不执行工具。SDK Client 每次请求创建并关闭。
+Provider、Model 和连接配置在构造时保存副本，生成时仅接受消息、工具和生成选项。
+`replay_reasoning_content_when_tool_calls` 仅在思考已开启且 assistant 有工具调用时补空思维链。
 
-调用参数、流式消费、工具回合及资源管理见
-[API 使用指南](https://github.com/JJJJSTIYYYY/my-llm-py/blob/main/docs/reference/api.md)；
-Profile 字段、默认值、继承规则及兼容服务适配见
-[配置指南](https://github.com/JJJJSTIYYYY/my-llm-py/blob/main/docs/reference/configuration.md)。
-通过 `ProviderProfile(protocol="anthropic" / "gemini" / "ollama")` 选择原生协议。
-Anthropic 必须设置 `ModelProfile.max_tokens` 或调用时的 `max_tokens`。
-原生协议的参数映射、推理配置和 SDK Client 类型见上述配置指南。
+## 独立格式转换
+
+`MyCodec` 无状态，不绑定 profile，可复用于任意转换路径。
+
+```python
+from my_llm import MyCodec
+
+codec = MyCodec()
+converted = codec.convert(
+    [{"role": "user", "content": "你好"}],
+    input_format="openai_chat", target_format="gemini",
+)
+assert converted["messages"] == [{"role": "user", "parts": [{"text": "你好"}]}]
+```
+
+消息、工具和流事件各有对称的 encode/decode 接口；`profile=None` 使用标准协议。
+同协议往返保留原生签名、未知字段和嵌套字典。
+
+详见 [API 使用指南](docs/reference/api.md)、[配置指南](docs/reference/configuration.md)
+及 [架构与测试边界](docs/reference/design-coverage.md)。
 
 ## 本地开发与验证
 
@@ -106,13 +100,7 @@ uv run ruff check src tests examples
 uv run ruff format --check src tests examples
 uv run python examples/local_demo.py
 uv build
-package_version=$(uv run python -c 'from my_llm import __version__; print(__version__)')
-uv run twine check --strict "dist/my_llm_py-${package_version}-py3-none-any.whl" "dist/my_llm_py-${package_version}.tar.gz"
 ```
 
-构建、安装验证和 GitHub 自动测试说明见
-[构建与验证指南](docs/guides/building.md)。
-
-## 许可证
-
-本项目采用 [Apache License 2.0](LICENSE)。
+[构建与验证指南](docs/guides/building.md) 包含安装和发行包验证步骤。
+项目采用 [Apache License 2.0](LICENSE)。

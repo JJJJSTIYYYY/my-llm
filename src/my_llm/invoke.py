@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
-from contextlib import aclosing
+from collections.abc import AsyncIterator, Hashable, Sequence
+from contextlib import AsyncExitStack, aclosing
 from copy import deepcopy
 from typing import Any
 
@@ -28,7 +28,9 @@ class MyLLM:
     the first awaited generation guesses it once from the whole history/tools.
     Ambiguous text-only histories prefer openai_chat. Set it explicitly for
     native Anthropic/Ollama or Responses text-only input. Each concurrent request
-    owns its stream state and SDK client. Configuration copies are captured here.
+    owns its stream state and borrows an instance-owned SDK client. Use
+    ``async with MyLLM(...)`` or ``await llm.aclose()`` to release clients.
+    Configuration copies are captured here; internal mutation is not supported.
     """
 
     def __init__(
@@ -45,6 +47,40 @@ class MyLLM:
         self.model = deepcopy(model)
         self.codec = MyCodec()
         self.stdio_protocol = stdio_protocol
+        self._clients: dict[Hashable, Any] = {}
+        self._client_resources = AsyncExitStack()
+        self._closed = False
+
+    def _check_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("MyLLM is closed")
+
+    def _get_client(self, options: dict) -> Any:
+        self._check_open()
+        profile = self.resolved_profile
+        transport = self.codec.transport(profile.protocol)
+        key = transport.client_key(profile, **options)
+        if key not in self._clients:
+            # SDK construction is synchronous: no task can interleave between
+            # lookup and registration, including concurrent first requests.
+            client = transport.create_client(profile, **options)
+            self._client_resources.push_async_callback(transport.close_client, client)
+            self._clients[key] = client
+        return self._clients[key]
+
+    async def aclose(self) -> None:
+        """Close cached SDK clients once, after finishing/closing response streams."""
+        if not self._closed:
+            self._closed = True
+            self._clients.clear()
+            await self._client_resources.aclose()
+
+    async def __aenter__(self) -> MyLLM:
+        self._check_open()
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        await self.aclose()
 
     def guess_stdio_protocol(self, messages_or_tools: list[Any]) -> Protocol:
         """Bind the I/O format once. Ambiguous standard messages prefer Chat."""
@@ -78,6 +114,7 @@ class MyLLM:
         result messages whose calls are stored on the server. Histories and
         mutable request options are isolated when this method is awaited.
         """
+        self._check_open()
         if not isinstance(stream, bool):
             raise ConfigurationError("stream must be a bool")
         history = dictionaries(messages)
@@ -128,7 +165,8 @@ class MyLLM:
     ) -> AsyncIterator[dict]:
         profile = self.resolved_profile
         try:
-            async with self.codec.upstream(request, profile, **options) as upstream:
+            client = self._get_client(options)
+            async with self.codec.upstream(client, request, profile, **options) as upstream:
                 async for event in upstream:
                     encoded = self.codec.encode(
                         chunks=[event], input_format=profile.protocol, profile=profile
@@ -155,8 +193,13 @@ async def generate(
     stdio_protocol: Protocol | None = None,
     **parameters: Any,
 ) -> MessageStream | dict | list:
-    """One-shot generation with the same standard I/O as MyLLM.generate()."""
+    """One-shot generation; a returned stream owns the temporary MyLLM lifetime."""
     selected = ModelProfile(model=model) if isinstance(model, str) else model
-    return await MyLLM(provider=provider, model=selected, stdio_protocol=stdio_protocol).generate(
-        messages=messages, **parameters
-    )
+    async with AsyncExitStack() as resources:
+        llm = await resources.enter_async_context(
+            MyLLM(provider=provider, model=selected, stdio_protocol=stdio_protocol)
+        )
+        result = await llm.generate(messages=messages, **parameters)
+        if isinstance(result, MessageStream):
+            result._on_close = resources.pop_all().aclose
+        return result

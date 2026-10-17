@@ -8,17 +8,19 @@
 运行时包位于 src/my_llm；应用调用方式见 [API 指南](../reference/api.md)，
 完整职责树见[架构文档](../design/architecture.md)。
 
-- codec/base 的 codec.py、encoder.py、decoder.py 定义抽象契约，模块名与五种原生实现一致。
+- codec/base 的 codec.py、encoder.py、decoder.py、transport.py 定义抽象契约，模块名与五种原生实现一致。
 - 五种协议各自维护 encoding 和 decoding；转换方法直接落在 encoder.py / decoder.py。
-  内容、字段及工具辅助合并为本方向的 content.py，官方 SDK 资源管理放在 decoding/transport.py。
+  内容、字段及工具辅助合并为本方向的 content.py，官方 SDK 生命周期与执行放在协议根目录的 transport.py。
+  BaseCodec 统一组合 encoder / decoder / transport，转换与执行组件互不导入。
   仅在存在对应职责时保留辅助模块，不为每个转换方法或短小函数建立分组包。
 - codec/shared 保存不选择厂商的公共机制；values.py 负责 SDK 值读取、路径读取及参数值展开。
 - profile/configuration.py 保存配置类型、覆盖字段与字典合并；resolution.py 负责解析、快照及校验。
-- stream 保存消息流生命周期与每次请求的状态；invoke.py 负责生成调用编排。
+- stream 保存消息流生命周期与每次请求的状态；invoke.py 负责生成调用编排与 SDK 客户端复用。
+  实例通过异步上下文或 aclose 关闭客户端；响应流按请求清理，见[生命周期设计](../design/client-lifecycle.md)。
 - __init__.py 只保留说明、导入与 __all__，不放业务代码。
 
 新增模块应以职责命名；避免重新引入 common.py 或 utils 作为未分类代码的容器。
-新增协议依据[接入协议指南](adding-protocol.md)实现三个基类的契约。
+新增协议依据[接入协议指南](adding-protocol.md)实现四个基类的契约。
 
 ## 导入约定
 
@@ -27,7 +29,7 @@
 包初始化文件负责组合公开导出；应用、示例和公共接口测试继续使用
 `from my_llm import MyLLM, ModelProfile, ProviderProfile`。
 
-导入子模块时可以通过所属包引用模块本身，例如 `from my_llm.codec.gemini.decoding import transport`；
+导入子模块时可以通过所属包引用模块本身，例如 `from my_llm.codec.gemini import transport`；
 不通过包的重导出反向获取实现类。为避免定义阶段的循环依赖而已有的函数内延迟导入保留。
 Ruff 统一导入顺序并禁止相对导入；结构契约检查实现代码不依赖包的符号重导出。
 

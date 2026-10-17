@@ -1,7 +1,5 @@
 """gemini: intermediate to native output."""
 
-from collections.abc import AsyncIterator
-from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 from google.genai import types
@@ -9,7 +7,6 @@ from openai import Omit
 
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.gemini.decoding.content import decode_part, foreign_block
-from my_llm.codec.gemini.decoding.transport import open_stream
 from my_llm.codec.shared.chunks import events
 from my_llm.codec.shared.conversion import (
     coalesce_messages,
@@ -44,7 +41,7 @@ PROTOCOL = "gemini"
 
 
 class GeminiDecoder(BaseDecoder):
-    """Render intermediate values and build request-owned native SDK calls."""
+    """Render intermediate values and assemble native request dictionaries."""
 
     __slots__ = ()
     usage_modes = ("none", "native")
@@ -239,11 +236,6 @@ class GeminiDecoder(BaseDecoder):
             "contents": history,
             "config": types.GenerateContentConfig(**result),
         }
-
-    def upstream(
-        self, request: dict, profile: ResolvedProfile, **parameters: Any
-    ) -> AbstractAsyncContextManager[AsyncIterator[Any]]:
-        return open_stream(request, profile, **parameters)
 
     def _apply_reasoning(
         self, config: dict[str, Any], profile: ResolvedProfile, effort: str

@@ -30,14 +30,16 @@ messages 和 tools 都遵循这个协议，历史不混用不同协议格式。
 ```python
 from my_llm import ModelProfile, MyLLM, ProviderProfile
 
-llm = MyLLM(
-    provider=ProviderProfile(protocol="openai_responses"),
-    model=ModelProfile(model="your-model", max_tokens=2048),
-    stdio_protocol="openai_chat",
-)
-
 async def ask(llm, prompt):
     return await llm.generate(messages=[{"role": "user", "content": prompt}])
+
+async def session():
+    async with MyLLM(
+        provider=ProviderProfile(protocol="openai_responses"),
+        model=ModelProfile(model="your-model", max_tokens=2048),
+        stdio_protocol="openai_chat",
+    ) as llm:
+        return await ask(llm, "Hello")
 ```
 
 ## 生成选项
@@ -62,10 +64,19 @@ provider、model、protocol、连接参数和 SDK client 不作为实例 generat
 ## 流与资源
 
 调用 `await llm.generate(..., stream=True)` 后使用 `async with stream`。
-未消费的流不启动请求；提前退出、取消、SDK 失败和正常结束都会关闭上游流和请求 client。
-`aclose()` 可重复调用。并发请求有独立的累积状态和 client；
-同一实例的并发请求使用同一个 stdio 协议，一路取消或失败不会关闭其他请求，
-验证范围见[并发复核](../audits/concurrency.md)。
+未消费的流不启动请求或创建客户端；提前退出、取消、SDK 失败和正常结束都会关闭本次响应流。
+同一 MyLLM 实例的串行、并发、流式与非流式调用复用官方 SDK 客户端，累积状态仍按请求独立。
+一路取消或失败不会关闭共享客户端或其他请求。
+
+应用结束时使用 `await llm.aclose()`，或者将实例放入 `async with MyLLM(...) as llm`；
+先完成或关闭所有响应流，再关闭实例。关闭操作可重复调用，关闭后新请求及尚未开始消费的流
+均报 RuntimeError，不重新创建客户端。实例应在同一异步事件循环内使用。
+独立函数 `generate(...)` 的临时实例自动清理；返回流时，其所有权延续至 MessageStream 关闭。
+
+Ollama 的公开 chat 接口不接受逐请求 headers，因此它按合并后的请求头分别缓存 SDK 客户端；
+相同请求头复用，不修改共享客户端的 headers。其余协议将请求头作为本次 SDK 调用的参数。
+不检测直接修改 MyLLM 内部属性后的配置失效。详见[客户端生命周期](../design/client-lifecycle.md)
+和[并发复核](../audits/concurrency.md)。
 
 ```python
 async def print_stream(llm, prompt):
@@ -102,28 +113,28 @@ import json
 
 async def add_round_trip(provider, model_id):
     from my_llm import ModelProfile, MyLLM
-    llm = MyLLM(
+    async with MyLLM(
         provider=provider,
         model=ModelProfile(model=model_id, supports_function_calling=True),
         stdio_protocol="openai_chat",
-    )
-    tools = [{"type": "function", "function": {
-        "name": "add", "parameters": {
-            "type": "object", "properties": {
-                "a": {"type": "integer"}, "b": {"type": "integer"},
-            }, "required": ["a", "b"],
-        },
-    }}]
-    history = [{"role": "user", "content": "What is 2 + 3?"}]
-    response = await llm.generate(messages=history, tools=tools)
-    history.append(response)
-    for call in response.get("tool_calls", []):
-        if call["function"]["name"] != "add":
-            raise ValueError("Unknown local tool")
-        arguments = json.loads(call["function"]["arguments"])
-        output = arguments["a"] + arguments["b"]
-        history.append({"role": "tool", "tool_call_id": call["id"], "content": str(output)})
-    return await llm.generate(messages=history, tools=tools)
+    ) as llm:
+        tools = [{"type": "function", "function": {
+            "name": "add", "parameters": {
+                "type": "object", "properties": {
+                    "a": {"type": "integer"}, "b": {"type": "integer"},
+                }, "required": ["a", "b"],
+            },
+        }}]
+        history = [{"role": "user", "content": "What is 2 + 3?"}]
+        response = await llm.generate(messages=history, tools=tools)
+        history.append(response)
+        for call in response.get("tool_calls", []):
+            if call["function"]["name"] != "add":
+                raise ValueError("Unknown local tool")
+            arguments = json.loads(call["function"]["arguments"])
+            output = arguments["a"] + arguments["b"]
+            history.append({"role": "tool", "tool_call_id": call["id"], "content": str(output)})
+        return await llm.generate(messages=history, tools=tools)
 ```
 
 `previous_response_id` 允许发送仅包含新消息/结果的历史，并允许结果引用服务端已保存的调用 ID。
@@ -132,7 +143,7 @@ async def add_round_trip(provider, model_id):
 
 ## 独立 Codec
 
-`BaseCodec` 只声明协议和对应的 `BaseEncoder` / `BaseDecoder`；它们不保存 profile、
+`BaseCodec` 组合协议对应的 `BaseEncoder` / `BaseDecoder` / `BaseTransport`；它们不保存 profile、
 流片段或识别结果。每种协议独立一对 encoder/decoder。
 
 - `encode_messages` / `decode_messages`
@@ -175,7 +186,8 @@ MyCodec 同时持有五个 Codec，可在不同调用中复用。中间态是内
 实时消费使用 MyLLM，由每次请求持有累积状态；BaseEncoder/BaseDecoder 仍只转换单次传入的块。
 
 协议策略由各自 Encoder / Decoder 管理：Encoder 还负责原生格式识别及用量归一化；
-Decoder 还负责默认值、用量策略、请求组装、SDK 传输与收集结果形状。
+Decoder 还负责默认值、用量策略、请求组装与收集结果形状。
+SDK 客户端的创建、关闭、复用键及请求执行由 BaseTransport 独立负责，作为 Codec.transport 统一组合。
 MyCodec 只路由，MyLLM 只编排每次请求；这些方法不在转换器实例上保留流状态。
 
 自定义实现除 messages / tools / chunks 外，需实现以下抽象接口：
@@ -183,12 +195,16 @@ MyCodec 只路由，MyLLM 只编排每次请求；这些方法不在转换器实
 | 实现 | 必须提供 |
 | --- | --- |
 | BaseEncoder | match_item(item)、usage(value)；整批 matches(values) 继承固定实现。 |
-| BaseDecoder | request_parameters(profile, **parameters)、assemble_request(messages, tools, profile, **parameters)、upstream(request, profile, **parameters)、profile_defaults()、usage(value)，以及 usage_modes 属性。 |
+| BaseDecoder | request_parameters(profile, **parameters)、assemble_request(messages, tools, profile, **parameters)、profile_defaults()、usage(value)，以及 usage_modes 属性。 |
+| BaseTransport | create_client(profile, **parameters)、upstream(client, request, profile, **parameters)；不处理消息中间态。 |
 
-BaseCodec 的协议身份、encoder 和 decoder 均为必需的抽象属性。
+BaseCodec 的协议身份、encoder、decoder 和 transport 均为必需的抽象属性。
 Decoder.request 继承固定实现，接收中间态，依次检查能力、解码消息和工具、调用 assemble_request；
 assemble_request 才接收原生消息与工具。完整实现和迁移约定见[接入协议指南](../guides/adding-protocol.md)。
 
-Decoder.upstream 返回异步上下文管理器，负责本次 SDK 流与客户端的资源生命周期。
+Transport.create_client 创建官方 SDK 客户端，MyLLM 保存并复用；close_client 默认调用 SDK 的异步 close，
+可覆盖原生关闭顺序。client_key 默认 None，SDK 将请求选项绑定到客户端时可覆盖。
+Transport.upstream 借用客户端，返回异步上下文管理器，只关闭本次 SDK 流与响应体。
+Transport.validate_profile 校验连接限制，BaseCodec.validate_profile 统一协调 Decoder 与 Transport 校验。
 validate_profile、result 和 allows_external_calls 有通用默认实现；
 需要额外校验、列表结果或服务端历史能力的协议在自己的 Decoder 中覆盖。

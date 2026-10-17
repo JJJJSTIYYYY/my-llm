@@ -1,7 +1,5 @@
 """anthropic: intermediate to native output."""
 
-from collections.abc import AsyncIterator
-from contextlib import AbstractAsyncContextManager
 from inspect import signature
 from typing import Any
 
@@ -9,7 +7,6 @@ from anthropic.resources.messages import AsyncMessages
 from openai import Omit
 
 from my_llm.codec.anthropic.decoding.content import foreign_block
-from my_llm.codec.anthropic.decoding.transport import open_stream
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.shared.chunks import events
 from my_llm.codec.shared.conversion import (
@@ -44,7 +41,7 @@ REASONS = {
 
 
 class AnthropicDecoder(BaseDecoder):
-    """Render intermediate values and build request-owned native SDK calls."""
+    """Render intermediate values and assemble native request dictionaries."""
 
     __slots__ = ()
     usage_modes = ("none", "native")
@@ -280,11 +277,6 @@ class AnthropicDecoder(BaseDecoder):
         if tools is not None:
             result["tools"] = tools
         return result
-
-    def upstream(
-        self, request: dict, profile: ResolvedProfile, **parameters: Any
-    ) -> AbstractAsyncContextManager[AsyncIterator[Any]]:
-        return open_stream(request, profile, **parameters)
 
     def _apply_reasoning(
         self,

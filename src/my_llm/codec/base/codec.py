@@ -5,12 +5,13 @@ from typing import Any, final
 
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.base.encoder import BaseEncoder
+from my_llm.codec.base.transport import BaseTransport
 from my_llm.profile.configuration import Protocol
 from my_llm.profile.resolution import ResolvedProfile
 
 
 class BaseCodec(ABC):
-    """A protocol and its stateless encoder/decoder; profiles are call arguments."""
+    """Compose a protocol's stateless encoder, decoder and SDK transport."""
 
     __slots__ = ()
 
@@ -31,6 +32,18 @@ class BaseCodec(ABC):
     def decoder(self) -> BaseDecoder:
         """The intermediate-to-native implementation; required for every codec."""
         ...
+
+    @property
+    @abstractmethod
+    def transport(self) -> BaseTransport:
+        """Official SDK lifecycle and execution, independent of conversion."""
+        ...
+
+    @final
+    def validate_profile(self, profile: ResolvedProfile) -> None:
+        """Coordinate conversion-policy and SDK-connection validation."""
+        self.decoder.validate_profile(profile)
+        self.transport.validate_profile(profile)
 
     @final
     def encode_messages(

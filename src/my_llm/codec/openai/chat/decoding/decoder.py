@@ -1,7 +1,5 @@
 """openai/chat: intermediate to native output."""
 
-from collections.abc import AsyncIterator
-from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 from openai import Omit
@@ -13,7 +11,6 @@ from my_llm.codec.openai.chat.decoding.content import (
     render_content,
     thinking_enabled,
 )
-from my_llm.codec.openai.chat.decoding.transport import open_stream
 from my_llm.codec.shared.chunks import events
 from my_llm.codec.shared.conversion import (
     blocks,
@@ -42,7 +39,7 @@ PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response
 
 
 class ChatCompletionsDecoder(BaseDecoder):
-    """Render intermediate values and build request-owned native SDK calls."""
+    """Render intermediate values and assemble native request dictionaries."""
 
     __slots__ = ()
     usage_modes = ("none", "stream_options")
@@ -251,11 +248,6 @@ class ChatCompletionsDecoder(BaseDecoder):
             result["tools"] = tools
 
         return result
-
-    def upstream(
-        self, request: dict, profile: ResolvedProfile, **parameters: Any
-    ) -> AbstractAsyncContextManager[AsyncIterator[Any]]:
-        return open_stream(request, profile, **parameters)
 
     def _envelope(self, **parameters: Any) -> dict:
         return {

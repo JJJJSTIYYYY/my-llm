@@ -92,12 +92,15 @@ async def test_guide_text_stream_and_tool_round_trip(monkeypatch):
         clients.append(client)
         return client
 
-    monkeypatch.setattr("my_llm.codec.openai.chat.decoding.transport.AsyncOpenAI", factory)
-    monkeypatch.setattr("my_llm.codec.openai.responses.decoding.transport.AsyncOpenAI", factory)
+    monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
+    monkeypatch.setattr("my_llm.codec.openai.responses.transport.AsyncOpenAI", factory)
     provider = ProviderProfile(api_key="local-doc-test")
     llm = MyLLM(provider=provider, model=ModelProfile(model="demo"))
     for name in ("ask", "print_stream"):
         assert (await api_example(name)(llm, "Hello"))["content"] == "Hello"
+    assert len(clients) == 1 and not clients[0].is_closed()
+    await llm.aclose()
     assert (await api_example("add_round_trip")(provider, "demo"))["content"] == "5"
     assert requests[-1]["messages"][-1]["role"] == "tool"
+    assert len(clients) == 2
     assert all(c.is_closed() for c in clients)

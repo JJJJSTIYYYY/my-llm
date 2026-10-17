@@ -36,8 +36,8 @@ async def test_official_openai_transport_all_stdio_formats(monkeypatch, protocol
         clients.append(client)
         return client
 
-    monkeypatch.setattr("my_llm.codec.openai.chat.decoding.transport.AsyncOpenAI", factory)
-    monkeypatch.setattr("my_llm.codec.openai.responses.decoding.transport.AsyncOpenAI", factory)
+    monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
+    monkeypatch.setattr("my_llm.codec.openai.responses.transport.AsyncOpenAI", factory)
     llm = MyLLM(
         provider=ProviderProfile(
             protocol=protocol,
@@ -61,10 +61,12 @@ async def test_official_openai_transport_all_stdio_formats(monkeypatch, protocol
     assert requests[0].url.path.endswith(
         "/responses" if protocol == "openai_responses" else "/chat/completions"
     )
+    assert not clients[0].is_closed()
+    await llm.aclose()
     assert clients[0].is_closed()
 
 
-async def test_sdk_http_errors_retain_their_type_and_close_client(monkeypatch):
+async def test_sdk_http_errors_retain_their_type_and_preserve_client(monkeypatch):
     from openai import BadRequestError
 
     clients = []
@@ -81,11 +83,13 @@ async def test_sdk_http_errors_retain_their_type_and_close_client(monkeypatch):
         clients.append(client)
         return client
 
-    monkeypatch.setattr("my_llm.codec.openai.chat.decoding.transport.AsyncOpenAI", factory)
-    monkeypatch.setattr("my_llm.codec.openai.responses.decoding.transport.AsyncOpenAI", factory)
+    monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
+    monkeypatch.setattr("my_llm.codec.openai.responses.transport.AsyncOpenAI", factory)
     llm = MyLLM(
         provider=ProviderProfile(api_key="local", max_retries=0), model=ModelProfile(model="demo")
     )
     with pytest.raises(BadRequestError):
         await llm.generate(messages=[{"role": "user", "content": "hi"}])
+    assert not clients[0].is_closed()
+    await llm.aclose()
     assert clients[0].is_closed()

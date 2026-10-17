@@ -80,11 +80,11 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
             http_clients.append(client._client)
             return client
 
-        monkeypatch.setattr("my_llm.codec.ollama.decoding.transport.AsyncOllama", ollama_factory)
+        monkeypatch.setattr("my_llm.codec.ollama.transport.AsyncOllama", ollama_factory)
     elif protocol == "anthropic":
-        monkeypatch.setattr("my_llm.codec.anthropic.decoding.transport.AsyncAnthropic", factory)
+        monkeypatch.setattr("my_llm.codec.anthropic.transport.AsyncAnthropic", factory)
     else:
-        monkeypatch.setattr("my_llm.codec.gemini.decoding.transport.genai.Client", factory)
+        monkeypatch.setattr("my_llm.codec.gemini.transport.genai.Client", factory)
     llm = MyLLM(
         provider=ProviderProfile(
             protocol=protocol,
@@ -139,4 +139,6 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
     else:
         assert body["options"]["num_predict"] == 2048
         assert requests[0].url.path == "/api/chat"
+    assert all(not client.is_closed for client in http_clients)
+    await llm.aclose()
     assert all(client.is_closed for client in http_clients)

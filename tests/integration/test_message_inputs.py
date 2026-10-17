@@ -7,11 +7,9 @@ from tests.helpers.transport import FakeClient
 
 async def test_mixed_protocol_history_is_rejected_before_request(monkeypatch):
     client = FakeClient([])
+    monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", lambda **kwargs: client)
     monkeypatch.setattr(
-        "my_llm.codec.openai.chat.decoding.transport.AsyncOpenAI", lambda **kwargs: client
-    )
-    monkeypatch.setattr(
-        "my_llm.codec.openai.responses.decoding.transport.AsyncOpenAI",
+        "my_llm.codec.openai.responses.transport.AsyncOpenAI",
         lambda **kwargs: client,
     )
     llm = MyLLM(provider=ProviderProfile(), model=ModelProfile(model="demo"))
@@ -29,11 +27,9 @@ async def test_previous_response_id_allows_external_tool_results(monkeypatch):
     from tests.helpers.protocols import response_completed
 
     client = FakeClient([response_completed()])
+    monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", lambda **kwargs: client)
     monkeypatch.setattr(
-        "my_llm.codec.openai.chat.decoding.transport.AsyncOpenAI", lambda **kwargs: client
-    )
-    monkeypatch.setattr(
-        "my_llm.codec.openai.responses.decoding.transport.AsyncOpenAI",
+        "my_llm.codec.openai.responses.transport.AsyncOpenAI",
         lambda **kwargs: client,
     )
     llm = MyLLM(
@@ -51,11 +47,9 @@ async def test_previous_response_id_allows_external_tool_results(monkeypatch):
 
 async def test_stdio_protocol_matches_tools_before_ambiguous_messages(monkeypatch):
     client = FakeClient([chat_event(content="ok"), chat_event(finish="stop")])
+    monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", lambda **kwargs: client)
     monkeypatch.setattr(
-        "my_llm.codec.openai.chat.decoding.transport.AsyncOpenAI", lambda **kwargs: client
-    )
-    monkeypatch.setattr(
-        "my_llm.codec.openai.responses.decoding.transport.AsyncOpenAI",
+        "my_llm.codec.openai.responses.transport.AsyncOpenAI",
         lambda **kwargs: client,
     )
     llm = MyLLM(

@@ -1,8 +1,6 @@
 """Stateless intermediate to standard-protocol conversion contract."""
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
-from contextlib import AbstractAsyncContextManager
 from typing import Any, final
 
 from my_llm.exceptions import ConfigurationError, UnsupportedCapabilityError
@@ -12,7 +10,7 @@ from my_llm.profile.resolution import ResolvedProfile
 class BaseDecoder(ABC):
     """Intermediate values to native output, independently of the input protocol.
 
-    Implement conversion, options, assembly and SDK hooks in the native owner.
+    Implement conversion, generation options and request assembly here.
     Profiles are call arguments; implementations must not mutate inputs or
     retain stream state. Request conversion follows the fixed request method.
     """
@@ -52,19 +50,12 @@ class BaseDecoder(ABC):
         ...
 
     @abstractmethod
-    def upstream(
-        self, request: dict, profile: ResolvedProfile, **parameters: Any
-    ) -> AbstractAsyncContextManager[AsyncIterator[Any]]:
-        """Open a request-owned native stream as an async context manager."""
-        ...
-
-    @abstractmethod
     def profile_defaults(self) -> dict:
         """Return native defaults without retaining mutable configuration."""
         ...
 
     def validate_profile(self, profile: ResolvedProfile) -> None:
-        """Validate native capability and transport settings."""
+        """Validate native conversion and usage policies."""
         if profile.get("usage_mode", "none") not in self.usage_modes:
             raise ConfigurationError("usage_mode is incompatible with the selected API")
 

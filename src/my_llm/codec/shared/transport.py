@@ -7,14 +7,12 @@ from typing import Any
 
 @asynccontextmanager
 async def owned_stream(
-    client: Any,
     create: Callable[[], Awaitable[Any]],
     *,
     close_stream: str = "close",
 ) -> AsyncIterator[Any]:
-    """Close the body before its client, including failed creation or cancellation."""
+    """Close one response stream without closing its borrowed SDK client."""
     async with AsyncExitStack() as resources:
-        resources.push_async_callback(client.close)
         upstream = await create()
         resources.push_async_callback(getattr(upstream, close_stream))
         yield upstream

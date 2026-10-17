@@ -29,18 +29,26 @@ class FakeStream:
 
 class FakeClient:
     def __init__(self, events, *, failure=None):
-        self.upstream = FakeStream(events, failure=failure)
+        self.events = list(events)
+        self.failure = failure
+        self.upstream = FakeStream(self.events, failure=failure)
         self.closed = False
+        self.close_count = 0
+        self.streams = []
         self.requests = []
         self.responses = SimpleNamespace(create=self.request)
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.request))
         self.messages = SimpleNamespace(create=self.request)
 
     async def request(self, **kwargs):
+        assert not self.closed
         self.requests.append(kwargs)
+        self.upstream = FakeStream(self.events, failure=self.failure)
+        self.streams.append(self.upstream)
         return self.upstream
 
     async def close(self):
+        self.close_count += 1
         self.closed = True
 
 

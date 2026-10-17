@@ -47,7 +47,8 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
     # Import lazily: codec contracts refer to ResolvedProfile during definition.
     from my_llm.codec.converter import MyCodec
 
-    decoder = MyCodec().decoder(provider.protocol)
+    codec = MyCodec()
+    decoder = codec.decoder(provider.protocol)
     values: dict[str, Any] = {
         "extra_headers": {},
         "extra_body": {},
@@ -89,7 +90,7 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
     usage = resolved.get("usage_mode", "none")
     if usage not in ("none", "native", "stream_options"):
         raise ConfigurationError("invalid usage_mode")
-    decoder.validate_profile(resolved)
+    codec.validate_profile(resolved)
     for key in (
         "extra_headers",
         "extra_body",

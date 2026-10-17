@@ -69,7 +69,7 @@ Gemini 迁移标记只用于外来工具历史，依据
 | 目标字段投影与媒体/思考/工具结果策略 | 各 `decoding/decoder.py` 和 `decoding/content.py`。 |
 | 默认字段路径、推理绑定、用量模式 | 各 Decoder 的 profile_defaults、request_parameters、usage_modes；profile resolver 获取声明后通用合并校验。 |
 | 请求体字段、system 指令与服务端历史能力 | 各 Decoder 的 assemble_request 和 allows_external_calls。 |
-| SDK、端点、HTTP 单位、客户端 headers、关闭方式 | 各 `decoding/transport.py`；共享 owned_stream 只管理资源栈。 |
+| SDK、端点、HTTP 单位、客户端 headers、关闭方式 | 各协议根目录的 Transport；由 BaseCodec 统一组合，共享 owned_stream 只管理响应资源栈。 |
 | Responses 列表结果与其他消息结果 | 对应 Decoder.result。 |
 | 块身份、片段、引用追加、尾部许可、参数完整性与 EOF | 请求自己的 StreamState；源引用固定为 BlockRef，不按厂商名分支。 |
 

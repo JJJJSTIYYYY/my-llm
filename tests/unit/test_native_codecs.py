@@ -2,9 +2,18 @@ from copy import deepcopy
 
 import pytest
 
-from my_llm import BaseCodec, BaseDecoder, BaseEncoder, MyCodec, UnsupportedCapabilityError
+from my_llm import (
+    BaseCodec,
+    BaseDecoder,
+    BaseEncoder,
+    BaseTransport,
+    MyCodec,
+    UnsupportedCapabilityError,
+)
+from my_llm.codec.openai.chat.codec import ChatCompletionsCodec
 from my_llm.codec.openai.chat.decoding.decoder import ChatCompletionsDecoder
 from my_llm.codec.openai.chat.encoding.encoder import ChatCompletionsEncoder
+from my_llm.codec.openai.chat.transport import ChatCompletionsTransport
 from tests.helpers.protocols import PROTOCOLS, history, tools
 
 
@@ -14,7 +23,8 @@ def test_common_contract_is_stateless_and_symmetric(protocol):
     assert isinstance(codec, BaseCodec)
     assert isinstance(codec.encoder, BaseEncoder)
     assert isinstance(codec.decoder, BaseDecoder)
-    for obj in (codec, codec.encoder, codec.decoder):
+    assert isinstance(codec.transport, BaseTransport)
+    for obj in (codec, codec.encoder, codec.decoder, codec.transport):
         assert not hasattr(obj, "__dict__")
         assert not hasattr(obj, "profile")
     assert codec.decode_messages(codec.encode_messages(history(protocol))) == history(protocol)
@@ -24,17 +34,18 @@ def test_common_contract_is_stateless_and_symmetric(protocol):
 
 
 def test_abstract_contract_cannot_be_instantiated():
-    for cls in (BaseCodec, BaseEncoder, BaseDecoder):
+    for cls in (BaseCodec, BaseEncoder, BaseDecoder, BaseTransport):
         with pytest.raises(TypeError):
             cls()
 
 
-@pytest.mark.parametrize("missing", ["encoder", "decoder"])
-def test_codec_requires_both_conversion_directions(missing):
+@pytest.mark.parametrize("missing", ["encoder", "decoder", "transport"])
+def test_codec_requires_conversion_directions_and_transport(missing):
     bindings = {
         "protocol_or_api_style": "openai_chat",
         "encoder": ChatCompletionsEncoder(),
         "decoder": ChatCompletionsDecoder(),
+        "transport": ChatCompletionsTransport(),
     }
     del bindings[missing]
     incomplete = type("IncompleteCodec", (BaseCodec,), bindings)
@@ -49,7 +60,8 @@ def test_codec_requires_both_conversion_directions(missing):
         (BaseEncoder, ChatCompletionsEncoder, "chunks"),
         (BaseDecoder, ChatCompletionsDecoder, "assemble_request"),
         (BaseDecoder, ChatCompletionsDecoder, "request_parameters"),
-        (BaseDecoder, ChatCompletionsDecoder, "upstream"),
+        (BaseTransport, ChatCompletionsTransport, "upstream"),
+        (BaseTransport, ChatCompletionsTransport, "create_client"),
     ],
 )
 def test_partial_protocol_implementation_cannot_be_instantiated(base, concrete, missing):
@@ -59,6 +71,42 @@ def test_partial_protocol_implementation_cannot_be_instantiated(base, concrete, 
     incomplete = type("IncompleteImplementation", (base,), bindings)
     with pytest.raises(TypeError, match=missing):
         incomplete()
+
+
+@pytest.mark.parametrize("protocol", PROTOCOLS)
+def test_decoder_has_no_sdk_lifecycle_interface(protocol):
+    converter = MyCodec()
+    decoder = converter.decoder(protocol)
+    transport = converter.transport(protocol)
+    assert transport is converter.codecs[protocol].transport
+    for name in ("create_client", "close_client", "client_key", "upstream"):
+        assert not hasattr(decoder, name)
+        assert callable(getattr(transport, name))
+
+
+def test_codec_coordinates_conversion_and_transport_validation(profile_factory):
+    profile = profile_factory()
+    calls = []
+
+    class Decoder(ChatCompletionsDecoder):
+        __slots__ = ()
+
+        def validate_profile(self, value):
+            calls.append(("decoder", value))
+
+    class Transport(ChatCompletionsTransport):
+        __slots__ = ()
+
+        def validate_profile(self, value):
+            calls.append(("transport", value))
+
+    class Codec(ChatCompletionsCodec):
+        __slots__ = ()
+        decoder = Decoder()
+        transport = Transport()
+
+    Codec().validate_profile(profile)
+    assert calls == [("decoder", profile), ("transport", profile)]
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)

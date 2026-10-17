@@ -13,6 +13,7 @@
 - [构建与发行包验证](guides/building.md)：安装、构建和 CI。
 - [架构与职责边界](design/architecture.md)：代码目录、请求和返回路径、既有重构验收。
 - [流状态设计](design/stream-state.md)：块身份、累积操作和终态约束。
+- [SDK 客户端生命周期](design/client-lifecycle.md)：实例复用、请求资源隔离和显式关闭。
 
 ## 审计与验证记录
 

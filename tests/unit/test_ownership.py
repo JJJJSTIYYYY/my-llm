@@ -24,11 +24,9 @@ def test_profile_and_request_snapshots_are_independent():
 
 async def test_lazy_generation_captures_history_and_request_options(monkeypatch):
     client = FakeClient([chat_event(content="ok"), chat_event(finish="stop")])
+    monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", lambda **kwargs: client)
     monkeypatch.setattr(
-        "my_llm.codec.openai.chat.decoding.transport.AsyncOpenAI", lambda **kwargs: client
-    )
-    monkeypatch.setattr(
-        "my_llm.codec.openai.responses.decoding.transport.AsyncOpenAI",
+        "my_llm.codec.openai.responses.transport.AsyncOpenAI",
         lambda **kwargs: client,
     )
     history = [{"role": "user", "content": [{"type": "text", "text": "original"}]}]

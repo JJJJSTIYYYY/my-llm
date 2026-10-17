@@ -49,7 +49,7 @@ async def test_unknown_option_fails_before_client_creation(monkeypatch):
     def must_not_open(**kwargs):
         pytest.fail("invalid request opened a native client")
 
-    monkeypatch.setattr("my_llm.codec.anthropic.decoding.transport.AsyncAnthropic", must_not_open)
+    monkeypatch.setattr("my_llm.codec.anthropic.transport.AsyncAnthropic", must_not_open)
     llm = MyLLM(
         provider=ProviderProfile(protocol="anthropic"),
         model=ModelProfile(model="demo", max_tokens=64),

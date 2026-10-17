@@ -12,6 +12,7 @@ def test_public_contract_uses_standard_messages_and_one_protocol_field():
         "BaseCodec",
         "BaseEncoder",
         "BaseDecoder",
+        "BaseTransport",
         "MyLLM",
         "MessageStream",
         "ResolvedProfile",

@@ -1,4 +1,4 @@
-"""Keep native policies with their encoder/decoder and preserve public exports."""
+"""Keep conversion and SDK execution independent within each native codec."""
 
 import ast
 from pathlib import Path
@@ -11,8 +11,10 @@ OWNERS = ("openai/chat", "openai/responses", "anthropic", "gemini", "ollama")
 
 def native_owner(path):
     for owner in OWNERS:
-        if path.is_relative_to(ROOT / "codec" / owner / "encoding") or path.is_relative_to(
-            ROOT / "codec" / owner / "decoding"
+        if (
+            path.is_relative_to(ROOT / "codec" / owner / "encoding")
+            or path.is_relative_to(ROOT / "codec" / owner / "decoding")
+            or path == ROOT / "codec" / owner / "transport.py"
         ):
             return f"my_llm.codec.{owner.replace('/', '.')}"
     return None
@@ -52,7 +54,7 @@ def test_native_implementations_do_not_depend_on_other_native_implementations():
 def test_encoders_and_decoders_do_not_depend_on_the_opposite_direction():
     for path in (ROOT / "codec").rglob("*.py"):
         owner = native_owner(path)
-        if owner is None:
+        if owner is None or path.name == "transport.py":
             continue
         direction = "encoding" if "encoding" in path.parts else "decoding"
         opposite = "decoding" if direction == "encoding" else "encoding"
@@ -64,9 +66,23 @@ def test_encoders_and_decoders_do_not_depend_on_the_opposite_direction():
                 modules.extend(alias.name for alias in node.names)
             assert not any(
                 module.startswith((owner + "." + opposite, owner + ".codec"))
+                or module == owner + ".transport"
                 or module == "my_llm.codec.converter"
                 for module in modules
             ), path
+
+
+def test_transports_do_not_import_conversion_implementations():
+    for owner in OWNERS:
+        path = ROOT / "codec" / owner / "transport.py"
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom):
+                assert not (node.module or "").startswith(
+                    (
+                        f"my_llm.codec.{owner.replace('/', '.')}.encoding",
+                        f"my_llm.codec.{owner.replace('/', '.')}.decoding",
+                    )
+                ), (path, node.module)
 
 
 def test_package_initializers_only_export_interfaces():

@@ -1,7 +1,5 @@
 """ollama: intermediate to native output."""
 
-from collections.abc import AsyncIterator
-from contextlib import AbstractAsyncContextManager
 from inspect import signature
 from typing import Any
 
@@ -15,7 +13,6 @@ from my_llm.codec.ollama.decoding.content import (
     function_tool,
     thinking_enabled,
 )
-from my_llm.codec.ollama.decoding.transport import open_stream
 from my_llm.codec.shared.chunks import events
 from my_llm.codec.shared.conversion import (
     coalesce_messages,
@@ -30,7 +27,7 @@ from my_llm.codec.shared.rendering import project_message, text_result
 from my_llm.codec.shared.tools import decode_functions
 from my_llm.codec.shared.usage import counts
 from my_llm.codec.shared.values import plain
-from my_llm.exceptions import ConfigurationError, MessageValidationError, UnsupportedCapabilityError
+from my_llm.exceptions import ConfigurationError, MessageValidationError
 from my_llm.profile.resolution import ResolvedProfile
 
 PROTOCOL = "ollama"
@@ -39,7 +36,7 @@ REQUEST_FIELDS = set(signature(AsyncClient.chat).parameters) - PROTECTED - {"sel
 
 
 class OllamaDecoder(BaseDecoder):
-    """Render intermediate values and build request-owned native SDK calls."""
+    """Render intermediate values and assemble native request dictionaries."""
 
     __slots__ = ()
     usage_modes = ("none", "native")
@@ -186,12 +183,6 @@ class OllamaDecoder(BaseDecoder):
             "reasoning_effort_parameter": {},
         }
 
-    def validate_profile(self, profile: ResolvedProfile) -> None:
-        super().validate_profile(profile)
-        retries = profile.get("max_retries")
-        if isinstance(retries, int) and not isinstance(retries, bool) and retries > 0:
-            raise UnsupportedCapabilityError("Ollama SDK does not support a positive max_retries")
-
     def request_parameters(self, profile: ResolvedProfile, **parameters: Any) -> dict[str, Any]:
         tokens, _, request, effort = native_options(
             profile, request_fields=REQUEST_FIELDS, protected=PROTECTED, **parameters
@@ -213,11 +204,6 @@ class OllamaDecoder(BaseDecoder):
         if tools is not None:
             result["tools"] = tools
         return result
-
-    def upstream(
-        self, request: dict, profile: ResolvedProfile, **parameters: Any
-    ) -> AbstractAsyncContextManager[AsyncIterator[Any]]:
-        return open_stream(request, profile, **parameters)
 
     def _thinking_value(
         self, request: dict[str, Any], profile: ResolvedProfile, effort: str

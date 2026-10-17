@@ -1,7 +1,5 @@
 """openai/responses: intermediate to native output."""
 
-from collections.abc import AsyncIterator
-from contextlib import AbstractAsyncContextManager
 from copy import deepcopy
 from typing import Any
 
@@ -9,7 +7,6 @@ from openai import Omit
 
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.openai.responses.decoding.content import foreign_block, render_content
-from my_llm.codec.openai.responses.decoding.transport import open_stream
 from my_llm.codec.shared.chunks import events
 from my_llm.codec.shared.conversion import (
     dictionaries,
@@ -39,7 +36,7 @@ PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response
 
 
 class ResponsesDecoder(BaseDecoder):
-    """Render intermediate values and build request-owned native SDK calls."""
+    """Render intermediate values and assemble native request dictionaries."""
 
     __slots__ = ()
     usage_modes = ("none", "native")
@@ -491,11 +488,6 @@ class ResponsesDecoder(BaseDecoder):
         if has_previous:
             result["previous_response_id"] = previous
         return result
-
-    def upstream(
-        self, request: dict, profile: ResolvedProfile, **parameters: Any
-    ) -> AbstractAsyncContextManager[AsyncIterator[Any]]:
-        return open_stream(request, profile, **parameters)
 
     def _response_envelope(self, **parameters: Any) -> dict:
         # Other protocols do not report these request settings. Supply valid defaults

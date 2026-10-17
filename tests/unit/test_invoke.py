@@ -23,8 +23,8 @@ def patch_client(monkeypatch, events, failure=None):
         captured.append(kwargs)
         return client
 
-    monkeypatch.setattr("my_llm.codec.openai.chat.decoding.transport.AsyncOpenAI", factory)
-    monkeypatch.setattr("my_llm.codec.openai.responses.decoding.transport.AsyncOpenAI", factory)
+    monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
+    monkeypatch.setattr("my_llm.codec.openai.responses.transport.AsyncOpenAI", factory)
     return client, captured
 
 
@@ -56,7 +56,9 @@ async def test_unstarted_and_early_closed_streams_release_resources(monkeypatch)
         async for event in stream:
             if event["choices"][0]["delta"].get("content"):
                 break
-    assert client.closed and client.upstream.closed
+    assert not client.closed and client.upstream.closed
+    await llm.aclose()
+    assert client.closed
     await stream.aclose()
     with pytest.raises(StopAsyncIteration):
         await anext(stream)
@@ -179,9 +181,7 @@ async def test_target_finish_failure_does_not_publish_a_completed_result(monkeyp
     events = stream_events("anthropic")
     events[-2]["delta"]["stop_reason"] = "pause_turn"
     client = FakeClient(events)
-    monkeypatch.setattr(
-        "my_llm.codec.anthropic.decoding.transport.AsyncAnthropic", lambda **kwargs: client
-    )
+    monkeypatch.setattr("my_llm.codec.anthropic.transport.AsyncAnthropic", lambda **kwargs: client)
     llm = MyLLM(
         provider=ProviderProfile(protocol="anthropic"),
         model=ModelProfile(model="demo", max_tokens=2048),
@@ -193,6 +193,8 @@ async def test_target_finish_failure_does_not_publish_a_completed_result(monkeyp
             async for _ in stream:
                 pass
     assert stream.result is None
+    assert not client.closed and client.upstream.closed
+    await llm.aclose()
     assert client.closed and client.upstream.closed
 
 
@@ -211,4 +213,6 @@ async def test_early_exit_during_final_tool_frames_has_no_completed_result(monke
             ):
                 break
     assert stream.result is None
+    assert not client.closed and client.upstream.closed
+    await llm.aclose()
     assert client.closed and client.upstream.closed

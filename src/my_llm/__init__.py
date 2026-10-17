@@ -3,7 +3,7 @@
 from openai import Omit, omit
 
 from my_llm._version import __version__
-from my_llm.codec import BaseCodec, BaseDecoder, BaseEncoder, MyCodec
+from my_llm.codec import BaseCodec, BaseDecoder, BaseEncoder, BaseTransport, MyCodec
 from my_llm.exceptions import (
     ConfigurationError,
     IncompleteStreamError,
@@ -30,6 +30,7 @@ __all__ = [
     "BaseCodec",
     "BaseDecoder",
     "BaseEncoder",
+    "BaseTransport",
     "MyCodec",
     "MyLLM",
     "MessageStream",

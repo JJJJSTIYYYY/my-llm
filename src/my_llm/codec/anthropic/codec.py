@@ -2,6 +2,7 @@
 
 from my_llm.codec.anthropic.decoding.decoder import AnthropicDecoder
 from my_llm.codec.anthropic.encoding.encoder import AnthropicEncoder
+from my_llm.codec.anthropic.transport import AnthropicTransport
 from my_llm.codec.base.codec import BaseCodec
 
 
@@ -10,3 +11,4 @@ class AnthropicCodec(BaseCodec):
     protocol_or_api_style = "anthropic"
     encoder = AnthropicEncoder()
     decoder = AnthropicDecoder()
+    transport = AnthropicTransport()

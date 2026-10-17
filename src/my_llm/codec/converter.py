@@ -5,6 +5,7 @@ from typing import Any
 from my_llm.codec.anthropic.codec import AnthropicCodec
 from my_llm.codec.base.codec import BaseCodec
 from my_llm.codec.base.decoder import BaseDecoder
+from my_llm.codec.base.transport import BaseTransport
 from my_llm.codec.gemini.codec import GeminiCodec
 from my_llm.codec.ollama.codec import OllamaCodec
 from my_llm.codec.openai.chat.codec import ChatCompletionsCodec
@@ -47,11 +48,18 @@ class MyCodec:
         return None
 
     def decoder(self, protocol: str) -> BaseDecoder:
-        """Return the stateless owner of native request and transport semantics."""
+        """Return the stateless intermediate-to-native converter."""
         return self._codec(protocol).decoder
 
-    def upstream(self, request: dict, profile: ResolvedProfile, **parameters: Any):
-        return self.decoder(profile.protocol).upstream(request, profile, **parameters)
+    def transport(self, protocol: str) -> BaseTransport:
+        """Return the SDK execution component composed by this protocol's codec."""
+        return self._codec(protocol).transport
+
+    def validate_profile(self, profile: ResolvedProfile) -> None:
+        self._codec(profile.protocol).validate_profile(profile)
+
+    def upstream(self, client: Any, request: dict, profile: ResolvedProfile, **parameters: Any):
+        return self.transport(profile.protocol).upstream(client, request, profile, **parameters)
 
     def result(self, messages: list, *, target_format: Protocol):
         converted = self.decode(messages=messages, target_format=target_format)["messages"]

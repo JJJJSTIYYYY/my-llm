@@ -23,8 +23,8 @@ SHA-256 为 `573045c4a0ba3ec98e914070937d4dfcb9d6e715ddc05fde800a905fc72cf498`�
 
 | 项目 | 原始要求 / 示例 | 当前实现与判定 |
 | --- | --- | --- |
-| Encoder / Decoder 对称性 | 第 73—75 行要求双向对称转换。 | messages / tools / chunks / usage 双向对称；完整抽象接口因职责不同而不对称。Encoder 另需 match_item，继承固定 matches；Decoder 另需 request_parameters、assemble_request、upstream、profile_defaults、usage_modes，继承固定 request，并有校验、结果形状与服务端历史能力钩子。见 [Encoder](../../src/my_llm/codec/base/encoder.py)、[Decoder](../../src/my_llm/codec/base/decoder.py)与[接入指南](../guides/adding-protocol.md)。 |
-| SDK 构建位置 | 第 218 行由 MyLLM 构建官方 SDK client。 | MyLLM 委托 MyCodec.upstream，具体 client、端点及清理位于各 Decoder 的 decoding/transport.py。官方 SDK 和请求独占生命周期保留；实现位置按后续要求调整。见 [调用路径](../../src/my_llm/invoke.py#L126)。 |
+| Encoder / Decoder 对称性 | 第 73—75 行要求双向对称转换。 | messages / tools / chunks / usage 双向对称；完整抽象接口因职责不同而不对称。Encoder 另需 match_item，继承固定 matches；Decoder 另需 request_parameters、assemble_request、profile_defaults、usage_modes，继承固定 request，并有转换校验、结果形状与服务端历史能力钩子。SDK 职责独立到 BaseTransport，由 BaseCodec 统一组合，见[接入指南](../guides/adding-protocol.md)。 |
+| SDK 构建位置 | 第 218 行由 MyLLM 构建官方 SDK client。 | MyLLM 管理 SDK 客户端缓存，通过 Codec.transport 的 create_client / close_client 执行原生创建与关闭，端点及响应清理位于协议根目录的 transport.py。客户端按实例复用，响应按请求独占，见[生命周期设计](../design/client-lifecycle.md)。 |
 | 任意格式转换 | 第 139—141 行支持任意源协议到任意目标协议。 | 五乘五路线存在，但不代表任意原生特性都可转换。未知附加字段跨协议过滤；必要的不透明内容、签名语义、不可表达媒体或无法保留的工具 Schema 约束会拒绝。属于后续“保证不报错前提下最大兼容”的范围收敛，见[配置边界](../reference/configuration.md#跨协议请求的处理边界)。 |
 | 离线流转换 | 原文描述 MyLLM 管理状态，并允许独立转换流块。 | MyCodec.decode 对完整的跨协议流批次会创建本次调用的局部 StreamState 并 finish；实时请求的状态仍由 MyLLM 创建。实例不保留该局部对象，所以仍满足对象无状态，但多了原文没有展开的批次累积路径。见 [converter.py](../../src/my_llm/codec/converter.py)。 |
 | 协议歧义 | 原文未规定同时匹配多种协议时的优先级。 | 当前注册顺序优先 openai_chat；整段 messages 与 tools 一起识别，显式 stdio_protocol 可消歧。不能将示例字典的排列顺序视为已约定的 Anthropic 优先规则。见 [注册与识别](../../src/my_llm/codec/converter.py)、[绑定](../../src/my_llm/invoke.py#L49)。 |
@@ -43,7 +43,7 @@ SHA-256 为 `573045c4a0ba3ec98e914070937d4dfcb9d6e715ddc05fde800a905fc72cf498`�
 
 | 编号 | 原文位置与要求 | 判定与当前证据 |
 | --- | --- | --- |
-| R01 | 61—68、124—132：共同基类，五个 Codec 继承 BaseCodec。 | 符合。三个基类均为抽象类，五个原生类均继承相应契约；[实例与抽象测试](../../tests/unit/test_native_codecs.py)。 |
+| R01 | 61—68、124—132：共同基类，五个 Codec 继承 BaseCodec。 | 符合。原有三个基类均为抽象类，并新增独立的 BaseTransport，由 BaseCodec 组合；五协议继承相应契约。见[实例与抽象测试](../../tests/unit/test_native_codecs.py)。 |
 | R02 | 73：每种协议独立一对无状态 Encoder / Decoder。 | 符合。五对实现独立，实例无 __dict__ / profile；[对象契约](../../tests/unit/test_native_codecs.py#L8)、[目录边界](../../tests/contract/test_codec_boundaries.py)。 |
 | R03 | 73：协议参数差异收入 **parameters。 | 符合。六个 BaseCodec 转换方法均有 profile=None 和 **parameters；[统一方法](../../src/my_llm/codec/base/codec.py)。previous_response_id 由请求阶段的参数字典传递。 |
 | R04 | 74—75、89—116：消息、工具、流块双向转换。 | 符合核心对称契约；完整 ABC 的职责扩展见上表。[BaseCodec](../../src/my_llm/codec/base/codec.py)、[转换测试](../../tests/contract/test_protocol_conformance.py)。 |
@@ -66,7 +66,7 @@ SHA-256 为 `573045c4a0ba3ec98e914070937d4dfcb9d6e715ddc05fde800a905fc72cf498`�
 | R21 | 55：仅思考开启且当条有调用时补空思考字段。 | 符合空值补充条件。Chat / Ollama 的 replay 开关、thinking、调用、已有可见思考共 32 种组合直接验证；[条件测试](../../tests/unit/test_encoding.py#L201)。已有可见思考的回放和缺失值的补充不是同一行为。 |
 | R22 | 227：外部工具调用必须完整，不做内部中断恢复。 | 符合。工具及后续块等待成功终态和 EOF，参数先完整解析再发布；失败不输出半成品，无自动修复流程；[流状态测试](../../tests/contract/test_stream_state.py#L264)。 |
 | R23 | 228：处理消息间的调用 / 结果 ID 异常。 | 符合。标准协议输入中的重复、缺失、未知、乱序及可选 ID 情况均检查。[历史测试](../../tests/unit/test_messages.py)、[validate_history](../../src/my_llm/codec/shared/validation.py)。 |
-| R24 | 231：移除自定义 client 支持。 | 符合。构造和实例 generate 均无 client 注入；各原生 transport 创建官方 SDK client，按请求关闭；[资源测试](../../tests/unit/test_invoke.py)、[并发验证](../../tests/integration/test_concurrency.py)。 |
+| R24 | 231：移除自定义 client 支持。 | 符合。构造和实例 generate 均无 client 注入；各原生 transport 创建官方 SDK client，MyLLM 实例复用并统一关闭；[资源测试](../../tests/unit/test_client_lifecycle.py)、[并发验证](../../tests/integration/test_concurrency.py)。 |
 | R25 | 233：无需旧版兼容路径，代码清晰、无冗余。 | 未保留旧消息包、旧 client 参数或旧文件转发；职责按当前目录归位，初始化文件仅导出。见[结构检查](../../tests/contract/test_codec_boundaries.py)、[发行包检查](../../tests/packaging/test_distribution.py)。“最简洁”是设计评价，不能以测试通过证明绝对最优；Decoder 扩展与局部批次累积的具体差异已单列。 |
 
 ## 文档表述问题

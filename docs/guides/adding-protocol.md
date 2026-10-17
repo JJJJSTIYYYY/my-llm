@@ -9,7 +9,8 @@
 每个协议保留一个 codec.py，以及 encoding / decoding 两个方向。
 主类分别放在 encoder.py 和 decoder.py；消息、工具、事件和用量的方法可在同一类中阅读。
 本方向复用的内容块、字段、工具调用及 Schema 辅助放在 content.py；
-SDK 的打开和关闭放在 decoding/transport.py。没有对应辅助逻辑时不创建空模块。
+SDK 的打开和关闭独立放在协议根目录的 transport.py，与 encoding / decoding 并列，
+由 Codec 组合其 Transport 实例。没有对应辅助逻辑时不创建空模块。
 __init__.py 只导出接口。
 
 ## 必需的抽象接口
@@ -31,7 +32,6 @@ __init__.py 只导出接口。
 | messages / tools / chunks / usage | 签名与 Encoder 对称，方向相反。只根据中间态和本协议的表达能力生成目标值。 |
 | request_parameters(profile, **parameters) → dict | 生成参数映射、受保护字段、推理绑定和 SDK 可接受的选项。 |
 | assemble_request(messages, tools, profile, **parameters) → dict | 接收已经解码的原生消息和工具，调用 request_parameters，放置 system / history / tools 等字段并校验原生服务端历史参数。 |
-| upstream(request, profile, **parameters) | 返回异步上下文管理器，打开官方 SDK 流，负责本次请求所有资源的关闭。 |
 | profile_defaults() → dict | 返回新的默认配置字典；不绑定 provider 或 model。 |
 | usage_modes: tuple[str, ...] | 声明支持的用量策略。 |
 
@@ -44,23 +44,40 @@ Decoder 还有三个按需覆盖的默认钩子：validate_profile 调用通用�
 可扩展原生限制；result 默认返回首条完成消息，可改为原生列表形状；
 allows_external_calls 默认 False，支持服务端历史时才覆盖。
 
-[BaseCodec](../../src/my_llm/codec/base/codec.py) 要求提供 protocol_or_api_style、encoder 和 decoder。
-可以用类属性满足这三个抽象属性，与内置实现一致：
+[BaseTransport](../../src/my_llm/codec/base/transport.py) 独立负责官方 SDK 的生命周期与原生请求执行，
+不读取中间态，也不引用 Encoder / Decoder：
+
+| 方法 | 职责 |
+| --- | --- |
+| create_client(profile, **parameters) | 必需。同步创建官方 SDK 客户端，MyLLM 负责保存与复用。 |
+| upstream(client, request, profile, **parameters) | 必需。借用客户端，执行已组装的原生请求，返回负责关闭本次响应流和响应体的异步上下文管理器。 |
+| close_client(client) | 默认 await client.close()；需要分别关闭同步与异步 SDK 部分时覆盖。 |
+| client_key(profile, **parameters) | 默认 None；SDK 将请求头等选项绑定到客户端时返回不可变缓存键。 |
+| validate_profile(profile) | 默认无操作；校验 SDK 连接、重试等限制，不创建客户端。 |
+
+客户端关闭由 MyLLM 调用 Transport.close_client；不要把响应、工具参数或序号放进客户端缓存键。
+BaseCodec.validate_profile 协调 Decoder 的转换策略校验与 Transport 的连接校验。
+详见[客户端生命周期](../design/client-lifecycle.md)。
+
+[BaseCodec](../../src/my_llm/codec/base/codec.py) 要求提供 protocol_or_api_style、encoder、decoder 和 transport。
+可以用类属性满足这四个抽象属性，与内置实现一致：
 
 ```python
 from my_llm.codec.base.codec import BaseCodec
 from my_llm.codec.openai.chat.decoding.decoder import ChatCompletionsDecoder
 from my_llm.codec.openai.chat.encoding.encoder import ChatCompletionsEncoder
+from my_llm.codec.openai.chat.transport import ChatCompletionsTransport
 
 class ChatCompletionsCodec(BaseCodec):
     __slots__ = ()
     protocol_or_api_style = "openai_chat"
     encoder = ChatCompletionsEncoder()
     decoder = ChatCompletionsDecoder()
+    transport = ChatCompletionsTransport()
 ```
 
-新协议用自己的实现替换示例中的身份与两个类即可。缺少必需接口的类不能实例化。
-Encoder / Decoder / Codec 均使用空 __slots__，只声明方法、不可变策略和无状态实现；
+新协议用自己的实现替换示例中的身份与三个实现类即可。缺少必需接口的类不能实例化。
+Encoder / Decoder / Transport / Codec 均使用空 __slots__，只声明方法、不可变策略和无状态实现；
 不保存 profile、识别结果、响应 ID、流序号或片段。profile 按调用传入，None 表示标准协议；
 所有调用均不得修改输入字典或解析后的配置。请求状态由 StreamState 持有。
 
@@ -81,7 +98,7 @@ Encoder / Decoder / Codec 均使用空 __slots__，只声明方法、不可变�
 
 ## 注册与验证
 
-1. 实现两个方向与 Codec，在 [MyCodec 注册表](../../src/my_llm/codec/converter.py) 加入实例；匹配优先级由注册顺序决定。
+1. 实现两个转换方向与 Transport，由 Codec 组合，在 [MyCodec 注册表](../../src/my_llm/codec/converter.py) 加入实例；匹配优先级由注册顺序决定。
 2. 在 [configuration.py](../../src/my_llm/profile/configuration.py) 的 Protocol / PROTOCOLS 中加入公开身份，同步包导出和协议文档。MyLLM、公共流状态和 shared 无需增加原生协议分支。
 3. 独立编写原生消息、工具和流样例，不用待测转换器生成预期。新增协议与全部已有协议双向验证消息、工具、完整流和请求，并检查同协议扩展保留、未知值拒绝、用量和终态。
 4. 通过官方 SDK 和本地 HTTP transport 验证请求、正常完成、异常、取消、提前退出及并发隔离。无需调用真实模型服务。
@@ -93,3 +110,6 @@ Encoder / Decoder / Codec 均使用空 __slots__，只声明方法、不可变�
 旧的 messages/、tools/、stream/、request/ 内部模块已合并，没有保留旧路径的转发。
 自定义实现需将 matches 改为 match_item，将原先接收原生历史的 request 改为 assemble_request，
 并提供 request_parameters；调用 Decoder.request 的代码应改传中间态。
+SDK 客户端职责已从 BaseDecoder 迁至 BaseTransport。原先 Decoder 上的 create_client、
+upstream、close_client、client_key 迁入 Transport，SDK 连接限制也在 Transport.validate_profile 校验；
+由 Codec.transport 组合。旧 decoding/transport.py 路径已移除，无兼容转发。

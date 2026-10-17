@@ -3,6 +3,7 @@
 from my_llm.codec.base.codec import BaseCodec
 from my_llm.codec.openai.chat.decoding.decoder import ChatCompletionsDecoder
 from my_llm.codec.openai.chat.encoding.encoder import ChatCompletionsEncoder
+from my_llm.codec.openai.chat.transport import ChatCompletionsTransport
 
 
 class ChatCompletionsCodec(BaseCodec):
@@ -10,3 +11,4 @@ class ChatCompletionsCodec(BaseCodec):
     protocol_or_api_style = "openai_chat"
     encoder = ChatCompletionsEncoder()
     decoder = ChatCompletionsDecoder()
+    transport = ChatCompletionsTransport()

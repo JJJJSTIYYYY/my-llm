@@ -25,25 +25,27 @@ src/my_llm/
     ├── base/
     │   ├── codec.py            # BaseCodec
     │   ├── encoder.py          # BaseEncoder
-    │   └── decoder.py          # BaseDecoder
+    │   ├── decoder.py          # BaseDecoder
+    │   └── transport.py        # BaseTransport，SDK 生命周期与执行
     ├── shared/                 # 通用字典、工具关联、匹配、流转换辅助
-    ├── anthropic/              # codec.py + encoding/ + decoding/
-    ├── gemini/                 # codec.py + encoding/ + decoding/
-    ├── ollama/                 # codec.py + encoding/ + decoding/
+    ├── anthropic/              # codec.py + transport.py + encoding/ + decoding/
+    ├── gemini/                 # codec.py + transport.py + encoding/ + decoding/
+    ├── ollama/                 # codec.py + transport.py + encoding/ + decoding/
     └── openai/
-        ├── chat/               # 独立 codec.py + encoding/ + decoding/
-        └── responses/          # 独立 codec.py + encoding/ + decoding/
+        ├── chat/               # 独立 codec.py + transport.py + encoding/ + decoding/
+        └── responses/          # 独立 codec.py + transport.py + encoding/ + decoding/
 ```
 
 ### 原生协议目录
 
 五种协议使用相同的方向边界。转换算法直接实现为 Encoder / Decoder 的方法，
 不再将每个方法拆成函数模块，再通过 staticmethod 绑定到类上。
-包初始化文件仅导出，codec.py 只组合两个方向并声明协议身份。
+包初始化文件仅导出，codec.py 统一组合 Encoder、Decoder、Transport 并声明协议身份。
 
 ```text
 <protocol>/
 ├── codec.py
+├── transport.py               # 官方 SDK 创建、关闭、复用策略与请求执行
 ├── encoding/
 │   ├── __init__.py             # 仅导出 Encoder
 │   ├── encoder.py              # 识别、消息、工具、流、用量：原生 → 中间态
@@ -51,14 +53,15 @@ src/my_llm/
 └── decoding/
     ├── __init__.py             # 仅导出 Decoder
     ├── decoder.py              # 中间态 → 原生；请求组装、参数与默认策略
-    ├── content.py              # 内容渲染、投影与工具辅助（按需）
-    └── transport.py            # 官方 SDK 调用和请求资源清理
+    └── content.py              # 内容渲染、投影与工具辅助（按需）
 ```
 
 每个方向的主要转换方法都由基类约束；content.py 中的函数是实现细节，
 供本方向的消息与流转换复用，不要求为每个辅助函数新增继承层。
-Decoder 的 request_parameters、assemble_request、profile_defaults 和 upstream
-也都有明确抽象接口；transport.py 是 upstream 使用的 SDK 资源管理实现。
+Decoder 的 request_parameters、assemble_request、profile_defaults 约束中间态到原生格式的转换。
+BaseTransport 独立约束 create_client、upstream，并提供关闭、缓存键和连接校验默认钩子。
+BaseCodec 统一组合三个组件，validate_profile 协调 Decoder 与 Transport 的校验。
+MyLLM 从 Codec 获取 Transport，保存并复用实际客户端；upstream 借用客户端且只清理本次响应。
 不同协议之间、同一协议的 encoding 与 decoding 之间均不相互依赖。
 
 encode 的方向是标准协议 → 中间态，decode 的方向是中间态 → 标准协议或上游请求格式，
@@ -67,8 +70,10 @@ encode 的方向是标准协议 → 中间态，decode 的方向是中间态 →
 BaseEncoder.matches 固定整批识别流程，协议只实现 match_item。
 BaseDecoder.request 固定能力检查、消息解码、工具解码、原生请求组装的顺序，
 直接调用 Decoder.request 也必须传中间态；MyCodec.request 只负责路由。
-Profile 解析向目标 Decoder 获取协议默认值和用量模式校验；MyLLM 委托 MyCodec 打开原生流、
+Profile 解析向目标 Decoder 获取协议默认值，并通过 Codec 统一校验转换和连接策略；MyLLM 委托 MyCodec 打开原生流、
 处理服务端历史能力和收集结果形状，不直接分支选择 SDK 或端点。
+客户端在实例中延迟创建，通过 MyLLM.aclose 或异步上下文统一关闭；
+单次请求不关闭共享客户端。见[客户端生命周期](client-lifecycle.md)。
 
 [转换器](../../src/my_llm/codec/converter.py)不引用 MyLLM；完整离线流批次可使用本次调用内的
 局部累积器，实时流的状态由 MyLLM 为每次请求创建并持有。
@@ -114,7 +119,7 @@ openai_chat；显式设置 stdio_protocol 可选择其他标准格式。
 | 空思维链只在思考开启且当条有工具调用时补充 | 已完成。Chat / Ollama 同时检查回放配置、思考开关、assistant 角色和工具调用；已有可见思考按回放配置处理。见 [参数组合测试](../../tests/unit/test_encoding.py)。 |
 | MyLLM 校验消息间工具 ID 一一对应 | 已完成。标准协议输入中的重复、缺少、未知、顺序错误及可选 ID 情况均校验；见[历史测试](../../tests/unit/test_messages.py)。 |
 | 不处理消息内部中断恢复，只对外发布完整工具调用 | 已完成。请求状态只负责正常片段累积，工具参数完整后再生成目标事件，不提供部分 JSON 工具调用或中断修复 API。显式 SDK 错误和缺少消息级终止事件继续上抛。见 [流测试](../../tests/contract/test_decoding.py)。 |
-| 移除自定义 client，统一官方 SDK | 已完成。MyLLM 无 client 构造参数，每次请求创建并关闭官方 SDK client；成功、异常、取消和提前退出均覆盖。见 [调用测试](../../tests/unit/test_invoke.py)、[OpenAI SDK](../../tests/integration/test_sdk_transport.py)、[原生 SDK](../../tests/integration/test_native_sdk_transport.py)。 |
+| 移除自定义 client，统一官方 SDK | 已完成。MyLLM 无 client 构造参数；官方 SDK client 在实例内复用并统一关闭，响应按请求清理；成功、异常、取消和提前退出均覆盖。见[生命周期设计](client-lifecycle.md)、[OpenAI SDK](../../tests/integration/test_sdk_transport.py)、[原生 SDK](../../tests/integration/test_native_sdk_transport.py)。 |
 | 无旧版兼容路径，文档与分发同步 | 已完成。旧模块已移除，公开导出和示例同步；构建测试验证新模块入包、旧 types 包不存在。见 [文档测试](../../tests/integration/test_documentation.py)与[发行包测试](../../tests/packaging/test_distribution.py)。 |
 
 ## 累计重构修复
@@ -160,7 +165,8 @@ Gemini 提前退出时 HTTPX 响应体未即时关闭的问题。见[并发复�
 
 ## 独立审计修复与协议归属复核
 
-A01—A11 的修复及后续代码审核已补齐。请求、SDK 传输、格式识别、默认参数、用量、
-内容投影、原生字段消费及 stream/result 形状的差异均由对应 Encoder / Decoder 负责。
+A01—A11 的修复及后续代码审核已补齐。请求格式、识别、默认生成参数、用量、
+内容投影、原生字段消费及 stream/result 形状的差异由对应 Encoder / Decoder 负责，
+SDK 生命周期、连接策略和执行由 Codec 组合的 Transport 独立负责。
 共享层只保留不区分厂商的机制。详见[修复验收记录](../audits/protocol-fixes-2026-10-17.md)，
 其验证结果取代本页较早的累计测试数量。

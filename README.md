@@ -34,16 +34,16 @@ import os
 from my_llm import ModelProfile, MyLLM, ProviderProfile
 
 async def main():
-    llm = MyLLM(
+    async with MyLLM(
         provider=ProviderProfile(
             protocol="openai_responses",
             api_key=os.environ["OPENAI_API_KEY"],
         ),
         model=ModelProfile(model=os.environ["LLM_MODEL"]),
         stdio_protocol="openai_chat",
-    )
-    message = await llm.generate(messages=[{"role": "user", "content": "你好"}])
-    print(message["content"])
+    ) as llm:
+        message = await llm.generate(messages=[{"role": "user", "content": "你好"}])
+        print(message["content"])
 
 asyncio.run(main())
 ```
@@ -66,7 +66,8 @@ async def print_answer(llm):
     return stream.result  # 完成后的标准消息字典
 ```
 
-流式工具调用完整后才返回；本库不执行工具。SDK Client 每次请求创建并关闭。
+流式工具调用完整后才返回；本库不执行工具。SDK Client 在同一 MyLLM 实例内延迟创建并复用，
+通过 `async with MyLLM(...)` 或 `await llm.aclose()` 统一关闭；每次请求单独关闭响应流。
 Provider、Model 和连接配置在构造时保存副本，生成时仅接受消息、工具和生成选项。
 `replay_reasoning_content_when_tool_calls` 在兼容 Chat 服务中需要显式启用（默认 False）；Ollama 默认 True。仅思考已开启且 assistant 有工具调用时补空思维链。
 

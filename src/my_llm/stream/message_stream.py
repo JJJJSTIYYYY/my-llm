@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from copy import deepcopy
 from typing import Any
 
@@ -21,6 +21,7 @@ class MessageStream(AsyncIterator[dict[str, Any]]):
         self._iterator = iterator
         self._state = state
         self._closed = False
+        self._on_close: Callable[[], Awaitable[None]] | None = None
 
     @property
     def result(self) -> Any:
@@ -41,10 +42,15 @@ class MessageStream(AsyncIterator[dict[str, Any]]):
             raise
 
     async def aclose(self) -> None:
-        """Close request resources; closing an unstarted stream creates no client."""
+        """Close the response and any one-shot owner, preserving reusable clients."""
         if not self._closed:
             self._closed = True
-            await self._iterator.aclose()
+            try:
+                await self._iterator.aclose()
+            finally:
+                if self._on_close is not None:
+                    callback, self._on_close = self._on_close, None
+                    await callback()
 
     async def __aenter__(self) -> MessageStream:
         return self

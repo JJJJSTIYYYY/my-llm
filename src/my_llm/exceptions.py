@@ -7,7 +7,7 @@ from typing import Any
 
 
 class MyLLMError(Exception):
-    """Base error raised by my-llm-py."""
+    """Base error raised by my-llm."""
 
 
 class ConfigurationError(MyLLMError, ValueError):

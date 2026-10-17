@@ -31,8 +31,8 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/JJJJSTIYYYY/my-llm-py"
-Issues = "https://github.com/JJJJSTIYYYY/my-llm-py/issues"
+Repository = "https://github.com/JJJJSTIYYYY/my-llm"
+Issues = "https://github.com/JJJJSTIYYYY/my-llm/issues"
 
 [tool.hatch.version]
 path = "src/my_llm/_version.py"

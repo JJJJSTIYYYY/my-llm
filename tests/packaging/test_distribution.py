@@ -80,8 +80,8 @@ def test_build_contains_runtime_modules_and_source_tests(tmp_path, version_overr
         assert metadata.get_all("License-File") == ["LICENSE"]
         assert archive.read(f"{dist_info}/licenses/LICENSE") == (root / "LICENSE").read_bytes()
         assert set(metadata.get_all("Project-URL")) == {
-            "Repository, https://github.com/JJJJSTIYYYY/my-llm-py",
-            "Issues, https://github.com/JJJJSTIYYYY/my-llm-py/issues",
+            "Repository, https://github.com/JJJJSTIYYYY/my-llm",
+            "Issues, https://github.com/JJJJSTIYYYY/my-llm/issues",
         }
         assert metadata["Requires-Python"] == ">=3.12"
         assert metadata["Description-Content-Type"] == "text/markdown"

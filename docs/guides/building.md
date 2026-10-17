@@ -69,7 +69,7 @@ uv run python examples/local_demo.py
 
 ## GitHub 自动测试（CI）
 
-[ci.yml](https://github.com/JJJJSTIYYYY/my-llm-py/blob/main/.github/workflows/ci.yml) 在分支 push 和 Pull Request 时运行。
+[ci.yml](https://github.com/JJJJSTIYYYY/my-llm/blob/main/.github/workflows/ci.yml) 在分支 push 和 Pull Request 时运行。
 使用锁定的依赖在 Ubuntu 上测试 Python 3.12、3.13、3.14；Python 3.12
 额外检查 Ruff 规则及格式。所有版本均运行完整 pytest 和本地示例，不需要模型 API Key。
 

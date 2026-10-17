@@ -80,15 +80,11 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
             http_clients.append(client._client)
             return client
 
-        monkeypatch.setattr(
-            "my_llm.codec.ollama.decoding.request.transport.AsyncOllama", ollama_factory
-        )
+        monkeypatch.setattr("my_llm.codec.ollama.decoding.transport.AsyncOllama", ollama_factory)
     elif protocol == "anthropic":
-        monkeypatch.setattr(
-            "my_llm.codec.anthropic.decoding.request.transport.AsyncAnthropic", factory
-        )
+        monkeypatch.setattr("my_llm.codec.anthropic.decoding.transport.AsyncAnthropic", factory)
     else:
-        monkeypatch.setattr("my_llm.codec.gemini.decoding.request.transport.genai.Client", factory)
+        monkeypatch.setattr("my_llm.codec.gemini.decoding.transport.genai.Client", factory)
     llm = MyLLM(
         provider=ProviderProfile(
             protocol=protocol,

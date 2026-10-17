@@ -23,15 +23,15 @@ SHA-256 为 `573045c4a0ba3ec98e914070937d4dfcb9d6e715ddc05fde800a905fc72cf498`�
 
 | 项目 | 原始要求 / 示例 | 当前实现与判定 |
 | --- | --- | --- |
-| Encoder / Decoder 对称性 | 第 73—75 行要求双向对称转换。 | messages / tools / chunks 三组方法仍对称；但完整抽象接口不再对称。Encoder 另需 matches、usage；Decoder 另需 request、upstream、profile_defaults、usage_modes、usage，并有校验、结果形状与服务端历史能力钩子。见 [Encoder](../../src/my_llm/codec/base/encoder.py)、[Decoder](../../src/my_llm/codec/base/decoder.py)。这是后续“所有协议特判收敛至各自 Encoder / Decoder”带来的职责扩展。 |
-| SDK 构建位置 | 第 218 行由 MyLLM 构建官方 SDK client。 | MyLLM 委托 MyCodec.upstream，具体 client、端点及清理位于各 Decoder 的 request/transport.py。官方 SDK 和请求独占生命周期保留；实现位置按后续要求调整。见 [调用路径](../../src/my_llm/invoke.py#L126)。 |
+| Encoder / Decoder 对称性 | 第 73—75 行要求双向对称转换。 | messages / tools / chunks / usage 双向对称；完整抽象接口因职责不同而不对称。Encoder 另需 match_item，继承固定 matches；Decoder 另需 request_parameters、assemble_request、upstream、profile_defaults、usage_modes，继承固定 request，并有校验、结果形状与服务端历史能力钩子。见 [Encoder](../../src/my_llm/codec/base/encoder.py)、[Decoder](../../src/my_llm/codec/base/decoder.py)与[接入指南](../guides/adding-protocol.md)。 |
+| SDK 构建位置 | 第 218 行由 MyLLM 构建官方 SDK client。 | MyLLM 委托 MyCodec.upstream，具体 client、端点及清理位于各 Decoder 的 decoding/transport.py。官方 SDK 和请求独占生命周期保留；实现位置按后续要求调整。见 [调用路径](../../src/my_llm/invoke.py#L126)。 |
 | 任意格式转换 | 第 139—141 行支持任意源协议到任意目标协议。 | 五乘五路线存在，但不代表任意原生特性都可转换。未知附加字段跨协议过滤；必要的不透明内容、签名语义、不可表达媒体或无法保留的工具 Schema 约束会拒绝。属于后续“保证不报错前提下最大兼容”的范围收敛，见[配置边界](../reference/configuration.md#跨协议请求的处理边界)。 |
-| 离线流转换 | 原文描述 MyLLM 管理状态，并允许独立转换流块。 | MyCodec.decode 对完整的跨协议流批次会创建本次调用的局部 StreamState 并 finish；实时请求的状态仍由 MyLLM 创建。实例不保留该局部对象，所以仍满足对象无状态，但多了原文没有展开的批次累积路径。见 [converter.py](../../src/my_llm/codec/converter.py#L76)。 |
-| 协议歧义 | 原文未规定同时匹配多种协议时的优先级。 | 当前注册顺序优先 openai_chat；整段 messages 与 tools 一起识别，显式 stdio_protocol 可消歧。不能将示例字典的排列顺序视为已约定的 Anthropic 优先规则。见 [注册与识别](../../src/my_llm/codec/converter.py#L26)、[绑定](../../src/my_llm/invoke.py#L49)。 |
+| 离线流转换 | 原文描述 MyLLM 管理状态，并允许独立转换流块。 | MyCodec.decode 对完整的跨协议流批次会创建本次调用的局部 StreamState 并 finish；实时请求的状态仍由 MyLLM 创建。实例不保留该局部对象，所以仍满足对象无状态，但多了原文没有展开的批次累积路径。见 [converter.py](../../src/my_llm/codec/converter.py)。 |
+| 协议歧义 | 原文未规定同时匹配多种协议时的优先级。 | 当前注册顺序优先 openai_chat；整段 messages 与 tools 一起识别，显式 stdio_protocol 可消歧。不能将示例字典的排列顺序视为已约定的 Anthropic 优先规则。见 [注册与识别](../../src/my_llm/codec/converter.py)、[绑定](../../src/my_llm/invoke.py#L49)。 |
 | MyLLM 属性命名 | 构造示例写 stdio_protocol / profile；后文又写 protocol_or_api_style / resolved_profile。 | 当前统一为 stdio_protocol 和 resolved_profile，没有重复提供 MyLLM.profile / protocol_or_api_style 别名。语义符合输入输出协议与上游协议分离，但与原文部分名称不同；原文自身需统一名称。 |
-| 目录命名 | 第 66—67 行写 base/encode.py、base/decode.py。 | 当前为 encoder.py、decoder.py；原生 encoding / decoding 再按 messages、tools、stream、request 分组，公共机制位于 shared。属于后续明确要求的目录调整，见[目录树](../design/architecture.md#原生协议目录)。 |
+| 目录命名 | 第 66—67 行写 base/encode.py、base/decode.py。 | 当前为 encoder.py、decoder.py；原生 encoding / decoding 的转换方法直接落在实现类，辅助按 content 与 transport 分开，公共机制位于 shared。目录树已随 2026-10-18 整理更新，见[目录树](../design/architecture.md#原生协议目录)。 |
 | 消息内部异常 | 第 227 行说“不处理”内容或工具调用中断。 | 当前检测缺少终态、重复终态、快照冲突和无效工具 JSON，会抛出错误并附可表达的部分结果；没有自动续写、重试修复、执行工具或发布半成品调用。将“检测并上抛”和“中断恢复”区分后，与设计边界相容。见 [StreamState](../../src/my_llm/stream/_state.py#L309)、[异常上抛](../../src/my_llm/invoke.py#L143)。 |
-| 中间态编辑 | 原文要求开放字典，未规定编辑后的同协议合并行为。 | 当前原生快照优先，同协议精确回放针对未经修改的中间态；它不是可编辑消息的公开 API。不能从“开放字典”推导出修改语义字段后必然覆盖快照的承诺。见 [original()](../../src/my_llm/codec/shared/conversion.py#L67)。 |
+| 中间态编辑 | 原文要求开放字典，未规定编辑后的同协议合并行为。 | 当前原生快照优先，同协议精确回放针对未经修改的中间态；它不是可编辑消息的公开 API。不能从“开放字典”推导出修改语义字段后必然覆盖快照的承诺。见 [original()](../../src/my_llm/codec/shared/conversion.py)。 |
 
 原文伪代码存在不完整的条件 return、protocol/profile 混写等情况。
 本次按行为要求核对，没有把不完整示例逐字执行作为验收标准。
@@ -45,12 +45,12 @@ SHA-256 为 `573045c4a0ba3ec98e914070937d4dfcb9d6e715ddc05fde800a905fc72cf498`�
 | --- | --- | --- |
 | R01 | 61—68、124—132：共同基类，五个 Codec 继承 BaseCodec。 | 符合。三个基类均为抽象类，五个原生类均继承相应契约；[实例与抽象测试](../../tests/unit/test_native_codecs.py)。 |
 | R02 | 73：每种协议独立一对无状态 Encoder / Decoder。 | 符合。五对实现独立，实例无 __dict__ / profile；[对象契约](../../tests/unit/test_native_codecs.py#L8)、[目录边界](../../tests/contract/test_codec_boundaries.py)。 |
-| R03 | 73：协议参数差异收入 **parameters。 | 符合。六个 BaseCodec 转换方法均有 profile=None 和 **parameters；[统一方法](../../src/my_llm/codec/base/codec.py#L26)。previous_response_id 由请求阶段的参数字典传递。 |
+| R03 | 73：协议参数差异收入 **parameters。 | 符合。六个 BaseCodec 转换方法均有 profile=None 和 **parameters；[统一方法](../../src/my_llm/codec/base/codec.py)。previous_response_id 由请求阶段的参数字典传递。 |
 | R04 | 74—75、89—116：消息、工具、流块双向转换。 | 符合核心对称契约；完整 ABC 的职责扩展见上表。[BaseCodec](../../src/my_llm/codec/base/codec.py)、[转换测试](../../tests/contract/test_protocol_conformance.py)。 |
 | R05 | 76：中间态不使用固定模板，未知字典保留层级。 | 符合。中间态为开放字典，协议数据的嵌套扩展、列表索引和冲突字段有直接检查；验收输入范围见上文。[保留测试](../../tests/contract/test_intermediate_preservation.py)。 |
-| R06 | 80：BaseCodec 无状态且不保存 profile。 | 符合。只声明协议身份和转换器，无请求级字段；[BaseCodec](../../src/my_llm/codec/base/codec.py#L12)。 |
-| R07 | 119—120：match_protocol 返回协议名或 None。 | 符合。[BaseCodec.match_protocol](../../src/my_llm/codec/base/codec.py#L56)委托自身 Encoder；MyCodec 遍历所有候选直到匹配，全部失败返回 None。 |
-| R08 | 136—138：MyCodec 同时持有五个无状态实例，不固定 profile。 | 符合。仅保存 codecs 注册表；[MyCodec](../../src/my_llm/codec/converter.py#L24)。 |
+| R06 | 80：BaseCodec 无状态且不保存 profile。 | 符合。只声明协议身份和转换器，无请求级字段；[BaseCodec](../../src/my_llm/codec/base/codec.py)。 |
+| R07 | 119—120：match_protocol 返回协议名或 None。 | 符合。[BaseCodec.match_protocol](../../src/my_llm/codec/base/codec.py)委托自身 Encoder；MyCodec 遍历所有候选直到匹配，全部失败返回 None。 |
+| R08 | 136—138：MyCodec 同时持有五个无状态实例，不固定 profile。 | 符合。仅保存 codecs 注册表；[MyCodec](../../src/my_llm/codec/converter.py)。 |
 | R09 | 139—141：接受五协议并允许源、目标任意组合。 | 已实现 25 条路线；特性可表达性有限，见上表。消息、工具各 25 组，原生流实时 / 批次共 50 组有独立预期与 SDK / Schema 校验；[协议契约](../../tests/contract/test_protocol_conformance.py)。 |
 | R10 | 35：路由内聚，不让 MyLLM 感知具体 Codec。 | 符合。invoke.py 只导入 MyCodec；具体类型只在注册表组合；[边界测试](../../tests/contract/test_codec_boundaries.py)、[invoke.py](../../src/my_llm/invoke.py#L12)。 |
 | R11 | 39、200—203、214：整段输入只识别并绑定一次。 | 符合。首次合并 messages/tools 识别，绑定后不重新猜测；[一次绑定测试](../../tests/unit/test_invoke.py#L147)、[工具消歧测试](../../tests/integration/test_message_inputs.py)。遍历消息做格式校验不等于逐条选择不同源协议。 |
@@ -58,9 +58,9 @@ SHA-256 为 `573045c4a0ba3ec98e914070937d4dfcb9d6e715ddc05fde800a905fc72cf498`�
 | R13 | 209：实例 generate 不再动态接收 provider/model。 | 符合。实例方法没有这些参数、client 或连接覆盖；单独的一次性 generate 是新建实例的入口，不是修改现有实例；[接口测试](../../tests/unit/test_public_api.py)、[错误参数测试](../../tests/unit/test_invoke.py#L116)。 |
 | R14 | 51、209、230：合并 protocol / api_type。 | 符合。只有五值 Protocol；ProviderProfile / ResolvedProfile 无 api_type，公开 API 无 APIType；[配置类型](../../src/my_llm/profile/configuration.py#L16)、[接口测试](../../tests/unit/test_public_api.py)。 |
 | R15 | 213—216：标准消息 / 工具输入按 I/O 协议编码，profile=None。 | 符合。[generate](../../src/my_llm/invoke.py#L83)对 stdio_protocol 编码，未传 provider profile。 |
-| R16 | 217—218：按上游 profile 解码并发起官方流请求。 | 符合行为；构建 client 的位置已调整。[request](../../src/my_llm/codec/converter.py#L123)将 resolved_profile 传入目标 Decoder；[五协议 SDK 测试](../../tests/integration/test_native_sdk_transport.py)、[OpenAI 测试](../../tests/integration/test_sdk_transport.py)。 |
+| R16 | 217—218：按上游 profile 解码并发起官方流请求。 | 符合行为；构建 client 的位置已调整。[request](../../src/my_llm/codec/converter.py)将 resolved_profile 传入目标 Decoder；[五协议 SDK 测试](../../tests/integration/test_native_sdk_transport.py)、[OpenAI 测试](../../tests/integration/test_sdk_transport.py)。 |
 | R17 | 222：返回的 SDK 事件按上游 profile 编码。 | 符合。[上游事件编码](../../src/my_llm/invoke.py#L133)传 input_format=profile.protocol、profile=profile；[配置路径回归](../../tests/unit/test_invoke.py#L160)。 |
-| R18 | 223：输出按绑定 I/O 协议解码，profile=None。 | 符合。[标准事件渲染](../../src/my_llm/invoke.py#L116)与 [result](../../src/my_llm/codec/converter.py#L55)都使用调用者协议且不传上游 profile。 |
+| R18 | 223：输出按绑定 I/O 协议解码，profile=None。 | 符合。[标准事件渲染](../../src/my_llm/invoke.py#L116)与 [result](../../src/my_llm/codec/converter.py)都使用调用者协议且不传上游 profile。 |
 | R19 | 43：OpenAI Chat / Responses 编解码分离。 | 符合。各自独立 encoding / decoding；原生实现之间不互相导入；[边界检查](../../tests/contract/test_codec_boundaries.py)。 |
 | R20 | 47、229：公开输入输出不再使用自定义消息协议。 | 符合。公开返回原生字典或 Responses items；Message / MessageChunk / ToolCall 等类型已移除。StreamState / BlockState 是内部累积实现；[公开接口](../../tests/unit/test_public_api.py)、[标准协议输出](../../tests/contract/test_protocol_conformance.py)。 |
 | R21 | 55：仅思考开启且当条有调用时补空思考字段。 | 符合空值补充条件。Chat / Ollama 的 replay 开关、thinking、调用、已有可见思考共 32 种组合直接验证；[条件测试](../../tests/unit/test_encoding.py#L201)。已有可见思考的回放和缺失值的补充不是同一行为。 |

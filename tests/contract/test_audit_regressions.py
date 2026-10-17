@@ -12,7 +12,7 @@ from my_llm import (
     MyCodec,
     UnsupportedCapabilityError,
 )
-from my_llm.codec.gemini.encoding.tools.schema import json_schema
+from my_llm.codec.gemini.encoding.content import json_schema
 from my_llm.stream._state import StreamState
 from tests.helpers.protocols import PROTOCOLS, response_completed, stream_events
 from tests.helpers.sdk import EVENT_TYPES, MESSAGE_TYPES, TOOL_TYPES, assert_native

@@ -1,6 +1,6 @@
 # 项目架构与职责边界
 
-2026-10-17 整理当前架构与既有重构验收。按标准协议输入范围和后续明确要求，
+2026-10-18 更新 codec 布局与抽象契约。按标准协议输入范围和后续明确要求，
 核心行为要求已落地。与最初示例在职责、目录和命名上的差异见
 [需求对照报告](../audits/refactor-requirements-2026-10-17.md)。
 无损边界为同一 protocol 与中间态之间，不保证跨协议无损。
@@ -37,37 +37,36 @@ src/my_llm/
 
 ### 原生协议目录
 
-五种协议使用相同的职责分组，encoding 顶层只保留转换器和格式识别入口，
-decoding 顶层只保留转换器。包初始化文件仅导出，codec.py 负责组合与匹配。
+五种协议使用相同的方向边界。转换算法直接实现为 Encoder / Decoder 的方法，
+不再将每个方法拆成函数模块，再通过 staticmethod 绑定到类上。
+包初始化文件仅导出，codec.py 只组合两个方向并声明协议身份。
 
 ```text
 <protocol>/
 ├── codec.py
 ├── encoding/
-│   ├── __init__.py
-│   ├── encoder.py
-│   ├── matching.py
-│   ├── messages/               # conversion.py；内容、字段消费与图片辅助
-│   ├── tools/                  # definitions.py；调用结构与工具 Schema
-│   └── stream/                 # chunks.py、usage.py
+│   ├── __init__.py             # 仅导出 Encoder
+│   ├── encoder.py              # 识别、消息、工具、流、用量：原生 → 中间态
+│   └── content.py              # 内容块、字段消费、工具调用和 Schema 辅助（按需）
 └── decoding/
-    ├── __init__.py
-    ├── decoder.py
-    ├── messages/               # conversion.py；内容、外来字段投影与思考回放
-    ├── tools/                  # definitions.py；调用结构
-    ├── stream/                 # chunks.py、usage.py
-    └── request/                # assembly.py、parameters.py、settings.py、transport.py
+    ├── __init__.py             # 仅导出 Decoder
+    ├── decoder.py              # 中间态 → 原生；请求组装、参数与默认策略
+    ├── content.py              # 内容渲染、投影与工具辅助（按需）
+    └── transport.py            # 官方 SDK 调用和请求资源清理
 ```
 
-messages/conversion.py 负责整条消息，content.py、fields.py、images.py、projection.py、
-reasoning.py 按各协议实际需要存在；tools 中同样仅保留需要的 calls.py 和 schema.py。
-流转换可复用本方向的消息和工具辅助，不在 stream 复制同一份逻辑。
-decoding/request 的四个模块分别负责请求组装、原生生成参数、默认配置与用量策略、
-官方 SDK 调用与清理。分组包不增加兼容转发，也不在 __init__.py 中实现转换。
+每个方向的主要转换方法都由基类约束；content.py 中的函数是实现细节，
+供本方向的消息与流转换复用，不要求为每个辅助函数新增继承层。
+Decoder 的 request_parameters、assemble_request、profile_defaults 和 upstream
+也都有明确抽象接口；transport.py 是 upstream 使用的 SDK 资源管理实现。
+不同协议之间、同一协议的 encoding 与 decoding 之间均不相互依赖。
 
 encode 的方向是标准协议 → 中间态，decode 的方向是中间态 → 标准协议或上游请求格式，
 因此上游参数生成归在 decoding。OpenAI 两套 API 的原生参数也分别处理。
 共享 options / transport 辅助仅合并配置、校验通用能力并管理资源，不选择厂商或原生字段。
+BaseEncoder.matches 固定整批识别流程，协议只实现 match_item。
+BaseDecoder.request 固定能力检查、消息解码、工具解码、原生请求组装的顺序，
+直接调用 Decoder.request 也必须传中间态；MyCodec.request 只负责路由。
 Profile 解析向目标 Decoder 获取协议默认值和用量模式校验；MyLLM 委托 MyCodec 打开原生流、
 处理服务端历史能力和收集结果形状，不直接分支选择 SDK 或端点。
 
@@ -82,6 +81,7 @@ Profile 解析向目标 Decoder 获取协议默认值和用量模式校验；MyL
 可复用样例、传输替身及校验器放在 `tests/helpers/`，conftest.py 只注册 fixture。
 文档按 `reference/`、`guides/`、`design/`、`audits/` 分类，见[文档目录](../README.md)。
 离线示例放在 `examples/`；模块命名和导入规则见[本地开发规范](../guides/development.md)。
+新协议的必需接口、中间态约定和验证步骤见[接入协议指南](../guides/adding-protocol.md)。
 
 ## 请求与返回路径
 

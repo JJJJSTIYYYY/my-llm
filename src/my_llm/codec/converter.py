@@ -4,12 +4,13 @@ from typing import Any
 
 from my_llm.codec.anthropic.codec import AnthropicCodec
 from my_llm.codec.base.codec import BaseCodec
+from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.gemini.codec import GeminiCodec
 from my_llm.codec.ollama.codec import OllamaCodec
 from my_llm.codec.openai.chat.codec import ChatCompletionsCodec
 from my_llm.codec.openai.responses.codec import ResponsesCodec
 from my_llm.codec.shared.chunks import is_batch
-from my_llm.exceptions import UnsupportedCapabilityError, UnsupportedProviderError
+from my_llm.exceptions import UnsupportedProviderError
 from my_llm.profile.configuration import Protocol
 from my_llm.profile.resolution import ResolvedProfile
 
@@ -45,7 +46,7 @@ class MyCodec:
                 return protocol
         return None
 
-    def decoder(self, protocol: str):
+    def decoder(self, protocol: str) -> BaseDecoder:
         """Return the stateless owner of native request and transport semantics."""
         return self._codec(protocol).decoder
 
@@ -121,11 +122,6 @@ class MyCodec:
         )
 
     def request(self, intermediate: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
-        if intermediate.get("tools") and not profile.get("supports_function_calling", False):
-            raise UnsupportedCapabilityError("model does not support function calling")
-        converted = self.decode(
-            **intermediate, target_format=profile.protocol, profile=profile, **parameters
-        )
         return self.decoder(profile.protocol).request(
-            converted["messages"], converted.get("tools"), profile, **parameters
+            intermediate["messages"], intermediate.get("tools"), profile, **parameters
         )

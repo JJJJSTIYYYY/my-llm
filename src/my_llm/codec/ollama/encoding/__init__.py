@@ -1,4 +1,4 @@
-"""Public encoder export."""
+"""ollama encoding."""
 
 from my_llm.codec.ollama.encoding.encoder import OllamaEncoder
 

@@ -69,7 +69,7 @@ A02 的实际传输及默认配置回归还见[原生 SDK 测试](../../tests/in
 
 ## A01：原生 Gemini Schema 没有转换为 JSON Schema
 
-位置：[Gemini 工具 Encoder](../../src/my_llm/codec/gemini/encoding/tools/definitions.py#L18)。
+位置：[Gemini 工具 Encoder](../../src/my_llm/codec/gemini/encoding/encoder.py)。
 它将 `parameters` 与 `parameters_json_schema` 作为同一种字典处理。
 但官方定义分别使用 Schema 与 JSON Schema，前者有 `OBJECT` / `STRING`
 等类型枚举，后者示例使用 `object` / `string`。
@@ -95,8 +95,8 @@ SDK 类型检查只把参数 Schema 当作字典，不验证其内部是否为�
 ## A02：原生选项被静默丢弃
 
 位置：[通用选项校验](../../src/my_llm/codec/shared/options.py)、
-[Anthropic REQUEST_FIELDS](../../src/my_llm/codec/anthropic/decoding/request/parameters.py#L11)、
-[Gemini REQUEST_FIELDS](../../src/my_llm/codec/gemini/decoding/request/parameters.py#L11)。
+[Anthropic REQUEST_FIELDS](../../src/my_llm/codec/anthropic/decoding/decoder.py)、
+[Gemini REQUEST_FIELDS](../../src/my_llm/codec/gemini/decoding/decoder.py)。
 
 合并 `extra_body` 后，只返回固定白名单里的键。实际复现：
 
@@ -118,9 +118,9 @@ Anthropic `metadata` 也有相同行为；真实 SDK 的本地请求证实字段
 
 ## A03：OpenAI 拒绝内容处理不完整
 
-位置：[Chat 流 Encoder](../../src/my_llm/codec/openai/chat/encoding/stream/chunks.py#L49)、
-[Responses 流 Encoder](../../src/my_llm/codec/openai/responses/encoding/stream/chunks.py#L198)、
-[Chat 内容渲染](../../src/my_llm/codec/openai/chat/decoding/messages/content.py)。
+位置：[Chat 流 Encoder](../../src/my_llm/codec/openai/chat/encoding/encoder.py)、
+[Responses 流 Encoder](../../src/my_llm/codec/openai/responses/encoding/encoder.py)、
+[Chat 内容渲染](../../src/my_llm/codec/openai/chat/decoding/content.py)。
 
 官方提供 [Chat delta.refusal](https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events)
 与 [Responses refusal.delta / refusal.done](https://developers.openai.com/api/reference/resources/responses/streaming-events)。
@@ -145,9 +145,9 @@ Responses 则将 refusal 增量作为 opaque 直接发布。仅含 refusal 的�
 
 ## A04：停止原因和停止序列转换有偏差
 
-位置：[Anthropic 原因映射](../../src/my_llm/codec/anthropic/encoding/stream/chunks.py)、
-[Anthropic 流 Decoder](../../src/my_llm/codec/anthropic/decoding/stream/chunks.py)、
-[Gemini 流 Decoder](../../src/my_llm/codec/gemini/decoding/stream/chunks.py#L43)。
+位置：[Anthropic 原因映射](../../src/my_llm/codec/anthropic/encoding/encoder.py)、
+[Anthropic 流 Decoder](../../src/my_llm/codec/anthropic/decoding/decoder.py)、
+[Gemini 流 Decoder](../../src/my_llm/codec/gemini/decoding/decoder.py)。
 
 官方说明 [Anthropic 命中停止序列时同时返回原因与匹配序列](https://platform.claude.com/docs/en/api/messages/create)，
 [Chat 的 stop 也包含命中停止序列](https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events)。
@@ -163,8 +163,8 @@ Responses 则将 refusal 增量作为 opaque 直接发布。仅含 refusal 的�
 
 ## A05：已知来源字段进入不支持它们的目标结构
 
-位置：[Gemini encode_part](../../src/my_llm/codec/gemini/encoding/messages/conversion.py#L43)、
-[tool_block / chat_call](../../src/my_llm/codec/shared/conversion.py#L169)。
+位置：[Gemini encode_part](../../src/my_llm/codec/gemini/encoding/encoder.py)、
+[tool_block / chat_call](../../src/my_llm/codec/shared/conversion.py)。
 
 两组官方原生输入可复现：
 
@@ -189,7 +189,7 @@ Ollama 索引问题确认发生于原生字典历史 / 独立 Codec 路径。
 
 ## A06：Ollama 图片 MIME 固定为 image/png
 
-位置：[Ollama 消息 Encoder](../../src/my_llm/codec/ollama/encoding/messages/conversion.py#L44)。
+位置：[Ollama 消息 Encoder](../../src/my_llm/codec/ollama/encoding/encoder.py)。
 
 官方 [Vision 样例](https://docs.ollama.com/capabilities/vision)使用 JPEG 文件的 base64，
 Ollama 图片列表本身不提供统一 PNG 的保证。当前 Encoder 对每张图都填
@@ -202,7 +202,7 @@ Ollama 图片列表本身不提供统一 PNG 的保证。当前 Encoder 对每�
 
 ## A07：Anthropic citations_delta 未进入最终消息
 
-位置：[Anthropic 流 Encoder](../../src/my_llm/codec/anthropic/encoding/stream/chunks.py#L54)。
+位置：[Anthropic 流 Encoder](../../src/my_llm/codec/anthropic/encoding/encoder.py)。
 
 官方 [Citations streaming support](https://platform.claude.com/docs/en/build-with-claude/citations#streaming-support)
 要求将每个 `citations_delta.citation` 追加到当前文本块的 `citations`。
@@ -215,8 +215,8 @@ Ollama 图片列表本身不提供统一 PNG 的保证。当前 Encoder 对每�
 
 ## A08：Anthropic 文本块工具结果不能发给 Ollama
 
-位置：[Ollama 结果渲染](../../src/my_llm/codec/ollama/decoding/messages/conversion.py#L52)、
-[tool_output](../../src/my_llm/codec/shared/conversion.py#L307)。
+位置：[Ollama 结果渲染](../../src/my_llm/codec/ollama/decoding/decoder.py)、
+[tool_output](../../src/my_llm/codec/shared/conversion.py)。
 
 官方允许 [Anthropic 工具结果采用内容块列表](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls)。
 只包含 `[{"type":"text","text":"OK"}]` 也会复现，无需图片或服务端工具。
@@ -229,7 +229,7 @@ Ollama 图片列表本身不提供统一 PNG 的保证。当前 Encoder 对每�
 
 ## A09：外来思考被渲染成缺少签名的 Anthropic 块
 
-位置：[Anthropic 消息 Decoder](../../src/my_llm/codec/anthropic/decoding/messages/conversion.py#L30)。
+位置：[Anthropic 消息 Decoder](../../src/my_llm/codec/anthropic/decoding/decoder.py)。
 
 Gemini `{"text":"Thinking","thought":True}` 转 Anthropic 后为
 `{"type":"thinking","thinking":"Thinking"}`，缺少必填 signature。
@@ -243,7 +243,7 @@ Chat / Ollama 可见思考转入这一目标也有相同结构问题。
 
 ## A10：文档 URL 被当成 Chat 支持的文件输入
 
-位置：[chat_content 的 document 分支](../../src/my_llm/codec/shared/conversion.py#L226)。
+位置：[chat_content 的 document 分支](../../src/my_llm/codec/shared/conversion.py)。
 
 原生 Anthropic URL document 转 Chat 得到：
 

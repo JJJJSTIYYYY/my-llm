@@ -1,6 +1,10 @@
+from copy import deepcopy
+
 import pytest
 
-from my_llm import BaseCodec, BaseDecoder, BaseEncoder, MyCodec
+from my_llm import BaseCodec, BaseDecoder, BaseEncoder, MyCodec, UnsupportedCapabilityError
+from my_llm.codec.openai.chat.decoding.decoder import ChatCompletionsDecoder
+from my_llm.codec.openai.chat.encoding.encoder import ChatCompletionsEncoder
 from tests.helpers.protocols import PROTOCOLS, history, tools
 
 
@@ -23,6 +27,117 @@ def test_abstract_contract_cannot_be_instantiated():
     for cls in (BaseCodec, BaseEncoder, BaseDecoder):
         with pytest.raises(TypeError):
             cls()
+
+
+@pytest.mark.parametrize("missing", ["encoder", "decoder"])
+def test_codec_requires_both_conversion_directions(missing):
+    bindings = {
+        "protocol_or_api_style": "openai_chat",
+        "encoder": ChatCompletionsEncoder(),
+        "decoder": ChatCompletionsDecoder(),
+    }
+    del bindings[missing]
+    incomplete = type("IncompleteCodec", (BaseCodec,), bindings)
+    with pytest.raises(TypeError, match=missing):
+        incomplete()
+
+
+@pytest.mark.parametrize(
+    "base,concrete,missing",
+    [
+        (BaseEncoder, ChatCompletionsEncoder, "match_item"),
+        (BaseEncoder, ChatCompletionsEncoder, "chunks"),
+        (BaseDecoder, ChatCompletionsDecoder, "assemble_request"),
+        (BaseDecoder, ChatCompletionsDecoder, "request_parameters"),
+        (BaseDecoder, ChatCompletionsDecoder, "upstream"),
+    ],
+)
+def test_partial_protocol_implementation_cannot_be_instantiated(base, concrete, missing):
+    bindings = {
+        name: getattr(concrete, name) for name in base.__abstractmethods__ if name != missing
+    }
+    incomplete = type("IncompleteImplementation", (base,), bindings)
+    with pytest.raises(TypeError, match=missing):
+        incomplete()
+
+
+@pytest.mark.parametrize("protocol", PROTOCOLS)
+def test_decoder_request_accepts_intermediate_values(profile_factory, protocol):
+    converter = MyCodec()
+    profile = profile_factory(protocol, max_tokens=100, supports_function_calling=True)
+    intermediate = converter.encode(
+        messages=[{"role": "user", "parts": [{"text": "hello"}]}],
+        tools=tools("gemini"),
+        input_format="gemini",
+    )
+    before = deepcopy(intermediate)
+    request = converter.decoder(protocol).request(**intermediate, profile=profile, max_tokens=50)
+    if protocol == "gemini":
+        assert request["contents"] == [{"role": "user", "parts": [{"text": "hello"}]}]
+        assert request["config"].max_output_tokens == 50
+        assert request["config"].tools[0].function_declarations[0].name == "weather"
+    else:
+        history_key = "input" if protocol == "openai_responses" else "messages"
+        expected_content = {
+            "openai_chat": "hello",
+            "openai_responses": [{"type": "input_text", "text": "hello"}],
+            "anthropic": [{"type": "text", "text": "hello"}],
+            "ollama": "hello",
+        }[protocol]
+        expected_message = {"role": "user", "content": expected_content}
+        if protocol == "openai_responses":
+            expected_message["type"] = "message"
+        assert request[history_key] == [expected_message]
+        assert request["tools"] == converter.decoder(protocol).tools(intermediate["tools"], profile)
+    assert intermediate == before
+
+
+@pytest.mark.parametrize("tool_values", [None, [], tools("openai_chat")])
+def test_request_pipeline_decodes_once_before_native_assembly(profile_factory, tool_values):
+    calls = []
+    profile = profile_factory(supports_function_calling=True)
+    intermediate = MyCodec().encode(
+        messages=[{"role": "user", "content": "hello"}],
+        tools=tool_values,
+        input_format="openai_chat",
+    )
+
+    class RecordingDecoder(ChatCompletionsDecoder):
+        __slots__ = ()
+
+        def messages(self, messages, profile=None, **parameters):
+            calls.append(("messages", profile, parameters))
+            return super().messages(messages, profile, **parameters)
+
+        def tools(self, tools, profile=None, **parameters):
+            calls.append(("tools", profile, parameters))
+            return super().tools(tools, profile, **parameters)
+
+        def assemble_request(self, messages, tools, profile, **parameters):
+            calls.append(("assemble", profile, parameters))
+            assert messages == [{"role": "user", "content": "hello"}]
+            assert tools == tool_values
+            return super().assemble_request(messages, tools, profile, **parameters)
+
+    RecordingDecoder().request(
+        intermediate["messages"], intermediate.get("tools"), profile, max_tokens=42
+    )
+    expected = (
+        ["messages", "assemble"] if tool_values is None else ["messages", "tools", "assemble"]
+    )
+    assert [kind for kind, _, _ in calls] == expected
+    assert all(actual is profile and options == {"max_tokens": 42} for _, actual, options in calls)
+
+
+def test_direct_decoder_request_checks_tool_capability_before_conversion(profile_factory):
+    class RejectConversion(ChatCompletionsDecoder):
+        __slots__ = ()
+
+        def messages(self, *args, **kwargs):
+            pytest.fail("unsupported tools must be rejected before converting the request")
+
+    with pytest.raises(UnsupportedCapabilityError, match="function calling"):
+        RejectConversion().request([], [{}], profile_factory())
 
 
 @pytest.mark.parametrize(

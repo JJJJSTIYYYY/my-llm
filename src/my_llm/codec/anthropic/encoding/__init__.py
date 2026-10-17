@@ -1,4 +1,4 @@
-"""Public encoder export."""
+"""anthropic encoding."""
 
 from my_llm.codec.anthropic.encoding.encoder import AnthropicEncoder
 

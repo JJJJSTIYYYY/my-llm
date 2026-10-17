@@ -153,23 +153,23 @@ class ConcurrentTransport:
             return client
 
         monkeypatch.setattr(
-            "my_llm.codec.openai.chat.decoding.request.transport.AsyncOpenAI",
+            "my_llm.codec.openai.chat.decoding.transport.AsyncOpenAI",
             lambda **kw: factory("openai_chat", **kw),
         )
         monkeypatch.setattr(
-            "my_llm.codec.openai.responses.decoding.request.transport.AsyncOpenAI",
+            "my_llm.codec.openai.responses.decoding.transport.AsyncOpenAI",
             lambda **kw: factory("openai_chat", **kw),
         )
         monkeypatch.setattr(
-            "my_llm.codec.anthropic.decoding.request.transport.AsyncAnthropic",
+            "my_llm.codec.anthropic.decoding.transport.AsyncAnthropic",
             lambda **kw: factory("anthropic", **kw),
         )
         monkeypatch.setattr(
-            "my_llm.codec.ollama.decoding.request.transport.AsyncOllama",
+            "my_llm.codec.ollama.decoding.transport.AsyncOllama",
             lambda **kw: factory("ollama", **kw),
         )
         monkeypatch.setattr(
-            "my_llm.codec.gemini.decoding.request.transport.genai.Client",
+            "my_llm.codec.gemini.decoding.transport.genai.Client",
             lambda **kw: factory("gemini", **kw),
         )
 

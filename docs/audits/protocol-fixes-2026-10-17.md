@@ -12,7 +12,7 @@ A01—A11 已改写为普通回归测试，见
 
 | 要求 | 实现与直接证据 |
 | --- | --- |
-| Gemini Schema 类型与语义 | [encoding/tools/schema.py](../../src/my_llm/codec/gemini/encoding/tools/schema.py) 递归转换 OBJECT/STRING 等类型、nullable、anyOf、defs/ref 与数量约束；应用属性名不改写，parameters_json_schema 不重新解释。同协议快照还原原值。 |
+| Gemini Schema 类型与语义 | [encoding/content.py](../../src/my_llm/codec/gemini/encoding/content.py) 递归转换 OBJECT/STRING 等类型、nullable、anyOf、defs/ref 与数量约束；应用属性名不改写，parameters_json_schema 不重新解释。同协议快照还原原值。 |
 | 原生选项不丢弃 | 各 Decoder 根据当前 SDK 支持的生成字段接收参数；未知选项明确拒绝，核心字段与 Gemini 自动工具执行开关继续受保护。[选项测试](../../tests/unit/test_native_options.py)覆盖错误发生在 client 创建前，[原生传输](../../tests/integration/test_native_sdk_transport.py)检查实际序列化结果。 |
 | 拒绝、引用与终态 | refusal 作为独立内容块累积；引用使用通用列表追加操作；终态后的操作由源 Encoder 声明允许的尾部类型。普通与工具后延迟文本、五种原生重复终态、非法后续内容及合法用量尾块均有直接回归。 |
 | 跨协议请求可表达性 | 各目标 Decoder 声明字段投影及降级策略。未知扩展不流入其他协议；文本工具结果转字符串，多模态结果在 Responses 可表达时保留。必要的不透明内容或无法保留的约束明确拒绝。 |
@@ -63,13 +63,13 @@ Gemini 迁移标记只用于外来工具历史，依据
 
 | 行为 | 当前唯一责任位置 |
 | --- | --- |
-| 全列表原生格式识别 | 各 `encoding/matching.py`；BaseCodec 只委托 Encoder，MyCodec 按注册顺序选择。 |
+| 全列表原生格式识别 | BaseEncoder.matches 统一遍历；各 `encoding/encoder.py` 实现 match_item；BaseCodec 只委托 Encoder，MyCodec 按注册顺序选择。 |
 | 原生消息、内容、工具、流片段、消费字段与工具 Schema | 各 `encoding/`。 |
-| 原生计数归一化 / 目标用量结构 | 各 `encoding/stream/usage.py` / `decoding/stream/usage.py`；共享层只合并累计快照及计算通用计数组。 |
-| 目标字段投影与媒体/思考/工具结果策略 | 各 `decoding/messages/`、`decoding/tools/` 和 `decoding/stream/`。 |
-| 默认字段路径、推理绑定、用量模式 | 各 `decoding/request/settings.py`、parameters.py；profile resolver 获取声明后通用合并校验。 |
-| 请求体字段、system 指令与服务端历史能力 | 各 `decoding/request/assembly.py` 和 Decoder。 |
-| SDK、端点、HTTP 单位、客户端 headers、关闭方式 | 各 `decoding/request/transport.py`；共享 owned_stream 只管理资源栈。 |
+| 原生计数归一化 / 目标用量结构 | 各 Encoder / Decoder 的 usage；共享层只合并累计快照及计算通用计数组。 |
+| 目标字段投影与媒体/思考/工具结果策略 | 各 `decoding/decoder.py` 和 `decoding/content.py`。 |
+| 默认字段路径、推理绑定、用量模式 | 各 Decoder 的 profile_defaults、request_parameters、usage_modes；profile resolver 获取声明后通用合并校验。 |
+| 请求体字段、system 指令与服务端历史能力 | 各 Decoder 的 assemble_request 和 allows_external_calls。 |
+| SDK、端点、HTTP 单位、客户端 headers、关闭方式 | 各 `decoding/transport.py`；共享 owned_stream 只管理资源栈。 |
 | Responses 列表结果与其他消息结果 | 对应 Decoder.result。 |
 | 块身份、片段、引用追加、尾部许可、参数完整性与 EOF | 请求自己的 StreamState；源引用固定为 BlockRef，不按厂商名分支。 |
 

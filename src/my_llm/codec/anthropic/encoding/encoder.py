@@ -1,16 +1,225 @@
-"""Stateless anthropic encoding."""
+"""anthropic: native input to intermediate."""
 
-from my_llm.codec.anthropic.encoding import matching
-from my_llm.codec.anthropic.encoding.messages import conversion as messages
-from my_llm.codec.anthropic.encoding.stream import chunks, usage
-from my_llm.codec.anthropic.encoding.tools import definitions as tools
+from typing import Any
+
 from my_llm.codec.base.encoder import BaseEncoder
+from my_llm.codec.shared.chunks import BlockRef, batch
+from my_llm.codec.shared.conversion import (
+    blocks,
+    dictionaries,
+    extras,
+    remember,
+)
+from my_llm.codec.shared.matching import mapping_list
+from my_llm.codec.shared.tools import encode_functions
+from my_llm.codec.shared.usage import record
+from my_llm.exceptions import MessageValidationError, ResponseFailedError
+from my_llm.profile.resolution import ResolvedProfile
+
+PROTOCOL = "anthropic"
+REASONS = {
+    "end_turn": "stop",
+    "stop_sequence": "stop",
+    "tool_use": "tool_calls",
+    "max_tokens": "length",
+    "refusal": "content_filter",
+}
 
 
 class AnthropicEncoder(BaseEncoder):
+    """Convert native messages, tools, events and usage to intermediate values."""
+
     __slots__ = ()
-    matches = staticmethod(matching.matches)
-    messages = staticmethod(messages.encode)
-    tools = staticmethod(tools.encode)
-    chunks = staticmethod(chunks.encode)
-    usage = staticmethod(usage.encode)
+
+    def match_item(self, item: dict) -> bool:
+        if "input_schema" in item:
+            return isinstance(item["input_schema"], dict) and isinstance(item.get("name"), str)
+        if item.get("role") not in ("user", "assistant", "system") or "content" not in item:
+            return False
+        if set(item) & {
+            "parts",
+            "type",
+            "tool_calls",
+            "tool_call_id",
+            "reasoning_content",
+            "thinking",
+            "images",
+            "tool_name",
+        }:
+            return False
+        content = item["content"]
+        return (
+            isinstance(content, str)
+            or content is None
+            or (
+                mapping_list(content)
+                and all(
+                    block.get("type")
+                    in {
+                        "text",
+                        "thinking",
+                        "redacted_thinking",
+                        "tool_use",
+                        "tool_result",
+                        "image",
+                        "document",
+                        "server_tool_use",
+                        "web_search_tool_result",
+                        "web_fetch_tool_result",
+                        "code_execution_tool_result",
+                    }
+                    for block in content
+                )
+            )
+        )
+
+    def messages(
+        self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
+    ) -> list[dict]:
+        result = []
+        for message in dictionaries(messages):
+            if (
+                message.get("role") not in ("system", "user", "assistant")
+                or "content" not in message
+                or "parts" in message
+            ):
+                raise MessageValidationError("message does not use the bound anthropic protocol")
+            result.append(
+                remember(
+                    {**message, "content": blocks(message.get("content"))}, [message], PROTOCOL
+                )
+            )
+        return result
+
+    def tools(
+        self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
+    ) -> list[dict]:
+        return encode_functions(
+            tools,
+            "anthropic",
+            lambda tool: (
+                [{**extras(tool, "input_schema"), "parameters": tool.get("input_schema", {})}]
+                if "input_schema" in tool
+                else None
+            ),
+            consumed={"name": True, "description": True, "input_schema": True},
+        )
+
+    def chunks(
+        self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
+    ) -> list[dict]:
+        result = []
+        for event in dictionaries(chunks):
+            if event.get("type") == "error" or event.get("error"):
+                raise ResponseFailedError(
+                    "provider generation failed", details=event.get("error", event)
+                )
+            kind = event.get("type")
+            index = event.get("index", 0)
+            ops = []
+            if kind == "message_start":
+                message = event["message"]
+                ops.append({"type": "metadata", **self._metadata(message)})
+                if message.get("usage") and (
+                    profile is None or profile.get("usage_mode") != "none"
+                ):
+                    ops.append({"type": "usage", "usage": message["usage"]})
+            elif kind == "content_block_start":
+                block = event["content_block"]
+                ops.append({"type": "block_set", "ref": BlockRef("content", index), "block": block})
+            elif kind == "content_block_delta":
+                delta = event["delta"]
+                if delta.get("type") == "citations_delta":
+                    ops.append(
+                        {
+                            "type": "block_annotation",
+                            "ref": BlockRef("content", index),
+                            "field": "citations",
+                            "value": delta["citation"],
+                        }
+                    )
+                field = {
+                    "text_delta": "text",
+                    "thinking_delta": "thinking",
+                    "signature_delta": "signature",
+                    "input_json_delta": "arguments",
+                }.get(delta.get("type"))
+                if field:
+                    ops.append(
+                        {
+                            "type": "block_delta",
+                            "ref": BlockRef("content", index),
+                            "field": field,
+                            "kind": {"arguments": "tool_use", "signature": "thinking"}.get(
+                                field, field
+                            ),
+                            "value": delta.get(
+                                "partial_json" if field == "arguments" else field, ""
+                            ),
+                        }
+                    )
+            elif kind == "content_block_stop":
+                ops.append({"type": "block_stop", "ref": BlockRef("content", index)})
+            elif kind == "message_delta":
+                delta = event.get("delta", {})
+                if delta.get("stop_reason"):
+                    reason = delta["stop_reason"]
+                    ops.append({"type": "reason", "reason": REASONS.get(reason, reason)})
+                    ops.append(
+                        {
+                            "type": "metadata",
+                            "native_stop_reason": reason,
+                            "native_stop_sequence": delta.get("stop_sequence"),
+                        }
+                    )
+                if event.get("usage") and (profile is None or profile.get("usage_mode") != "none"):
+                    ops.append({"type": "usage", "usage": event["usage"]})
+            elif kind == "message_stop":
+                ops.append({"type": "finish"})
+            if not ops:
+                ops = [{"type": "opaque", "value": event}]
+            for operation in ops:
+                if operation["type"] == "usage":
+                    operation["usage"] = self.usage(operation["usage"])
+            result.append(batch(event, ops, PROTOCOL, self._consumed_fields(event)))
+        return result
+
+    def usage(self, value: dict | None) -> dict | None:
+        if value is None:
+            return None
+        cached = value.get("cache_read_input_tokens")
+        written = value.get("cache_creation_input_tokens")
+        return record(
+            value,
+            "anthropic",
+            input_base=value.get("input_tokens"),
+            input_add={"cache_read": cached, "cache_write": written},
+            output_base=value.get("output_tokens"),
+            cached=cached,
+            cache_write=written,
+        )
+
+    def _metadata(self, event: dict) -> dict:
+        return {key: event[key] for key in ("id", "model") if key in event}
+
+    def _consumed_fields(self, event: dict) -> dict:
+        fields = {
+            "message_start": {"message": dict.fromkeys(("id", "model"), True)},
+            "content_block_start": {"index": True},
+            "content_block_delta": {
+                "index": True,
+                "delta": {
+                    "type": True,
+                    "text": True,
+                    "thinking": True,
+                    "signature": True,
+                    "partial_json": True,
+                    "citation": True,
+                },
+            },
+            "content_block_stop": {"index": True},
+            "message_delta": {"delta": {"stop_reason": True, "stop_sequence": True}},
+            "message_stop": {},
+        }
+        kind = event.get("type")
+        return {"type": True, **fields[kind]} if kind in fields else {}

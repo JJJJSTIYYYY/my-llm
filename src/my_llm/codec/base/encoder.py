@@ -1,19 +1,30 @@
 """Stateless standard-protocol to intermediate conversion contract."""
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, final
 
+from my_llm.codec.shared.matching import match_all
 from my_llm.profile.resolution import ResolvedProfile
 
 
 class BaseEncoder(ABC):
-    """Convert independently on each call; request state belongs to MyLLM."""
+    """Native input to intermediate values, without knowing the output protocol.
+
+    Implement the five abstract hooks directly in the protocol's encoder.py.
+    Keep content helpers in the same direction and mutable state request-owned.
+    Profiles are call arguments; implementations must not mutate inputs.
+    """
 
     __slots__ = ()
 
-    @abstractmethod
+    @final
     def matches(self, values: list) -> bool:
-        """Recognize this protocol's native message and tool shapes."""
+        """Recognize the whole native list; malformed inputs never match."""
+        return match_all(values, self.match_item)
+
+    @abstractmethod
+    def match_item(self, item: dict) -> bool:
+        """Recognize one native message/tool; list handling is fixed in matches."""
         ...
 
     @abstractmethod

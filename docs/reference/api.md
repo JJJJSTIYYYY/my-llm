@@ -182,8 +182,12 @@ MyCodec 只路由，MyLLM 只编排每次请求；这些方法不在转换器实
 
 | 实现 | 必须提供 |
 | --- | --- |
-| BaseEncoder | matches(values)、usage(value)。 |
-| BaseDecoder | request(messages, tools, profile, **parameters)、upstream(request, profile, **parameters)、profile_defaults()、usage(value)，以及 usage_modes 属性。 |
+| BaseEncoder | match_item(item)、usage(value)；整批 matches(values) 继承固定实现。 |
+| BaseDecoder | request_parameters(profile, **parameters)、assemble_request(messages, tools, profile, **parameters)、upstream(request, profile, **parameters)、profile_defaults()、usage(value)，以及 usage_modes 属性。 |
+
+BaseCodec 的协议身份、encoder 和 decoder 均为必需的抽象属性。
+Decoder.request 继承固定实现，接收中间态，依次检查能力、解码消息和工具、调用 assemble_request；
+assemble_request 才接收原生消息与工具。完整实现和迁移约定见[接入协议指南](../guides/adding-protocol.md)。
 
 Decoder.upstream 返回异步上下文管理器，负责本次 SDK 流与客户端的资源生命周期。
 validate_profile、result 和 allows_external_calls 有通用默认实现；

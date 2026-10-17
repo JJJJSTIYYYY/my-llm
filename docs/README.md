@@ -9,6 +9,7 @@
 ## 开发与设计
 
 - [本地开发规范](guides/development.md)：目录职责、导入、测试辅助代码与结构验证。
+- [接入新的协议](guides/adding-protocol.md)：Encoder / Decoder 必需接口、固定流程与注册验证。
 - [构建与发行包验证](guides/building.md)：安装、构建和 CI。
 - [架构与职责边界](design/architecture.md)：代码目录、请求和返回路径、既有重构验收。
 - [流状态设计](design/stream-state.md)：块身份、累积操作和终态约束。

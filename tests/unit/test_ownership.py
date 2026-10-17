@@ -1,7 +1,6 @@
 from copy import deepcopy
 
 from my_llm import ModelProfile, MyCodec, MyLLM, ProviderProfile
-from my_llm.codec.openai.chat.decoding.request.parameters import request_parameters
 from my_llm.profile import resolve_profiles
 from tests.helpers.protocols import chat_event
 from tests.helpers.transport import FakeClient
@@ -14,18 +13,22 @@ def test_profile_and_request_snapshots_are_independent():
     body["nested"]["value"] = "changed"
     assert llm.provider.extra_body["nested"]["value"] == "original"
     assert llm.resolved_profile.get("extra_body")["nested"]["value"] == "original"
-    request = request_parameters(llm.resolved_profile)
+    decoder = llm.codec.decoder(llm.resolved_profile.protocol)
+    request = decoder.request_parameters(llm.resolved_profile)
     request["extra_body"]["nested"]["value"] = "transport"
-    assert request_parameters(llm.resolved_profile)["extra_body"]["nested"]["value"] == "original"
+    assert (
+        decoder.request_parameters(llm.resolved_profile)["extra_body"]["nested"]["value"]
+        == "original"
+    )
 
 
 async def test_lazy_generation_captures_history_and_request_options(monkeypatch):
     client = FakeClient([chat_event(content="ok"), chat_event(finish="stop")])
     monkeypatch.setattr(
-        "my_llm.codec.openai.chat.decoding.request.transport.AsyncOpenAI", lambda **kwargs: client
+        "my_llm.codec.openai.chat.decoding.transport.AsyncOpenAI", lambda **kwargs: client
     )
     monkeypatch.setattr(
-        "my_llm.codec.openai.responses.decoding.request.transport.AsyncOpenAI",
+        "my_llm.codec.openai.responses.decoding.transport.AsyncOpenAI",
         lambda **kwargs: client,
     )
     history = [{"role": "user", "content": [{"type": "text", "text": "original"}]}]

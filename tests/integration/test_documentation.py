@@ -22,7 +22,13 @@ def python_blocks(path):
 
 
 @pytest.mark.parametrize(
-    "relative_path", ["README.md", "docs/reference/api.md", "docs/reference/configuration.md"]
+    "relative_path",
+    [
+        "README.md",
+        "docs/reference/api.md",
+        "docs/reference/configuration.md",
+        "docs/guides/adding-protocol.md",
+    ],
 )
 def test_documented_python_is_valid(relative_path):
     blocks = python_blocks(ROOT / relative_path)
@@ -86,10 +92,8 @@ async def test_guide_text_stream_and_tool_round_trip(monkeypatch):
         clients.append(client)
         return client
 
-    monkeypatch.setattr("my_llm.codec.openai.chat.decoding.request.transport.AsyncOpenAI", factory)
-    monkeypatch.setattr(
-        "my_llm.codec.openai.responses.decoding.request.transport.AsyncOpenAI", factory
-    )
+    monkeypatch.setattr("my_llm.codec.openai.chat.decoding.transport.AsyncOpenAI", factory)
+    monkeypatch.setattr("my_llm.codec.openai.responses.decoding.transport.AsyncOpenAI", factory)
     provider = ProviderProfile(api_key="local-doc-test")
     llm = MyLLM(provider=provider, model=ModelProfile(model="demo"))
     for name in ("ask", "print_stream"):

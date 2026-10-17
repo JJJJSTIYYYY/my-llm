@@ -1,20 +1,24 @@
 # 本地开发规范
 
+2026-10-18 的 codec 布局与接口以本页目录说明和[接入协议指南](adding-protocol.md)为准；
+页末 2026-10-17 的目录分层验收保留为历史记录。
+
 ## 目录与模块
 
 运行时包位于 src/my_llm；应用调用方式见 [API 指南](../reference/api.md)，
 完整职责树见[架构文档](../design/architecture.md)。
 
 - codec/base 的 codec.py、encoder.py、decoder.py 定义抽象契约，模块名与五种原生实现一致。
-- 五种协议各自维护 encoding 和 decoding；两者都按 messages、tools、stream 分组，
-  decoding 另有 request 分组。SDK、字段名与协议特判留在对应目录。
+- 五种协议各自维护 encoding 和 decoding；转换方法直接落在 encoder.py / decoder.py。
+  内容、字段及工具辅助合并为本方向的 content.py，官方 SDK 资源管理放在 decoding/transport.py。
+  仅在存在对应职责时保留辅助模块，不为每个转换方法或短小函数建立分组包。
 - codec/shared 保存不选择厂商的公共机制；values.py 负责 SDK 值读取、路径读取及参数值展开。
 - profile/configuration.py 保存配置类型、覆盖字段与字典合并；resolution.py 负责解析、快照及校验。
 - stream 保存消息流生命周期与每次请求的状态；invoke.py 负责生成调用编排。
 - __init__.py 只保留说明、导入与 __all__，不放业务代码。
 
 新增模块应以职责命名；避免重新引入 common.py 或 utils 作为未分类代码的容器。
-本次整理仅移动模块、更新导入和文档引用，没有调整参数、转换、终态或清理逻辑。
+新增协议依据[接入协议指南](adding-protocol.md)实现三个基类的契约。
 
 ## 导入约定
 
@@ -23,7 +27,7 @@
 包初始化文件负责组合公开导出；应用、示例和公共接口测试继续使用
 `from my_llm import MyLLM, ModelProfile, ProviderProfile`。
 
-导入子模块时可以通过所属包引用模块本身，例如 `from ...encoding.stream import chunks`；
+导入子模块时可以通过所属包引用模块本身，例如 `from my_llm.codec.gemini.decoding import transport`；
 不通过包的重导出反向获取实现类。为避免定义阶段的循环依赖而已有的函数内延迟导入保留。
 Ruff 统一导入顺序并禁止相对导入；结构契约检查实现代码不依赖包的符号重导出。
 
@@ -87,3 +91,22 @@ decoding 顶层仅保留 __init__.py、decoder.py；没有保留旧路径的转�
 覆盖新增分组及其初始化文件。Ruff 与 217 个 Python 文件的格式检查、
 Markdown 本地链接、协议模板校验、离线示例、wheel / sdist 构建、Twine 严格检查通过；
 隔离进程从 wheel 成功导入全部 183 个运行时模块。
+
+## 2026-10-18 codec 收敛与抽象契约验收
+
+codec 的 Python 文件由 171 个收敛为 63 个，其中五协议的 encoding / decoding
+从 142 个文件收敛为 34 个。转换方法直接实现在类中，内容辅助与 SDK 资源管理按职责保留，
+不再为单个方法建立 messages / tools / stream / request 分组包。
+
+BaseCodec 的两个方向都成为必需的抽象属性；BaseEncoder 固定整批匹配，
+BaseDecoder 固定能力检查、消息解码、工具解码与请求组装。
+新协议仅实现对应原生接口并注册，无需改写公共编排或依赖另一协议的转换器。
+自定义实现的接口调整和旧内部路径迁移见[接入协议指南](adding-protocol.md)。
+
+与整理前快照逐项核对，115 个转换方法及辅助函数的执行体在更新调用引用后 AST 一致，
+五个 SDK transport 文件逐字节一致；原有顶层公开导出与全部协议参考文件未变。
+流状态、字段语义、原生参数和资源清理算法保持原有行为。
+
+完整测试 **933 passed**，覆盖五协议任意组合、真实 SDK 的本地传输与并发隔离，
+并新增缺失抽象接口、Decoder 直接接收中间态、只转换一次、None / 空工具列表区别和方向依赖检查。
+Ruff、格式、Markdown 链接、24 个 Schema / 59 个模板 / 90 帧事件校验及离线示例通过。

@@ -23,10 +23,8 @@ def patch_client(monkeypatch, events, failure=None):
         captured.append(kwargs)
         return client
 
-    monkeypatch.setattr("my_llm.codec.openai.chat.decoding.request.transport.AsyncOpenAI", factory)
-    monkeypatch.setattr(
-        "my_llm.codec.openai.responses.decoding.request.transport.AsyncOpenAI", factory
-    )
+    monkeypatch.setattr("my_llm.codec.openai.chat.decoding.transport.AsyncOpenAI", factory)
+    monkeypatch.setattr("my_llm.codec.openai.responses.decoding.transport.AsyncOpenAI", factory)
     return client, captured
 
 
@@ -182,7 +180,7 @@ async def test_target_finish_failure_does_not_publish_a_completed_result(monkeyp
     events[-2]["delta"]["stop_reason"] = "pause_turn"
     client = FakeClient(events)
     monkeypatch.setattr(
-        "my_llm.codec.anthropic.decoding.request.transport.AsyncAnthropic", lambda **kwargs: client
+        "my_llm.codec.anthropic.decoding.transport.AsyncAnthropic", lambda **kwargs: client
     )
     llm = MyLLM(
         provider=ProviderProfile(protocol="anthropic"),

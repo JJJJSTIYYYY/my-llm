@@ -49,6 +49,26 @@ def test_native_implementations_do_not_depend_on_other_native_implementations():
                 ), (path, node.module)
 
 
+def test_encoders_and_decoders_do_not_depend_on_the_opposite_direction():
+    for path in (ROOT / "codec").rglob("*.py"):
+        owner = native_owner(path)
+        if owner is None:
+            continue
+        direction = "encoding" if "encoding" in path.parts else "decoding"
+        opposite = "decoding" if direction == "encoding" else "encoding"
+        for node in ast.walk(ast.parse(path.read_text())):
+            modules = []
+            if isinstance(node, ast.ImportFrom):
+                modules.append(node.module or "")
+            elif isinstance(node, ast.Import):
+                modules.extend(alias.name for alias in node.names)
+            assert not any(
+                module.startswith((owner + "." + opposite, owner + ".codec"))
+                or module == "my_llm.codec.converter"
+                for module in modules
+            ), path
+
+
 def test_package_initializers_only_export_interfaces():
     for path in ROOT.rglob("__init__.py"):
         tree = ast.parse(path.read_text())

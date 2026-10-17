@@ -33,7 +33,7 @@
 本地 google-genai 1.75.0 的流由多层异步生成器包装。提前退出时关闭外层生成器及
 SDK client，不能保证悬挂的 HTTPX 响应体在退出当下已经关闭；测试直接捕获了该问题。
 
-[Gemini Decoder 传输实现](../../src/my_llm/codec/gemini/decoding/request/transport.py)通过 SDK 公开 HttpOptions.async_client_args
+[Gemini Decoder 传输实现](../../src/my_llm/codec/gemini/decoding/transport.py)通过 SDK 公开 HttpOptions.async_client_args
 配置 HTTPX response hook，在每次请求自己的 AsyncExitStack 中登记响应体清理。
 退出时显式关闭响应体，再关闭异步和同步 SDK client；清理不依赖垃圾回收，
 多个响应或重试也分别登记。没有修改 SDK，也没有恢复公开的自定义 client 接口。

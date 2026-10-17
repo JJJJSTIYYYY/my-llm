@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$ref": "#/$defs/ChatResponse",
+  "$defs": {
+    "ChatResponse": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "message": {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "enum": [
+                "assistant"
+              ]
+            },
+            "content": {
+              "type": "string"
+            },
+            "thinking": {
+              "type": "string"
+            },
+            "tool_calls": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ToolCall"
+              }
+            },
+            "images": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "done": {
+          "type": "boolean"
+        },
+        "done_reason": {
+          "type": "string"
+        },
+        "total_duration": {
+          "type": "integer"
+        },
+        "load_duration": {
+          "type": "integer"
+        },
+        "prompt_eval_count": {
+          "type": "integer"
+        },
+        "prompt_eval_cached_count": {
+          "type": "integer"
+        },
+        "prompt_eval_duration": {
+          "type": "integer"
+        },
+        "eval_count": {
+          "type": "integer"
+        },
+        "eval_duration": {
+          "type": "integer"
+        },
+        "logprobs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Logprob"
+          }
+        },
+        "remote_model": {
+          "type": "string"
+        },
+        "remote_host": {
+          "type": "string"
+        }
+      }
+    },
+    "Logprob": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string"
+        },
+        "logprob": {
+          "type": "number"
+        },
+        "bytes": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "top_logprobs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TokenLogprob"
+          }
+        }
+      }
+    },
+    "TokenLogprob": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string"
+        },
+        "logprob": {
+          "type": "number"
+        },
+        "bytes": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "ToolCall": {
+      "type": "object",
+      "properties": {
+        "function": {
+          "type": "object",
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "arguments": {
+              "type": "object"
+            },
+            "index": {
+              "type": "integer"
+            }
+          }
+        },
+        "id": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "x-reference-source": "https://raw.githubusercontent.com/ollama/ollama/2476d5ead197abe04629651028f83d48dc75d2b2/docs/openapi.yaml",
+  "x-snapshot-date": "2026-10-17",
+  "x-official-server-types": "https://raw.githubusercontent.com/ollama/ollama/7a5ae12ead68342df402177cfabf4e7fc95aaca5/api/types.go",
+  "x-normalization-notes": "../sources.json#/ollama_additions"
+}

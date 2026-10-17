@@ -1,14 +1,5 @@
-"""Stateless anthropic encoding."""
+"""Public encoder export."""
 
-from my_llm.codec.anthropic.encoding import chunks, messages, tools
-from my_llm.codec.base import BaseEncoder
-
-
-class AnthropicEncoder(BaseEncoder):
-    __slots__ = ()
-    messages = staticmethod(messages.encode)
-    tools = staticmethod(tools.encode)
-    chunks = staticmethod(chunks.encode)
-
+from my_llm.codec.anthropic.encoding.encoder import AnthropicEncoder
 
 __all__ = ["AnthropicEncoder"]

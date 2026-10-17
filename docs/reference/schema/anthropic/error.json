@@ -1,0 +1,8 @@
+{
+  "type": "error",
+  "error": {
+    "type": "invalid_request_error",
+    "message": "Example invalid request"
+  },
+  "request_id": "req_example"
+}

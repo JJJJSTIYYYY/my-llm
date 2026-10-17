@@ -8,8 +8,8 @@ from typing import Literal
 from openai import Omit
 
 from my_llm.exceptions import ConfigurationError
+from my_llm.profile.configuration import Protocol, _Overrides
 from my_llm.profile.model_profile import ModelProfile
-from my_llm.profile.utils.common import Protocol, _Overrides
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -47,7 +47,8 @@ class ProviderProfile(_Overrides):
         reasoning_content_path: Reasoning delta selector; defaults to the API's
             standard reasoning-summary/reasoning-content field.
         replay_reasoning_content_when_tool_calls: Replay existing visible reasoning; add an empty
-            value only on assistant tool calls when thinking is enabled. Defaults True.
+            value only on assistant tool calls when thinking is enabled. Defaults False
+            for Chat (compatible-service opt-in), True for Ollama native thinking.
 
     Raises:
         ConfigurationError: The model catalogue contains invalid entries.

@@ -1,14 +1,5 @@
-"""Stateless openai/responses decoding."""
+"""Public decoder export."""
 
-from my_llm.codec.base import BaseDecoder
-from my_llm.codec.openai.responses.decoding import chunks, messages, tools
-
-
-class ResponsesDecoder(BaseDecoder):
-    __slots__ = ()
-    messages = staticmethod(messages.decode)
-    tools = staticmethod(tools.decode)
-    chunks = staticmethod(chunks.decode)
-
+from my_llm.codec.openai.responses.decoding.decoder import ResponsesDecoder
 
 __all__ = ["ResponsesDecoder"]

@@ -1,0 +1,17 @@
+{
+  "model": "<MODEL_ID>",
+  "input": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Hello"
+        }
+      ]
+    }
+  ],
+  "stream": false,
+  "max_output_tokens": 256,
+  "store": false
+}

@@ -1,0 +1,13 @@
+{
+  "method": "POST",
+  "url": "http://localhost:11434/api/chat",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "optional_headers": {
+    "Authorization": "Bearer <OLLAMA_API_KEY>"
+  },
+  "stream_content_type": "application/x-ndjson",
+  "stream_terminator": "done=true",
+  "source": "ollama"
+}

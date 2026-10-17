@@ -1,8 +1,8 @@
 import pytest
 
 from my_llm import ConfigurationError, ModelProfile, ProviderProfile, UnsupportedProviderError, omit
-from my_llm.profile.utils.common import merge_dicts
-from my_llm.profile.utils.resolution import client_parameters, resolve_profiles
+from my_llm.profile.configuration import merge_dicts
+from my_llm.profile.resolution import client_parameters, resolve_profiles
 
 
 def test_protocol_defaults(profile_factory):
@@ -73,9 +73,10 @@ def test_unknown_protocol():
 @pytest.mark.parametrize("protocol", ["anthropic", "gemini", "ollama"])
 def test_native_protocols_keep_profile_defaults(protocol):
     native = resolve_profiles(ProviderProfile(protocol=protocol), ModelProfile(model="demo"))
-    original = resolve_profiles(ProviderProfile(), ModelProfile(model="demo"))
     assert native.protocol == protocol
-    assert native.values == original.values
+    assert native.get("reasoning_enable_parameter") == {}
+    assert native.get("reasoning_effort_parameter") == {}
+    assert native.get("supports_reasoning_effort") is False
 
 
 @pytest.mark.parametrize("disabled", [False, omit])

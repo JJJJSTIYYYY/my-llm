@@ -1,0 +1,18 @@
+{
+  "id": "msg_example",
+  "type": "message",
+  "role": "assistant",
+  "model": "<MODEL_ID>",
+  "content": [
+    {
+      "type": "text",
+      "text": "Hello"
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 1,
+    "output_tokens": 2
+  }
+}

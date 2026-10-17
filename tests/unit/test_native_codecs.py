@@ -1,7 +1,7 @@
 import pytest
-from conftest import PROTOCOLS, history, tools
 
 from my_llm import BaseCodec, BaseDecoder, BaseEncoder, MyCodec
+from tests.helpers.protocols import PROTOCOLS, history, tools
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)

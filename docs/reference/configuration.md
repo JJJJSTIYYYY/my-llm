@@ -48,7 +48,7 @@ assert resolve_profiles(provider, model).get("extra_body") == {"a": 3}
 只有一个 `protocol` 字段，没有单独的 API 类型选择。
 `stdio_protocol` 是 MyLLM 的输入输出协议，不属于 provider。
 所有 SDK client 都由请求创建并关闭，不接受自定义 client。
-Ollama SDK 没有原生 max_retries 选项，此字段对 Ollama 不生效。
+Ollama SDK 没有原生 max_retries 选项；None / omit / 0 保留原生行为，正数在构造时明确拒绝。
 
 ## Model 字段
 
@@ -78,7 +78,7 @@ Provider 的 `add_models(ModelProfile | list[ModelProfile])` 按 ID 更新并保
 | `reasoning_effort_mapping` | none/low/medium/high/xhigh/max 映射；None/omit 禁用某级 |
 | `content_path` | OpenAI 文本增量路径或 Responses 事件类型 |
 | `reasoning_content_path` | 兼容 Chat 服务的可见思考扩展路径或 Responses 事件类型 |
-| `replay_reasoning_content_when_tool_calls` | 默认 True；回放已有可见思考，仅思考开启且当条有工具调用时补空值 |
+| `replay_reasoning_content_when_tool_calls` | Chat 默认 False，Ollama 默认 True；兼容 Chat 服务显式启用后回放可见思考，仅思考开启且当条有工具调用时补空值 |
 
 Chat 默认文本路径 `$.choices[0].delta.content`，思考路径
 `$.choices[0].delta.reasoning_content`；该字段属于兼容服务扩展，并非官方 OpenAI Chat 字段。Responses 默认事件为
@@ -87,6 +87,7 @@ Chat 默认文本路径 `$.choices[0].delta.content`，思考路径
 原生协议使用原生字段（例如 Anthropic thinking、Gemini thought、Ollama thinking）。
 
 replay=False/omit 在 Chat/Ollama 请求中去掉可见思考字段；True 保留已有内容。
+官方 Chat 默认关闭该兼容字段回放，避免生成官方未定义的 reasoning_content；Ollama thinking 是原生字段，默认保留。
 没有思考内容时，普通 assistant 消息保持不带思考字段；仅在思考开启且有工具调用时
 分别补 `reasoning_content=""` / `thinking=""`。签名回放保持协议原生块。
 
@@ -94,16 +95,25 @@ replay=False/omit 在 Chat/Ollama 请求中去掉可见思考字段；True 保�
 
 | protocol | 输出 token 限制 | 思考 | tools |
 | --- | --- | --- | --- |
-| openai_chat | max_completion_tokens | 默认 extra_body.thinking.type=enabled；可配置 reasoning_effort | function wrapper |
+| openai_chat | max_completion_tokens | 开启时默认 reasoning_effort=medium；支持强度时按映射设置 | function wrapper |
 | openai_responses | max_output_tokens | reasoning.summary=detailed，effort 经映射 | 扁平 function |
 | anthropic | max_tokens，必须设置 | thinking=enabled/adaptive，预算必须小于 max_tokens | name/input_schema |
 | gemini | config.max_output_tokens | config.thinking_config，禁用 SDK 自动工具执行 | function_declarations |
-| ollama | options.num_predict | think=True 或原生 low/medium/high | function wrapper，arguments 为对象 |
+| ollama | options.num_predict | think=True 或模型原生字符串 | function wrapper，arguments 为对象 |
 
 Anthropic 默认 thinking budget_tokens=1024，启用时要求 max_tokens>1024。
 Gemini 默认 include_thoughts=True 与 thinking_budget=-1；支持强度时使用 thinking_level。
-Ollama 默认 think=True，启用强度时须映射为 low/medium/high。
+显式开启 Ollama 推理时默认生成 think=True；未指定 reasoning / 非 none effort 时不自动增加 think。
+强度映射由具体模型决定，例如 low/medium/high，不限定为全局枚举。
 原生参数通过 extra_body 配置，使用各 SDK 原生字段，不设计通用 thinking 对象。
+Anthropic 的 tool_choice / metadata 和 Gemini 的 tool_config / safety_settings 会保留到 SDK 请求。
+Anthropic / Gemini / Ollama 接收当前安装 SDK 支持的生成字段；不支持的字段会抛出
+ConfigurationError，不再静默丢弃。Gemini 的 automatic_function_calling 与 http_options
+由库管理，不能通过 extra_body 覆盖；HTTP headers 使用 extra_headers。
+
+Chat 默认使用官方 reasoning_effort 参数；兼容服务的 thinking / enable_thinking 扩展需要显式配置。
+覆盖 reasoning_enable_parameter 时仍逐键继承默认值；如只使用扩展，需在该字典内设置
+reasoning_effort=omit，再添加 extra_body 绑定。
 
 ```python
 from my_llm import ModelProfile, MyLLM, ProviderProfile
@@ -123,3 +133,35 @@ gemini = MyLLM(
 生成的推理参数优先于 extra_body 同名键。extra_body 和 reasoning 绑定不能覆盖
 model / stream / messages / input / tools 等核心协议字段。
 SDK 会验证目标协议具体参数和字段；未知扩展在 Codec 转换中保留，不代表目标 API 一定支持。
+
+## 跨协议请求的处理边界
+
+外来字段不再因为同名就直接进入目标消息。目标 Decoder 仅投影已知可表达语义；
+未知扩展仍留在中间态和同协议快照中。跨协议的未知事件不透传成其他协议的事件。
+
+外来思考在 Chat / Responses / Anthropic / Gemini 中按普通文本表达，在 Ollama 中可使用
+原生 thinking；不会伪造 Anthropic 签名或 Responses 加密 reasoning。Gemini 的外来工具历史
+使用其[官方迁移标记](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures#faqs)
+`skip_thought_signature_validator`；原生 Gemini 历史的签名和并行调用位置不改变。
+
+Chat / Ollama 不能把 URL 文档作为原生文件读取时保留文本引用；没有隐式下载或文件系统读写。
+必要的不透明内容、不能安全表达的媒体或 SDK 会静默丢弃的工具 Schema 约束，
+会在请求前抛出 UnsupportedCapabilityError，避免发送已知不合法或已被改变约束的请求。
+该策略检查格式与已知表达能力，不替代目标模型能力、服务端上下文、鉴权与配额校验。
+
+兼容 Chat 服务若需要 reasoning_content 回放，应显式配置：
+
+```python
+from my_llm import ProviderProfile, omit
+
+compatible = ProviderProfile(
+    protocol="openai_chat",
+    replay_reasoning_content_when_tool_calls=True,
+    reasoning_enable_parameter={
+        "reasoning_effort": omit,
+        "extra_body": {"thinking": {"type": "enabled"}},
+    },
+)
+```
+
+Ollama 当前 SDK 不提供重试次数配置；max_retries 仅接受 None / omit / 0，正数在构造时明确拒绝。

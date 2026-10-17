@@ -1,0 +1,4 @@
+data: {"responseId":"gem_1","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Hello"}]}}]}
+
+data: {"candidates":[{"index":0,"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":2,"totalTokenCount":3}}
+

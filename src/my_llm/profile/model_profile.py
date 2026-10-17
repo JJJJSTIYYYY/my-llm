@@ -8,7 +8,7 @@ from typing import ClassVar
 from openai import Omit
 
 from my_llm.exceptions import ConfigurationError
-from my_llm.profile.utils.common import _Overrides
+from my_llm.profile.configuration import _Overrides
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -1,0 +1,209 @@
+{
+  "description": "Independent alternatives; do not merge all options into one request. Values in angle brackets are placeholders; signed replay requires original server data.",
+  "cases": [
+    {
+      "name": "request.tools_round_trip",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Weather?"
+          },
+          {
+            "role": "assistant",
+            "content": "Checking",
+            "tool_calls": [
+              {
+                "function": {
+                  "name": "weather",
+                  "arguments": {
+                    "city": "上海"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_name": "weather",
+            "content": "Sunny"
+          }
+        ],
+        "stream": false,
+        "options": {
+          "num_predict": 256
+        },
+        "keep_alive": "5m",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "weather",
+              "description": "Weather",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "request.image",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Describe the image.",
+            "images": [
+              "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="
+            ]
+          }
+        ],
+        "stream": false,
+        "options": {
+          "num_predict": 256
+        },
+        "keep_alive": "5m"
+      }
+    },
+    {
+      "name": "request.thinking",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Answer clearly."
+          },
+          {
+            "role": "user",
+            "content": "Hello"
+          }
+        ],
+        "stream": false,
+        "options": {
+          "num_predict": 256
+        },
+        "keep_alive": "5m",
+        "think": true
+      },
+      "notes": "Check supported values with /api/show. String values are model-defined; no universal fixed effort enum."
+    },
+    {
+      "name": "request.json_schema",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Answer clearly."
+          },
+          {
+            "role": "user",
+            "content": "Hello"
+          }
+        ],
+        "stream": false,
+        "options": {
+          "num_predict": 256
+        },
+        "keep_alive": "5m",
+        "format": {
+          "type": "object",
+          "properties": {
+            "answer": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "answer"
+          ]
+        }
+      }
+    },
+    {
+      "name": "request.text",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Answer clearly."
+          },
+          {
+            "role": "user",
+            "content": "Hello"
+          }
+        ],
+        "stream": false,
+        "options": {
+          "num_predict": 256
+        },
+        "keep_alive": "5m"
+      }
+    },
+    {
+      "name": "response.text",
+      "schema": "response.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "created_at": "2026-10-17T00:00:00Z",
+        "message": {
+          "role": "assistant",
+          "content": "Hello"
+        },
+        "done": true,
+        "done_reason": "stop",
+        "total_duration": 10000000,
+        "load_duration": 1000000,
+        "prompt_eval_count": 1,
+        "prompt_eval_cached_count": 0,
+        "prompt_eval_duration": 2000000,
+        "eval_count": 2,
+        "eval_duration": 7000000
+      }
+    },
+    {
+      "name": "error.http",
+      "schema": "error.schema.json",
+      "value": {
+        "error": "Example model not found"
+      }
+    },
+    {
+      "name": "request.stream",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Answer clearly."
+          },
+          {
+            "role": "user",
+            "content": "Hello"
+          }
+        ],
+        "stream": true,
+        "options": {
+          "num_predict": 256
+        },
+        "keep_alive": "5m"
+      }
+    }
+  ]
+}

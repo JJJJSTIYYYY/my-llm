@@ -1,8 +1,9 @@
 import pytest
-from conftest import FakeClient, chat_event, response_completed
 
 from my_llm import ConfigurationError, ModelProfile, ProviderProfile, generate
-from my_llm.profile.utils.resolution import resolve_profiles
+from my_llm.profile.resolution import resolve_profiles
+from tests.helpers.protocols import chat_event, response_completed
+from tests.helpers.transport import FakeClient
 
 
 def test_context_window_default():
@@ -138,7 +139,13 @@ async def test_metadata_does_not_change_request_or_limit_content(protocol, windo
         [response_completed()] if protocol == "openai_responses" else [chat_event(finish="stop")]
     )
     client = FakeClient(events)
-    monkeypatch.setattr("my_llm.invoke.AsyncOpenAI", lambda **kwargs: client)
+    monkeypatch.setattr(
+        "my_llm.codec.openai.chat.decoding.request.transport.AsyncOpenAI", lambda **kwargs: client
+    )
+    monkeypatch.setattr(
+        "my_llm.codec.openai.responses.decoding.request.transport.AsyncOpenAI",
+        lambda **kwargs: client,
+    )
     text = "content longer than the configured context window " * 10
     await generate(provider=provider, model=model, messages=[{"role": "user", "content": text}])
     request = client.requests[0]

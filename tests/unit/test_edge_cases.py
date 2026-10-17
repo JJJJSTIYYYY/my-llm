@@ -1,8 +1,8 @@
 import pytest
-from test_encoding import codec
 
 from my_llm import ConfigurationError, ModelProfile, ProviderProfile, omit
-from my_llm.profile.utils.resolution import resolve_profiles
+from my_llm.profile.resolution import resolve_profiles
+from tests.helpers.requests import codec
 
 
 def test_custom_chat_effort_named_parameter(profile_factory):
@@ -13,7 +13,7 @@ def test_custom_chat_effort_named_parameter(profile_factory):
         [{"role": "user", "content": "x"}], tools=omit, reasoning_effort="high"
     )
     assert request["reasoning_effort"] == "medium"
-    assert request["extra_body"]["thinking"]["type"] == "enabled"
+    assert "extra_body" not in request
 
 
 def test_custom_response_summary_override(profile_factory):

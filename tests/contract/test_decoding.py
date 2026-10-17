@@ -8,35 +8,11 @@ import json
 from copy import deepcopy
 
 import pytest
-from conftest import PROTOCOLS, stream_events
 
 from my_llm import IncompleteStreamError, MyCodec, ResponseFailedError, ResponseIncompleteError
 from my_llm.stream._state import StreamState
-
-
-def render(source, target, incoming):
-    codec = MyCodec()
-    state = StreamState("demo")
-    output = []
-    for event in incoming:
-        chunks = codec.encode(chunks=[event], input_format=source)["chunks"]
-        converted = codec.decode(
-            chunks=state.feed(chunks),
-            target_format=target,
-            sequence_number=state.sequence_number,
-            **state.metadata,
-        )["chunks"]
-        output.extend(converted)
-        state.sequence_number += len(converted)
-    output.extend(
-        codec.decode(
-            chunks=state.finish(),
-            target_format=target,
-            sequence_number=state.sequence_number,
-            **state.metadata,
-        )["chunks"]
-    )
-    return output, state
+from tests.helpers.protocols import PROTOCOLS, stream_events
+from tests.helpers.streaming import render
 
 
 @pytest.mark.parametrize("source", PROTOCOLS)
@@ -202,16 +178,16 @@ def test_redacted_anthropic_block_survives_collected_and_streamed_output():
 
 @pytest.mark.parametrize("source", PROTOCOLS)
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_unknown_stream_events_keep_their_original_dictionary(source, target):
+def test_unknown_stream_events_are_replayed_only_to_their_native_protocol(source, target):
     unknown = {"type": "vendor.future_event", "payload": {"nested": [{"data": 1}]}}
     incoming = [unknown, *stream_events(source)]
     output, _ = render(source, target, incoming)
-    assert unknown in output
+    assert (unknown in output) is (source == target)
 
 
 def test_unknown_responses_output_item_stays_at_output_root_in_stream():
     item = {"type": "future_output", "id": "future_1", "payload": {"nested": [1, 2]}}
-    from conftest import response_completed
+    from tests.helpers.protocols import response_completed
 
     output, _ = render("openai_responses", "openai_responses", [response_completed([item])])
     assert output[-1]["response"]["output"] == [item]
@@ -229,7 +205,7 @@ def test_buffered_tool_extensions_survive_stream_conversion(target):
         for choice in event.get("choices", [])
         for call in choice["delta"].get("tool_calls", [])
     ]
-    assert calls[0]["function"]["future"] == {"nested": [1, 2]}
+    assert ("future" in calls[0]["function"]) is (target == "openai_chat")
 
 
 def test_gemini_text_extension_cannot_change_the_translated_block_type():
@@ -257,7 +233,7 @@ def test_gemini_text_extension_cannot_change_the_translated_block_type():
     assert state.messages()[0]["content"][0]["type"] == "text"
     chat = MyCodec().decode(state.messages(), target_format="openai_chat")["messages"]
     assert "tool_calls" not in chat[0]
-    assert chat[0]["content"][0]["text"] == "Hello"
+    assert chat[0]["content"] == "Hello"
 
 
 @pytest.mark.parametrize("source", ["openai_chat", "anthropic"])

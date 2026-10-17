@@ -2,15 +2,16 @@
 
 from typing import Any
 
-from my_llm.codec.anthropic import AnthropicCodec
-from my_llm.codec.base import BaseCodec
-from my_llm.codec.gemini import GeminiCodec
-from my_llm.codec.ollama import OllamaCodec
-from my_llm.codec.openai import ChatCompletionsCodec, ResponsesCodec
-from my_llm.codec.request import build_request
-from my_llm.codec.utils.chunks import is_batch
+from my_llm.codec.anthropic.codec import AnthropicCodec
+from my_llm.codec.base.codec import BaseCodec
+from my_llm.codec.gemini.codec import GeminiCodec
+from my_llm.codec.ollama.codec import OllamaCodec
+from my_llm.codec.openai.chat.codec import ChatCompletionsCodec
+from my_llm.codec.openai.responses.codec import ResponsesCodec
+from my_llm.codec.shared.chunks import is_batch
 from my_llm.exceptions import UnsupportedCapabilityError, UnsupportedProviderError
-from my_llm.profile import Protocol, ResolvedProfile
+from my_llm.profile.configuration import Protocol
+from my_llm.profile.resolution import ResolvedProfile
 
 
 class MyCodec:
@@ -44,6 +45,17 @@ class MyCodec:
                 return protocol
         return None
 
+    def decoder(self, protocol: str):
+        """Return the stateless owner of native request and transport semantics."""
+        return self._codec(protocol).decoder
+
+    def upstream(self, request: dict, profile: ResolvedProfile, **parameters: Any):
+        return self.decoder(profile.protocol).upstream(request, profile, **parameters)
+
+    def result(self, messages: list, *, target_format: Protocol):
+        converted = self.decode(messages=messages, target_format=target_format)["messages"]
+        return self.decoder(target_format).result(converted)
+
     def encode(
         self,
         messages: Any = None,
@@ -73,7 +85,7 @@ class MyCodec:
     ) -> dict[str, Any]:
         codec = self._codec(target_format)
         if chunks and all(is_batch(chunk) for chunk in chunks):
-            from my_llm.codec.utils.conversion import source_protocol
+            from my_llm.codec.shared.conversion import source_protocol
 
             if any(source_protocol(chunk) != target_format for chunk in chunks):
                 # A complete batch is a pure per-call conversion. Live streams
@@ -114,4 +126,6 @@ class MyCodec:
         converted = self.decode(
             **intermediate, target_format=profile.protocol, profile=profile, **parameters
         )
-        return build_request(converted["messages"], converted.get("tools"), profile, **parameters)
+        return self.decoder(profile.protocol).request(
+            converted["messages"], converted.get("tools"), profile, **parameters
+        )

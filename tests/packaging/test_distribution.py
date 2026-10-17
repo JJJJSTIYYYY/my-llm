@@ -20,7 +20,7 @@ def test_build_contains_runtime_modules_and_source_tests(tmp_path, version_overr
     source.mkdir()
     for name in ("pyproject.toml", "README.md", "LICENSE", ".gitignore"):
         shutil.copy2(root / name, source / name)
-    for name in ("src", "docs/guides", "docs/reference", "tests", "examples"):
+    for name in ("src", "docs", "tests", "examples"):
         shutil.copytree(
             root / name, source / name, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
         )
@@ -40,6 +40,16 @@ def test_build_contains_runtime_modules_and_source_tests(tmp_path, version_overr
     dist_info = f"my_llm_py-{expected_version}.dist-info"
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
+        expected_runtime = {
+            path.relative_to(source / "src").as_posix()
+            for path in (source / "src/my_llm").rglob("*")
+            if path.is_file() and (path.suffix == ".py" or path.name == "py.typed")
+        }
+        assert {
+            name
+            for name in names
+            if name.startswith("my_llm/") and (name.endswith(".py") or name.endswith("/py.typed"))
+        } == expected_runtime
         assert "my_llm/invoke.py" in names
         assert "my_llm/_version.py" in names
         assert "my_llm/codec/openai/responses/decoding/__init__.py" in names
@@ -50,6 +60,15 @@ def test_build_contains_runtime_modules_and_source_tests(tmp_path, version_overr
         assert "my_llm/stream/message_stream.py" in names
         assert "my_llm/stream/_state.py" in names
         assert "my_llm/codec/base/codec.py" in names
+        assert "my_llm/codec/base/encoder.py" in names
+        assert "my_llm/codec/base/decoder.py" in names
+        assert "my_llm/codec/shared/values.py" in names
+        assert "my_llm/profile/configuration.py" in names
+        assert "my_llm/profile/resolution.py" in names
+        assert not any(name.startswith("my_llm/codec/utils/") for name in names)
+        assert not any(name.startswith("my_llm/profile/utils/") for name in names)
+        assert "my_llm/codec/base/encode.py" not in names
+        assert "my_llm/codec/base/decode.py" not in names
         assert "my_llm/codec/converter.py" in names
         assert "my_llm/py.typed" in names
         assert all(not name.endswith(".gitkeep") for name in names)
@@ -91,6 +110,12 @@ def test_build_contains_runtime_modules_and_source_tests(tmp_path, version_overr
             "tests/integration/test_sdk_transport.py",
             "docs/reference/api.md",
             "docs/reference/configuration.md",
+            "docs/README.md",
+            "docs/design/architecture.md",
+            "docs/audits/protocol-fixes-2026-10-17.md",
+            "docs/guides/development.md",
+            "tests/helpers/protocols.py",
+            "tests/helpers/sdk.py",
             "examples/local_demo.py",
             "LICENSE",
         ):

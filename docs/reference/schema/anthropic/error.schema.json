@@ -1,0 +1,215 @@
+{
+  "$defs": {
+    "APIErrorObject": {
+      "additionalProperties": true,
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "type": {
+          "const": "api_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message",
+        "type"
+      ],
+      "type": "object"
+    },
+    "AuthenticationError": {
+      "additionalProperties": true,
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "type": {
+          "const": "authentication_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message",
+        "type"
+      ],
+      "type": "object"
+    },
+    "BillingError": {
+      "additionalProperties": true,
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "type": {
+          "const": "billing_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message",
+        "type"
+      ],
+      "type": "object"
+    },
+    "GatewayTimeoutError": {
+      "additionalProperties": true,
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "type": {
+          "const": "timeout_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message",
+        "type"
+      ],
+      "type": "object"
+    },
+    "InvalidRequestError": {
+      "additionalProperties": true,
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "type": {
+          "const": "invalid_request_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message",
+        "type"
+      ],
+      "type": "object"
+    },
+    "NotFoundError": {
+      "additionalProperties": true,
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "type": {
+          "const": "not_found_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message",
+        "type"
+      ],
+      "type": "object"
+    },
+    "OverloadedError": {
+      "additionalProperties": true,
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "type": {
+          "const": "overloaded_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message",
+        "type"
+      ],
+      "type": "object"
+    },
+    "PermissionError": {
+      "additionalProperties": true,
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "type": {
+          "const": "permission_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RateLimitError": {
+      "additionalProperties": true,
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "type": {
+          "const": "rate_limit_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message",
+        "type"
+      ],
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "properties": {
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/InvalidRequestError"
+        },
+        {
+          "$ref": "#/$defs/AuthenticationError"
+        },
+        {
+          "$ref": "#/$defs/BillingError"
+        },
+        {
+          "$ref": "#/$defs/PermissionError"
+        },
+        {
+          "$ref": "#/$defs/NotFoundError"
+        },
+        {
+          "$ref": "#/$defs/RateLimitError"
+        },
+        {
+          "$ref": "#/$defs/GatewayTimeoutError"
+        },
+        {
+          "$ref": "#/$defs/APIErrorObject"
+        },
+        {
+          "$ref": "#/$defs/OverloadedError"
+        }
+      ]
+    },
+    "request_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "type": {
+      "const": "error",
+      "type": "string"
+    }
+  },
+  "required": [
+    "error",
+    "type"
+  ],
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "x-reference-source": "https://github.com/anthropics/anthropic-sdk-python/tree/v1.15.0/src/anthropic/types",
+  "x-snapshot-date": "2026-10-17",
+  "x-schema-kind": "derived from official SDK 1.15.0; header arguments removed; stream ping/error added from official docs"
+}

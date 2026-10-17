@@ -3,16 +3,23 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from my_llm.codec.base.decode import BaseDecoder
-from my_llm.codec.base.encode import BaseEncoder
-from my_llm.profile import Protocol, ResolvedProfile
+from my_llm.codec.base.decoder import BaseDecoder
+from my_llm.codec.base.encoder import BaseEncoder
+from my_llm.profile.configuration import Protocol
+from my_llm.profile.resolution import ResolvedProfile
 
 
 class BaseCodec(ABC):
     """A protocol and its stateless encoder/decoder; profiles are call arguments."""
 
     __slots__ = ()
-    protocol_or_api_style: Protocol
+
+    @property
+    @abstractmethod
+    def protocol_or_api_style(self) -> Protocol:
+        """Native identity used only for routing and provenance."""
+        ...
+
     encoder: BaseEncoder
     decoder: BaseDecoder
 
@@ -46,7 +53,6 @@ class BaseCodec(ABC):
     ) -> list[dict[str, Any]]:
         return self.decoder.chunks(chunks, profile, **parameters)
 
-    @abstractmethod
     def match_protocol(self, messages_or_tools: list[Any]) -> str | None:
         """Return this protocol when the entire input conforms, otherwise None."""
-        ...
+        return self.protocol_or_api_style if self.encoder.matches(messages_or_tools) else None

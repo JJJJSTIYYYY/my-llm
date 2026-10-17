@@ -1,6 +1,6 @@
 """Accumulation invariants across native event boundaries and JSON round trips.
 
-Protocol sources: docs/reference/stream-state.md. Fixtures below are written as
+Protocol sources: docs/design/stream-state.md. Fixtures below are written as
 native events, independently of the operation handlers under test.
 """
 
@@ -8,12 +8,12 @@ import json
 from copy import deepcopy
 
 import pytest
-from conftest import PROTOCOLS, chat_event, response_completed, stream_events
-from test_decoding import render
-from test_protocol_conformance import EVENT_TYPES, assert_native
 
 from my_llm import IncompleteStreamError, MessageValidationError, MyCodec
 from my_llm.stream._state import StreamState
+from tests.helpers.protocols import PROTOCOLS, chat_event, response_completed, stream_events
+from tests.helpers.sdk import EVENT_TYPES, assert_native
+from tests.helpers.streaming import render
 
 
 def validate_events(protocol, events):
@@ -30,6 +30,7 @@ def response_message(index, texts):
         "role": "assistant",
         "content": [
             {
+                "logprobs": [],
                 "type": "output_text",
                 "text": text,
                 "annotations": [
@@ -64,7 +65,12 @@ def response_text_events(output):
                     {
                         "type": "response.content_part.added",
                         **address,
-                        "part": {"type": "output_text", "text": "", "annotations": []},
+                        "part": {
+                            "logprobs": [],
+                            "type": "output_text",
+                            "text": "",
+                            "annotations": [],
+                        },
                     },
                     {
                         "type": "response.output_text.delta",
@@ -149,7 +155,7 @@ def test_equal_text_keeps_citations_on_its_own_item_and_part():
     output, state = render("openai_responses", "openai_responses", incoming)
     validate_events("openai_responses", output)
     done = [event["item"] for event in output if event["type"] == "response.output_item.done"]
-    assert [item["content"][0]["annotations"][0]["title"] for item in done] == [
+    assert [part["annotations"][0]["title"] for item in done for part in item["content"]] == [
         "citation_0_0",
         "citation_0_1",
         "citation_1_0",
@@ -360,7 +366,12 @@ def test_reasoning_summary_parts_use_their_native_summary_indexes():
     output, state = render("openai_responses", "openai_responses", incoming)
     validate_events("openai_responses", output)
     done = [event["item"] for event in output if event["type"] == "response.output_item.done"]
-    assert [entry["summary"][0]["text"] for entry in done] == ["first", "second"]
+    assert done == [item]
+    assert [
+        event["summary_index"]
+        for event in output
+        if event["type"] == "response.reasoning_summary_part.done"
+    ] == [0, 1]
     assert done == output[-1]["response"]["output"]
     assert MyCodec().decode(state.messages(), target_format="openai_responses")["messages"] == [
         item

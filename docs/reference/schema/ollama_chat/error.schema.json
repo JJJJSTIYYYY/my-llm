@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$ref": "#/$defs/ErrorResponse",
+  "$defs": {
+    "ErrorResponse": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "signin_url": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "x-reference-source": "https://raw.githubusercontent.com/ollama/ollama/2476d5ead197abe04629651028f83d48dc75d2b2/docs/openapi.yaml",
+  "x-snapshot-date": "2026-10-17",
+  "x-official-server-types": "https://raw.githubusercontent.com/ollama/ollama/7a5ae12ead68342df402177cfabf4e7fc95aaca5/api/types.go",
+  "x-normalization-notes": "../sources.json#/ollama_additions"
+}

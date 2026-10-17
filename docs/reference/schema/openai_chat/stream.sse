@@ -1,0 +1,8 @@
+data: {"id":"chat_1","created":1,"model":"<MODEL_ID>","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}
+
+data: {"id":"chat_1","created":1,"model":"<MODEL_ID>","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chat_1","created":1,"model":"<MODEL_ID>","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}
+
+data: [DONE]
+

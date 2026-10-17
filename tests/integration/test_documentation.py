@@ -8,10 +8,11 @@ from pathlib import Path
 
 import httpx
 import pytest
-from conftest import chat_event, sse
 from openai import AsyncOpenAI
 
 from my_llm import ModelProfile, MyLLM, ProviderProfile
+from tests.helpers.protocols import chat_event
+from tests.helpers.transport import sse
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -35,7 +36,7 @@ def test_configuration_guide_covers_profile_fields_and_local_links():
     for profile in (ProviderProfile, ModelProfile):
         for field in fields(profile):
             assert f"`{field.name}`" in config, field.name
-    for path in (ROOT / "docs/reference").glob("*.md"):
+    for path in (ROOT / "README.md", *(ROOT / "docs").rglob("*.md")):
         prose = re.sub(r"^```.*?^```", "", path.read_text(), flags=re.MULTILINE | re.DOTALL)
         for target in re.findall(r"\]\(([^)]+)\)", prose):
             if "://" not in target and not target.startswith("#"):
@@ -85,7 +86,10 @@ async def test_guide_text_stream_and_tool_round_trip(monkeypatch):
         clients.append(client)
         return client
 
-    monkeypatch.setattr("my_llm.invoke.AsyncOpenAI", factory)
+    monkeypatch.setattr("my_llm.codec.openai.chat.decoding.request.transport.AsyncOpenAI", factory)
+    monkeypatch.setattr(
+        "my_llm.codec.openai.responses.decoding.request.transport.AsyncOpenAI", factory
+    )
     provider = ProviderProfile(api_key="local-doc-test")
     llm = MyLLM(provider=provider, model=ModelProfile(model="demo"))
     for name in ("ask", "print_stream"):

@@ -1,10 +1,10 @@
 from copy import deepcopy
 
 import pytest
-from conftest import CHAT_HISTORY
 
 from my_llm import MessageValidationError, MyCodec
-from my_llm.codec.utils.validation import validate_history
+from my_llm.codec.shared.validation import validate_history
+from tests.helpers.protocols import CHAT_HISTORY
 
 
 def validate(messages, **parameters):

@@ -65,7 +65,7 @@ provider、model、protocol、连接参数和 SDK client 不作为实例 generat
 未消费的流不启动请求；提前退出、取消、SDK 失败和正常结束都会关闭上游流和请求 client。
 `aclose()` 可重复调用。并发请求有独立的累积状态和 client；
 同一实例的并发请求使用同一个 stdio 协议，一路取消或失败不会关闭其他请求，
-验证范围见[并发复核](concurrency.md)。
+验证范围见[并发复核](../audits/concurrency.md)。
 
 ```python
 async def print_stream(llm, prompt):
@@ -88,8 +88,8 @@ async def print_stream(llm, prompt):
 Anthropic/Gemini 的签名内容保留在完成消息和对应的原生流字段中。
 启用用量时，Chat 先发送结束 choice，再发送 `choices=[]` 的独立 usage 尾块。
 跨协议输出到 Responses 时，输出限制与内容过滤分别生成相应的 `response.incomplete`，
-成功结束才生成 `response.completed`；协议字段依据与校验范围见[协议复核](protocol-conformance.md)。
-块引用、快照协调及发布规则见[流状态设计](stream-state.md)。
+成功结束才生成 `response.completed`；协议字段依据与校验范围见[协议复核](../audits/protocol-conformance.md)。
+块引用、快照协调及发布规则见[流状态设计](../design/stream-state.md)。
 
 ## 工具回合
 
@@ -159,13 +159,13 @@ assert native["messages"] == [{"role": "user", "parts": [{"text": "Hello"}]}]
 ```
 
 MyCodec 同时持有五个 Codec，可在不同调用中复用。中间态是内部实现，不是应用消息协议；
-源编码将未知字段保留在中间态的原层级，字段冲突时转换值优先；标准格式（`profile=None`）下，同协议与未经修改的中间态之间无损。跨协议输出可能丢弃目标协议不支持的字段，不保证跨协议往返无损。详见[保留规则与验证](lossless-audit.md)。目标 SDK 对不支持的扩展仍可能报错。
+源编码将未知字段保留在中间态的原层级，字段冲突时转换值优先；标准格式（`profile=None`）下，同协议与未经修改的中间态之间无损。跨协议输出可能丢弃目标协议不支持的字段，不保证跨协议往返无损。详见[保留规则与验证](../audits/lossless.md)。外来扩展仅在目标有已知表示时迁移；必要的不透明内容或 SDK 无法完整表达的约束在请求前明确拒绝，详见[配置与兼容边界](configuration.md#跨协议请求的处理边界)。
 增量 encode/decode 不累积片段；需要完整消息或完整工具时由 MyLLM 的请求状态负责累积。
 
 ## 异常边界
 
 `ConfigurationError` 表示配置错误，`MessageValidationError` 表示标准输入/消息关联错误；
-`UnsupportedCapabilityError` 表示模型禁用了所需能力。SDK HTTP/传输错误保持原有类型。
+`UnsupportedCapabilityError` 表示模型禁用了所需能力，或目标协议 / SDK 无法安全表达必要内容或约束。SDK HTTP/传输错误保持原有类型。
 `StreamError` 及其子类包含原生 `details` 和相同 stdio 协议的 `partial_message`。
 缺少消息级终止事件报 `IncompleteStreamError`；Responses failed/incomplete 使用对应子类。
 本库不提供消息内部中断恢复、工具执行或部分 JSON 工具调用接口。
@@ -173,3 +173,18 @@ MyCodec 同时持有五个 Codec，可在不同调用中复用。中间态是内
 `MyCodec.convert(chunks=完整事件列表, input_format=..., target_format=...)` 也可离线转换
 整个流；跨协议的完整 batch 在本次调用内组装，不保存到转换器。
 实时消费使用 MyLLM，由每次请求持有累积状态；BaseEncoder/BaseDecoder 仍只转换单次传入的块。
+
+协议策略由各自 Encoder / Decoder 管理：Encoder 还负责原生格式识别及用量归一化；
+Decoder 还负责默认值、用量策略、请求组装、SDK 传输与收集结果形状。
+MyCodec 只路由，MyLLM 只编排每次请求；这些方法不在转换器实例上保留流状态。
+
+自定义实现除 messages / tools / chunks 外，需实现以下抽象接口：
+
+| 实现 | 必须提供 |
+| --- | --- |
+| BaseEncoder | matches(values)、usage(value)。 |
+| BaseDecoder | request(messages, tools, profile, **parameters)、upstream(request, profile, **parameters)、profile_defaults()、usage(value)，以及 usage_modes 属性。 |
+
+Decoder.upstream 返回异步上下文管理器，负责本次 SDK 流与客户端的资源生命周期。
+validate_profile、result 和 allows_external_calls 有通用默认实现；
+需要额外校验、列表结果或服务端历史能力的协议在自己的 Decoder 中覆盖。

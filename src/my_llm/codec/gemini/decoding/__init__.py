@@ -1,14 +1,5 @@
-"""Stateless gemini decoding."""
+"""Public decoder export."""
 
-from my_llm.codec.base import BaseDecoder
-from my_llm.codec.gemini.decoding import chunks, messages, tools
-
-
-class GeminiDecoder(BaseDecoder):
-    __slots__ = ()
-    messages = staticmethod(messages.decode)
-    tools = staticmethod(tools.decode)
-    chunks = staticmethod(chunks.decode)
-
+from my_llm.codec.gemini.decoding.decoder import GeminiDecoder
 
 __all__ = ["GeminiDecoder"]

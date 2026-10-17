@@ -1,8 +1,6 @@
 import copy
-from types import SimpleNamespace
 
 import pytest
-from conftest import encode_request
 
 from my_llm import (
     ConfigurationError,
@@ -11,15 +9,8 @@ from my_llm import (
     UnsupportedCapabilityError,
     omit,
 )
-from my_llm.profile.utils.resolution import resolve_profiles
-
-
-def codec(profile):
-    return SimpleNamespace(
-        encode=lambda messages, tools=None, **parameters: encode_request(
-            profile, messages, tools, **parameters
-        )
-    )
+from my_llm.profile.resolution import resolve_profiles
+from tests.helpers.requests import codec, encode_request
 
 
 @pytest.mark.parametrize(
@@ -59,8 +50,8 @@ def test_reasoning_enable_only_for_chat(profile_factory):
     request = codec(profile_factory()).encode(
         [{"role": "user", "content": "x"}], tools=omit, reasoning_effort="high"
     )
-    assert request["extra_body"] == {"thinking": {"type": "enabled"}}
-    assert "reasoning_effort" not in request
+    assert request["reasoning_effort"] == "medium"
+    assert "extra_body" not in request
 
 
 @pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max"])
@@ -86,7 +77,10 @@ def test_unsupported_reasoning_and_effort(profile_factory):
 def test_custom_effort_body_and_generated_priority():
     provider = ProviderProfile(
         supports_reasoning_effort=True,
-        reasoning_enable_parameter={"extra_body": {"enable_thinking": True}},
+        reasoning_enable_parameter={
+            "reasoning_effort": omit,
+            "extra_body": {"enable_thinking": True},
+        },
         reasoning_effort_parameter={
             "reasoning_effort": omit,
             "extra_body": {"thinking": {"budget": "{effort}"}},
@@ -159,7 +153,9 @@ def test_tools_conversion_and_no_input_mutation(
 
 @pytest.mark.parametrize("protocol", ["openai_responses", "openai_chat"])
 @pytest.mark.parametrize("input_format", ["openai_responses", "openai_chat"])
-def test_tool_values_and_extension_fields_are_preserved(profile_factory, protocol, input_format):
+def test_tool_extensions_are_native_only_and_foreign_null_options_are_omitted(
+    profile_factory, protocol, input_format
+):
     function = {
         "name": "weather",
         "description": None,
@@ -175,11 +171,12 @@ def test_tool_values_and_extension_fields_are_preserved(profile_factory, protoco
     request = codec(profile_factory(protocol, supports_function_calling=True)).encode(
         [{"role": "user", "content": "x"}], tools=[tool]
     )
-    assert request["tools"] == (
-        [{"type": "function", **function}]
-        if protocol == "openai_responses"
-        else [{"type": "function", "function": function}]
-    )
+    if protocol == input_format:
+        assert request["tools"] == [tool]
+    elif protocol == "openai_responses":
+        assert request["tools"] == [{"type": "function", "name": "weather", "strict": False}]
+    else:
+        assert request["tools"] == [{"type": "function", "function": {"name": "weather"}}]
 
 
 @pytest.mark.parametrize("protocol", ["openai_responses", "openai_chat"])

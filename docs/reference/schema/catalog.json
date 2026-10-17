@@ -1,0 +1,69 @@
+{
+  "snapshot_date": "2026-10-17",
+  "protocols": {
+    "openai_chat": {
+      "method": "POST",
+      "url": "https://api.openai.com/v1/chat/completions",
+      "headers": {
+        "Authorization": "Bearer <OPENAI_API_KEY>",
+        "Content-Type": "application/json"
+      },
+      "stream_content_type": "text/event-stream",
+      "stream_terminator": "[DONE]",
+      "source": "openai"
+    },
+    "openai_responses": {
+      "method": "POST",
+      "url": "https://api.openai.com/v1/responses",
+      "headers": {
+        "Authorization": "Bearer <OPENAI_API_KEY>",
+        "Content-Type": "application/json"
+      },
+      "stream_content_type": "text/event-stream",
+      "stream_terminator": "typed response terminal event",
+      "source": "openai"
+    },
+    "ollama_chat": {
+      "method": "POST",
+      "url": "http://localhost:11434/api/chat",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "optional_headers": {
+        "Authorization": "Bearer <OLLAMA_API_KEY>"
+      },
+      "stream_content_type": "application/x-ndjson",
+      "stream_terminator": "done=true",
+      "source": "ollama"
+    },
+    "gemini": {
+      "method": "POST",
+      "url": "https://generativelanguage.googleapis.com/v1beta/models/<MODEL_ID>:generateContent",
+      "stream_url": "https://generativelanguage.googleapis.com/v1beta/models/<MODEL_ID>:streamGenerateContent?alt=sse",
+      "headers": {
+        "x-goog-api-key": "<GEMINI_API_KEY>",
+        "Content-Type": "application/json"
+      },
+      "stream_content_type": "text/event-stream",
+      "stream_terminator": "candidate finishReason; continue reading through EOF for final metadata",
+      "source": "gemini"
+    },
+    "anthropic": {
+      "method": "POST",
+      "url": "https://api.anthropic.com/v1/messages",
+      "headers": {
+        "x-api-key": "<ANTHROPIC_API_KEY>",
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json"
+      },
+      "optional_headers": {
+        "anthropic-beta": "<BETA_FLAGS>",
+        "anthropic-user-profile-id": "<USER_PROFILE_ID>",
+        "anthropic-workspace-id": "<WORKSPACE_ID>"
+      },
+      "stream_content_type": "text/event-stream",
+      "stream_terminator": "message_stop",
+      "source": "anthropic"
+    }
+  }
+}

@@ -8,10 +8,10 @@ import json
 from copy import deepcopy
 
 import pytest
-from conftest import PROTOCOLS, tools
 
 from my_llm import MyCodec
-from my_llm.codec.utils.conversion import residual
+from my_llm.codec.shared.conversion import residual
+from tests.helpers.protocols import PROTOCOLS, tools
 
 EXT = {"nested": [{"sentinel": "must-survive"}], "empty": {}, "null": None}
 
@@ -124,7 +124,7 @@ def test_responses_does_not_merge_source_messages_or_drop_item_extensions():
         {
             "type": "message",
             "role": "assistant",
-            "content": [{"type": "output_text", "text": str(i)}],
+            "content": [{"logprobs": [], "type": "output_text", "text": str(i)}],
             "future": {"item": i},
         }
         for i in range(2)
@@ -453,7 +453,7 @@ def test_each_target_reads_namespaced_translation_instead_of_native_collision(ta
 
 
 def test_history_validation_reads_converted_role_and_content():
-    from my_llm.codec.utils.validation import validate_history
+    from my_llm.codec.shared.validation import validate_history
 
     native = [
         {
@@ -471,7 +471,7 @@ def test_history_validation_reads_converted_role_and_content():
 
 
 def test_short_extension_names_are_not_treated_as_internal_control_keys():
-    from my_llm.codec.utils.validation import validate_history
+    from my_llm.codec.shared.validation import validate_history
     from my_llm.exceptions import MessageValidationError
 
     tool = {"type": "function", "function": {"name": "f", "parameters": {}}, "__functions__": EXT}

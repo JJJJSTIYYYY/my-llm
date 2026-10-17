@@ -7,7 +7,6 @@ from copy import deepcopy
 import httpx
 import pytest
 from anthropic import AsyncAnthropic
-from conftest import PROTOCOLS, history, sse, stream_events, tools
 from google import genai
 from google.genai import types
 from ollama import AsyncClient
@@ -15,6 +14,8 @@ from openai import AsyncOpenAI
 
 from my_llm import ModelProfile, MyCodec, MyLLM, ProviderProfile
 from my_llm.stream._state import StreamState
+from tests.helpers.protocols import PROTOCOLS, history, stream_events, tools
+from tests.helpers.transport import sse
 
 GenAIClient = genai.Client
 
@@ -151,10 +152,26 @@ class ConcurrentTransport:
             self.clients.append(http)
             return client
 
-        monkeypatch.setattr("my_llm.invoke.AsyncOpenAI", lambda **kw: factory("openai_chat", **kw))
-        monkeypatch.setattr("my_llm.invoke.AsyncAnthropic", lambda **kw: factory("anthropic", **kw))
-        monkeypatch.setattr("my_llm.invoke.AsyncOllama", lambda **kw: factory("ollama", **kw))
-        monkeypatch.setattr("my_llm.invoke.genai.Client", lambda **kw: factory("gemini", **kw))
+        monkeypatch.setattr(
+            "my_llm.codec.openai.chat.decoding.request.transport.AsyncOpenAI",
+            lambda **kw: factory("openai_chat", **kw),
+        )
+        monkeypatch.setattr(
+            "my_llm.codec.openai.responses.decoding.request.transport.AsyncOpenAI",
+            lambda **kw: factory("openai_chat", **kw),
+        )
+        monkeypatch.setattr(
+            "my_llm.codec.anthropic.decoding.request.transport.AsyncAnthropic",
+            lambda **kw: factory("anthropic", **kw),
+        )
+        monkeypatch.setattr(
+            "my_llm.codec.ollama.decoding.request.transport.AsyncOllama",
+            lambda **kw: factory("ollama", **kw),
+        )
+        monkeypatch.setattr(
+            "my_llm.codec.gemini.decoding.request.transport.genai.Client",
+            lambda **kw: factory("gemini", **kw),
+        )
 
     def assert_closed(self, count):
         assert len(self.clients) == len(self.bodies) == count

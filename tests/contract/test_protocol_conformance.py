@@ -1,121 +1,21 @@
 """Native protocol shapes, checked independently against official SDK schemas.
 
-Sources and scope are recorded in docs/reference/protocol-conformance.md.
+Sources and scope are recorded in docs/audits/protocol-conformance.md.
 Unknown/vendor extensions have separate preservation tests; SDK parsing alone
 is not proof of conformance because several SDKs allow or ignore extra keys.
 """
 
 import json
-from collections.abc import Iterable
 from copy import deepcopy
-from typing import Annotated, get_args, get_origin
 
 import pytest
-from anthropic.types import MessageParam, RawMessageStreamEvent
-from anthropic.types import ToolParam as AnthropicToolParam
-from conftest import PROTOCOLS, history, stream_events, tools
-from google.genai import types
-from ollama import ChatResponse, Image, Message, Tool
-from openai.types.chat import (
-    ChatCompletionChunk,
-    ChatCompletionMessageParam,
-    ChatCompletionToolParam,
-)
-from openai.types.responses import ResponseInputItemParam, ResponseStreamEvent, ToolParam
-from pydantic import BaseModel, TypeAdapter, ValidationError
-from test_decoding import render
+from jsonschema import ValidationError as SchemaValidationError
+from pydantic import ValidationError
 
 from my_llm import MyCodec
-
-MESSAGE_TYPES = {
-    "openai_chat": ChatCompletionMessageParam,
-    "openai_responses": ResponseInputItemParam,
-    "anthropic": MessageParam,
-    "gemini": types.Content,
-    "ollama": Message,
-}
-TOOL_TYPES = {
-    "openai_chat": ChatCompletionToolParam,
-    "openai_responses": ToolParam,
-    "anthropic": AnthropicToolParam,
-    "gemini": types.Tool,
-    "ollama": Tool,
-}
-
-
-def variants(value):
-    if get_origin(value) is Annotated:
-        yield from variants(get_args(value)[0])
-    elif isinstance(value, type) and issubclass(value, BaseModel):
-        yield value
-    else:
-        for child in get_args(value):
-            yield from variants(child)
-
-
-def event_models(value):
-    return {
-        kind: model
-        for model in variants(value)
-        for kind in get_args(model.model_fields["type"].annotation)
-    }
-
-
-EVENT_TYPES = {
-    "openai_chat": ChatCompletionChunk,
-    "openai_responses": event_models(ResponseStreamEvent),
-    "anthropic": event_models(RawMessageStreamEvent),
-    "gemini": types.GenerateContentResponse,
-    "ollama": ChatResponse,
-}
-
-
-def assert_no_ignored_fields(native, validated):
-    if isinstance(validated, BaseModel) and isinstance(native, dict):
-        fields = type(validated).model_fields
-        aliases = {field.alias or key: key for key, field in fields.items()}
-        assert set(native) <= (fields.keys() | aliases.keys())
-        for key, value in native.items():
-            assert_no_ignored_fields(value, getattr(validated, aliases.get(key, key)))
-    elif isinstance(native, dict) and isinstance(validated, dict):
-        assert native.keys() <= validated.keys()
-        for key, value in native.items():
-            assert_no_ignored_fields(value, validated[key])
-    elif isinstance(native, list) and isinstance(validated, Iterable):
-        # TypedDict SDK schemas often use Iterable[Block]. Pydantic validates
-        # those lazily; consume the iterator before trusting nested fields.
-        validated = list(validated)
-        assert len(native) == len(validated)
-        for value, parsed in zip(native, validated):
-            assert_no_ignored_fields(value, parsed)
-
-
-def assert_native(value, schema):
-    # The Ollama client normalizes REST base64 strings into Image objects before
-    # validating Message; the wire format remains a base64 string array.
-    sdk_value = value
-    if schema is Message and value.get("images"):
-        sdk_value = {**value, "images": [Image(value=image) for image in value["images"]]}
-    # Keep the adapter alive while consuming any lazy SDK Iterable validators.
-    adapter = TypeAdapter(schema)
-    validated = adapter.validate_python(sdk_value)
-    assert_no_ignored_fields(value, validated)
-    # Some SDK models mark these as Optional for convenience, while the REST
-    # contract requires them. Do not let model permissiveness weaken the oracle.
-    if schema is types.Content:
-        assert value.get("role", "user") in ("user", "model")
-        for part in value["parts"]:
-            for field in ("function_call", "function_response"):
-                if field in part:
-                    assert isinstance(part[field].get("name"), str) and part[field]["name"]
-            if "function_response" in part:
-                assert isinstance(part["function_response"].get("response"), dict)
-    if schema is types.Tool:
-        for function in value.get("function_declarations", []):
-            assert isinstance(function.get("name"), str) and function["name"]
-            assert isinstance(function.get("description"), str)
-    if schema is Message and value.get("images"):
-        assert validated.model_dump(mode="json", exclude_none=True)["images"] == value["images"]
+from tests.helpers.protocols import PROTOCOLS, history, stream_events, tools
+from tests.helpers.sdk import EVENT_TYPES, MESSAGE_TYPES, TOOL_TYPES, assert_native
+from tests.helpers.streaming import render
 
 
 def canonical_history(messages, protocol):
@@ -164,6 +64,9 @@ def test_histories_match_independent_native_expectations(source, target):
     for message in converted:
         assert_native(message, MESSAGE_TYPES[target])
     expected = history(target)
+    if target == "gemini" and source != "gemini":
+        # Official migration marker, not a fabricated cryptographic signature.
+        expected[1]["parts"][1]["thought_signature"] = "skip_thought_signature_validator"
     # Gemini requires an object result. Converting that object into a text-only
     # result preserves its JSON, rather than silently extracting a chosen key.
     if source == "gemini" and target != "gemini":
@@ -396,7 +299,7 @@ def test_responses_native_request_metadata_survives_stream_reconstruction():
 def test_required_stream_fields_are_not_hidden_by_sdk_defaults(kind, field):
     event = next(e for e in stream_events("openai_responses", tool=True) if e["type"] == kind)
     event.pop(field)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValidationError, SchemaValidationError)):
         assert_native(event, EVENT_TYPES["openai_responses"][kind])
 
 

@@ -1,14 +1,5 @@
-"""Stateless ollama decoding."""
+"""Public decoder export."""
 
-from my_llm.codec.base import BaseDecoder
-from my_llm.codec.ollama.decoding import chunks, messages, tools
-
-
-class OllamaDecoder(BaseDecoder):
-    __slots__ = ()
-    messages = staticmethod(messages.decode)
-    tools = staticmethod(tools.decode)
-    chunks = staticmethod(chunks.decode)
-
+from my_llm.codec.ollama.decoding.decoder import OllamaDecoder
 
 __all__ = ["OllamaDecoder"]

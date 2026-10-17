@@ -49,8 +49,7 @@ include = [
     "/README.md",
     "/LICENSE",
     "/pyproject.toml",
-    "/docs/guides",
-    "/docs/reference",
+    "/docs",
     "/tests",
     "/examples",
 ]
@@ -58,6 +57,7 @@ include = [
 [dependency-groups]
 dev = [
     "hatchling>=1.26",
+    "jsonschema>=4.26,<5",
     "pytest>=8",
     "pytest-asyncio>=0.24",
     "ruff>=0.9",

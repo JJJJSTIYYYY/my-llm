@@ -1,11 +1,8 @@
 """Stateless openai_chat protocol facade."""
 
-from typing import Any
-
-from my_llm.codec.base import BaseCodec
-from my_llm.codec.openai.chat.decoding import ChatCompletionsDecoder
-from my_llm.codec.openai.chat.encoding import ChatCompletionsEncoder
-from my_llm.codec.utils.matching import candidates
+from my_llm.codec.base.codec import BaseCodec
+from my_llm.codec.openai.chat.decoding.decoder import ChatCompletionsDecoder
+from my_llm.codec.openai.chat.encoding.encoder import ChatCompletionsEncoder
 
 
 class ChatCompletionsCodec(BaseCodec):
@@ -13,10 +10,3 @@ class ChatCompletionsCodec(BaseCodec):
     protocol_or_api_style = "openai_chat"
     encoder = ChatCompletionsEncoder()
     decoder = ChatCompletionsDecoder()
-
-    def match_protocol(self, messages_or_tools: list[Any]) -> str | None:
-        return (
-            self.protocol_or_api_style
-            if self.protocol_or_api_style in candidates(messages_or_tools)
-            else None
-        )

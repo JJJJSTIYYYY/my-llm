@@ -1,0 +1,18 @@
+{
+  "model": "<MODEL_ID>",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Answer clearly."
+    },
+    {
+      "role": "user",
+      "content": "Hello"
+    }
+  ],
+  "stream": false,
+  "options": {
+    "num_predict": 256
+  },
+  "keep_alive": "5m"
+}

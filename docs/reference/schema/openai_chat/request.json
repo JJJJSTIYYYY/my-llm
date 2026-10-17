@@ -1,0 +1,15 @@
+{
+  "model": "<MODEL_ID>",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Answer clearly."
+    },
+    {
+      "role": "user",
+      "content": "Hello"
+    }
+  ],
+  "stream": false,
+  "max_completion_tokens": 256
+}

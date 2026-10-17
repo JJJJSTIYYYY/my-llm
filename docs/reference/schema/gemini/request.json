@@ -1,0 +1,22 @@
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Hello"
+        }
+      ]
+    }
+  ],
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "Answer clearly."
+      }
+    ]
+  },
+  "generationConfig": {
+    "maxOutputTokens": 256
+  }
+}

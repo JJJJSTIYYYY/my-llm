@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$ref": "#/$defs/ChatRequest",
+  "$defs": {
+    "ChatMessage": {
+      "type": "object",
+      "required": [
+        "role",
+        "content"
+      ],
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": [
+            "system",
+            "user",
+            "assistant",
+            "tool"
+          ]
+        },
+        "content": {
+          "type": "string"
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tool_calls": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolCall"
+          }
+        },
+        "thinking": {
+          "type": "string"
+        },
+        "tool_name": {
+          "type": "string"
+        },
+        "tool_call_id": {
+          "type": "string"
+        }
+      }
+    },
+    "ChatRequest": {
+      "type": "object",
+      "required": [
+        "model",
+        "messages"
+      ],
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChatMessage"
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolDefinition"
+          }
+        },
+        "format": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "json"
+              ]
+            },
+            {
+              "type": "object"
+            }
+          ]
+        },
+        "options": {
+          "$ref": "#/$defs/ModelOptions"
+        },
+        "stream": {
+          "type": "boolean",
+          "default": true
+        },
+        "think": {
+          "$ref": "#/$defs/ThinkValue"
+        },
+        "keep_alive": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "logprobs": {
+          "type": "boolean"
+        },
+        "top_logprobs": {
+          "type": "integer"
+        }
+      }
+    },
+    "ModelOptions": {
+      "type": "object",
+      "properties": {
+        "seed": {
+          "type": "integer"
+        },
+        "temperature": {
+          "type": "number",
+          "format": "float"
+        },
+        "top_k": {
+          "type": "integer"
+        },
+        "top_p": {
+          "type": "number",
+          "format": "float"
+        },
+        "min_p": {
+          "type": "number",
+          "format": "float"
+        },
+        "stop": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "num_ctx": {
+          "type": "integer"
+        },
+        "num_predict": {
+          "type": "integer"
+        },
+        "num_keep": {
+          "type": "integer"
+        },
+        "repeat_last_n": {
+          "type": "integer"
+        },
+        "repeat_penalty": {
+          "type": "number"
+        },
+        "presence_penalty": {
+          "type": "number"
+        },
+        "frequency_penalty": {
+          "type": "number"
+        },
+        "num_batch": {
+          "type": "integer"
+        },
+        "num_gpu": {
+          "type": "integer"
+        },
+        "main_gpu": {
+          "type": "integer"
+        },
+        "use_mmap": {
+          "type": "boolean"
+        },
+        "num_thread": {
+          "type": "integer"
+        },
+        "draft_num_predict": {
+          "type": "integer"
+        },
+        "typical_p": {
+          "type": "number",
+          "deprecated": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "ThinkValue": {
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ToolCall": {
+      "type": "object",
+      "properties": {
+        "function": {
+          "type": "object",
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "arguments": {
+              "type": "object"
+            },
+            "index": {
+              "type": "integer"
+            }
+          }
+        },
+        "id": {
+          "type": "string"
+        }
+      }
+    },
+    "ToolDefinition": {
+      "type": "object",
+      "required": [
+        "type",
+        "function"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "function"
+          ]
+        },
+        "function": {
+          "type": "object",
+          "required": [
+            "name",
+            "parameters"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "parameters": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  },
+  "x-reference-source": "https://raw.githubusercontent.com/ollama/ollama/2476d5ead197abe04629651028f83d48dc75d2b2/docs/openapi.yaml",
+  "x-snapshot-date": "2026-10-17",
+  "x-official-server-types": "https://raw.githubusercontent.com/ollama/ollama/7a5ae12ead68342df402177cfabf4e7fc95aaca5/api/types.go",
+  "x-normalization-notes": "../sources.json#/ollama_additions"
+}

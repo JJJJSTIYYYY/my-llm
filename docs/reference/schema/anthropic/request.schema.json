@@ -1,0 +1,7478 @@
+{
+  "$defs": {
+    "Base64ImageSourceParam": {
+      "properties": {
+        "data": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "format": "path",
+              "type": "string"
+            }
+          ]
+        },
+        "media_type": {
+          "enum": [
+            "image/jpeg",
+            "image/png",
+            "image/gif",
+            "image/webp"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "base64",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "media_type",
+        "type"
+      ],
+      "type": "object"
+    },
+    "Base64PDFSource": {
+      "additionalProperties": true,
+      "properties": {
+        "data": {
+          "type": "string"
+        },
+        "media_type": {
+          "const": "application/pdf",
+          "type": "string"
+        },
+        "type": {
+          "const": "base64",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "media_type",
+        "type"
+      ],
+      "type": "object"
+    },
+    "Base64PDFSourceParam": {
+      "properties": {
+        "data": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "format": "path",
+              "type": "string"
+            }
+          ]
+        },
+        "media_type": {
+          "const": "application/pdf",
+          "type": "string"
+        },
+        "type": {
+          "const": "base64",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "media_type",
+        "type"
+      ],
+      "type": "object"
+    },
+    "BashCodeExecutionOutputBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "file_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "bash_code_execution_output",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "BashCodeExecutionOutputBlockParam": {
+      "properties": {
+        "file_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "bash_code_execution_output",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "BashCodeExecutionResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/BashCodeExecutionOutputBlock"
+          },
+          "type": "array"
+        },
+        "return_code": {
+          "type": "integer"
+        },
+        "stderr": {
+          "type": "string"
+        },
+        "stdout": {
+          "type": "string"
+        },
+        "type": {
+          "const": "bash_code_execution_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "return_code",
+        "stderr",
+        "stdout",
+        "type"
+      ],
+      "type": "object"
+    },
+    "BashCodeExecutionResultBlockParam": {
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/BashCodeExecutionOutputBlockParam"
+          },
+          "type": "array"
+        },
+        "return_code": {
+          "type": "integer"
+        },
+        "stderr": {
+          "type": "string"
+        },
+        "stdout": {
+          "type": "string"
+        },
+        "type": {
+          "const": "bash_code_execution_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "return_code",
+        "stderr",
+        "stdout",
+        "type"
+      ],
+      "type": "object"
+    },
+    "BashCodeExecutionToolResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BashCodeExecutionToolResultError"
+            },
+            {
+              "$ref": "#/$defs/BashCodeExecutionResultBlock"
+            }
+          ]
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "bash_code_execution_tool_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "BashCodeExecutionToolResultBlockParam": {
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BashCodeExecutionToolResultErrorParam"
+            },
+            {
+              "$ref": "#/$defs/BashCodeExecutionResultBlockParam"
+            }
+          ]
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "bash_code_execution_tool_result",
+          "type": "string"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "content",
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "BashCodeExecutionToolResultError": {
+      "additionalProperties": true,
+      "properties": {
+        "error_code": {
+          "enum": [
+            "invalid_tool_input",
+            "unavailable",
+            "too_many_requests",
+            "execution_time_exceeded",
+            "output_file_too_large"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "bash_code_execution_tool_result_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "type"
+      ],
+      "type": "object"
+    },
+    "BashCodeExecutionToolResultErrorParam": {
+      "properties": {
+        "error_code": {
+          "enum": [
+            "invalid_tool_input",
+            "unavailable",
+            "too_many_requests",
+            "execution_time_exceeded",
+            "output_file_too_large"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "bash_code_execution_tool_result_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "type"
+      ],
+      "type": "object"
+    },
+    "BrowserCloseTabConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserDoubleClickConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserFileUploadConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserFindConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserFormInputConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserGetPageTextConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserHoldKeyConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserHoverConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserJavascriptExecConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserKeyConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserLeftClickConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserLeftClickDragConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserLeftMouseDownConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserLeftMouseUpConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserListTabsConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserMiddleClickConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserMouseMoveConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserNavigateConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserNewTabConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserReadConsoleConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserReadNetworkConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserReadPageConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserRightClickConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserScreenshotConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserScrollConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserScrollToConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserStateBlockParam": {
+      "properties": {
+        "tabs": {
+          "items": {
+            "$ref": "#/$defs/BrowserStateTabEntryParam"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "browser_state",
+          "type": "string"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state_changes": {
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BrowserStateChangeTabOpenedParam"
+                  },
+                  {
+                    "$ref": "#/$defs/BrowserStateChangeDownloadStartedParam"
+                  },
+                  {
+                    "$ref": "#/$defs/BrowserStateChangeDownloadCompletedParam"
+                  },
+                  {
+                    "$ref": "#/$defs/BrowserStateChangeDownloadFailedParam"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "tabs",
+        "type"
+      ],
+      "type": "object"
+    },
+    "BrowserStateChangeDownloadCompletedParam": {
+      "properties": {
+        "download_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "download_completed",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "size_bytes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "download_id",
+        "type",
+        "url"
+      ],
+      "type": "object"
+    },
+    "BrowserStateChangeDownloadFailedParam": {
+      "properties": {
+        "download_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "download_failed",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "download_id",
+        "type",
+        "url"
+      ],
+      "type": "object"
+    },
+    "BrowserStateChangeDownloadStartedParam": {
+      "properties": {
+        "download_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "download_started",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "download_id",
+        "type",
+        "url"
+      ],
+      "type": "object"
+    },
+    "BrowserStateChangeTabOpenedParam": {
+      "properties": {
+        "tab_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tab_opened",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tab_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "BrowserStateTabEntryParam": {
+      "properties": {
+        "tab_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "active": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "tab_id",
+        "title",
+        "url"
+      ],
+      "type": "object"
+    },
+    "BrowserSwitchTabConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserToolset20260801Param": {
+      "properties": {
+        "type": {
+          "const": "browser_toolset_20260801",
+          "type": "string"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "configs": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserToolsetConfigsParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "BrowserToolsetConfigsParam": {
+      "properties": {
+        "close_tab": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserCloseTabConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "double_click": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserDoubleClickConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "file_upload": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserFileUploadConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "find": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserFindConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "form_input": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserFormInputConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "get_page_text": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserGetPageTextConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hold_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserHoldKeyConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hover": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserHoverConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "javascript_exec": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserJavascriptExecConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserKeyConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "left_click": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserLeftClickConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "left_click_drag": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserLeftClickDragConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "left_mouse_down": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserLeftMouseDownConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "left_mouse_up": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserLeftMouseUpConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "list_tabs": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserListTabsConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "middle_click": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserMiddleClickConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mouse_move": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserMouseMoveConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "navigate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserNavigateConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "new_tab": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserNewTabConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "read_console": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserReadConsoleConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "read_network": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserReadNetworkConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "read_page": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserReadPageConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "right_click": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserRightClickConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "screenshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserScreenshotConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scroll": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserScrollConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scroll_to": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserScrollToConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "switch_tab": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserSwitchTabConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "triple_click": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserTripleClickConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserTypeConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wait": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserWaitConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "zoom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserZoomConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserTripleClickConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserTypeConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserWaitConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BrowserZoomConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "CacheControlEphemeralParam": {
+      "properties": {
+        "type": {
+          "const": "ephemeral",
+          "type": "string"
+        },
+        "ttl": {
+          "enum": [
+            "5m",
+            "1h"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "CitationCharLocation": {
+      "additionalProperties": true,
+      "properties": {
+        "cited_text": {
+          "type": "string"
+        },
+        "document_index": {
+          "type": "integer"
+        },
+        "document_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "end_char_index": {
+          "type": "integer"
+        },
+        "file_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "start_char_index": {
+          "type": "integer"
+        },
+        "type": {
+          "const": "char_location",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cited_text",
+        "document_index",
+        "end_char_index",
+        "start_char_index",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CitationCharLocationParam": {
+      "properties": {
+        "cited_text": {
+          "type": "string"
+        },
+        "document_index": {
+          "type": "integer"
+        },
+        "document_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "end_char_index": {
+          "type": "integer"
+        },
+        "start_char_index": {
+          "type": "integer"
+        },
+        "type": {
+          "const": "char_location",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cited_text",
+        "document_index",
+        "document_title",
+        "end_char_index",
+        "start_char_index",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CitationContentBlockLocation": {
+      "additionalProperties": true,
+      "properties": {
+        "cited_text": {
+          "type": "string"
+        },
+        "document_index": {
+          "type": "integer"
+        },
+        "document_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "end_block_index": {
+          "type": "integer"
+        },
+        "file_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "start_block_index": {
+          "type": "integer"
+        },
+        "type": {
+          "const": "content_block_location",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cited_text",
+        "document_index",
+        "end_block_index",
+        "start_block_index",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CitationContentBlockLocationParam": {
+      "properties": {
+        "cited_text": {
+          "type": "string"
+        },
+        "document_index": {
+          "type": "integer"
+        },
+        "document_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "end_block_index": {
+          "type": "integer"
+        },
+        "start_block_index": {
+          "type": "integer"
+        },
+        "type": {
+          "const": "content_block_location",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cited_text",
+        "document_index",
+        "document_title",
+        "end_block_index",
+        "start_block_index",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CitationPageLocation": {
+      "additionalProperties": true,
+      "properties": {
+        "cited_text": {
+          "type": "string"
+        },
+        "document_index": {
+          "type": "integer"
+        },
+        "document_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "end_page_number": {
+          "type": "integer"
+        },
+        "file_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "start_page_number": {
+          "type": "integer"
+        },
+        "type": {
+          "const": "page_location",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cited_text",
+        "document_index",
+        "end_page_number",
+        "start_page_number",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CitationPageLocationParam": {
+      "properties": {
+        "cited_text": {
+          "type": "string"
+        },
+        "document_index": {
+          "type": "integer"
+        },
+        "document_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "end_page_number": {
+          "type": "integer"
+        },
+        "start_page_number": {
+          "type": "integer"
+        },
+        "type": {
+          "const": "page_location",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cited_text",
+        "document_index",
+        "document_title",
+        "end_page_number",
+        "start_page_number",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CitationSearchResultLocationParam": {
+      "properties": {
+        "cited_text": {
+          "type": "string"
+        },
+        "end_block_index": {
+          "type": "integer"
+        },
+        "search_result_index": {
+          "type": "integer"
+        },
+        "source": {
+          "type": "string"
+        },
+        "start_block_index": {
+          "type": "integer"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "const": "search_result_location",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cited_text",
+        "end_block_index",
+        "search_result_index",
+        "source",
+        "start_block_index",
+        "title",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CitationWebSearchResultLocationParam": {
+      "properties": {
+        "cited_text": {
+          "type": "string"
+        },
+        "encrypted_index": {
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "const": "web_search_result_location",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cited_text",
+        "encrypted_index",
+        "title",
+        "type",
+        "url"
+      ],
+      "type": "object"
+    },
+    "CitationsConfig": {
+      "additionalProperties": true,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "CitationsConfigParam": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "CitationsSearchResultLocation": {
+      "additionalProperties": true,
+      "properties": {
+        "cited_text": {
+          "type": "string"
+        },
+        "end_block_index": {
+          "type": "integer"
+        },
+        "search_result_index": {
+          "type": "integer"
+        },
+        "source": {
+          "type": "string"
+        },
+        "start_block_index": {
+          "type": "integer"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "search_result_location",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cited_text",
+        "end_block_index",
+        "search_result_index",
+        "source",
+        "start_block_index",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CitationsWebSearchResultLocation": {
+      "additionalProperties": true,
+      "properties": {
+        "cited_text": {
+          "type": "string"
+        },
+        "encrypted_index": {
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "web_search_result_location",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cited_text",
+        "encrypted_index",
+        "type",
+        "url"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionOutputBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "file_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_output",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionOutputBlockParam": {
+      "properties": {
+        "file_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_output",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/CodeExecutionOutputBlock"
+          },
+          "type": "array"
+        },
+        "return_code": {
+          "type": "integer"
+        },
+        "stderr": {
+          "type": "string"
+        },
+        "stdout": {
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "return_code",
+        "stderr",
+        "stdout",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionResultBlockParam": {
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/CodeExecutionOutputBlockParam"
+          },
+          "type": "array"
+        },
+        "return_code": {
+          "type": "integer"
+        },
+        "stderr": {
+          "type": "string"
+        },
+        "stdout": {
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "return_code",
+        "stderr",
+        "stdout",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionTool20250522Param": {
+      "properties": {
+        "name": {
+          "const": "code_execution",
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_20250522",
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "strict": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionTool20250825Param": {
+      "properties": {
+        "name": {
+          "const": "code_execution",
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_20250825",
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "strict": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionTool20260120Param": {
+      "properties": {
+        "name": {
+          "const": "code_execution",
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_20260120",
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "strict": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionTool20260521Param": {
+      "properties": {
+        "name": {
+          "const": "code_execution",
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_20260521",
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "strict": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionToolResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CodeExecutionToolResultError"
+            },
+            {
+              "$ref": "#/$defs/CodeExecutionResultBlock"
+            },
+            {
+              "$ref": "#/$defs/EncryptedCodeExecutionResultBlock"
+            }
+          ]
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_tool_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionToolResultBlockParam": {
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CodeExecutionToolResultErrorParam"
+            },
+            {
+              "$ref": "#/$defs/CodeExecutionResultBlockParam"
+            },
+            {
+              "$ref": "#/$defs/EncryptedCodeExecutionResultBlockParam"
+            }
+          ]
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_tool_result",
+          "type": "string"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "content",
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionToolResultError": {
+      "additionalProperties": true,
+      "properties": {
+        "error_code": {
+          "enum": [
+            "invalid_tool_input",
+            "unavailable",
+            "too_many_requests",
+            "execution_time_exceeded"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_tool_result_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionToolResultErrorParam": {
+      "properties": {
+        "error_code": {
+          "enum": [
+            "invalid_tool_input",
+            "unavailable",
+            "too_many_requests",
+            "execution_time_exceeded"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_tool_result_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ComputerCursorPositionConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ComputerDoubleClickConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ComputerHoldKeyConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ComputerKeyConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ComputerLeftClickConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ComputerLeftClickDragConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ComputerLeftMouseDownConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ComputerLeftMouseUpConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ComputerMiddleClickConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ComputerMouseMoveConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ComputerRightClickConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ComputerScreenshotConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ComputerScrollConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ComputerToolset20260801Param": {
+      "properties": {
+        "type": {
+          "const": "computer_toolset_20260801",
+          "type": "string"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "configs": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerToolsetConfigsParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "ComputerToolsetConfigsParam": {
+      "properties": {
+        "cursor_position": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerCursorPositionConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "double_click": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerDoubleClickConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hold_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerHoldKeyConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerKeyConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "left_click": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerLeftClickConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "left_click_drag": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerLeftClickDragConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "left_mouse_down": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerLeftMouseDownConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "left_mouse_up": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerLeftMouseUpConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "middle_click": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerMiddleClickConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mouse_move": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerMouseMoveConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "right_click": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerRightClickConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "screenshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerScreenshotConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scroll": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerScrollConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "triple_click": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerTripleClickConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerTypeConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wait": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerWaitConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "zoom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerZoomConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ComputerTripleClickConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ComputerTypeConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ComputerWaitConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ComputerZoomConfigParam": {
+      "properties": {
+        "defer_loading": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ContainerParams": {
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skills": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/SkillParams"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ContainerUploadBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "file_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "container_upload",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ContainerUploadBlockParam": {
+      "properties": {
+        "file_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "container_upload",
+          "type": "string"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "file_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ContentBlockSourceParam": {
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TextBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/ImageBlockParam"
+                  }
+                ]
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "type": {
+          "const": "content",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "type"
+      ],
+      "type": "object"
+    },
+    "DiagnosticsParam": {
+      "properties": {
+        "previous_message_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "DirectCaller": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "direct",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "DirectCallerParam": {
+      "properties": {
+        "type": {
+          "const": "direct",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "DocumentBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "citations": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CitationsConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Base64PDFSource"
+            },
+            {
+              "$ref": "#/$defs/PlainTextSource"
+            }
+          ]
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "document",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "type"
+      ],
+      "type": "object"
+    },
+    "DocumentBlockParam": {
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Base64PDFSourceParam"
+            },
+            {
+              "$ref": "#/$defs/PlainTextSourceParam"
+            },
+            {
+              "$ref": "#/$defs/ContentBlockSourceParam"
+            },
+            {
+              "$ref": "#/$defs/URLPDFSourceParam"
+            },
+            {
+              "$ref": "#/$defs/FileDocumentSourceParam"
+            }
+          ]
+        },
+        "type": {
+          "const": "document",
+          "type": "string"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "citations": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CitationsConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "context": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "type"
+      ],
+      "type": "object"
+    },
+    "EncryptedCodeExecutionResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/CodeExecutionOutputBlock"
+          },
+          "type": "array"
+        },
+        "encrypted_stdout": {
+          "type": "string"
+        },
+        "return_code": {
+          "type": "integer"
+        },
+        "stderr": {
+          "type": "string"
+        },
+        "type": {
+          "const": "encrypted_code_execution_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "encrypted_stdout",
+        "return_code",
+        "stderr",
+        "type"
+      ],
+      "type": "object"
+    },
+    "EncryptedCodeExecutionResultBlockParam": {
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/CodeExecutionOutputBlockParam"
+          },
+          "type": "array"
+        },
+        "encrypted_stdout": {
+          "type": "string"
+        },
+        "return_code": {
+          "type": "integer"
+        },
+        "stderr": {
+          "type": "string"
+        },
+        "type": {
+          "const": "encrypted_code_execution_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "encrypted_stdout",
+        "return_code",
+        "stderr",
+        "type"
+      ],
+      "type": "object"
+    },
+    "FileDocumentSourceParam": {
+      "properties": {
+        "file_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "file",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "FileImageSourceParam": {
+      "properties": {
+        "file_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "file",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ImageBlockParam": {
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Base64ImageSourceParam"
+            },
+            {
+              "$ref": "#/$defs/URLImageSourceParam"
+            },
+            {
+              "$ref": "#/$defs/FileImageSourceParam"
+            }
+          ]
+        },
+        "type": {
+          "const": "image",
+          "type": "string"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "transformations": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageTransformationsParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ImageTransformationsParam": {
+      "properties": {
+        "oversized_image": {
+          "enum": [
+            "downsize",
+            "error"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "InputSchemaTyped": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "object",
+          "type": "string"
+        },
+        "properties": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "required": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "JSONOutputFormatParam": {
+      "properties": {
+        "schema": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "type": {
+          "const": "json_schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "type"
+      ],
+      "type": "object"
+    },
+    "MemoryTool20250818Param": {
+      "properties": {
+        "name": {
+          "const": "memory",
+          "type": "string"
+        },
+        "type": {
+          "const": "memory_20250818",
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "input_examples": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "strict": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "MessageCreateParamsNonStreaming": {
+      "properties": {
+        "max_tokens": {
+          "type": "integer"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/MessageParam"
+          },
+          "type": "array"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "enum": [
+                "claude-haiku-5-5",
+                "claude-sonnet-5-5",
+                "claude-fable-5-1",
+                "claude-opus-5-5",
+                "claude-mythos-5-1",
+                "claude-sonnet-5",
+                "claude-fable-5",
+                "claude-mythos-5",
+                "claude-opus-5",
+                "claude-opus-4-8",
+                "claude-opus-4-7",
+                "claude-mythos-preview",
+                "claude-opus-4-6",
+                "claude-sonnet-4-6",
+                "claude-haiku-4-5",
+                "claude-haiku-4-5-20251001",
+                "claude-opus-4-5",
+                "claude-opus-4-5-20251101",
+                "claude-sonnet-4-5",
+                "claude-sonnet-4-5-20250929"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "container": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContainerParams"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "diagnostics": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiagnosticsParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inference_geo": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metadata": {
+          "$ref": "#/$defs/MetadataParam"
+        },
+        "output_config": {
+          "$ref": "#/$defs/OutputConfigParam"
+        },
+        "service_tier": {
+          "enum": [
+            "auto",
+            "standard_only"
+          ],
+          "type": "string"
+        },
+        "speed": {
+          "anyOf": [
+            {
+              "enum": [
+                "fast",
+                "standard"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stop_sequences": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "system": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/TextBlockParam"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "thinking": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThinkingConfigEnabledParam"
+            },
+            {
+              "$ref": "#/$defs/ThinkingConfigDisabledParam"
+            },
+            {
+              "$ref": "#/$defs/ThinkingConfigBetweenToolsParam"
+            },
+            {
+              "$ref": "#/$defs/ThinkingConfigAdaptiveParam"
+            }
+          ]
+        },
+        "tool_choice": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolChoiceAutoParam"
+            },
+            {
+              "$ref": "#/$defs/ToolChoiceAnyParam"
+            },
+            {
+              "$ref": "#/$defs/ToolChoiceToolParam"
+            },
+            {
+              "$ref": "#/$defs/ToolChoiceNoneParam"
+            }
+          ]
+        },
+        "tools": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ToolParam"
+              },
+              {
+                "$ref": "#/$defs/ToolBash20250124Param"
+              },
+              {
+                "$ref": "#/$defs/CodeExecutionTool20250522Param"
+              },
+              {
+                "$ref": "#/$defs/CodeExecutionTool20250825Param"
+              },
+              {
+                "$ref": "#/$defs/CodeExecutionTool20260120Param"
+              },
+              {
+                "$ref": "#/$defs/CodeExecutionTool20260521Param"
+              },
+              {
+                "$ref": "#/$defs/BrowserToolset20260801Param"
+              },
+              {
+                "$ref": "#/$defs/MemoryTool20250818Param"
+              },
+              {
+                "$ref": "#/$defs/ComputerToolset20260801Param"
+              },
+              {
+                "$ref": "#/$defs/ToolTextEditor20250124Param"
+              },
+              {
+                "$ref": "#/$defs/ToolTextEditor20250429Param"
+              },
+              {
+                "$ref": "#/$defs/ToolTextEditor20250728Param"
+              },
+              {
+                "$ref": "#/$defs/WebSearchTool20250305Param"
+              },
+              {
+                "$ref": "#/$defs/WebFetchTool20250910Param"
+              },
+              {
+                "$ref": "#/$defs/WebSearchTool20260209Param"
+              },
+              {
+                "$ref": "#/$defs/WebFetchTool20260209Param"
+              },
+              {
+                "$ref": "#/$defs/WebFetchTool20260309Param"
+              },
+              {
+                "$ref": "#/$defs/WebSearchTool20260318Param"
+              },
+              {
+                "$ref": "#/$defs/WebFetchTool20260318Param"
+              },
+              {
+                "$ref": "#/$defs/ToolSearchToolBm25_20251119Param"
+              },
+              {
+                "$ref": "#/$defs/ToolSearchToolRegex20251119Param"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "stream": {
+          "const": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "max_tokens",
+        "messages",
+        "model"
+      ],
+      "type": "object"
+    },
+    "MessageCreateParamsStreaming": {
+      "properties": {
+        "max_tokens": {
+          "type": "integer"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/MessageParam"
+          },
+          "type": "array"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "enum": [
+                "claude-haiku-5-5",
+                "claude-sonnet-5-5",
+                "claude-fable-5-1",
+                "claude-opus-5-5",
+                "claude-mythos-5-1",
+                "claude-sonnet-5",
+                "claude-fable-5",
+                "claude-mythos-5",
+                "claude-opus-5",
+                "claude-opus-4-8",
+                "claude-opus-4-7",
+                "claude-mythos-preview",
+                "claude-opus-4-6",
+                "claude-sonnet-4-6",
+                "claude-haiku-4-5",
+                "claude-haiku-4-5-20251001",
+                "claude-opus-4-5",
+                "claude-opus-4-5-20251101",
+                "claude-sonnet-4-5",
+                "claude-sonnet-4-5-20250929"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "container": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContainerParams"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "diagnostics": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiagnosticsParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inference_geo": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metadata": {
+          "$ref": "#/$defs/MetadataParam"
+        },
+        "output_config": {
+          "$ref": "#/$defs/OutputConfigParam"
+        },
+        "service_tier": {
+          "enum": [
+            "auto",
+            "standard_only"
+          ],
+          "type": "string"
+        },
+        "speed": {
+          "anyOf": [
+            {
+              "enum": [
+                "standard",
+                "fast"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stop_sequences": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "system": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/TextBlockParam"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "thinking": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThinkingConfigEnabledParam"
+            },
+            {
+              "$ref": "#/$defs/ThinkingConfigDisabledParam"
+            },
+            {
+              "$ref": "#/$defs/ThinkingConfigBetweenToolsParam"
+            },
+            {
+              "$ref": "#/$defs/ThinkingConfigAdaptiveParam"
+            }
+          ]
+        },
+        "tool_choice": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolChoiceAutoParam"
+            },
+            {
+              "$ref": "#/$defs/ToolChoiceAnyParam"
+            },
+            {
+              "$ref": "#/$defs/ToolChoiceToolParam"
+            },
+            {
+              "$ref": "#/$defs/ToolChoiceNoneParam"
+            }
+          ]
+        },
+        "tools": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ToolParam"
+              },
+              {
+                "$ref": "#/$defs/ToolBash20250124Param"
+              },
+              {
+                "$ref": "#/$defs/CodeExecutionTool20250522Param"
+              },
+              {
+                "$ref": "#/$defs/CodeExecutionTool20250825Param"
+              },
+              {
+                "$ref": "#/$defs/CodeExecutionTool20260120Param"
+              },
+              {
+                "$ref": "#/$defs/CodeExecutionTool20260521Param"
+              },
+              {
+                "$ref": "#/$defs/BrowserToolset20260801Param"
+              },
+              {
+                "$ref": "#/$defs/MemoryTool20250818Param"
+              },
+              {
+                "$ref": "#/$defs/ComputerToolset20260801Param"
+              },
+              {
+                "$ref": "#/$defs/ToolTextEditor20250124Param"
+              },
+              {
+                "$ref": "#/$defs/ToolTextEditor20250429Param"
+              },
+              {
+                "$ref": "#/$defs/ToolTextEditor20250728Param"
+              },
+              {
+                "$ref": "#/$defs/WebSearchTool20250305Param"
+              },
+              {
+                "$ref": "#/$defs/WebFetchTool20250910Param"
+              },
+              {
+                "$ref": "#/$defs/WebSearchTool20260209Param"
+              },
+              {
+                "$ref": "#/$defs/WebFetchTool20260209Param"
+              },
+              {
+                "$ref": "#/$defs/WebFetchTool20260309Param"
+              },
+              {
+                "$ref": "#/$defs/WebSearchTool20260318Param"
+              },
+              {
+                "$ref": "#/$defs/WebFetchTool20260318Param"
+              },
+              {
+                "$ref": "#/$defs/ToolSearchToolBm25_20251119Param"
+              },
+              {
+                "$ref": "#/$defs/ToolSearchToolRegex20251119Param"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "stream": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "max_tokens",
+        "messages",
+        "model",
+        "stream"
+      ],
+      "type": "object"
+    },
+    "MessageParam": {
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TextBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/ImageBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/DocumentBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/SearchResultBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/ThinkingBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/RedactedThinkingBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/ToolUseBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/ToolResultBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/ServerToolUseBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/WebSearchToolResultBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/WebFetchToolResultBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/CodeExecutionToolResultBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/BashCodeExecutionToolResultBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/TextEditorCodeExecutionToolResultBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/ToolSearchToolResultBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/ContainerUploadBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/TextBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/ThinkingBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/RedactedThinkingBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/ToolUseBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/ServerToolUseBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/WebSearchToolResultBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/WebFetchToolResultBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/CodeExecutionToolResultBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/BashCodeExecutionToolResultBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/TextEditorCodeExecutionToolResultBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/ToolSearchToolResultBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/ContainerUploadBlock"
+                  }
+                ]
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "role": {
+          "enum": [
+            "user",
+            "assistant",
+            "system"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "role"
+      ],
+      "type": "object"
+    },
+    "MetadataParam": {
+      "properties": {
+        "user_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "OutputConfigParam": {
+      "properties": {
+        "effort": {
+          "anyOf": [
+            {
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JSONOutputFormatParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "PlainTextSource": {
+      "additionalProperties": true,
+      "properties": {
+        "data": {
+          "type": "string"
+        },
+        "media_type": {
+          "const": "text/plain",
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "media_type",
+        "type"
+      ],
+      "type": "object"
+    },
+    "PlainTextSourceParam": {
+      "properties": {
+        "data": {
+          "type": "string"
+        },
+        "media_type": {
+          "const": "text/plain",
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "media_type",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RedactedThinkingBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "data": {
+          "type": "string"
+        },
+        "type": {
+          "const": "redacted_thinking",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RedactedThinkingBlockParam": {
+      "properties": {
+        "data": {
+          "type": "string"
+        },
+        "type": {
+          "const": "redacted_thinking",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "type"
+      ],
+      "type": "object"
+    },
+    "SearchResultBlockParam": {
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/TextBlockParam"
+          },
+          "type": "array"
+        },
+        "source": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "const": "search_result",
+          "type": "string"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "citations": {
+          "$ref": "#/$defs/CitationsConfigParam"
+        }
+      },
+      "required": [
+        "content",
+        "source",
+        "title",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ServerToolCaller": {
+      "additionalProperties": true,
+      "properties": {
+        "tool_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_20250825",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ServerToolCaller20260120": {
+      "additionalProperties": true,
+      "properties": {
+        "tool_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_20260120",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ServerToolCaller20260120Param": {
+      "properties": {
+        "tool_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_20260120",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ServerToolCallerParam": {
+      "properties": {
+        "tool_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_20250825",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ServerToolUseBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "caller": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DirectCaller"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller20260120"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "input": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "name": {
+          "enum": [
+            "web_search",
+            "web_fetch",
+            "code_execution",
+            "bash_code_execution",
+            "text_editor_code_execution",
+            "tool_search_tool_regex",
+            "tool_search_tool_bm25"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "server_tool_use",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "input",
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ServerToolUseBlockParam": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "input": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "name": {
+          "enum": [
+            "web_search",
+            "web_fetch",
+            "code_execution",
+            "bash_code_execution",
+            "text_editor_code_execution",
+            "tool_search_tool_regex",
+            "tool_search_tool_bm25"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "server_tool_use",
+          "type": "string"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "caller": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DirectCallerParam"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCallerParam"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller20260120Param"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "input",
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "SkillParams": {
+      "properties": {
+        "skill_id": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "anthropic",
+            "custom"
+          ],
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "skill_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "citations": {
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CitationCharLocation"
+                  },
+                  {
+                    "$ref": "#/$defs/CitationPageLocation"
+                  },
+                  {
+                    "$ref": "#/$defs/CitationContentBlockLocation"
+                  },
+                  {
+                    "$ref": "#/$defs/CitationsWebSearchResultLocation"
+                  },
+                  {
+                    "$ref": "#/$defs/CitationsSearchResultLocation"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "text": {
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextBlockParam": {
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "type": "string"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "citations": {
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CitationCharLocationParam"
+                  },
+                  {
+                    "$ref": "#/$defs/CitationPageLocationParam"
+                  },
+                  {
+                    "$ref": "#/$defs/CitationContentBlockLocationParam"
+                  },
+                  {
+                    "$ref": "#/$defs/CitationWebSearchResultLocationParam"
+                  },
+                  {
+                    "$ref": "#/$defs/CitationSearchResultLocationParam"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "text",
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextEditorCodeExecutionCreateResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "is_file_update": {
+          "type": "boolean"
+        },
+        "type": {
+          "const": "text_editor_code_execution_create_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "is_file_update",
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextEditorCodeExecutionCreateResultBlockParam": {
+      "properties": {
+        "is_file_update": {
+          "type": "boolean"
+        },
+        "type": {
+          "const": "text_editor_code_execution_create_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "is_file_update",
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextEditorCodeExecutionStrReplaceResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "lines": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "new_lines": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "new_start": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "old_lines": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "old_start": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "text_editor_code_execution_str_replace_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextEditorCodeExecutionStrReplaceResultBlockParam": {
+      "properties": {
+        "type": {
+          "const": "text_editor_code_execution_str_replace_result",
+          "type": "string"
+        },
+        "lines": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "new_lines": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "new_start": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "old_lines": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "old_start": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextEditorCodeExecutionToolResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextEditorCodeExecutionToolResultError"
+            },
+            {
+              "$ref": "#/$defs/TextEditorCodeExecutionViewResultBlock"
+            },
+            {
+              "$ref": "#/$defs/TextEditorCodeExecutionCreateResultBlock"
+            },
+            {
+              "$ref": "#/$defs/TextEditorCodeExecutionStrReplaceResultBlock"
+            }
+          ]
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "text_editor_code_execution_tool_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextEditorCodeExecutionToolResultBlockParam": {
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextEditorCodeExecutionToolResultErrorParam"
+            },
+            {
+              "$ref": "#/$defs/TextEditorCodeExecutionViewResultBlockParam"
+            },
+            {
+              "$ref": "#/$defs/TextEditorCodeExecutionCreateResultBlockParam"
+            },
+            {
+              "$ref": "#/$defs/TextEditorCodeExecutionStrReplaceResultBlockParam"
+            }
+          ]
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "text_editor_code_execution_tool_result",
+          "type": "string"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "content",
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextEditorCodeExecutionToolResultError": {
+      "additionalProperties": true,
+      "properties": {
+        "error_code": {
+          "enum": [
+            "invalid_tool_input",
+            "unavailable",
+            "too_many_requests",
+            "execution_time_exceeded",
+            "file_not_found"
+          ],
+          "type": "string"
+        },
+        "error_message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "text_editor_code_execution_tool_result_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextEditorCodeExecutionToolResultErrorParam": {
+      "properties": {
+        "error_code": {
+          "enum": [
+            "invalid_tool_input",
+            "unavailable",
+            "too_many_requests",
+            "execution_time_exceeded",
+            "file_not_found"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "text_editor_code_execution_tool_result_error",
+          "type": "string"
+        },
+        "error_message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "error_code",
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextEditorCodeExecutionViewResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "file_type": {
+          "enum": [
+            "text",
+            "image",
+            "pdf"
+          ],
+          "type": "string"
+        },
+        "num_lines": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "start_line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "total_lines": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "text_editor_code_execution_view_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "file_type",
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextEditorCodeExecutionViewResultBlockParam": {
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "file_type": {
+          "enum": [
+            "text",
+            "image",
+            "pdf"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "text_editor_code_execution_view_result",
+          "type": "string"
+        },
+        "num_lines": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "start_line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "total_lines": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "content",
+        "file_type",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ThinkingBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "signature": {
+          "type": "string"
+        },
+        "thinking": {
+          "type": "string"
+        },
+        "type": {
+          "const": "thinking",
+          "type": "string"
+        }
+      },
+      "required": [
+        "signature",
+        "thinking",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ThinkingBlockParam": {
+      "properties": {
+        "signature": {
+          "type": "string"
+        },
+        "thinking": {
+          "type": "string"
+        },
+        "type": {
+          "const": "thinking",
+          "type": "string"
+        }
+      },
+      "required": [
+        "signature",
+        "thinking",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ThinkingConfigAdaptiveParam": {
+      "properties": {
+        "type": {
+          "const": "adaptive",
+          "type": "string"
+        },
+        "display": {
+          "anyOf": [
+            {
+              "enum": [
+                "summarized",
+                "omitted"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "ThinkingConfigBetweenToolsParam": {
+      "properties": {
+        "type": {
+          "const": "between_tools",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "ThinkingConfigDisabledParam": {
+      "properties": {
+        "type": {
+          "const": "disabled",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "ThinkingConfigEnabledParam": {
+      "properties": {
+        "budget_tokens": {
+          "type": "integer"
+        },
+        "type": {
+          "const": "enabled",
+          "type": "string"
+        },
+        "display": {
+          "anyOf": [
+            {
+              "enum": [
+                "summarized",
+                "omitted"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "budget_tokens",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolBash20250124Param": {
+      "properties": {
+        "name": {
+          "const": "bash",
+          "type": "string"
+        },
+        "type": {
+          "const": "bash_20250124",
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "input_examples": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "strict": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolChoiceAnyParam": {
+      "properties": {
+        "type": {
+          "const": "any",
+          "type": "string"
+        },
+        "disable_parallel_tool_use": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolChoiceAutoParam": {
+      "properties": {
+        "type": {
+          "const": "auto",
+          "type": "string"
+        },
+        "disable_parallel_tool_use": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolChoiceNoneParam": {
+      "properties": {
+        "type": {
+          "const": "none",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolChoiceToolParam": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool",
+          "type": "string"
+        },
+        "disable_parallel_tool_use": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolParam": {
+      "properties": {
+        "input_schema": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InputSchemaTyped"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        },
+        "eager_input_streaming": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input_examples": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "strict": {
+          "type": "boolean"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "const": "custom",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "input_schema",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ToolReferenceBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "tool_name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolReferenceBlockParam": {
+      "properties": {
+        "tool_name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_reference",
+          "type": "string"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "tool_name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolResultBlockParam": {
+      "properties": {
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_result",
+          "type": "string"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TextBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/ImageBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/SearchResultBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/DocumentBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/ToolReferenceBlockParam"
+                  },
+                  {
+                    "$ref": "#/$defs/BrowserStateBlockParam"
+                  }
+                ]
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "is_error": {
+          "type": "boolean"
+        },
+        "toolset_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolSearchToolBm25_20251119Param": {
+      "properties": {
+        "name": {
+          "const": "tool_search_tool_bm25",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "tool_search_tool_bm25_20251119",
+            "tool_search_tool_bm25"
+          ],
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "strict": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolSearchToolRegex20251119Param": {
+      "properties": {
+        "name": {
+          "const": "tool_search_tool_regex",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "tool_search_tool_regex_20251119",
+            "tool_search_tool_regex"
+          ],
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "strict": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolSearchToolResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolSearchToolResultError"
+            },
+            {
+              "$ref": "#/$defs/ToolSearchToolSearchResultBlock"
+            }
+          ]
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_search_tool_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolSearchToolResultBlockParam": {
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolSearchToolResultErrorParam"
+            },
+            {
+              "$ref": "#/$defs/ToolSearchToolSearchResultBlockParam"
+            }
+          ]
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_search_tool_result",
+          "type": "string"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "content",
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolSearchToolResultError": {
+      "additionalProperties": true,
+      "properties": {
+        "error_code": {
+          "enum": [
+            "invalid_tool_input",
+            "unavailable",
+            "too_many_requests",
+            "execution_time_exceeded"
+          ],
+          "type": "string"
+        },
+        "error_message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "tool_search_tool_result_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolSearchToolResultErrorParam": {
+      "properties": {
+        "error_code": {
+          "enum": [
+            "invalid_tool_input",
+            "unavailable",
+            "too_many_requests",
+            "execution_time_exceeded"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_search_tool_result_error",
+          "type": "string"
+        },
+        "error_message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "error_code",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolSearchToolSearchResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "tool_references": {
+          "items": {
+            "$ref": "#/$defs/ToolReferenceBlock"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "tool_search_tool_search_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_references",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolSearchToolSearchResultBlockParam": {
+      "properties": {
+        "tool_references": {
+          "items": {
+            "$ref": "#/$defs/ToolReferenceBlockParam"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "tool_search_tool_search_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_references",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolTextEditor20250124Param": {
+      "properties": {
+        "name": {
+          "const": "str_replace_editor",
+          "type": "string"
+        },
+        "type": {
+          "const": "text_editor_20250124",
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "input_examples": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "strict": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolTextEditor20250429Param": {
+      "properties": {
+        "name": {
+          "const": "str_replace_based_edit_tool",
+          "type": "string"
+        },
+        "type": {
+          "const": "text_editor_20250429",
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "input_examples": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "strict": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolTextEditor20250728Param": {
+      "properties": {
+        "name": {
+          "const": "str_replace_based_edit_tool",
+          "type": "string"
+        },
+        "type": {
+          "const": "text_editor_20250728",
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "input_examples": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "max_characters": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "strict": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolUseBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "caller": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DirectCaller"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller20260120"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "input": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_use",
+          "type": "string"
+        },
+        "toolset_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "input",
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolUseBlockParam": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "input": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_use",
+          "type": "string"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "caller": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DirectCallerParam"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCallerParam"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller20260120Param"
+            }
+          ]
+        },
+        "toolset_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "input",
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "URLImageSourceParam": {
+      "properties": {
+        "type": {
+          "const": "url",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "url"
+      ],
+      "type": "object"
+    },
+    "URLPDFSourceParam": {
+      "properties": {
+        "type": {
+          "const": "url",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "url"
+      ],
+      "type": "object"
+    },
+    "UserLocationParam": {
+      "properties": {
+        "type": {
+          "const": "approximate",
+          "type": "string"
+        },
+        "city": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "country": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "region": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timezone": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebFetchBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/DocumentBlock"
+        },
+        "retrieved_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "web_fetch_result",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "type",
+        "url"
+      ],
+      "type": "object"
+    },
+    "WebFetchBlockParam": {
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/DocumentBlockParam"
+        },
+        "type": {
+          "const": "web_fetch_result",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "retrieved_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "content",
+        "type",
+        "url"
+      ],
+      "type": "object"
+    },
+    "WebFetchTool20250910Param": {
+      "properties": {
+        "name": {
+          "const": "web_fetch",
+          "type": "string"
+        },
+        "type": {
+          "const": "web_fetch_20250910",
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowed_domains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "blocked_domains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "citations": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CitationsConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "max_content_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_uses": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "strict": {
+          "type": "boolean"
+        },
+        "url_sources": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebFetchURLSourcesParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebFetchTool20260209Param": {
+      "properties": {
+        "name": {
+          "const": "web_fetch",
+          "type": "string"
+        },
+        "type": {
+          "const": "web_fetch_20260209",
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowed_domains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "blocked_domains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "citations": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CitationsConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "max_content_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_uses": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "strict": {
+          "type": "boolean"
+        },
+        "url_sources": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebFetchURLSourcesParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebFetchTool20260309Param": {
+      "properties": {
+        "name": {
+          "const": "web_fetch",
+          "type": "string"
+        },
+        "type": {
+          "const": "web_fetch_20260309",
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowed_domains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "blocked_domains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "citations": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CitationsConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "max_content_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_uses": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "strict": {
+          "type": "boolean"
+        },
+        "url_sources": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebFetchURLSourcesParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "use_cache": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebFetchTool20260318Param": {
+      "properties": {
+        "name": {
+          "const": "web_fetch",
+          "type": "string"
+        },
+        "type": {
+          "const": "web_fetch_20260318",
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowed_domains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "blocked_domains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "citations": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CitationsConfigParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "max_content_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_uses": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "response_inclusion": {
+          "enum": [
+            "full",
+            "excluded"
+          ],
+          "type": "string"
+        },
+        "strict": {
+          "type": "boolean"
+        },
+        "url_sources": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebFetchURLSourcesParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "use_cache": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebFetchToolResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "caller": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DirectCaller"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller20260120"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebFetchToolResultErrorBlock"
+            },
+            {
+              "$ref": "#/$defs/WebFetchBlock"
+            }
+          ]
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "web_fetch_tool_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebFetchToolResultBlockParam": {
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebFetchToolResultErrorBlockParam"
+            },
+            {
+              "$ref": "#/$defs/WebFetchBlockParam"
+            }
+          ]
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "web_fetch_tool_result",
+          "type": "string"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "caller": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DirectCallerParam"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCallerParam"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller20260120Param"
+            }
+          ]
+        }
+      },
+      "required": [
+        "content",
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebFetchToolResultErrorBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "error_code": {
+          "enum": [
+            "invalid_tool_input",
+            "url_too_long",
+            "url_not_allowed",
+            "url_not_in_prior_context",
+            "url_not_accessible",
+            "unsupported_content_type",
+            "too_many_requests",
+            "max_uses_exceeded",
+            "unavailable",
+            "content_too_large"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "web_fetch_tool_result_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebFetchToolResultErrorBlockParam": {
+      "properties": {
+        "error_code": {
+          "enum": [
+            "invalid_tool_input",
+            "url_too_long",
+            "url_not_allowed",
+            "url_not_in_prior_context",
+            "url_not_accessible",
+            "unsupported_content_type",
+            "too_many_requests",
+            "max_uses_exceeded",
+            "unavailable",
+            "content_too_large"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "web_fetch_tool_result_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebFetchURLSourceAllParam": {
+      "properties": {
+        "type": {
+          "const": "all",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebFetchURLSourceExceptParam": {
+      "properties": {
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/WebFetchURLSourceToolReferenceParam"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "except",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tools",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebFetchURLSourceNoneParam": {
+      "properties": {
+        "type": {
+          "const": "none",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebFetchURLSourceOnlyParam": {
+      "properties": {
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/WebFetchURLSourceToolReferenceParam"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "only",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tools",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebFetchURLSourceToolReferenceParam": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebFetchURLSourcesParam": {
+      "properties": {
+        "client_tool_results": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebFetchURLSourceAllParam"
+            },
+            {
+              "$ref": "#/$defs/WebFetchURLSourceNoneParam"
+            },
+            {
+              "$ref": "#/$defs/WebFetchURLSourceOnlyParam"
+            },
+            {
+              "$ref": "#/$defs/WebFetchURLSourceExceptParam"
+            }
+          ]
+        },
+        "server_tool_results": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebFetchURLSourceAllParam"
+            },
+            {
+              "$ref": "#/$defs/WebFetchURLSourceNoneParam"
+            },
+            {
+              "$ref": "#/$defs/WebFetchURLSourceOnlyParam"
+            },
+            {
+              "$ref": "#/$defs/WebFetchURLSourceExceptParam"
+            }
+          ]
+        },
+        "user_input": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebFetchURLSourceAllParam"
+            },
+            {
+              "$ref": "#/$defs/WebFetchURLSourceNoneParam"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "WebSearchResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "encrypted_content": {
+          "type": "string"
+        },
+        "page_age": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "const": "web_search_result",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "encrypted_content",
+        "title",
+        "type",
+        "url"
+      ],
+      "type": "object"
+    },
+    "WebSearchResultBlockParam": {
+      "properties": {
+        "encrypted_content": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "const": "web_search_result",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "page_age": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "encrypted_content",
+        "title",
+        "type",
+        "url"
+      ],
+      "type": "object"
+    },
+    "WebSearchTool20250305Param": {
+      "properties": {
+        "name": {
+          "const": "web_search",
+          "type": "string"
+        },
+        "type": {
+          "const": "web_search_20250305",
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowed_domains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "blocked_domains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "max_uses": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "strict": {
+          "type": "boolean"
+        },
+        "user_location": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UserLocationParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebSearchTool20260209Param": {
+      "properties": {
+        "name": {
+          "const": "web_search",
+          "type": "string"
+        },
+        "type": {
+          "const": "web_search_20260209",
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowed_domains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "blocked_domains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "max_uses": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "strict": {
+          "type": "boolean"
+        },
+        "user_location": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UserLocationParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebSearchTool20260318Param": {
+      "properties": {
+        "name": {
+          "const": "web_search",
+          "type": "string"
+        },
+        "type": {
+          "const": "web_search_20260318",
+          "type": "string"
+        },
+        "allowed_callers": {
+          "items": {
+            "enum": [
+              "direct",
+              "code_execution_20250825",
+              "code_execution_20260120",
+              "code_execution_20260521"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowed_domains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "blocked_domains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defer_loading": {
+          "type": "boolean"
+        },
+        "max_uses": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "response_inclusion": {
+          "enum": [
+            "full",
+            "excluded"
+          ],
+          "type": "string"
+        },
+        "strict": {
+          "type": "boolean"
+        },
+        "user_location": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UserLocationParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebSearchToolRequestErrorParam": {
+      "properties": {
+        "error_code": {
+          "enum": [
+            "invalid_tool_input",
+            "unavailable",
+            "max_uses_exceeded",
+            "too_many_requests",
+            "query_too_long",
+            "request_too_large"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "web_search_tool_result_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebSearchToolResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "caller": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DirectCaller"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller20260120"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebSearchToolResultError"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/WebSearchResultBlock"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "web_search_tool_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebSearchToolResultBlockParam": {
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/WebSearchResultBlockParam"
+              },
+              "type": "array"
+            },
+            {
+              "$ref": "#/$defs/WebSearchToolRequestErrorParam"
+            }
+          ]
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "web_search_tool_result",
+          "type": "string"
+        },
+        "cache_control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheControlEphemeralParam"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "caller": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DirectCallerParam"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCallerParam"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller20260120Param"
+            }
+          ]
+        }
+      },
+      "required": [
+        "content",
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebSearchToolResultError": {
+      "additionalProperties": true,
+      "properties": {
+        "error_code": {
+          "enum": [
+            "invalid_tool_input",
+            "unavailable",
+            "max_uses_exceeded",
+            "too_many_requests",
+            "query_too_long",
+            "request_too_large"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "web_search_tool_result_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "type"
+      ],
+      "type": "object"
+    }
+  },
+  "anyOf": [
+    {
+      "$ref": "#/$defs/MessageCreateParamsNonStreaming"
+    },
+    {
+      "$ref": "#/$defs/MessageCreateParamsStreaming"
+    }
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "x-reference-source": "https://github.com/anthropics/anthropic-sdk-python/tree/v1.15.0/src/anthropic/types",
+  "x-snapshot-date": "2026-10-17",
+  "x-schema-kind": "derived from official SDK 1.15.0; header arguments removed; stream ping/error added from official docs"
+}

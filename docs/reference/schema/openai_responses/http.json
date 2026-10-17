@@ -1,0 +1,11 @@
+{
+  "method": "POST",
+  "url": "https://api.openai.com/v1/responses",
+  "headers": {
+    "Authorization": "Bearer <OPENAI_API_KEY>",
+    "Content-Type": "application/json"
+  },
+  "stream_content_type": "text/event-stream",
+  "stream_terminator": "typed response terminal event",
+  "source": "openai"
+}

@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$ref": "#/$defs/ErrorResponse",
+  "$defs": {
+    "Error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "param": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "type": "string"
+        },
+        "misalignment": {
+          "$ref": "#/$defs/MisalignmentErrorDetailsResource"
+        }
+      },
+      "required": [
+        "type",
+        "message",
+        "param",
+        "code"
+      ]
+    },
+    "ErrorResponse": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/Error"
+        }
+      },
+      "required": [
+        "error"
+      ]
+    },
+    "MisalignmentErrorDetailsResource": {
+      "properties": {
+        "review_target": {
+          "anyOf": [
+            {
+              "not": {
+                "pattern": "[^A-Za-z0-9._~:-]"
+              },
+              "type": "string",
+              "maxLength": 96,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._~:-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error_type": {
+          "$ref": "#/$defs/_MisalignmentErrorType"
+        },
+        "detailed_explanation": {
+          "type": "string"
+        },
+        "steer": {
+          "$ref": "#/$defs/_MisalignmentSteer"
+        }
+      },
+      "type": "object",
+      "required": []
+    },
+    "_MisalignmentErrorType": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "string",
+          "enum": [
+            "potentially_unintended_data_transfer",
+            "potentially_unintended_data_access",
+            "potentially_unintended_destructive_activity",
+            "other"
+          ]
+        }
+      ]
+    },
+    "_MisalignmentSteer": {
+      "properties": {
+        "message": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "message"
+      ]
+    }
+  },
+  "x-reference-source": "https://raw.githubusercontent.com/openai/openai-openapi/d156763a484eb247e116e0ea345e16344b0049ba/openapi.json",
+  "x-snapshot-date": "2026-10-17"
+}

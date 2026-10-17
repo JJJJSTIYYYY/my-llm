@@ -1,0 +1,444 @@
+{
+  "description": "Independent alternatives; do not merge all options into one request. Values in angle brackets are placeholders; signed replay requires original server data.",
+  "cases": [
+    {
+      "name": "request.tools_round_trip",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Weather?"
+              }
+            ]
+          },
+          {
+            "type": "message",
+            "id": "msg_1",
+            "status": "completed",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "Checking",
+                "annotations": [],
+                "logprobs": []
+              }
+            ]
+          },
+          {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "weather",
+            "arguments": "{\"city\":\"上海\"}"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": "Sunny"
+          }
+        ],
+        "stream": false,
+        "max_output_tokens": 256,
+        "store": false,
+        "tools": [
+          {
+            "type": "function",
+            "name": "weather",
+            "description": "Weather",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              }
+            },
+            "strict": false
+          }
+        ],
+        "tool_choice": "auto",
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "name": "request.previous_response",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "input": [
+          {
+            "type": "function_call_output",
+            "call_id": "call_previous",
+            "output": "Sunny"
+          }
+        ],
+        "stream": false,
+        "max_output_tokens": 256,
+        "store": false,
+        "previous_response_id": "resp_previous"
+      },
+      "notes": "Use real IDs from the same server-side conversation; conversation and previous_response_id are alternative mechanisms."
+    },
+    {
+      "name": "request.image",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Describe the image."
+              },
+              {
+                "type": "input_image",
+                "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=",
+                "detail": "auto"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_output_tokens": 256,
+        "store": false
+      }
+    },
+    {
+      "name": "request.file_url",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_file",
+                "file_url": "https://example.com/document.pdf"
+              },
+              {
+                "type": "input_text",
+                "text": "Summarize the document."
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_output_tokens": 256,
+        "store": false
+      },
+      "notes": "Replace example.com with an accessible supported file; this file_url representation belongs to Responses, not Chat."
+    },
+    {
+      "name": "request.reasoning",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_output_tokens": 256,
+        "store": false,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      }
+    },
+    {
+      "name": "request.json_schema",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_output_tokens": 256,
+        "store": false,
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "answer",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "answer": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "answer"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "response.incomplete",
+      "schema": "response.schema.json",
+      "value": {
+        "id": "resp_example",
+        "object": "response",
+        "created_at": 1792195200,
+        "status": "incomplete",
+        "access_programs": null,
+        "error": null,
+        "incomplete_details": {
+          "reason": "max_output_tokens"
+        },
+        "instructions": null,
+        "model": "<MODEL_ID>",
+        "tools": [],
+        "output": [
+          {
+            "type": "message",
+            "id": "msg_example",
+            "status": "completed",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "Hello",
+                "annotations": [],
+                "logprobs": []
+              }
+            ]
+          }
+        ],
+        "parallel_tool_calls": true,
+        "metadata": {},
+        "tool_choice": "auto",
+        "temperature": 1,
+        "top_p": 1,
+        "usage": {
+          "input_tokens": 1,
+          "input_tokens_details": {
+            "cached_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "output_tokens": 2,
+          "output_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "total_tokens": 3
+        }
+      }
+    },
+    {
+      "name": "response.refusal",
+      "schema": "response.schema.json",
+      "value": {
+        "id": "resp_example",
+        "object": "response",
+        "created_at": 1792195200,
+        "status": "completed",
+        "access_programs": null,
+        "error": null,
+        "incomplete_details": null,
+        "instructions": null,
+        "model": "<MODEL_ID>",
+        "tools": [],
+        "output": [
+          {
+            "type": "message",
+            "id": "msg_example",
+            "status": "completed",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "refusal",
+                "refusal": "I cannot help with that request."
+              }
+            ]
+          }
+        ],
+        "parallel_tool_calls": true,
+        "metadata": {},
+        "tool_choice": "auto",
+        "temperature": 1,
+        "top_p": 1,
+        "usage": {
+          "input_tokens": 1,
+          "input_tokens_details": {
+            "cached_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "output_tokens": 2,
+          "output_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "total_tokens": 3
+        }
+      }
+    },
+    {
+      "name": "response.failed",
+      "schema": "response.schema.json",
+      "value": {
+        "id": "resp_example",
+        "object": "response",
+        "created_at": 1792195200,
+        "status": "failed",
+        "access_programs": null,
+        "error": {
+          "code": "server_error",
+          "message": "Example generation failure"
+        },
+        "incomplete_details": null,
+        "instructions": null,
+        "model": "<MODEL_ID>",
+        "tools": [],
+        "output": [],
+        "parallel_tool_calls": true,
+        "metadata": {},
+        "tool_choice": "auto",
+        "temperature": 1,
+        "top_p": 1,
+        "usage": {
+          "input_tokens": 1,
+          "input_tokens_details": {
+            "cached_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "output_tokens": 2,
+          "output_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "total_tokens": 3
+        }
+      }
+    },
+    {
+      "name": "request.text",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_output_tokens": 256,
+        "store": false
+      }
+    },
+    {
+      "name": "response.text",
+      "schema": "response.schema.json",
+      "value": {
+        "id": "resp_example",
+        "object": "response",
+        "created_at": 1792195200,
+        "status": "completed",
+        "access_programs": null,
+        "error": null,
+        "incomplete_details": null,
+        "instructions": null,
+        "model": "<MODEL_ID>",
+        "tools": [],
+        "output": [
+          {
+            "type": "message",
+            "id": "msg_example",
+            "status": "completed",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "Hello",
+                "annotations": [],
+                "logprobs": []
+              }
+            ]
+          }
+        ],
+        "parallel_tool_calls": true,
+        "metadata": {},
+        "tool_choice": "auto",
+        "temperature": 1,
+        "top_p": 1,
+        "usage": {
+          "input_tokens": 1,
+          "input_tokens_details": {
+            "cached_tokens": 0,
+            "cache_write_tokens": 0
+          },
+          "output_tokens": 2,
+          "output_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "total_tokens": 3
+        }
+      }
+    },
+    {
+      "name": "error.http",
+      "schema": "error.schema.json",
+      "value": {
+        "error": {
+          "message": "Example invalid request",
+          "type": "invalid_request_error",
+          "param": "model",
+          "code": "model_not_found"
+        }
+      }
+    },
+    {
+      "name": "request.stream",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "stream": true,
+        "max_output_tokens": 256,
+        "store": false
+      }
+    }
+  ]
+}

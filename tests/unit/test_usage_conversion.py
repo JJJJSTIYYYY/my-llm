@@ -2,7 +2,12 @@
 
 import pytest
 
-from my_llm.codec.utils.usage import convert_usage
+from my_llm import MyCodec
+
+
+def convert_usage(value, source, target):
+    codec = MyCodec()
+    return codec.codecs[target].decoder.usage(codec.codecs[source].encoder.usage(value))
 
 
 @pytest.mark.parametrize(

@@ -1,0 +1,1909 @@
+{
+  "$defs": {
+    "Base64PDFSource": {
+      "additionalProperties": true,
+      "properties": {
+        "data": {
+          "type": "string"
+        },
+        "media_type": {
+          "const": "application/pdf",
+          "type": "string"
+        },
+        "type": {
+          "const": "base64",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "media_type",
+        "type"
+      ],
+      "type": "object"
+    },
+    "BashCodeExecutionOutputBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "file_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "bash_code_execution_output",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "BashCodeExecutionResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/BashCodeExecutionOutputBlock"
+          },
+          "type": "array"
+        },
+        "return_code": {
+          "type": "integer"
+        },
+        "stderr": {
+          "type": "string"
+        },
+        "stdout": {
+          "type": "string"
+        },
+        "type": {
+          "const": "bash_code_execution_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "return_code",
+        "stderr",
+        "stdout",
+        "type"
+      ],
+      "type": "object"
+    },
+    "BashCodeExecutionToolResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BashCodeExecutionToolResultError"
+            },
+            {
+              "$ref": "#/$defs/BashCodeExecutionResultBlock"
+            }
+          ]
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "bash_code_execution_tool_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "BashCodeExecutionToolResultError": {
+      "additionalProperties": true,
+      "properties": {
+        "error_code": {
+          "enum": [
+            "invalid_tool_input",
+            "unavailable",
+            "too_many_requests",
+            "execution_time_exceeded",
+            "output_file_too_large"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "bash_code_execution_tool_result_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CacheCreation": {
+      "additionalProperties": true,
+      "properties": {
+        "ephemeral_1h_input_tokens": {
+          "type": "integer"
+        },
+        "ephemeral_5m_input_tokens": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ephemeral_1h_input_tokens",
+        "ephemeral_5m_input_tokens"
+      ],
+      "type": "object"
+    },
+    "CacheMissMessagesChanged": {
+      "additionalProperties": true,
+      "properties": {
+        "cache_missed_input_tokens": {
+          "type": "integer"
+        },
+        "type": {
+          "const": "messages_changed",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cache_missed_input_tokens",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CacheMissModelChanged": {
+      "additionalProperties": true,
+      "properties": {
+        "cache_missed_input_tokens": {
+          "type": "integer"
+        },
+        "type": {
+          "const": "model_changed",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cache_missed_input_tokens",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CacheMissPreviousMessageNotFound": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "previous_message_not_found",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "CacheMissSystemChanged": {
+      "additionalProperties": true,
+      "properties": {
+        "cache_missed_input_tokens": {
+          "type": "integer"
+        },
+        "type": {
+          "const": "system_changed",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cache_missed_input_tokens",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CacheMissToolsChanged": {
+      "additionalProperties": true,
+      "properties": {
+        "cache_missed_input_tokens": {
+          "type": "integer"
+        },
+        "type": {
+          "const": "tools_changed",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cache_missed_input_tokens",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CacheMissUnavailable": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "unavailable",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "CitationCharLocation": {
+      "additionalProperties": true,
+      "properties": {
+        "cited_text": {
+          "type": "string"
+        },
+        "document_index": {
+          "type": "integer"
+        },
+        "document_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "end_char_index": {
+          "type": "integer"
+        },
+        "file_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "start_char_index": {
+          "type": "integer"
+        },
+        "type": {
+          "const": "char_location",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cited_text",
+        "document_index",
+        "end_char_index",
+        "start_char_index",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CitationContentBlockLocation": {
+      "additionalProperties": true,
+      "properties": {
+        "cited_text": {
+          "type": "string"
+        },
+        "document_index": {
+          "type": "integer"
+        },
+        "document_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "end_block_index": {
+          "type": "integer"
+        },
+        "file_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "start_block_index": {
+          "type": "integer"
+        },
+        "type": {
+          "const": "content_block_location",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cited_text",
+        "document_index",
+        "end_block_index",
+        "start_block_index",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CitationPageLocation": {
+      "additionalProperties": true,
+      "properties": {
+        "cited_text": {
+          "type": "string"
+        },
+        "document_index": {
+          "type": "integer"
+        },
+        "document_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "end_page_number": {
+          "type": "integer"
+        },
+        "file_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "start_page_number": {
+          "type": "integer"
+        },
+        "type": {
+          "const": "page_location",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cited_text",
+        "document_index",
+        "end_page_number",
+        "start_page_number",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CitationsConfig": {
+      "additionalProperties": true,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "CitationsSearchResultLocation": {
+      "additionalProperties": true,
+      "properties": {
+        "cited_text": {
+          "type": "string"
+        },
+        "end_block_index": {
+          "type": "integer"
+        },
+        "search_result_index": {
+          "type": "integer"
+        },
+        "source": {
+          "type": "string"
+        },
+        "start_block_index": {
+          "type": "integer"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "search_result_location",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cited_text",
+        "end_block_index",
+        "search_result_index",
+        "source",
+        "start_block_index",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CitationsWebSearchResultLocation": {
+      "additionalProperties": true,
+      "properties": {
+        "cited_text": {
+          "type": "string"
+        },
+        "encrypted_index": {
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "web_search_result_location",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cited_text",
+        "encrypted_index",
+        "type",
+        "url"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionOutputBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "file_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_output",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/CodeExecutionOutputBlock"
+          },
+          "type": "array"
+        },
+        "return_code": {
+          "type": "integer"
+        },
+        "stderr": {
+          "type": "string"
+        },
+        "stdout": {
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "return_code",
+        "stderr",
+        "stdout",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionToolResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CodeExecutionToolResultError"
+            },
+            {
+              "$ref": "#/$defs/CodeExecutionResultBlock"
+            },
+            {
+              "$ref": "#/$defs/EncryptedCodeExecutionResultBlock"
+            }
+          ]
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_tool_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionToolResultError": {
+      "additionalProperties": true,
+      "properties": {
+        "error_code": {
+          "enum": [
+            "invalid_tool_input",
+            "unavailable",
+            "too_many_requests",
+            "execution_time_exceeded"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_tool_result_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "type"
+      ],
+      "type": "object"
+    },
+    "Container": {
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "skills": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ContainerSkill"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "expires_at"
+      ],
+      "type": "object"
+    },
+    "ContainerSkill": {
+      "additionalProperties": true,
+      "properties": {
+        "skill_id": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "anthropic",
+            "custom"
+          ],
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "skill_id",
+        "type",
+        "version"
+      ],
+      "type": "object"
+    },
+    "ContainerUploadBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "file_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "container_upload",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "Diagnostics": {
+      "additionalProperties": true,
+      "properties": {
+        "cache_miss_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheMissModelChanged"
+            },
+            {
+              "$ref": "#/$defs/CacheMissSystemChanged"
+            },
+            {
+              "$ref": "#/$defs/CacheMissToolsChanged"
+            },
+            {
+              "$ref": "#/$defs/CacheMissMessagesChanged"
+            },
+            {
+              "$ref": "#/$defs/CacheMissPreviousMessageNotFound"
+            },
+            {
+              "$ref": "#/$defs/CacheMissUnavailable"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "DirectCaller": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "direct",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "DocumentBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "citations": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CitationsConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Base64PDFSource"
+            },
+            {
+              "$ref": "#/$defs/PlainTextSource"
+            }
+          ]
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "document",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "type"
+      ],
+      "type": "object"
+    },
+    "EncryptedCodeExecutionResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/CodeExecutionOutputBlock"
+          },
+          "type": "array"
+        },
+        "encrypted_stdout": {
+          "type": "string"
+        },
+        "return_code": {
+          "type": "integer"
+        },
+        "stderr": {
+          "type": "string"
+        },
+        "type": {
+          "const": "encrypted_code_execution_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "encrypted_stdout",
+        "return_code",
+        "stderr",
+        "type"
+      ],
+      "type": "object"
+    },
+    "OutputTokensDetails": {
+      "additionalProperties": true,
+      "properties": {
+        "thinking_tokens": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "thinking_tokens"
+      ],
+      "type": "object"
+    },
+    "PlainTextSource": {
+      "additionalProperties": true,
+      "properties": {
+        "data": {
+          "type": "string"
+        },
+        "media_type": {
+          "const": "text/plain",
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "media_type",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RedactedThinkingBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "data": {
+          "type": "string"
+        },
+        "type": {
+          "const": "redacted_thinking",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RefusalStopDetails": {
+      "additionalProperties": true,
+      "properties": {
+        "category": {
+          "anyOf": [
+            {
+              "enum": [
+                "cyber",
+                "bio",
+                "frontier_llm",
+                "reasoning_extraction",
+                "general_harms"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "explanation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "refusal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "ServerToolCaller": {
+      "additionalProperties": true,
+      "properties": {
+        "tool_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_20250825",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ServerToolCaller20260120": {
+      "additionalProperties": true,
+      "properties": {
+        "tool_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "code_execution_20260120",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ServerToolUsage": {
+      "additionalProperties": true,
+      "properties": {
+        "web_fetch_requests": {
+          "type": "integer"
+        },
+        "web_search_requests": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "web_fetch_requests",
+        "web_search_requests"
+      ],
+      "type": "object"
+    },
+    "ServerToolUseBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "caller": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DirectCaller"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller20260120"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "input": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "name": {
+          "enum": [
+            "web_search",
+            "web_fetch",
+            "code_execution",
+            "bash_code_execution",
+            "text_editor_code_execution",
+            "tool_search_tool_regex",
+            "tool_search_tool_bm25"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "server_tool_use",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "input",
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "citations": {
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CitationCharLocation"
+                  },
+                  {
+                    "$ref": "#/$defs/CitationPageLocation"
+                  },
+                  {
+                    "$ref": "#/$defs/CitationContentBlockLocation"
+                  },
+                  {
+                    "$ref": "#/$defs/CitationsWebSearchResultLocation"
+                  },
+                  {
+                    "$ref": "#/$defs/CitationsSearchResultLocation"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "text": {
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextEditorCodeExecutionCreateResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "is_file_update": {
+          "type": "boolean"
+        },
+        "type": {
+          "const": "text_editor_code_execution_create_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "is_file_update",
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextEditorCodeExecutionStrReplaceResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "lines": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "new_lines": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "new_start": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "old_lines": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "old_start": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "text_editor_code_execution_str_replace_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextEditorCodeExecutionToolResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextEditorCodeExecutionToolResultError"
+            },
+            {
+              "$ref": "#/$defs/TextEditorCodeExecutionViewResultBlock"
+            },
+            {
+              "$ref": "#/$defs/TextEditorCodeExecutionCreateResultBlock"
+            },
+            {
+              "$ref": "#/$defs/TextEditorCodeExecutionStrReplaceResultBlock"
+            }
+          ]
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "text_editor_code_execution_tool_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextEditorCodeExecutionToolResultError": {
+      "additionalProperties": true,
+      "properties": {
+        "error_code": {
+          "enum": [
+            "invalid_tool_input",
+            "unavailable",
+            "too_many_requests",
+            "execution_time_exceeded",
+            "file_not_found"
+          ],
+          "type": "string"
+        },
+        "error_message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "text_editor_code_execution_tool_result_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "type"
+      ],
+      "type": "object"
+    },
+    "TextEditorCodeExecutionViewResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "file_type": {
+          "enum": [
+            "text",
+            "image",
+            "pdf"
+          ],
+          "type": "string"
+        },
+        "num_lines": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "start_line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "total_lines": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "text_editor_code_execution_view_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "file_type",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ThinkingBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "signature": {
+          "type": "string"
+        },
+        "thinking": {
+          "type": "string"
+        },
+        "type": {
+          "const": "thinking",
+          "type": "string"
+        }
+      },
+      "required": [
+        "signature",
+        "thinking",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolReferenceBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "tool_name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolSearchToolResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolSearchToolResultError"
+            },
+            {
+              "$ref": "#/$defs/ToolSearchToolSearchResultBlock"
+            }
+          ]
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_search_tool_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolSearchToolResultError": {
+      "additionalProperties": true,
+      "properties": {
+        "error_code": {
+          "enum": [
+            "invalid_tool_input",
+            "unavailable",
+            "too_many_requests",
+            "execution_time_exceeded"
+          ],
+          "type": "string"
+        },
+        "error_message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "tool_search_tool_result_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolSearchToolSearchResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "tool_references": {
+          "items": {
+            "$ref": "#/$defs/ToolReferenceBlock"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "tool_search_tool_search_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_references",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolUseBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "caller": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DirectCaller"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller20260120"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "input": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_use",
+          "type": "string"
+        },
+        "toolset_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "input",
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "Usage": {
+      "additionalProperties": true,
+      "properties": {
+        "cache_creation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheCreation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cache_creation_input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cache_read_input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "inference_geo": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "input_tokens": {
+          "type": "integer"
+        },
+        "output_tokens": {
+          "type": "integer"
+        },
+        "output_tokens_details": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OutputTokensDetails"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "server_tool_use": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ServerToolUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "service_tier": {
+          "anyOf": [
+            {
+              "enum": [
+                "standard",
+                "priority",
+                "batch"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "speed": {
+          "anyOf": [
+            {
+              "enum": [
+                "standard",
+                "fast"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens"
+      ],
+      "type": "object"
+    },
+    "WebFetchBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/DocumentBlock"
+        },
+        "retrieved_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "web_fetch_result",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "type",
+        "url"
+      ],
+      "type": "object"
+    },
+    "WebFetchToolResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "caller": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DirectCaller"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller20260120"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebFetchToolResultErrorBlock"
+            },
+            {
+              "$ref": "#/$defs/WebFetchBlock"
+            }
+          ]
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "web_fetch_tool_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebFetchToolResultErrorBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "error_code": {
+          "enum": [
+            "invalid_tool_input",
+            "url_too_long",
+            "url_not_allowed",
+            "url_not_in_prior_context",
+            "url_not_accessible",
+            "unsupported_content_type",
+            "too_many_requests",
+            "max_uses_exceeded",
+            "unavailable",
+            "content_too_large"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "web_fetch_tool_result_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebSearchResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "encrypted_content": {
+          "type": "string"
+        },
+        "page_age": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "const": "web_search_result",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "encrypted_content",
+        "title",
+        "type",
+        "url"
+      ],
+      "type": "object"
+    },
+    "WebSearchToolResultBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "caller": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DirectCaller"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller"
+            },
+            {
+              "$ref": "#/$defs/ServerToolCaller20260120"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebSearchToolResultError"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/WebSearchResultBlock"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "web_search_tool_result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "tool_use_id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "WebSearchToolResultError": {
+      "additionalProperties": true,
+      "properties": {
+        "error_code": {
+          "enum": [
+            "invalid_tool_input",
+            "unavailable",
+            "max_uses_exceeded",
+            "too_many_requests",
+            "query_too_long",
+            "request_too_large"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "web_search_tool_result_error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "type"
+      ],
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "container": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Container"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "content": {
+      "items": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/TextBlock"
+          },
+          {
+            "$ref": "#/$defs/ThinkingBlock"
+          },
+          {
+            "$ref": "#/$defs/RedactedThinkingBlock"
+          },
+          {
+            "$ref": "#/$defs/ToolUseBlock"
+          },
+          {
+            "$ref": "#/$defs/ServerToolUseBlock"
+          },
+          {
+            "$ref": "#/$defs/WebSearchToolResultBlock"
+          },
+          {
+            "$ref": "#/$defs/WebFetchToolResultBlock"
+          },
+          {
+            "$ref": "#/$defs/CodeExecutionToolResultBlock"
+          },
+          {
+            "$ref": "#/$defs/BashCodeExecutionToolResultBlock"
+          },
+          {
+            "$ref": "#/$defs/TextEditorCodeExecutionToolResultBlock"
+          },
+          {
+            "$ref": "#/$defs/ToolSearchToolResultBlock"
+          },
+          {
+            "$ref": "#/$defs/ContainerUploadBlock"
+          }
+        ]
+      },
+      "type": "array"
+    },
+    "diagnostics": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Diagnostics"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "model": {
+      "anyOf": [
+        {
+          "enum": [
+            "claude-haiku-5-5",
+            "claude-sonnet-5-5",
+            "claude-fable-5-1",
+            "claude-opus-5-5",
+            "claude-mythos-5-1",
+            "claude-sonnet-5",
+            "claude-fable-5",
+            "claude-mythos-5",
+            "claude-opus-5",
+            "claude-opus-4-8",
+            "claude-opus-4-7",
+            "claude-mythos-preview",
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4-5",
+            "claude-opus-4-5-20251101",
+            "claude-sonnet-4-5",
+            "claude-sonnet-4-5-20250929"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "role": {
+      "const": "assistant",
+      "type": "string"
+    },
+    "stop_details": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RefusalStopDetails"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "stop_reason": {
+      "anyOf": [
+        {
+          "enum": [
+            "end_turn",
+            "max_tokens",
+            "stop_sequence",
+            "tool_use",
+            "pause_turn",
+            "refusal",
+            "model_context_window_exceeded"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "stop_sequence": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "type": {
+      "const": "message",
+      "type": "string"
+    },
+    "usage": {
+      "$ref": "#/$defs/Usage"
+    }
+  },
+  "required": [
+    "id",
+    "content",
+    "model",
+    "role",
+    "type",
+    "usage"
+  ],
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "x-reference-source": "https://github.com/anthropics/anthropic-sdk-python/tree/v1.15.0/src/anthropic/types",
+  "x-snapshot-date": "2026-10-17",
+  "x-schema-kind": "derived from official SDK 1.15.0; header arguments removed; stream ping/error added from official docs"
+}

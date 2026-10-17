@@ -1,0 +1,529 @@
+{
+  "description": "Independent alternatives; do not merge all options into one request. Values in angle brackets are placeholders; signed replay requires original server data.",
+  "cases": [
+    {
+      "name": "request.tools_round_trip",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "max_tokens": 256,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Weather?"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Checking"
+              },
+              {
+                "type": "tool_use",
+                "id": "call_1",
+                "name": "weather",
+                "input": {
+                  "city": "上海"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_1",
+                "content": "Sunny"
+              }
+            ]
+          }
+        ],
+        "system": [
+          {
+            "type": "text",
+            "text": "Answer clearly."
+          }
+        ],
+        "stream": false,
+        "tools": [
+          {
+            "name": "weather",
+            "description": "Weather",
+            "strict": false,
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ],
+        "tool_choice": {
+          "type": "auto"
+        }
+      }
+    },
+    {
+      "name": "request.image",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "max_tokens": 256,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image",
+                "source": {
+                  "type": "base64",
+                  "media_type": "image/png",
+                  "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="
+                }
+              },
+              {
+                "type": "text",
+                "text": "Describe the image."
+              }
+            ]
+          }
+        ],
+        "system": [
+          {
+            "type": "text",
+            "text": "Answer clearly."
+          }
+        ],
+        "stream": false
+      }
+    },
+    {
+      "name": "request.thinking_budget",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "system": [
+          {
+            "type": "text",
+            "text": "Answer clearly."
+          }
+        ],
+        "stream": false,
+        "thinking": {
+          "type": "enabled",
+          "budget_tokens": 1024
+        }
+      },
+      "notes": "Use a model supporting manual thinking budgets; do not combine forced tool_choice with thinking on models that prohibit it."
+    },
+    {
+      "name": "request.adaptive_thinking",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "system": [
+          {
+            "type": "text",
+            "text": "Answer clearly."
+          }
+        ],
+        "stream": false,
+        "thinking": {
+          "type": "adaptive"
+        },
+        "output_config": {
+          "effort": "high"
+        }
+      },
+      "notes": "Only for models supporting adaptive thinking and the selected effort."
+    },
+    {
+      "name": "request.prompt_cache",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "max_tokens": 256,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "system": [
+          {
+            "type": "text",
+            "text": "<REUSABLE_SYSTEM_PREFIX>",
+            "cache_control": {
+              "type": "ephemeral",
+              "ttl": "5m"
+            }
+          }
+        ],
+        "stream": false
+      }
+    },
+    {
+      "name": "request.json_schema",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "max_tokens": 256,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "system": [
+          {
+            "type": "text",
+            "text": "Answer clearly."
+          }
+        ],
+        "stream": false,
+        "output_config": {
+          "format": {
+            "type": "json_schema",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "answer": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "answer"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "request.signed_replay",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "max_tokens": 256,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Weather?"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "<ORIGINAL_THINKING_TEXT>",
+                "signature": "<ORIGINAL_ANTHROPIC_SIGNATURE>"
+              },
+              {
+                "type": "text",
+                "text": "Checking"
+              },
+              {
+                "type": "tool_use",
+                "id": "call_1",
+                "name": "weather",
+                "input": {
+                  "city": "上海"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_1",
+                "content": "Sunny"
+              }
+            ]
+          }
+        ],
+        "system": [
+          {
+            "type": "text",
+            "text": "Answer clearly."
+          }
+        ],
+        "stream": false,
+        "tools": [
+          {
+            "name": "weather",
+            "description": "Weather",
+            "strict": false,
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "notes": "Copy the complete original Anthropic thinking block without edits. Placeholder signatures are not valid server signatures."
+    },
+    {
+      "name": "request.beta",
+      "schema": "request.beta.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "max_tokens": 256,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "system": [
+          {
+            "type": "text",
+            "text": "Answer clearly."
+          }
+        ],
+        "stream": false,
+        "thinking": {
+          "type": "adaptive"
+        }
+      },
+      "notes": "Select beta features and required anthropic-beta headers according to the feature docs; betas is not a JSON body field."
+    },
+    {
+      "name": "response.stop_sequence",
+      "schema": "response.schema.json",
+      "value": {
+        "id": "msg_example",
+        "type": "message",
+        "role": "assistant",
+        "model": "<MODEL_ID>",
+        "content": [
+          {
+            "type": "text",
+            "text": "Hello"
+          }
+        ],
+        "stop_reason": "stop_sequence",
+        "stop_sequence": "END",
+        "usage": {
+          "input_tokens": 1,
+          "output_tokens": 2
+        }
+      }
+    },
+    {
+      "name": "request.text",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "max_tokens": 256,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "system": [
+          {
+            "type": "text",
+            "text": "Answer clearly."
+          }
+        ],
+        "stream": false
+      }
+    },
+    {
+      "name": "response.text",
+      "schema": "response.schema.json",
+      "value": {
+        "id": "msg_example",
+        "type": "message",
+        "role": "assistant",
+        "model": "<MODEL_ID>",
+        "content": [
+          {
+            "type": "text",
+            "text": "Hello"
+          }
+        ],
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "usage": {
+          "input_tokens": 1,
+          "output_tokens": 2
+        }
+      }
+    },
+    {
+      "name": "error.http",
+      "schema": "error.schema.json",
+      "value": {
+        "type": "error",
+        "error": {
+          "type": "invalid_request_error",
+          "message": "Example invalid request"
+        },
+        "request_id": "req_example"
+      }
+    },
+    {
+      "name": "request.stream",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "max_tokens": 256,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "system": [
+          {
+            "type": "text",
+            "text": "Answer clearly."
+          }
+        ],
+        "stream": true
+      }
+    },
+    {
+      "name": "request.citations",
+      "schema": "request.schema.json",
+      "value": {
+        "model": "<MODEL_ID>",
+        "max_tokens": 256,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "document",
+                "source": {
+                  "type": "text",
+                  "media_type": "text/plain",
+                  "data": "Hello source."
+                },
+                "title": "Example",
+                "citations": {
+                  "enabled": true
+                }
+              },
+              {
+                "type": "text",
+                "text": "Answer with citations."
+              }
+            ]
+          }
+        ],
+        "system": [
+          {
+            "type": "text",
+            "text": "Answer clearly."
+          }
+        ],
+        "stream": false
+      }
+    },
+    {
+      "name": "response.citations",
+      "schema": "response.schema.json",
+      "value": {
+        "id": "msg_example",
+        "type": "message",
+        "role": "assistant",
+        "model": "<MODEL_ID>",
+        "content": [
+          {
+            "type": "text",
+            "text": "Hello",
+            "citations": [
+              {
+                "type": "char_location",
+                "cited_text": "Hello",
+                "document_index": 0,
+                "document_title": "Example",
+                "start_char_index": 0,
+                "end_char_index": 5
+              }
+            ]
+          }
+        ],
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "usage": {
+          "input_tokens": 1,
+          "output_tokens": 2
+        }
+      }
+    }
+  ]
+}

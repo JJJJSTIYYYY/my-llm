@@ -7,8 +7,15 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from my_llm.codec.utils.chunks import BlockRef, operations
-from my_llm.codec.utils.conversion import arguments, dictionaries, extras, source_protocol
+from my_llm.codec.shared.chunks import BlockRef, operations
+from my_llm.codec.shared.conversion import (
+    arguments,
+    dictionaries,
+    extras,
+    merge_fields,
+    source_protocol,
+)
+from my_llm.codec.shared.keys import SOURCE
 from my_llm.exceptions import IncompleteStreamError
 
 
@@ -18,17 +25,19 @@ class BlockState:
 
     index: int
     content: dict
+    source_ref: BlockRef | None = None
     fragments: dict[str, list[str]] = field(default_factory=dict)
     argument_parts: list[str] | None = None
     emitted: bool = False
     closed: bool = False
     source_closed: bool = False
     text_sent: int = 0
+    pending_annotations: list[dict] = field(default_factory=list)
 
     @property
     def text_field(self) -> str | None:
         kind = self.content.get("type")
-        return kind if kind in ("text", "thinking") else None
+        return kind if kind in ("text", "thinking", "refusal") else None
 
     def materialize(self) -> dict:
         block = deepcopy(self.content)
@@ -66,8 +75,9 @@ class StreamState:
         self.snapshot: list[dict] | None = None
         self.reason: str | None = None
         self.usage: dict | None = None
-        self.usage_protocol: str | None = None
+        self.source_protocol: str | None = None
         self.terminal = False
+        self._terminal_tail: set[str] = set()
         self.started = False
         self.finished = False
         self.sequence_number = 0
@@ -85,15 +95,14 @@ class StreamState:
         ref = BlockRef(*ref)
         if ref not in self._references:
             self._references[ref] = self._new_block({"type": kind})
+            self._references[ref].source_ref = ref
         return self._references[ref]
 
     def _start(self) -> list[dict]:
         if self.started:
             return []
         self.started = True
-        return [
-            {"type": "start", "usage": deepcopy(self.usage), "usage_protocol": self.usage_protocol}
-        ]
+        return [{"type": "start", "usage": deepcopy(self.usage)}]
 
     def _deferred(self, block: BlockState) -> bool:
         return self._deferred_from is not None and block.index >= self._deferred_from
@@ -103,30 +112,62 @@ class StreamState:
             raise IncompleteStreamError("stream has already been finalized")
         result = []
         for chunk in chunks:
+            origin = source_protocol(chunk)
+            if origin is not None:
+                if self.source_protocol not in (None, origin):
+                    raise IncompleteStreamError("stream mixes source protocols")
+                self.source_protocol = origin
+                self.metadata["source_protocol"] = origin
             for event in operations(chunk):
-                if event["type"] == "usage":
-                    self.usage_protocol = source_protocol(chunk) or self.usage_protocol
+                if self.terminal and event["type"] not in self._terminal_tail:
+                    raise IncompleteStreamError("event received after protocol terminal event")
                 result.extend(_HANDLERS[event["type"]](self, event))
         return result
 
     def _metadata(self, event: dict) -> list[dict]:
-        self.metadata.update(
-            {
-                ("response_id" if k == "id" else k): v
-                for k, v in event.items()
-                if k != "type" and v is not None
-            }
-        )
+        values = {
+            ("response_id" if k == "id" else k): deepcopy(v)
+            for k, v in event.items()
+            if k not in ("type", "merge") and v is not None
+        }
+        for key in event.get("merge", ()):
+            if key in values:
+                values[key] = merge_fields(self.metadata.get(key, {}), values[key])
+        self.metadata.update(values)
         return []
 
     def _usage(self, event: dict) -> list[dict]:
-        self.usage = {**(self.usage or {}), **event["usage"]}
+        self.usage = merge_fields(self.usage or {}, deepcopy(event["usage"]))
         return []
+
+    def _begin(self, event: dict) -> list[dict]:
+        return self._start()
 
     def _reason(self, event: dict) -> list[dict]:
         self.reason = event.get("reason") or self.reason
-        self.terminal |= event["type"] == "finish"
+        if event["type"] == "finish":
+            self.terminal = True
+            self._terminal_tail = set(event.get("allow_tail", ()))
         return []
+
+    def _annotation(self, event: dict) -> list[dict]:
+        block = self._block(event["ref"], event.get("kind", "text"))
+        if block.source_closed:
+            raise IncompleteStreamError("annotation received after source block stopped")
+        block.content.setdefault(event["field"], []).append(deepcopy(event["value"]))
+        block.pending_annotations.append(
+            {
+                "type": "block_annotation",
+                "index": block.index,
+                "field": event["field"],
+                "value": deepcopy(event["value"]),
+            }
+        )
+        return self._annotations(block) if block.emitted and not self._deferred(block) else []
+
+    def _annotations(self, block: BlockState) -> list[dict]:
+        pending, block.pending_annotations = block.pending_annotations, []
+        return pending
 
     def _snapshot(self, event: dict) -> list[dict]:
         references = {BlockRef(*entry["ref"]) for entry in event["blocks"]}
@@ -158,8 +199,9 @@ class StreamState:
     def _update_block(self, event: dict) -> list[dict]:
         patch = deepcopy(event["block"])
         block = self._block(event["ref"], patch.get("type", "unknown"))
-        if "function" in patch:
-            block.content.setdefault("function", {}).update(patch.pop("function"))
+        for key in event.get("merge", ()):
+            if key in patch:
+                block.content.setdefault(key, {}).update(patch.pop(key))
         block.content.update(patch)
         return []
 
@@ -173,7 +215,7 @@ class StreamState:
             return []
         block.fragments.setdefault(name, []).append(value)
         block.content.update(extras(event.get("extras", {}), "type", name))
-        if name == "signature" or self._deferred(block):
+        if name != block.text_field or self._deferred(block):
             return []
         return self._emit_text(block, value)
 
@@ -192,20 +234,39 @@ class StreamState:
         if not block.emitted:
             block.emitted = True
             result.append(
-                {"type": "block_start", "index": block.index, "block": deepcopy(block.content)}
+                {
+                    "type": "block_start",
+                    "index": block.index,
+                    "source_ref": block.source_ref,
+                    "block": deepcopy(block.content),
+                }
             )
         if value:
             block.text_sent += len(value)
             result.append(
-                {"type": "delta", "index": block.index, "field": block.text_field, "value": value}
+                {
+                    "type": "delta",
+                    "index": block.index,
+                    "source_ref": block.source_ref,
+                    "field": block.text_field,
+                    "value": value,
+                }
             )
+        result.extend(self._annotations(block))
         return result
 
     def _close(self, block: BlockState) -> list[dict]:
         if not block.emitted or block.closed or block.text_field is None:
             return []
         block.closed = True
-        return [{"type": "block_stop", "index": block.index, "block": block.materialize()}]
+        return [
+            {
+                "type": "block_stop",
+                "index": block.index,
+                "source_ref": block.source_ref,
+                "block": block.materialize(),
+            }
+        ]
 
     def _publish(
         self, block: BlockState, *, final: bool = False, tool_index: int = 0
@@ -222,7 +283,12 @@ class StreamState:
             return []
         block.emitted = True
         content = extras(block.materialize())
-        event = {"type": "block", "index": block.index, "block": content}
+        event = {
+            "type": "block",
+            "index": block.index,
+            "source_ref": block.source_ref,
+            "block": content,
+        }
         if content.get("type") == "tool_use":
             event.update(type="tool", tool_index=tool_index)
         return [*self._start(), event]
@@ -236,7 +302,9 @@ class StreamState:
             for block in self._blocks
             if not partial or block.content.get("type") != "tool_use"
         ]
-        return [{"role": "assistant", "content": content}]
+        return [
+            {"role": "assistant", "content": content, SOURCE: {"protocol": self.source_protocol}}
+        ]
 
     def finish(self) -> list[dict]:
         if self.finished:
@@ -246,7 +314,8 @@ class StreamState:
         # Validate every call before publishing any of them or marking success.
         messages = self.messages()
         output_blocks = [
-            {"index": block.index, "block": block.materialize()} for block in self._blocks
+            {"index": block.index, "source_ref": block.source_ref, "block": block.materialize()}
+            for block in self._blocks
         ]
         result = self._start()
         tool_index = 0
@@ -263,7 +332,6 @@ class StreamState:
                 "messages": messages,
                 "output_blocks": output_blocks,
                 "usage": deepcopy(self.usage),
-                "usage_protocol": self.usage_protocol,
             }
         )
         self.finished = True
@@ -271,6 +339,7 @@ class StreamState:
 
 
 _HANDLERS = {
+    "start": StreamState._begin,
     "metadata": StreamState._metadata,
     "usage": StreamState._usage,
     "snapshot": StreamState._snapshot,
@@ -280,6 +349,7 @@ _HANDLERS = {
     "block_append": StreamState._append_block,
     "block_update": StreamState._update_block,
     "block_delta": StreamState._delta,
+    "block_annotation": StreamState._annotation,
     "block_stop": StreamState._stop_block,
     "opaque": StreamState._opaque,
 }

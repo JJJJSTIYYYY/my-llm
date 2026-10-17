@@ -1,0 +1,3 @@
+event: error
+data: {"type":"error","code":"server_error","message":"Example generation failure","param":null,"sequence_number":0}
+

@@ -1,12 +1,19 @@
 import pytest
-from conftest import FakeClient, chat_event
 
 from my_llm import MessageValidationError, ModelProfile, MyLLM, ProviderProfile
+from tests.helpers.protocols import chat_event
+from tests.helpers.transport import FakeClient
 
 
 async def test_mixed_protocol_history_is_rejected_before_request(monkeypatch):
     client = FakeClient([])
-    monkeypatch.setattr("my_llm.invoke.AsyncOpenAI", lambda **kwargs: client)
+    monkeypatch.setattr(
+        "my_llm.codec.openai.chat.decoding.request.transport.AsyncOpenAI", lambda **kwargs: client
+    )
+    monkeypatch.setattr(
+        "my_llm.codec.openai.responses.decoding.request.transport.AsyncOpenAI",
+        lambda **kwargs: client,
+    )
     llm = MyLLM(provider=ProviderProfile(), model=ModelProfile(model="demo"))
     with pytest.raises(MessageValidationError):
         await llm.generate(
@@ -19,10 +26,16 @@ async def test_mixed_protocol_history_is_rejected_before_request(monkeypatch):
 
 
 async def test_previous_response_id_allows_external_tool_results(monkeypatch):
-    from conftest import response_completed
+    from tests.helpers.protocols import response_completed
 
     client = FakeClient([response_completed()])
-    monkeypatch.setattr("my_llm.invoke.AsyncOpenAI", lambda **kwargs: client)
+    monkeypatch.setattr(
+        "my_llm.codec.openai.chat.decoding.request.transport.AsyncOpenAI", lambda **kwargs: client
+    )
+    monkeypatch.setattr(
+        "my_llm.codec.openai.responses.decoding.request.transport.AsyncOpenAI",
+        lambda **kwargs: client,
+    )
     llm = MyLLM(
         provider=ProviderProfile(protocol="openai_responses"),
         model=ModelProfile(model="demo"),
@@ -38,7 +51,13 @@ async def test_previous_response_id_allows_external_tool_results(monkeypatch):
 
 async def test_stdio_protocol_matches_tools_before_ambiguous_messages(monkeypatch):
     client = FakeClient([chat_event(content="ok"), chat_event(finish="stop")])
-    monkeypatch.setattr("my_llm.invoke.AsyncOpenAI", lambda **kwargs: client)
+    monkeypatch.setattr(
+        "my_llm.codec.openai.chat.decoding.request.transport.AsyncOpenAI", lambda **kwargs: client
+    )
+    monkeypatch.setattr(
+        "my_llm.codec.openai.responses.decoding.request.transport.AsyncOpenAI",
+        lambda **kwargs: client,
+    )
     llm = MyLLM(
         provider=ProviderProfile(), model=ModelProfile(model="demo", supports_function_calling=True)
     )

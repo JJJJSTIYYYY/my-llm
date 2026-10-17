@@ -4,10 +4,12 @@ import json
 
 import httpx
 import pytest
-from conftest import history, sse, stream_events, tools
 from openai import AsyncOpenAI
 
 from my_llm import ModelProfile, MyLLM, ProviderProfile
+from tests.helpers.protocols import history, stream_events, tools
+from tests.helpers.schema import validate_request
+from tests.helpers.transport import sse
 
 
 @pytest.mark.parametrize("protocol", ["openai_chat", "openai_responses"])
@@ -20,6 +22,7 @@ async def test_official_openai_transport_all_stdio_formats(monkeypatch, protocol
 
     def handler(request):
         requests.append(request)
+        validate_request(protocol, json.loads(request.content))
         return httpx.Response(
             200,
             text=sse(stream_events(protocol, tool=True), done=protocol == "openai_chat"),
@@ -33,7 +36,10 @@ async def test_official_openai_transport_all_stdio_formats(monkeypatch, protocol
         clients.append(client)
         return client
 
-    monkeypatch.setattr("my_llm.invoke.AsyncOpenAI", factory)
+    monkeypatch.setattr("my_llm.codec.openai.chat.decoding.request.transport.AsyncOpenAI", factory)
+    monkeypatch.setattr(
+        "my_llm.codec.openai.responses.decoding.request.transport.AsyncOpenAI", factory
+    )
     llm = MyLLM(
         provider=ProviderProfile(
             protocol=protocol,
@@ -77,7 +83,10 @@ async def test_sdk_http_errors_retain_their_type_and_close_client(monkeypatch):
         clients.append(client)
         return client
 
-    monkeypatch.setattr("my_llm.invoke.AsyncOpenAI", factory)
+    monkeypatch.setattr("my_llm.codec.openai.chat.decoding.request.transport.AsyncOpenAI", factory)
+    monkeypatch.setattr(
+        "my_llm.codec.openai.responses.decoding.request.transport.AsyncOpenAI", factory
+    )
     llm = MyLLM(
         provider=ProviderProfile(api_key="local", max_retries=0), model=ModelProfile(model="demo")
     )

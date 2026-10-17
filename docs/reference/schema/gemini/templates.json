@@ -1,0 +1,428 @@
+{
+  "description": "Independent alternatives; do not merge all options into one request. Values in angle brackets are placeholders; signed replay requires original server data.",
+  "cases": [
+    {
+      "name": "request.tools_round_trip",
+      "schema": "request.schema.json",
+      "value": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Weather?"
+              }
+            ]
+          },
+          {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Checking"
+              },
+              {
+                "functionCall": {
+                  "id": "call_1",
+                  "name": "weather",
+                  "args": {
+                    "city": "上海"
+                  }
+                },
+                "thoughtSignature": "PE9SSUdJTkFMX0dFTUlOSV9TSUdOQVRVUkU+"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "parts": [
+              {
+                "functionResponse": {
+                  "id": "call_1",
+                  "name": "weather",
+                  "response": {
+                    "result": "Sunny"
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "systemInstruction": {
+          "parts": [
+            {
+              "text": "Answer clearly."
+            }
+          ]
+        },
+        "generationConfig": {
+          "maxOutputTokens": 256
+        },
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "weather",
+                "description": "Weather",
+                "parametersJsonSchema": {
+                  "type": "object",
+                  "properties": {
+                    "city": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "toolConfig": {
+          "functionCallingConfig": {
+            "mode": "AUTO"
+          }
+        }
+      },
+      "notes": "Preserve real thoughtSignature bytes/part boundaries when the model requires them; replace the base64 placeholder with the original signature."
+    },
+    {
+      "name": "request.image",
+      "schema": "request.schema.json",
+      "value": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Describe the image."
+              },
+              {
+                "inlineData": {
+                  "mimeType": "image/png",
+                  "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="
+                }
+              }
+            ]
+          }
+        ],
+        "systemInstruction": {
+          "parts": [
+            {
+              "text": "Answer clearly."
+            }
+          ]
+        },
+        "generationConfig": {
+          "maxOutputTokens": 256
+        }
+      }
+    },
+    {
+      "name": "request.json_schema",
+      "schema": "request.schema.json",
+      "value": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "systemInstruction": {
+          "parts": [
+            {
+              "text": "Answer clearly."
+            }
+          ]
+        },
+        "generationConfig": {
+          "maxOutputTokens": 256,
+          "responseMimeType": "application/json",
+          "responseJsonSchema": {
+            "type": "object",
+            "properties": {
+              "answer": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "answer"
+            ]
+          }
+        }
+      },
+      "notes": "Do not set responseSchema together with responseJsonSchema."
+    },
+    {
+      "name": "request.native_schema",
+      "schema": "request.schema.json",
+      "value": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "systemInstruction": {
+          "parts": [
+            {
+              "text": "Answer clearly."
+            }
+          ]
+        },
+        "generationConfig": {
+          "maxOutputTokens": 256
+        },
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "weather",
+                "description": "Look up weather.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "city": {
+                      "type": "STRING"
+                    }
+                  },
+                  "required": [
+                    "city"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "request.thinking_budget",
+      "schema": "request.schema.json",
+      "value": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "systemInstruction": {
+          "parts": [
+            {
+              "text": "Answer clearly."
+            }
+          ]
+        },
+        "generationConfig": {
+          "maxOutputTokens": 4096,
+          "thinkingConfig": {
+            "includeThoughts": true,
+            "thinkingBudget": 1024
+          }
+        }
+      },
+      "notes": "Use a model supporting this budget; do not combine thinkingBudget and thinkingLevel."
+    },
+    {
+      "name": "request.thinking_level",
+      "schema": "request.schema.json",
+      "value": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "systemInstruction": {
+          "parts": [
+            {
+              "text": "Answer clearly."
+            }
+          ]
+        },
+        "generationConfig": {
+          "maxOutputTokens": 4096,
+          "thinkingConfig": {
+            "includeThoughts": true,
+            "thinkingLevel": "HIGH"
+          }
+        }
+      },
+      "notes": "Model-specific support and allowed levels must be checked."
+    },
+    {
+      "name": "request.safety",
+      "schema": "request.schema.json",
+      "value": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "systemInstruction": {
+          "parts": [
+            {
+              "text": "Answer clearly."
+            }
+          ]
+        },
+        "generationConfig": {
+          "maxOutputTokens": 256
+        },
+        "safetySettings": [
+          {
+            "category": "HARM_CATEGORY_HATE_SPEECH",
+            "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "response.prompt_blocked",
+      "schema": "response.schema.json",
+      "value": {
+        "promptFeedback": {
+          "blockReason": "SAFETY"
+        },
+        "responseId": "response_example"
+      }
+    },
+    {
+      "name": "response.max_tokens",
+      "schema": "response.schema.json",
+      "value": {
+        "candidates": [
+          {
+            "index": 0,
+            "content": {
+              "role": "model",
+              "parts": [
+                {
+                  "text": "Hello"
+                }
+              ]
+            },
+            "finishReason": "MAX_TOKENS",
+            "safetyRatings": []
+          }
+        ],
+        "usageMetadata": {
+          "promptTokenCount": 1,
+          "candidatesTokenCount": 2,
+          "totalTokenCount": 3
+        },
+        "modelVersion": "<MODEL_ID>",
+        "responseId": "response_example"
+      }
+    },
+    {
+      "name": "request.text",
+      "schema": "request.schema.json",
+      "value": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "systemInstruction": {
+          "parts": [
+            {
+              "text": "Answer clearly."
+            }
+          ]
+        },
+        "generationConfig": {
+          "maxOutputTokens": 256
+        }
+      }
+    },
+    {
+      "name": "response.text",
+      "schema": "response.schema.json",
+      "value": {
+        "candidates": [
+          {
+            "index": 0,
+            "content": {
+              "role": "model",
+              "parts": [
+                {
+                  "text": "Hello"
+                }
+              ]
+            },
+            "finishReason": "STOP",
+            "safetyRatings": []
+          }
+        ],
+        "usageMetadata": {
+          "promptTokenCount": 1,
+          "candidatesTokenCount": 2,
+          "totalTokenCount": 3
+        },
+        "modelVersion": "<MODEL_ID>",
+        "responseId": "response_example"
+      }
+    },
+    {
+      "name": "error.http",
+      "schema": "error.schema.json",
+      "value": {
+        "error": {
+          "code": 400,
+          "message": "Example invalid request",
+          "status": "INVALID_ARGUMENT"
+        }
+      }
+    },
+    {
+      "name": "request.stream",
+      "schema": "request.schema.json",
+      "value": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "systemInstruction": {
+          "parts": [
+            {
+              "text": "Answer clearly."
+            }
+          ]
+        },
+        "generationConfig": {
+          "maxOutputTokens": 256
+        }
+      }
+    }
+  ]
+}

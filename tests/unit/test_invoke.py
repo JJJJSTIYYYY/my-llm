@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-from conftest import FakeClient, chat_event
 
 from my_llm import (
     ConfigurationError,
@@ -12,6 +11,8 @@ from my_llm import (
     ProviderProfile,
     generate,
 )
+from tests.helpers.protocols import chat_event
+from tests.helpers.transport import FakeClient
 
 
 def patch_client(monkeypatch, events, failure=None):
@@ -22,7 +23,10 @@ def patch_client(monkeypatch, events, failure=None):
         captured.append(kwargs)
         return client
 
-    monkeypatch.setattr("my_llm.invoke.AsyncOpenAI", factory)
+    monkeypatch.setattr("my_llm.codec.openai.chat.decoding.request.transport.AsyncOpenAI", factory)
+    monkeypatch.setattr(
+        "my_llm.codec.openai.responses.decoding.request.transport.AsyncOpenAI", factory
+    )
     return client, captured
 
 
@@ -168,3 +172,45 @@ async def test_provider_paths_apply_before_standard_output_decoding(monkeypatch)
     )
     result = await llm.generate(messages=[{"role": "user", "parts": [{"text": "hi"}]}])
     assert result == {"role": "model", "parts": [{"text": "configured"}]}
+
+
+async def test_target_finish_failure_does_not_publish_a_completed_result(monkeypatch):
+    from my_llm import ResponseFailedError
+    from tests.helpers.protocols import stream_events
+
+    events = stream_events("anthropic")
+    events[-2]["delta"]["stop_reason"] = "pause_turn"
+    client = FakeClient(events)
+    monkeypatch.setattr(
+        "my_llm.codec.anthropic.decoding.request.transport.AsyncAnthropic", lambda **kwargs: client
+    )
+    llm = MyLLM(
+        provider=ProviderProfile(protocol="anthropic"),
+        model=ModelProfile(model="demo", max_tokens=2048),
+        stdio_protocol="openai_chat",
+    )
+    stream = await llm.generate(messages=[{"role": "user", "content": "hi"}], stream=True)
+    with pytest.raises(ResponseFailedError, match="finish reason"):
+        async with stream:
+            async for _ in stream:
+                pass
+    assert stream.result is None
+    assert client.closed and client.upstream.closed
+
+
+async def test_early_exit_during_final_tool_frames_has_no_completed_result(monkeypatch):
+    from tests.helpers.protocols import stream_events
+
+    client, _ = patch_client(monkeypatch, stream_events("openai_chat", tool=True))
+    llm = MyLLM(
+        provider=ProviderProfile(), model=ModelProfile(model="demo"), stdio_protocol="openai_chat"
+    )
+    stream = await llm.generate(messages=[{"role": "user", "content": "hi"}], stream=True)
+    async with stream:
+        async for event in stream:
+            if any(
+                choice.get("delta", {}).get("tool_calls") for choice in event.get("choices", [])
+            ):
+                break
+    assert stream.result is None
+    assert client.closed and client.upstream.closed

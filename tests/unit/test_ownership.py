@@ -1,10 +1,10 @@
 from copy import deepcopy
 
-from conftest import FakeClient, chat_event
-
 from my_llm import ModelProfile, MyCodec, MyLLM, ProviderProfile
-from my_llm.codec.openai._parameters import request_parameters
+from my_llm.codec.openai.chat.decoding.request.parameters import request_parameters
 from my_llm.profile import resolve_profiles
+from tests.helpers.protocols import chat_event
+from tests.helpers.transport import FakeClient
 
 
 def test_profile_and_request_snapshots_are_independent():
@@ -21,7 +21,13 @@ def test_profile_and_request_snapshots_are_independent():
 
 async def test_lazy_generation_captures_history_and_request_options(monkeypatch):
     client = FakeClient([chat_event(content="ok"), chat_event(finish="stop")])
-    monkeypatch.setattr("my_llm.invoke.AsyncOpenAI", lambda **kwargs: client)
+    monkeypatch.setattr(
+        "my_llm.codec.openai.chat.decoding.request.transport.AsyncOpenAI", lambda **kwargs: client
+    )
+    monkeypatch.setattr(
+        "my_llm.codec.openai.responses.decoding.request.transport.AsyncOpenAI",
+        lambda **kwargs: client,
+    )
     history = [{"role": "user", "content": [{"type": "text", "text": "original"}]}]
     body = {"nested": {"value": "original"}}
     llm = MyLLM(provider=ProviderProfile(), model=ModelProfile(model="demo"))
@@ -47,5 +53,9 @@ def test_converter_never_mutates_input_or_profile():
         converted = codec.convert(
             messages, input_format="openai_chat", target_format=protocol, profile=profile
         )
-        converted["messages"][0]["nested"]["value"].append(2)
+        if protocol == "openai_chat":
+            converted["messages"][0]["nested"]["value"].append(2)
+        else:
+            assert "nested" not in converted["messages"][0]
+            converted["messages"][0]["content" if protocol != "gemini" else "parts"] = "changed"
     assert messages == before

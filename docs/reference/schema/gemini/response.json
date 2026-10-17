@@ -1,0 +1,24 @@
+{
+  "candidates": [
+    {
+      "index": 0,
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "text": "Hello"
+          }
+        ]
+      },
+      "finishReason": "STOP",
+      "safetyRatings": []
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 1,
+    "candidatesTokenCount": 2,
+    "totalTokenCount": 3
+  },
+  "modelVersion": "<MODEL_ID>",
+  "responseId": "response_example"
+}

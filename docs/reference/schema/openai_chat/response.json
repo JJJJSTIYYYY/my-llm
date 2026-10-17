@@ -1,0 +1,23 @@
+{
+  "id": "chat_example",
+  "object": "chat.completion",
+  "created": 1792195200,
+  "model": "<MODEL_ID>",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hello",
+        "refusal": null
+      },
+      "finish_reason": "stop",
+      "logprobs": null
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 1,
+    "completion_tokens": 2,
+    "total_tokens": 3
+  }
+}

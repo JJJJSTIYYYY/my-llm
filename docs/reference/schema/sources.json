@@ -1,0 +1,221 @@
+{
+  "snapshot_date": "2026-10-17",
+  "scope": "OpenAI Responses, OpenAI Chat Completions, Gemini GenerateContent, Anthropic Messages, Ollama Chat only; all reachable source-defined structures, previews separated.",
+  "openai": {
+    "url": "https://raw.githubusercontent.com/openai/openai-openapi/d156763a484eb247e116e0ea345e16344b0049ba/openapi.json",
+    "commit": "d156763a484eb247e116e0ea345e16344b0049ba",
+    "commit_date": "2026-10-17T04:24:53Z",
+    "sha256": "f3d4299aadfff5e35cfd578168a0175b72dbe0a4cf40ffb47c5bd6ecca0305cd",
+    "bytes": 4863203,
+    "changed_after_initial_download": false
+  },
+  "ollama": {
+    "url": "https://raw.githubusercontent.com/ollama/ollama/2476d5ead197abe04629651028f83d48dc75d2b2/docs/openapi.yaml",
+    "commit": "2476d5ead197abe04629651028f83d48dc75d2b2",
+    "commit_date": "2026-10-16T23:01:01Z",
+    "sha256": "3ab79b0b2c5698690964b237710f4e56be5ec1272beb90eb25397eaeb50abead",
+    "bytes": 86763,
+    "changed_after_initial_download": false
+  },
+  "ollama_server_types": {
+    "url": "https://raw.githubusercontent.com/ollama/ollama/7a5ae12ead68342df402177cfabf4e7fc95aaca5/api/types.go",
+    "commit": "7a5ae12ead68342df402177cfabf4e7fc95aaca5",
+    "commit_date": "2026-10-13T19:39:05Z",
+    "sha256": "e19aafa5065afa3ed058df9135d200527391e012349ed5955dd0cc09c0b33f7a",
+    "bytes": 44473,
+    "changed_after_initial_download": false
+  },
+  "ollama_additions": [
+    {
+      "schema": "ChatMessage",
+      "field": "thinking",
+      "basis": "api.Message and official streaming/tool-calling examples"
+    },
+    {
+      "schema": "ChatMessage",
+      "field": "tool_name",
+      "basis": "api.Message and official streaming/tool-calling examples"
+    },
+    {
+      "schema": "ChatMessage",
+      "field": "tool_call_id",
+      "basis": "api.Message and official streaming/tool-calling examples"
+    },
+    {
+      "schema": "ToolCall",
+      "field": "id",
+      "basis": "api.ToolCall.ID"
+    },
+    {
+      "schema": "ToolCall",
+      "field": "function.index",
+      "basis": "api.ToolCallFunction.Index and official parallel-tool examples"
+    },
+    {
+      "schema": "ModelOptions",
+      "field": "num_keep",
+      "basis": "api.Options / api.Runner; typical_p is deprecated"
+    },
+    {
+      "schema": "ModelOptions",
+      "field": "repeat_last_n",
+      "basis": "api.Options / api.Runner; typical_p is deprecated"
+    },
+    {
+      "schema": "ModelOptions",
+      "field": "repeat_penalty",
+      "basis": "api.Options / api.Runner; typical_p is deprecated"
+    },
+    {
+      "schema": "ModelOptions",
+      "field": "presence_penalty",
+      "basis": "api.Options / api.Runner; typical_p is deprecated"
+    },
+    {
+      "schema": "ModelOptions",
+      "field": "frequency_penalty",
+      "basis": "api.Options / api.Runner; typical_p is deprecated"
+    },
+    {
+      "schema": "ModelOptions",
+      "field": "num_batch",
+      "basis": "api.Options / api.Runner; typical_p is deprecated"
+    },
+    {
+      "schema": "ModelOptions",
+      "field": "num_gpu",
+      "basis": "api.Options / api.Runner; typical_p is deprecated"
+    },
+    {
+      "schema": "ModelOptions",
+      "field": "main_gpu",
+      "basis": "api.Options / api.Runner; typical_p is deprecated"
+    },
+    {
+      "schema": "ModelOptions",
+      "field": "use_mmap",
+      "basis": "api.Options / api.Runner; typical_p is deprecated"
+    },
+    {
+      "schema": "ModelOptions",
+      "field": "num_thread",
+      "basis": "api.Options / api.Runner; typical_p is deprecated"
+    },
+    {
+      "schema": "ModelOptions",
+      "field": "draft_num_predict",
+      "basis": "api.Options / api.Runner; typical_p is deprecated"
+    },
+    {
+      "schema": "ModelOptions",
+      "field": "typical_p",
+      "basis": "api.Options / api.Runner; typical_p is deprecated"
+    },
+    {
+      "schema": "ChatStreamEvent",
+      "field": "done_reason",
+      "basis": "final NDJSON chunk uses response fields and final usage counters"
+    },
+    {
+      "schema": "ChatStreamEvent",
+      "field": "total_duration",
+      "basis": "final NDJSON chunk uses response fields and final usage counters"
+    },
+    {
+      "schema": "ChatStreamEvent",
+      "field": "load_duration",
+      "basis": "final NDJSON chunk uses response fields and final usage counters"
+    },
+    {
+      "schema": "ChatStreamEvent",
+      "field": "prompt_eval_count",
+      "basis": "final NDJSON chunk uses response fields and final usage counters"
+    },
+    {
+      "schema": "ChatStreamEvent",
+      "field": "prompt_eval_cached_count",
+      "basis": "final NDJSON chunk uses response fields and final usage counters"
+    },
+    {
+      "schema": "ChatStreamEvent",
+      "field": "prompt_eval_duration",
+      "basis": "final NDJSON chunk uses response fields and final usage counters"
+    },
+    {
+      "schema": "ChatStreamEvent",
+      "field": "eval_count",
+      "basis": "final NDJSON chunk uses response fields and final usage counters"
+    },
+    {
+      "schema": "ChatStreamEvent",
+      "field": "eval_duration",
+      "basis": "final NDJSON chunk uses response fields and final usage counters"
+    },
+    {
+      "schema": "ChatStreamEvent",
+      "field": "logprobs",
+      "basis": "final NDJSON chunk uses response fields and final usage counters"
+    },
+    {
+      "schema": "ChatResponse",
+      "field": "remote_model",
+      "basis": "public server response types, optional cloud response metadata"
+    },
+    {
+      "schema": "ChatResponse",
+      "field": "remote_host",
+      "basis": "public server response types, optional cloud response metadata"
+    },
+    {
+      "schema": "ChatStreamEvent",
+      "field": "remote_model",
+      "basis": "public server response types, optional cloud response metadata"
+    },
+    {
+      "schema": "ChatStreamEvent",
+      "field": "remote_host",
+      "basis": "public server response types, optional cloud response metadata"
+    },
+    {
+      "schema": "ErrorResponse",
+      "field": "signin_url",
+      "basis": "api.AuthorizationError, optional cloud authentication response"
+    }
+  ],
+  "gemini": {
+    "url": "https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta",
+    "revision": "20261015",
+    "sha256": "7c10e431c615909bbf5bf3d109804a63c1af56eb197b761b822c06ae6a672813"
+  },
+  "anthropic": {
+    "sdk": "anthropic",
+    "version": "1.15.0",
+    "latest_release_metadata_url": "https://pypi.org/pypi/anthropic/json",
+    "release_url": "https://github.com/anthropics/anthropic-sdk-python/releases/tag/v1.15.0",
+    "wheel_sha256": "10189a7993c5c71a0a2d4bb80020ca6a2fd27679f51e627405da37251d15ff49",
+    "sdk_only_header_fields_removed_from_body": [
+      "betas",
+      "user_profile_id",
+      "workspace_id"
+    ],
+    "stream_control_events_added": [
+      "ping",
+      "error"
+    ]
+  },
+  "normalization": {
+    "descriptions": "Long source prose and examples omitted; structural keywords and reachable definitions retained.",
+    "openapi": "All local component refs rewritten to $defs. No flattening of allOf/anyOf/oneOf.",
+    "gemini": "Discovery converted to JSON Schema; explicitly Required descriptions become required; model moved to URL path. This is a derived schema, not an official JSON Schema release.",
+    "anthropic": "SDK-based structural schema, not a published official OpenAPI. Pydantic export does not enforce every server-side semantic rule.",
+    "validation": "Schema validity and examples are checked locally; lifecycle and model support require separate checks."
+  },
+  "openai_normalizations": [
+    {
+      "schema": "openai_responses/request.schema.json#/$defs/InputItem",
+      "change": "oneOf -> anyOf",
+      "reason": "Official EasyInputMessage and Item/InputMessage branches overlap for documented message input; strict oneOf rejects valid requests.",
+      "upstream_schema": "openai_responses/request.upstream.schema.json"
+    }
+  ]
+}

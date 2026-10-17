@@ -5,11 +5,13 @@ import json
 import httpx
 import pytest
 from anthropic import AsyncAnthropic
-from conftest import history, sse, stream_events, tools
 from google import genai
 from ollama import AsyncClient
 
 from my_llm import ModelProfile, MyLLM, ProviderProfile
+from tests.helpers.protocols import history, stream_events, tools
+from tests.helpers.schema import validate_request
+from tests.helpers.transport import sse
 
 GenAIClient = genai.Client
 
@@ -24,6 +26,7 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
 
     def handler(request):
         requests.append(request)
+        validate_request(protocol, json.loads(request.content))
         events = stream_events(protocol, tool=True)
         if protocol == "gemini":
             aliases = {
@@ -77,11 +80,15 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
             http_clients.append(client._client)
             return client
 
-        monkeypatch.setattr("my_llm.invoke.AsyncOllama", ollama_factory)
+        monkeypatch.setattr(
+            "my_llm.codec.ollama.decoding.request.transport.AsyncOllama", ollama_factory
+        )
     elif protocol == "anthropic":
-        monkeypatch.setattr("my_llm.invoke.AsyncAnthropic", factory)
+        monkeypatch.setattr(
+            "my_llm.codec.anthropic.decoding.request.transport.AsyncAnthropic", factory
+        )
     else:
-        monkeypatch.setattr("my_llm.invoke.genai.Client", factory)
+        monkeypatch.setattr("my_llm.codec.gemini.decoding.request.transport.genai.Client", factory)
     llm = MyLLM(
         provider=ProviderProfile(
             protocol=protocol,
@@ -92,7 +99,19 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
         model=ModelProfile(model="demo", max_tokens=2048, supports_function_calling=True),
         stdio_protocol=stdio,
     )
-    result = await llm.generate(messages=history(stdio), tools=tools(stdio), stream=stream)
+    options = {
+        "anthropic": {"tool_choice": {"type": "auto"}, "metadata": {"user_id": "local-test"}},
+        "gemini": {
+            "tool_config": {"function_calling_config": {"mode": "AUTO"}},
+            "safety_settings": [
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"}
+            ],
+        },
+        "ollama": {},
+    }[protocol]
+    result = await llm.generate(
+        messages=history(stdio), tools=tools(stdio), stream=stream, extra_body=options
+    )
     if stream:
         async with result:
             events = [e async for e in result]
@@ -104,10 +123,23 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
     if protocol == "anthropic":
         assert body["max_tokens"] == 2048
         assert body["tools"][0]["input_schema"]["type"] == "object"
+        assert body["tool_choice"] == options["tool_choice"]
+        assert body["metadata"] == options["metadata"]
         assert requests[0].url.path == "/v1/messages"
     elif protocol == "gemini":
         assert body["generationConfig"]["maxOutputTokens"] == 2048
         assert "streamGenerateContent" in str(requests[0].url)
+        assert body["toolConfig"]["functionCallingConfig"]["mode"] == "AUTO"
+        assert body["safetySettings"] == options["safety_settings"]
+        calls = [
+            part
+            for message in body["contents"]
+            for part in message["parts"]
+            if "functionCall" in part
+        ]
+        assert calls
+        if stdio != "gemini":
+            assert calls[0]["thoughtSignature"] == "skip_thought_signature_validator"
     else:
         assert body["options"]["num_predict"] == 2048
         assert requests[0].url.path == "/api/chat"

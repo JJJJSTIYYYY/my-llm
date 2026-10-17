@@ -1,14 +1,5 @@
-"""Stateless openai/chat encoding."""
+"""Public encoder export."""
 
-from my_llm.codec.base import BaseEncoder
-from my_llm.codec.openai.chat.encoding import chunks, messages, tools
-
-
-class ChatCompletionsEncoder(BaseEncoder):
-    __slots__ = ()
-    messages = staticmethod(messages.encode)
-    tools = staticmethod(tools.encode)
-    chunks = staticmethod(chunks.encode)
-
+from my_llm.codec.openai.chat.encoding.encoder import ChatCompletionsEncoder
 
 __all__ = ["ChatCompletionsEncoder"]

@@ -92,9 +92,11 @@ assert converted["messages"] == [{"role": "user", "parts": [{"text": "你好"}]}
 详见[文档目录](docs/README.md)、[API 使用指南](docs/reference/api.md)、
 [配置指南](docs/reference/configuration.md)及[架构与测试边界](docs/design/architecture.md)。
 
-## 本地开发与验证
+## 安装最新的开发版本 (main 分支)
 
 ```sh
+git clone https://github.com/JJJJSTIYYYY/my-llm.git
+cd ./my-llm
 uv sync --group dev --locked
 uv run pytest -q
 uv run ruff check src tests examples

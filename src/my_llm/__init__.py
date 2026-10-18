@@ -18,6 +18,7 @@ from my_llm.exceptions import (
 from my_llm.invoke import MyLLM, generate
 from my_llm.profile import (
     ModelProfile,
+    OverridableProfile,
     Protocol,
     ProviderProfile,
     ReasoningEffort,
@@ -35,6 +36,7 @@ __all__ = [
     "MyLLM",
     "MessageStream",
     "ModelProfile",
+    "OverridableProfile",
     "ProviderProfile",
     "ResolvedProfile",
     "resolve_profiles",

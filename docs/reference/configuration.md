@@ -68,6 +68,8 @@ Provider 的 `add_models(ModelProfile | list[ModelProfile])` 按 ID 更新并保
 
 ## Provider / Model 共享覆盖项
 
+`ProviderProfile` 和 `ModelProfile` 继承公开的 `OverridableProfile`，以下字段可在两层设置。
+
 | 字段 | 说明 |
 | --- | --- |
 | `extra_headers` | 请求 headers 按键合并 |
@@ -76,6 +78,7 @@ Provider 的 `add_models(ModelProfile | list[ModelProfile])` 按 ID 更新并保
 | `reasoning_enable_parameter` | 开启思考时注入的 SDK 参数字典 |
 | `reasoning_effort_parameter` | 支持强度时额外注入的 SDK 参数字典 |
 | `reasoning_effort_mapping` | none/low/medium/high/xhigh/max 映射；None/omit 禁用某级 |
+| `max_tokens_path` | `max_tokens` 在 SDK 请求参数中的写入路径；None 继承协议默认值，omit 禁用自动写入 |
 | `content_path` | OpenAI 文本增量路径或 Responses 事件类型 |
 | `reasoning_content_path` | 兼容 Chat 服务的可见思考扩展路径或 Responses 事件类型 |
 | `replay_reasoning_content_when_tool_calls` | Chat 默认 False，Ollama 默认 True；兼容 Chat 服务显式启用后回放可见思考，仅思考开启且当条有工具调用时补空值 |
@@ -85,6 +88,25 @@ Chat 默认文本路径 `$.choices[0].delta.content`，思考路径
 `response.output_text.delta` / `response.reasoning_summary_text.delta`。
 `$.` 路径支持属性/字典键与数值索引；omit 禁用路径。
 原生协议使用原生字段（例如 Anthropic thinking、Gemini thought、Ollama thinking）。
+
+`max_tokens_path` 从传给 SDK 的参数字典根部开始，支持与 content_path 相同的
+点分键名和数值索引，`$.` 前缀可省略。例如 `$.max_tokens` 直接传 SDK 参数，
+`$.extra_body.max_tokens` 或 `$.extra_body.max_completion_tokens` 写入 extra_body。
+协议默认路径分别为 Chat 的 `$.max_completion_tokens`、Responses 的 `$.max_output_tokens`、
+Anthropic 的 `$.max_tokens`、Gemini 的 `$.config.max_output_tokens` 和 Ollama 的 `$.options.num_predict`。
+自定义路径替代默认写入位置，不会额外添加默认 token 参数。目标路径的值优先于
+extra_body 和 reasoning 绑定中的同名值，其他字段保留；路径不能覆盖协议核心字段。
+generate 的 max_tokens 仍覆盖模型值；omit 禁用本次自动写入，不删除手动配置的原生参数。
+目标路径和键名须符合对应 SDK 的接口要求；Anthropic 仍要求提供 max_tokens。
+
+```python
+provider = ProviderProfile(max_tokens_path="$.extra_body.max_tokens")
+model = ModelProfile(
+    model="your-model",
+    max_tokens=4096,
+    max_tokens_path="$.extra_body.max_completion_tokens",
+)
+```
 
 replay=False/omit 在 Chat/Ollama 请求中去掉可见思考字段；True 保留已有内容。
 官方 Chat 默认关闭该兼容字段回放，避免生成官方未定义的 reasoning_content；Ollama thinking 是原生字段，默认保留。

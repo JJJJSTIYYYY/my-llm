@@ -46,6 +46,7 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
         raise ConfigurationError("model must be a non-empty string")
     # Import lazily: codec contracts refer to ResolvedProfile during definition.
     from my_llm.codec.converter import MyCodec
+    from my_llm.codec.shared.values import path_keys
 
     codec = MyCodec()
     decoder = codec.decoder(provider.protocol)
@@ -101,10 +102,12 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
         value = values[key]
         if not isinstance(value, (dict, Omit)):
             raise ConfigurationError(f"{key} must be a dict or omit")
-    for key in ("content_path", "reasoning_content_path"):
+    for key in ("content_path", "reasoning_content_path", "max_tokens_path"):
         value = values[key]
         if not isinstance(value, (str, Omit)) or (isinstance(value, str) and not value):
             raise ConfigurationError(f"{key} must be a non-empty string or omit")
+    if resolved.get("max_tokens_path") is not None:
+        path_keys(resolved.get("max_tokens_path"))
     validate_max_tokens(resolved.get("max_tokens"))
     client_parameters(resolved)
     return resolved

@@ -18,6 +18,7 @@ from my_llm.codec.shared.conversion import (
 )
 from my_llm.codec.shared.keys import OPAQUE, SOURCE
 from my_llm.codec.shared.options import (
+    apply_max_tokens,
     bindings,
     check_protected,
     overlay_generated,
@@ -431,6 +432,7 @@ class ResponsesDecoder(BaseDecoder):
         return {
             "replay_reasoning_content_when_tool_calls": True,
             "supports_reasoning_effort": True,
+            "max_tokens_path": "$.max_output_tokens",
             "content_path": "response.output_text.delta",
             "reasoning_content_path": "response.reasoning_summary_text.delta",
             "reasoning_enable_parameter": {
@@ -465,13 +467,12 @@ class ResponsesDecoder(BaseDecoder):
                 if index == 1 and "effort" not in value:
                     combined["effort"] = effort
                 request["reasoning"] = _expand(combined, effort)
-        if tokens is not None:
-            request["max_output_tokens"] = tokens
         body = overlay_generated(request, body)
         if headers:
             request["extra_headers"] = headers
         if body:
             request["extra_body"] = body
+        apply_max_tokens(request, profile, tokens, protected=PROTECTED)
         return request
 
     def assemble_request(

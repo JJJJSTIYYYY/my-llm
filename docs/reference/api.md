@@ -51,7 +51,7 @@ async def session():
 | `messages` | 必填 | 非空、同协议的消息或 items 列表 |
 | `tools` | `omit` | 同协议的工具声明列表；None/omit 不发送，[] 发送空列表 |
 | `stream` | False | True 返回需异步消费的 MessageStream |
-| `max_tokens` | None | 继承模型；omit 取消输出 token 限制 |
+| `max_tokens` | None | 继承模型；按 profile 的 max_tokens_path 写入 SDK 请求；omit 禁用自动写入 |
 | `reasoning` | None | True 在 effort=none 时使用 medium；False 与非 none effort 冲突 |
 | `reasoning_effort` | `none` | none/low/medium/high/xhigh/max，经 profile 映射 |
 | `extra_headers` | None | 按键覆盖 profile headers |

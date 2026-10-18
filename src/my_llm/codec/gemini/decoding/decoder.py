@@ -15,7 +15,7 @@ from my_llm.codec.shared.conversion import (
     source_protocol,
 )
 from my_llm.codec.shared.keys import OPAQUE
-from my_llm.codec.shared.options import native_options
+from my_llm.codec.shared.options import apply_max_tokens, native_options
 from my_llm.codec.shared.rendering import project_message, select_present
 from my_llm.codec.shared.tools import decode_functions
 from my_llm.codec.shared.usage import counts
@@ -194,6 +194,7 @@ class GeminiDecoder(BaseDecoder):
         return {
             "replay_reasoning_content_when_tool_calls": True,
             "supports_reasoning_effort": False,
+            "max_tokens_path": "$.config.max_output_tokens",
             "content_path": "$.candidates[0].content.parts[0].text",
             "reasoning_content_path": "$.candidates[0].content.parts[0].text",
             "reasoning_enable_parameter": {},
@@ -208,13 +209,13 @@ class GeminiDecoder(BaseDecoder):
             raise UnsupportedCapabilityError("only one generated candidate is supported")
         # Admit native generation settings only, never native cloud tools or AFC overrides.
         config["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(disable=True)
-        if tokens is not None:
-            config["max_output_tokens"] = tokens
         if headers:
             config["http_options"] = types.HttpOptions(headers=headers)
         if effort:
             self._apply_reasoning(config, profile, effort)
-        return config
+        request = {"config": config}
+        apply_max_tokens(request, profile, tokens, protected=PROTECTED)
+        return request
 
     def assemble_request(
         self, messages: list, tools: list | None, profile: ResolvedProfile, **parameters: Any
@@ -223,19 +224,19 @@ class GeminiDecoder(BaseDecoder):
         if previous is not None and not isinstance(previous, Omit):
             raise ConfigurationError("previous_response_id requires OpenAI Responses API")
         result = self.request_parameters(profile, **parameters)
+        config = result["config"]
         system = [m for m in messages if m.get("role") in ("system", "developer")]
         history = [m for m in messages if m.get("role") not in ("system", "developer")]
         if not history:
             raise ConfigurationError("a non-system message is required")
         if system:
-            result["system_instruction"] = {"parts": [part for m in system for part in m["parts"]]}
+            config["system_instruction"] = {"parts": [part for m in system for part in m["parts"]]}
         if tools is not None:
-            result["tools"] = tools
-        return {
-            "model": profile.model,
-            "contents": history,
-            "config": types.GenerateContentConfig(**result),
-        }
+            config["tools"] = tools
+        result.update(
+            model=profile.model, contents=history, config=types.GenerateContentConfig(**config)
+        )
+        return result
 
     def _apply_reasoning(
         self, config: dict[str, Any], profile: ResolvedProfile, effort: str

@@ -22,6 +22,7 @@ from my_llm.codec.shared.conversion import (
 )
 from my_llm.codec.shared.keys import OPAQUE
 from my_llm.codec.shared.options import (
+    apply_max_tokens,
     bindings,
     check_protected,
     overlay_generated,
@@ -202,6 +203,7 @@ class ChatCompletionsDecoder(BaseDecoder):
         return {
             "replay_reasoning_content_when_tool_calls": False,
             "supports_reasoning_effort": False,
+            "max_tokens_path": "$.max_completion_tokens",
             "content_path": "$.choices[0].delta.content",
             "reasoning_content_path": "$.choices[0].delta.reasoning_content",
             "reasoning_enable_parameter": {"reasoning_effort": "medium"},
@@ -224,8 +226,6 @@ class ChatCompletionsDecoder(BaseDecoder):
                 request["reasoning_effort"] = value
         if body.get("n") not in (None, 1):
             raise UnsupportedCapabilityError("only one generated candidate is supported")
-        if tokens is not None:
-            request["max_completion_tokens"] = tokens
         if profile.get("usage_mode", "none") == "stream_options":
             request["stream_options"] = {"include_usage": True}
         body = overlay_generated(request, body)
@@ -233,6 +233,7 @@ class ChatCompletionsDecoder(BaseDecoder):
             request["extra_headers"] = headers
         if body:
             request["extra_body"] = body
+        apply_max_tokens(request, profile, tokens, protected=PROTECTED)
         return request
 
     def assemble_request(

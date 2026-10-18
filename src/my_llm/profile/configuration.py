@@ -23,13 +23,16 @@ EFFORTS = ("none", "low", "medium", "high", "xhigh", "max")
 
 
 @dataclass(frozen=True, kw_only=True)
-class _Overrides:
+class OverridableProfile:
+    """Shared provider/model overrides; None inherits and omit disables a value."""
+
     extra_headers: Parameter = None
     extra_body: Parameter = None
     reasoning_enable_parameter: Parameter = None
     reasoning_effort_parameter: Parameter = None
     reasoning_effort_mapping: Parameter = None
     supports_reasoning_effort: bool | Omit | None = None
+    max_tokens_path: str | Omit | None = None
     content_path: str | Omit | None = None
     reasoning_content_path: str | Omit | None = None
     replay_reasoning_content_when_tool_calls: bool | Omit | None = None

@@ -22,11 +22,10 @@ from my_llm.codec.shared.conversion import (
     text,
 )
 from my_llm.codec.shared.keys import OPAQUE
-from my_llm.codec.shared.options import native_options
+from my_llm.codec.shared.options import apply_max_tokens, native_options
 from my_llm.codec.shared.rendering import project_message, text_result
 from my_llm.codec.shared.tools import decode_functions
 from my_llm.codec.shared.usage import counts
-from my_llm.codec.shared.values import plain
 from my_llm.exceptions import ConfigurationError, MessageValidationError
 from my_llm.profile.resolution import ResolvedProfile
 
@@ -177,6 +176,7 @@ class OllamaDecoder(BaseDecoder):
         return {
             "replay_reasoning_content_when_tool_calls": True,
             "supports_reasoning_effort": False,
+            "max_tokens_path": "$.options.num_predict",
             "content_path": "$.message.content",
             "reasoning_content_path": "$.message.thinking",
             "reasoning_enable_parameter": {},
@@ -187,10 +187,9 @@ class OllamaDecoder(BaseDecoder):
         tokens, _, request, effort = native_options(
             profile, request_fields=REQUEST_FIELDS, protected=PROTECTED, **parameters
         )
-        if tokens is not None:
-            request["options"] = {**plain(request.get("options") or {}), "num_predict": tokens}
         if effort:
             request["think"] = self._thinking_value(request, profile, effort)
+        apply_max_tokens(request, profile, tokens, protected=PROTECTED)
         return request
 
     def assemble_request(

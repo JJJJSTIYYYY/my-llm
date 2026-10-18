@@ -1,6 +1,13 @@
 import pytest
 
-from my_llm import ConfigurationError, ModelProfile, ProviderProfile, UnsupportedProviderError, omit
+from my_llm import (
+    ConfigurationError,
+    ModelProfile,
+    OverridableProfile,
+    ProviderProfile,
+    UnsupportedProviderError,
+    omit,
+)
 from my_llm.profile.configuration import merge_dicts
 from my_llm.profile.resolution import client_parameters, resolve_profiles
 
@@ -14,6 +21,39 @@ def test_protocol_defaults(profile_factory):
     assert responses.get("supports_reasoning_effort") is True
     assert responses.get("reasoning_enable_parameter")["reasoning"]["summary"] == "detailed"
     assert chat.get("usage_mode") == responses.get("usage_mode") == "none"
+
+
+def test_shared_overrides_are_public():
+    from my_llm.profile import OverridableProfile as ProfileExport
+    from my_llm.profile.configuration import OverridableProfile as ConfigurationExport
+
+    assert OverridableProfile is ProfileExport is ConfigurationExport
+    assert isinstance(ProviderProfile(), OverridableProfile)
+    assert isinstance(ModelProfile(model="demo"), OverridableProfile)
+
+
+@pytest.mark.parametrize(
+    "model_path,expected",
+    [
+        (None, "$.extra_body.max_tokens"),
+        ("max_completion_tokens", "max_completion_tokens"),
+        (omit, None),
+    ],
+)
+def test_max_tokens_path_layering(model_path, expected):
+    profile = resolve_profiles(
+        ProviderProfile(max_tokens_path="$.extra_body.max_tokens"),
+        ModelProfile(model="demo", max_tokens_path=model_path),
+    )
+    assert profile.get("max_tokens_path") == expected
+
+
+@pytest.mark.parametrize(
+    "path", ["", 1, True, [], "$", "$.extra_body..tokens", "$.limits[-1].tokens", "tokens[bad]"]
+)
+def test_invalid_max_tokens_path(path):
+    with pytest.raises(ConfigurationError):
+        resolve_profiles(ProviderProfile(max_tokens_path=path), ModelProfile(model="demo"))
 
 
 def test_model_overrides_provider_and_dict_keys():

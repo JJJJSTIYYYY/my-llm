@@ -66,6 +66,48 @@ async def test_official_openai_transport_all_stdio_formats(monkeypatch, protocol
     assert clients[0].is_closed()
 
 
+@pytest.mark.parametrize(
+    "protocol,path,token_key",
+    [
+        ("openai_chat", "$.max_tokens", "max_tokens"),
+        ("openai_chat", "$.extra_body.max_tokens", "max_tokens"),
+        ("openai_chat", "extra_body.max_completion_tokens", "max_completion_tokens"),
+        ("openai_responses", "$.max_output_tokens", "max_output_tokens"),
+        ("openai_responses", "$.extra_body.max_tokens", "max_tokens"),
+        ("openai_responses", "extra_body.max_completion_tokens", "max_completion_tokens"),
+    ],
+)
+async def test_custom_token_path_is_serialized_by_official_sdk(
+    monkeypatch, protocol, path, token_key
+):
+    bodies = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            text=sse(stream_events(protocol), done=protocol == "openai_chat"),
+            headers={"Content-Type": "text/event-stream"},
+        )
+
+    def factory(**kwargs):
+        return AsyncOpenAI(
+            **kwargs, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        )
+
+    monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
+    monkeypatch.setattr("my_llm.codec.openai.responses.transport.AsyncOpenAI", factory)
+    async with MyLLM(
+        provider=ProviderProfile(protocol=protocol, api_key="local-test", max_tokens_path=path),
+        model=ModelProfile(model="demo", max_tokens=100),
+        stdio_protocol="openai_chat",
+    ) as llm:
+        await llm.generate(messages=[{"role": "user", "content": "hi"}], max_tokens=50)
+    assert bodies[0][token_key] == 50
+    assert {key for key in bodies[0] if key.startswith("max_")} == {token_key}
+    assert "extra_body" not in bodies[0]
+
+
 async def test_sdk_http_errors_retain_their_type_and_preserve_client(monkeypatch):
     from openai import BadRequestError
 

@@ -23,24 +23,54 @@ def plain(value: Any) -> Any:
 _PATH = re.compile(r"([A-Za-z_][A-Za-z_0-9]*)(?:\[(\d+)\])?")
 
 
+def path_keys(path: str) -> list[str | int]:
+    """Parse the dotted-key/index syntax shared by read and write paths."""
+    keys: list[str | int] = []
+    for component in path.removeprefix("$.").split("."):
+        match = _PATH.fullmatch(component)
+        if not match:
+            raise ConfigurationError(f"unsupported path syntax: {path!r}")
+        keys.append(match[1])
+        if match[2] is not None:
+            keys.append(int(match[2]))
+    return keys
+
+
+def set_path(value: dict, path: str, item: Any) -> None:
+    """Write a path, creating containers and retaining existing sibling fields."""
+    keys = path_keys(path)
+    for index, key in enumerate(keys):
+        if isinstance(key, int):
+            if not isinstance(value, list):
+                raise ConfigurationError(f"path requires a list: {path!r}")
+            if key >= len(value):
+                value.extend([None] * (key + 1 - len(value)))
+        elif not isinstance(value, dict):
+            raise ConfigurationError(f"path requires a dictionary: {path!r}")
+        if index == len(keys) - 1:
+            value[key] = item
+            return
+        child = value.get(key) if isinstance(value, dict) else value[key]
+        child = (
+            plain(child) if child is not None else ([] if isinstance(keys[index + 1], int) else {})
+        )
+        value[key] = child
+        value = child
+
+
 def path_value(value: Any, path: str | Omit) -> Any:
     """Read dotted attributes/mapping keys and numeric indexes, without dumping SDK objects."""
     if isinstance(path, Omit):
         return None
-    if path.startswith("$."):
-        path = path[2:]
-    for component in path.split("."):
-        match = _PATH.fullmatch(component)
-        if not match:
-            raise ConfigurationError(f"unsupported path syntax: {path!r}")
-        value = read(value, match[1])
+    for key in path_keys(path):
+        if isinstance(key, int):
+            if not isinstance(value, (list, tuple)) or key >= len(value):
+                return None
+            value = value[key]
+        else:
+            value = read(value, key)
         if value is None:
             return None
-        if match[2] is not None:
-            index = int(match[2])
-            if not isinstance(value, (list, tuple)) or index >= len(value):
-                return None
-            value = value[index]
     return value
 
 

@@ -18,7 +18,7 @@ from my_llm.codec.shared.conversion import (
     source_protocol,
 )
 from my_llm.codec.shared.keys import OPAQUE
-from my_llm.codec.shared.options import native_options
+from my_llm.codec.shared.options import apply_max_tokens, native_options
 from my_llm.codec.shared.rendering import project_message, select_present
 from my_llm.codec.shared.tools import decode_functions
 from my_llm.codec.shared.usage import counts
@@ -233,6 +233,7 @@ class AnthropicDecoder(BaseDecoder):
         return {
             "replay_reasoning_content_when_tool_calls": True,
             "supports_reasoning_effort": False,
+            "max_tokens_path": "$.max_tokens",
             "content_path": "$.delta.text",
             "reasoning_content_path": "$.delta.thinking",
             "reasoning_enable_parameter": {},
@@ -245,11 +246,12 @@ class AnthropicDecoder(BaseDecoder):
         )
         if tokens is None:
             raise ConfigurationError("Anthropic requires max_tokens in the model or generation")
-        request = {**body, "max_tokens": tokens}
+        request = dict(body)
         if headers:
             request["extra_headers"] = headers
         if effort:
             self._apply_reasoning(request, body, profile, tokens, effort)
+        apply_max_tokens(request, profile, tokens, protected=PROTECTED)
         return request
 
     def assemble_request(

@@ -8,11 +8,11 @@ from typing import ClassVar
 from openai import Omit
 
 from my_llm.exceptions import ConfigurationError
-from my_llm.profile.configuration import _Overrides
+from my_llm.profile.configuration import OverridableProfile
 
 
 @dataclass(frozen=True, kw_only=True)
-class ModelProfile(_Overrides):
+class ModelProfile(OverridableProfile):
     """Model identity, descriptive metadata and provider-setting overrides.
 
     Args:
@@ -34,6 +34,7 @@ class ModelProfile(_Overrides):
         reasoning_effort_mapping: Effort mappings overriding provider keys;
             None/omit values disable individual levels.
         supports_reasoning_effort: Override the provider's effort capability.
+        max_tokens_path: Override the SDK request path for the output-token limit.
         content_path: Override the text-delta selector.
         reasoning_content_path: Override the reasoning-delta selector.
         replay_reasoning_content_when_tool_calls: Override whether visible reasoning is replayed. Empty reasoning

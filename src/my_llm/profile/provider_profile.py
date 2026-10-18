@@ -8,12 +8,12 @@ from typing import Literal
 from openai import Omit
 
 from my_llm.exceptions import ConfigurationError
-from my_llm.profile.configuration import Protocol, _Overrides
+from my_llm.profile.configuration import OverridableProfile, Protocol
 from my_llm.profile.model_profile import ModelProfile
 
 
 @dataclass(frozen=True, kw_only=True)
-class ProviderProfile(_Overrides):
+class ProviderProfile(OverridableProfile):
     """Provider connection, API selection and inherited model defaults.
 
     All arguments are keyword-only. None inherits a protocol default; omit
@@ -43,6 +43,10 @@ class ProviderProfile(_Overrides):
         reasoning_effort_mapping: Map none/low/medium/high/xhigh/max to provider
             strings; None or omit values disable individual levels.
         supports_reasoning_effort: Defaults True for Responses, False for Chat.
+        max_tokens_path: SDK request path for the output-token limit, such as
+            "$.max_completion_tokens" or "$.extra_body.max_tokens". Supports
+            dotted keys and numeric indexes, with an optional "$." prefix.
+            None inherits the protocol default; omit disables automatic insertion.
         content_path: Text delta selector; defaults to the API's standard field.
         reasoning_content_path: Reasoning delta selector; defaults to the API's
             standard reasoning-summary/reasoning-content field.

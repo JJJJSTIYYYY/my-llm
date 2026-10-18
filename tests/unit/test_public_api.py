@@ -16,6 +16,7 @@ def test_public_contract_uses_standard_messages_and_one_protocol_field():
         "MyLLM",
         "MessageStream",
         "ResolvedProfile",
+        "OverridableProfile",
     ):
         assert name in my_llm.__all__
     for name in (

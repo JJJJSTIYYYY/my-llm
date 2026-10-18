@@ -5,7 +5,7 @@ from typing import Any
 
 from openai import Omit
 
-from my_llm.codec.shared.values import _expand
+from my_llm.codec.shared.values import _expand, path_keys, set_path
 from my_llm.exceptions import ConfigurationError, UnsupportedCapabilityError
 from my_llm.profile.configuration import EFFORTS, merge_dicts
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
@@ -53,6 +53,24 @@ def check_protected(body: dict, protected: set[str]) -> None:
         raise ConfigurationError("request body bindings must be dictionaries")
     if set(body) & protected:
         raise ConfigurationError("extra_body cannot override protocol parameters")
+
+
+def apply_max_tokens(
+    request: dict, profile: ResolvedProfile, tokens: int | None, *, protected: set[str]
+) -> None:
+    """Insert the resolved limit at its SDK path, after other option bindings."""
+    path = profile.get("max_tokens_path")
+    if tokens is None or path is None:
+        return
+    keys = path_keys(path)
+    target = keys[1:] if keys[0] in ("extra_body", "config") else keys
+    if not target or target[0] in protected:
+        raise ConfigurationError("max_tokens_path cannot override protocol parameters")
+    set_path(request, path, tokens)
+    # SDK extra_body is a final wire overlay; keep the generated limit authoritative.
+    body = request.get("extra_body")
+    if keys[0] != "extra_body" and isinstance(body, dict) and keys[0] in body:
+        body[keys[0]] = deepcopy(request[keys[0]])
 
 
 def bindings(profile: ResolvedProfile, effort: str | None, *, expand: bool = True):

@@ -12,85 +12,119 @@
 
 </div>
 
-异步调用 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages、Gemini 和
-Ollama。请求使用官方 SDK，输入、输出与流事件采用五种协议的标准字典，不另定义消息类型。
-需要 Python 3.12+，不内置厂商或模型清单。
+my-llm-py 是一个 Python 异步 LLM 协议适配库，支持 OpenAI Chat、OpenAI Responses、Anthropic、Gemini 和 Ollama 五种协议自由组合。
+
+**用一种协议请求另一种协议的 API，按输入协议返回结果。标准协议直接转换，非标准协议通过配置兼容。**
+
+```text
+OpenAI Chat 格式输入 → 任意协议 API → OpenAI Chat 格式输出
+```
+
+消息、工具和流事件一并转换。更换上游 API，业务层继续使用原有协议收发数据。
+
+## 主要功能与亮点
+
+| 功能 | 说明 |
+| --- | --- |
+| 跨协议调用 | 标准协议直接转换，输入输出协议与上游 API 独立选择。 |
+| 统一工具调用 | 转换工具定义、调用和结果；流式参数自动组装，响应成功结束后交付完整调用。工具由应用执行。 |
+| 流式与完整回复 | 支持文本、可见思考增量；流结束后通过 `stream.result` 获取完整消息。 |
+| 多模态转换 | 按协议与模型能力转换图片、音频、视频和文件等内容。 |
+| 配置兼容 | 非标准协议通过配置兼容，适配服务与模型的参数、字段路径及思考内容等差异，配置可拓展。 |
+| 独立格式转换 | 无需调用模型，即可转换消息、工具和完整流事件列表；标准模式下支持同协议无损往返。 |
+| 异步并发 | 复用官方 SDK 客户端，请求状态独立；支持取消、提前退出和资源清理。 |
+| 协议扩展 | 可扩展新的协议实现，接入现有调用与转换流程。 |
+
+输入接受标准字典或可转为字典的官方 SDK 对象，输出为所选输入协议的标准字典。
+跨协议转换受目标协议的表达能力限制，详见[兼容边界](docs/reference/configuration.md#跨协议请求的处理边界)。
 
 ## 安装
+
+需要 **Python 3.12+**。
 
 ```sh
 pip install my-llm-py
 # 或 uv add my-llm-py
 ```
 
-## 调用
+## 快速开始
 
-`ProviderProfile.protocol` 选择上游 API，`stdio_protocol` 选择调用者的输入输出协议。
-两者独立；例如用 Chat 消息调用 Responses API，并继续收到 Chat 消息。
+以下示例使用 **OpenAI Chat 格式**调用 **Anthropic Messages API**，返回 **Chat assistant 消息**。
+设置 `ANTHROPIC_API_KEY` 和 `LLM_MODEL` 环境变量后运行，模型 ID 填写服务支持的值。
 
 ```python
 import asyncio
 import os
+
 from my_llm import ModelProfile, MyLLM, ProviderProfile
+
 
 async def main():
     async with MyLLM(
         provider=ProviderProfile(
-            protocol="openai_responses",
-            api_key=os.environ["OPENAI_API_KEY"],
+            protocol="anthropic",  # 实际请求的 API 协议
+            api_key=os.environ["ANTHROPIC_API_KEY"],
         ),
-        model=ModelProfile(model=os.environ["LLM_MODEL"]),
-        stdio_protocol="openai_chat",
+        model=ModelProfile(model=os.environ["LLM_MODEL"], max_tokens=4096),
+        stdio_protocol="openai_chat",  # 输入和输出均使用 Chat 协议
     ) as llm:
         message = await llm.generate(messages=[{"role": "user", "content": "你好"}])
         print(message["content"])
 
+
 asyncio.run(main())
 ```
 
-五个协议名为 `openai_chat`、`openai_responses`、`anthropic`、`gemini`、`ollama`。
-省略 `stdio_protocol` 时，首次调用从整个 messages/tools 列表识别一次并绑定到实例。
-纯文本消息等重叠输入默认使用 `openai_chat`；需要其他格式时显式指定。
-同一实例的 messages 与 tools 使用同一种协议，不混用历史格式。
+更换 `provider.protocol` 及对应连接、模型配置，即可切换上游 API；`stdio_protocol` 决定业务层使用的格式。
+
+### 流式调用
+
+在上例的 `async with MyLLM(stdio_protocol="openai_chat", ...)` 内调用下面的函数，流事件也按 Chat (openai_chat) 协议返回：
 
 ```python
 async def print_answer(llm):
-    # 此示例的 llm 使用 stdio_protocol="openai_chat"。
     stream = await llm.generate(
-        messages=[{"role": "user", "content": "你好"}], stream=True,
+        messages=[{"role": "user", "content": "你好"}],
+        stream=True,
     )
     async with stream:
         async for event in stream:
             for choice in event.get("choices", []):
                 print(choice["delta"].get("content", ""), end="", flush=True)
-    return stream.result  # 完成后的标准消息字典
+    return stream.result
 ```
 
-流式工具调用完整后才返回；本库不执行工具。SDK Client 在同一 MyLLM 实例内延迟创建并复用，
-通过 `async with MyLLM(...)` 或 `await llm.aclose()` 统一关闭；每次请求单独关闭响应流。
-Provider、Model 和连接配置在构造时保存副本，生成时仅接受消息、工具和生成选项。
-`replay_reasoning_content_when_tool_calls` 在兼容 Chat 服务中需要显式启用（默认 False）；Ollama 默认 True。仅思考已开启且 assistant 有工具调用时补空思维链。
+使用 `async with` 管理实例和流。传入工具前，在 `ModelProfile` 中设置 `supports_function_calling=True`。
 
-## 独立格式转换
+### 独立格式转换
 
-`MyCodec` 无状态，不绑定 profile，可复用于任意转换路径。
+`MyCodec` 可离线转换协议格式，无需 API 密钥：
 
 ```python
 from my_llm import MyCodec
 
-codec = MyCodec()
-converted = codec.convert(
+converted = MyCodec().convert(
     [{"role": "user", "content": "你好"}],
-    input_format="openai_chat", target_format="gemini",
+    input_format="openai_chat",
+    target_format="gemini",
 )
-assert converted["messages"] == [{"role": "user", "parts": [{"text": "你好"}]}]
+print(converted["messages"])
+# [{"role": "user", "parts": [{"text": "你好"}]}]
 ```
 
-消息、工具和流事件各有对称的 encode/decode 接口；`profile=None` 使用标准协议。
-同协议往返保留原生签名、未知字段和嵌套字典。
+## 支持的协议
 
-详见[文档目录](docs/README.md)、[API 使用指南](docs/reference/api.md)、
-[配置指南](docs/reference/configuration.md)及[架构与测试边界](docs/design/architecture.md)。
+以下标识均可用于 `ProviderProfile.protocol` 和 `stdio_protocol`：
+
+| 协议标识 | 对应 API |
+| --- | --- |
+| `openai_chat` | OpenAI Chat Completions 及兼容服务 |
+| `openai_responses` | OpenAI Responses 及兼容服务 |
+| `anthropic` | Anthropic Messages |
+| `gemini` | Gemini GenerateContent |
+| `ollama` | Ollama Chat |
+
+同一实例的消息与工具使用同一种输入输出协议。
 
 ## 安装最新的开发版本 (main 分支)
 
@@ -105,6 +139,12 @@ uv run python examples/local_demo.py
 uv build
 ```
 
-[构建与验证指南](docs/guides/building.md) 包含安装和发行包验证步骤。
-[本地开发规范](docs/guides/development.md)说明目录、导入与测试辅助代码的约定。
+## 文档
+
+- [API 使用指南](docs/reference/api.md)：生成、流式消费、工具回合与格式转换。
+- [配置指南](docs/reference/configuration.md)：连接、模型、思考参数与兼容服务。
+- [协议模板](docs/reference/schema/README.md)：五种协议的请求、返回和流事件。
+- [扩展协议](docs/guides/adding-protocol.md) · [本地开发](docs/guides/development.md) · [构建验证](docs/guides/building.md)
+- [全部文档](docs/README.md)
+
 项目采用 [Apache License 2.0](LICENSE)。

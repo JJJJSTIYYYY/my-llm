@@ -6,7 +6,7 @@ from typing import Any, final
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.base.transport import BaseTransport
-from my_llm.profile.configuration import Protocol
+from my_llm.profile.configuration import Protocol, ProtocolDefaults
 from my_llm.profile.resolution import ResolvedProfile
 
 
@@ -19,6 +19,12 @@ class BaseCodec(ABC):
     @abstractmethod
     def protocol_or_api_style(self) -> Protocol:
         """Native identity used only for routing and provenance."""
+        ...
+
+    @property
+    @abstractmethod
+    def defaults(self) -> ProtocolDefaults:
+        """Standard profile settings owned and declared by this protocol."""
         ...
 
     @property

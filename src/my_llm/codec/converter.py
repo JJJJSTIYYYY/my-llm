@@ -1,10 +1,11 @@
-"""Reusable, profile-independent conversion among five standard protocols."""
+"""Reusable, profile-independent conversion among registered protocols."""
 
 from typing import Any
 
 from my_llm.codec.anthropic.codec import AnthropicCodec
 from my_llm.codec.base.codec import BaseCodec
 from my_llm.codec.base.decoder import BaseDecoder
+from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.base.transport import BaseTransport
 from my_llm.codec.gemini.codec import GeminiCodec
 from my_llm.codec.ollama.codec import OllamaCodec
@@ -12,9 +13,10 @@ from my_llm.codec.openai.chat.codec import ChatCompletionsCodec
 from my_llm.codec.openai.responses.codec import ResponsesCodec
 from my_llm.codec.shared.replay import retain
 from my_llm.codec.shared.stream import is_batch
-from my_llm.exceptions import UnsupportedProviderError
-from my_llm.profile.configuration import Protocol
+from my_llm.exceptions import ConfigurationError, UnsupportedProviderError
+from my_llm.profile.configuration import Protocol, ProtocolDefaults
 from my_llm.profile.resolution import ResolvedProfile
+from my_llm.registry import register_codec, registered_codecs
 
 
 class MyCodec:
@@ -27,13 +29,38 @@ class MyCodec:
     __slots__ = ("codecs",)
 
     def __init__(self) -> None:
-        self.codecs: dict[str, BaseCodec] = {
-            "openai_chat": ChatCompletionsCodec(),
-            "openai_responses": ResponsesCodec(),
-            "anthropic": AnthropicCodec(),
-            "gemini": GeminiCodec(),
-            "ollama": OllamaCodec(),
-        }
+        self.codecs = registered_codecs()
+
+    @staticmethod
+    def register(codec: BaseCodec) -> None:
+        """Register a stateless protocol before constructing MyCodec or MyLLM.
+
+        The Codec owns its default configuration and all three implementations.
+        Existing converter instances keep their registration snapshot. Names
+        cannot replace an already registered protocol.
+        """
+        if not isinstance(codec, BaseCodec):
+            raise ConfigurationError("protocol implementation must be a BaseCodec")
+        protocol = codec.protocol_or_api_style
+        if not isinstance(protocol, str) or not protocol.strip():
+            raise ConfigurationError("protocol name must be a non-empty string")
+        if not isinstance(codec.defaults, ProtocolDefaults):
+            raise ConfigurationError("protocol defaults must be ProtocolDefaults")
+        components = (
+            (codec.encoder, BaseEncoder),
+            (codec.decoder, BaseDecoder),
+            (codec.transport, BaseTransport),
+        )
+        for component, expected in components:
+            if not isinstance(component, expected):
+                raise ConfigurationError(f"protocol component must be a {expected.__name__}")
+        if codec.encoder.protocol != protocol or codec.decoder.protocol != protocol:
+            raise ConfigurationError("codec, encoder and decoder must use the same protocol name")
+        if hasattr(codec, "__dict__") or any(
+            hasattr(component, "__dict__") for component, _ in components
+        ):
+            raise ConfigurationError("protocol components must declare empty __slots__")
+        register_codec(codec)
 
     def _codec(self, protocol: str) -> BaseCodec:
         try:
@@ -121,7 +148,7 @@ class MyCodec:
                 result[kind] = getattr(codec, f"decode_{kind}")(values, profile, **parameters)
                 if kind == "chunks" and replay_chunks is not None:
                     result[kind] = retain(
-                        replay_chunks, result[kind], target_format, kind, force=True
+                        replay_chunks, result[kind], target_format, kind, groups=(), force=True
                     )
         return result
 
@@ -146,3 +173,14 @@ class MyCodec:
         return self._codec(profile.protocol).request(
             intermediate["messages"], intermediate.get("tools"), profile, **parameters
         )
+
+
+for _builtin in (
+    ChatCompletionsCodec(),
+    ResponsesCodec(),
+    AnthropicCodec(),
+    GeminiCodec(),
+    OllamaCodec(),
+):
+    MyCodec.register(_builtin)
+del _builtin

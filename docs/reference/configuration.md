@@ -3,6 +3,8 @@
 `ProviderProfile` 描述连接和上游 API；`ModelProfile` 描述模型与覆盖项。
 MyLLM 构造时按协议默认值 → provider → model 合并，保存两份 profile 副本和一份
 `resolved_profile: ResolvedProfile`。generate 不接受动态 provider/model 或连接参数。
+协议默认值由各 Codec.defaults 的 ProtocolDefaults 声明，解析从注册表复制，
+不创建 Codec 或 SDK 客户端。新协议须先通过 MyCodec.register(codec) 注册，再解析配置或创建 MyLLM。
 
 ```python
 from my_llm import ModelProfile, MyLLM, ProviderProfile
@@ -42,16 +44,18 @@ assert resolve_profiles(provider, model).get("extra_body") == {"a": 3}
 
 | 字段 | 默认值 / 说明 |
 | --- | --- |
-| `protocol` | `openai_chat`；可选 openai_responses / anthropic / gemini / ollama |
+| `protocol` | `openai_chat`；接受已注册协议名，内置另有 openai_responses / anthropic / gemini / ollama |
 | `base_url` | None，官方 SDK 默认地址 |
 | `api_key` | None，使用 SDK 环境变量等默认行为；不出现在 profile repr |
 | `timeout` | None，SDK 默认；显式值必须为正秒数 |
 | `max_retries` | None，SDK 默认；显式值必须是非负整数 |
 | `supports_stream` | 解析后 True；False/omit 不支持，因为两种返回模式均用上游流 |
-| `usage_mode` | `none`；Responses/原生协议使用 `native`，Chat 使用 `stream_options` |
+| `usage_mode` | `none`；Responses/原生协议使用 `native`，Chat 使用 `stream_options`；扩展模式由协议 Transport 声明 |
 | `models` | None，可选 ModelProfile 列表；生成仍须显式选择模型 |
 
 只有一个 `protocol` 字段，没有单独的 API 类型选择。
+Protocol 是 str 别名；未注册的协议名在配置解析时拒绝。
+usage_mode 必须为非空字符串，具体值由 Transport.usage_modes 校验，新增协议可自行声明模式。
 `stdio_protocol` 是 MyLLM 的输入输出协议，不属于 provider。
 SDK 客户端由 MyLLM 实例延迟创建、复用并统一关闭；响应流按请求关闭，不接受自定义 client。
 Ollama SDK 没有原生 max_retries 选项；None / omit / 0 保留原生行为，正数在构造时明确拒绝。

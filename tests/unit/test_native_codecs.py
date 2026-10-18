@@ -41,10 +41,11 @@ def test_abstract_contract_cannot_be_instantiated():
             cls()
 
 
-@pytest.mark.parametrize("missing", ["encoder", "decoder", "transport"])
+@pytest.mark.parametrize("missing", ["defaults", "encoder", "decoder", "transport"])
 def test_codec_requires_conversion_directions_and_transport(missing):
     bindings = {
         "protocol_or_api_style": "openai_chat",
+        "defaults": ChatCompletionsCodec.defaults,
         "encoder": ChatCompletionsEncoder(),
         "decoder": ChatCompletionsDecoder(),
         "transport": ChatCompletionsTransport(),

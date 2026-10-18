@@ -3,7 +3,15 @@
 from openai import Omit, omit
 
 from my_llm._version import __version__
-from my_llm.codec import BaseCodec, BaseDecoder, BaseEncoder, BaseTransport, MyCodec
+from my_llm.codec import (
+    BaseCodec,
+    BaseDecoder,
+    BaseEncoder,
+    BaseTransport,
+    MyCodec,
+    PreparedOptions,
+    Translations,
+)
 from my_llm.exceptions import (
     ConfigurationError,
     IncompleteStreamError,
@@ -20,6 +28,7 @@ from my_llm.profile import (
     ModelProfile,
     OverridableProfile,
     Protocol,
+    ProtocolDefaults,
     ProviderProfile,
     ReasoningEffort,
     ResolvedProfile,
@@ -41,6 +50,9 @@ __all__ = [
     "ResolvedProfile",
     "resolve_profiles",
     "Protocol",
+    "ProtocolDefaults",
+    "PreparedOptions",
+    "Translations",
     "ReasoningEffort",
     "Omit",
     "omit",

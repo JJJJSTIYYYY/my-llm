@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
 
 from openai import Omit
 
@@ -22,15 +21,16 @@ class ProviderProfile(OverridableProfile):
     build a changed configuration. The model catalogue has explicit mutators.
 
     Args:
-        protocol: openai_chat (default), openai_responses, anthropic, gemini or ollama.
+        protocol: Registered protocol name. Built-ins include openai_chat (default),
+            openai_responses, anthropic, gemini and ollama.
         base_url: Optional service URL passed to the selected official SDK.
         api_key: Optional SDK credential; excluded from repr.
         timeout: Positive SDK timeout in seconds, or None for the SDK default.
         max_retries: Non-negative SDK retry count, or None for the SDK default.
         supports_stream: Whether upstream streaming is available; defaults True
             when resolved. False/omit is unsupported in both public modes.
-        usage_mode: "none" (default), "native" for Responses, or
-            "stream_options" for Chat Completions.
+        usage_mode: A mode declared by the selected Transport; built-ins use
+            "none" (default), "native" or "stream_options".
         models: Optional list of ModelProfile configurations. Model IDs are
             unique; later entries replace earlier entries with the same ID.
             Generations still require explicit model selection.
@@ -65,7 +65,7 @@ class ProviderProfile(OverridableProfile):
     timeout: float | Omit | None = None
     max_retries: int | Omit | None = None
     supports_stream: bool | Omit | None = None
-    usage_mode: Literal["none", "native", "stream_options"] | Omit | None = None
+    usage_mode: str | Omit | None = None
     models: list[ModelProfile] | None = None
 
     def __post_init__(self) -> None:

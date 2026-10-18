@@ -1,5 +1,6 @@
 """Stateless stream operations, source block identities and token accounting."""
 
+from collections.abc import Callable
 from typing import NamedTuple
 
 from my_llm.codec.shared.conversion import SOURCE, dictionaries, original, remember, residual
@@ -26,6 +27,21 @@ def batch(event: dict, operations: list[dict], protocol: str, consumed: dict | N
     # extensions can remain untouched at their original source paths.
     value[SOURCE]["events"] = operations
     return value
+
+
+def encode_batch(
+    event: dict,
+    operations: list[dict],
+    protocol: str,
+    *,
+    consumed: dict,
+    usage: Callable[[dict | None], dict | None],
+) -> dict:
+    """Translate native usage operations before retaining their source event."""
+    for operation in operations:
+        if operation["type"] == "usage":
+            operation["usage"] = usage(operation["usage"])
+    return batch(event, operations, protocol, consumed)
 
 
 def is_batch(value: dict) -> bool:

@@ -148,7 +148,8 @@ def test_bad_model_configuration(field, value):
         ("max_retries", -1),
         ("api_key", ""),
         ("base_url", 4),
-        ("usage_mode", "invalid"),
+        ("usage_mode", ""),
+        ("usage_mode", 1),
     ],
 )
 def test_bad_provider_configuration(field, value):
@@ -163,6 +164,14 @@ def test_incompatible_usage_modes(protocol, usage):
     with pytest.raises(ConfigurationError):
         MyLLM(
             provider=ProviderProfile(protocol=protocol, usage_mode=usage),
+            model=ModelProfile(model="demo"),
+        )
+
+
+def test_unrecognized_usage_mode_is_rejected_by_selected_transport():
+    with pytest.raises(ConfigurationError, match="usage_mode"):
+        MyLLM(
+            provider=ProviderProfile(usage_mode="invalid"),
             model=ModelProfile(model="demo"),
         )
 

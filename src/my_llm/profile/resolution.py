@@ -9,7 +9,7 @@ from typing import Any
 from openai import Omit
 
 from my_llm.exceptions import ConfigurationError, UnsupportedProviderError
-from my_llm.profile.configuration import EFFORTS, PROTOCOLS, Protocol, merge_dicts
+from my_llm.profile.configuration import EFFORTS, Protocol, merge_dicts
 from my_llm.profile.defaults import protocol_defaults
 from my_llm.profile.model_profile import ModelProfile
 from my_llm.profile.paths import path_keys
@@ -39,14 +39,12 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
     """Validate and snapshot protocol, provider and model settings in order.
 
     Excludes descriptive context-window metadata and the provider's catalogue.
-    Standard defaults come from the declarative protocol configuration.
+    Standard defaults come from the registered protocol's declaration.
     Transport validates SDK-specific constraints separately.
     Raises ConfigurationError subclasses for invalid configuration.
     """
     if not isinstance(provider, ProviderProfile) or not isinstance(model, ModelProfile):
         raise ConfigurationError("provider and model must be profile instances")
-    if provider.protocol not in PROTOCOLS:
-        raise UnsupportedProviderError(f"unsupported protocol: {provider.protocol!r}")
     if not isinstance(model.model, str) or not model.model.strip():
         raise ConfigurationError("model must be a non-empty string")
     values: dict[str, Any] = {
@@ -93,8 +91,8 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
     if not resolved.get("supports_stream", False):
         raise UnsupportedProviderError("provider must support upstream streaming")
     usage = resolved.get("usage_mode", "none")
-    if usage not in ("none", "native", "stream_options"):
-        raise ConfigurationError("invalid usage_mode")
+    if not isinstance(usage, str) or not usage:
+        raise ConfigurationError("usage_mode must be a non-empty string")
     for key in (
         "extra_headers",
         "extra_body",

@@ -241,8 +241,40 @@ def validate_native_options(
     return options
 
 
-def overlay_generated(request: dict, body: dict) -> dict:
-    """Keep generated values authoritative in a caller-selected overlay."""
+def prepare_overlay_options(
+    profile: ResolvedProfile,
+    options: PreparedOptions,
+    *,
+    protected: set[str],
+    overlay: str,
+) -> PreparedOptions:
+    """Merge validated overlay bindings and check the configured token path."""
+    body = merge_bindings(options.body, *(binding.get(overlay) for binding in options.bindings))
+    validate_max_tokens_path(
+        profile,
+        options.tokens,
+        protected=protected,
+        containers=(overlay,),
+        request={overlay: body},
+    )
+    return replace(options, body=body)
+
+
+def overlay_request_parameters(
+    request: dict,
+    profile: ResolvedProfile,
+    options: PreparedOptions,
+    *,
+    overlay: str,
+    headers_field: str,
+) -> dict:
+    """Attach request-owned headers and an overlay, retaining generated values."""
+    body = deepcopy(options.body)
     for key in request.keys() & body.keys():
         body[key] = deepcopy(request[key])
-    return body
+    if options.headers:
+        request[headers_field] = deepcopy(options.headers)
+    if body:
+        request[overlay] = body
+    apply_max_tokens(request, profile, options.tokens, overlay=overlay)
+    return request

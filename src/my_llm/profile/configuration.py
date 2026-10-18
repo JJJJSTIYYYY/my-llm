@@ -14,13 +14,28 @@ from openai import Omit
 
 from my_llm.exceptions import ConfigurationError
 
-type Protocol = Literal["openai_chat", "openai_responses", "anthropic", "gemini", "ollama"]
-
-PROTOCOLS = ("openai_chat", "openai_responses", "anthropic", "gemini", "ollama")
+type Protocol = str
 type ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
 type Parameter = dict[str, Any] | Omit | None
 
 EFFORTS = ("none", "low", "medium", "high", "xhigh", "max")
+
+
+@dataclass(frozen=True, kw_only=True)
+class ProtocolDefaults:
+    """Required standard settings declared by each protocol's Codec.
+
+    Use omit for selectors or parameter bindings that the protocol does not use.
+    Mutable binding values are borrowed read-only and copied during resolution.
+    """
+
+    replay_reasoning_content_when_tool_calls: bool
+    supports_reasoning_effort: bool
+    max_tokens_path: str | Omit
+    content_path: str | Omit
+    reasoning_content_path: str | Omit
+    reasoning_enable_parameter: dict[str, Any] | Omit
+    reasoning_effort_parameter: dict[str, Any] | Omit
 
 
 @dataclass(frozen=True, kw_only=True)

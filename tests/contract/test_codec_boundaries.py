@@ -1,23 +1,45 @@
 """Keep conversion and SDK execution independent within each native codec."""
 
 import ast
+import inspect
 from pathlib import Path
+from typing import Any, get_type_hints
 
 import pytest
 
-from tests.helpers.protocols import PROTOCOLS
+from my_llm import MyCodec
 
 ROOT = Path(__file__).resolve().parents[2] / "src/my_llm"
-OWNERS = ("openai/chat", "openai/responses", "anthropic", "gemini", "ollama")
-SDK_PACKAGES = ("openai", "anthropic", "google", "ollama")
+CODECS = MyCodec().codecs
+PROTOCOLS = tuple(CODECS)
+
+
+def owner_paths(codecs):
+    """Discover native packages from their registered facade modules."""
+    return {
+        Path(inspect.getfile(type(codec))).resolve().parent: type(codec).__module__.rpartition(".")[
+            0
+        ]
+        for codec in codecs
+    }
+
+
+OWNERS = owner_paths(CODECS.values())
+CLIENT_TYPES = [
+    client
+    for codec in CODECS.values()
+    if (client := get_type_hints(type(codec.transport).create_client).get("return")) is not Any
+    and inspect.isclass(client)
+]
+SDK_PACKAGES = {client.__module__.split(".")[0] for client in CLIENT_TYPES}
 SDK_CLIENTS = {
-    "AsyncOpenAI",
-    "OpenAI",
-    "AsyncAnthropic",
-    "Anthropic",
-    "AsyncClient",
-    "Client",
-    "genai",
+    name
+    for client in CLIENT_TYPES
+    for name in (
+        client.__name__,
+        client.__name__.removeprefix("Async"),
+        *client.__module__.split(".")[:-1],
+    )
 }
 
 
@@ -58,14 +80,23 @@ def assert_no_sdk_clients(tree, path):
 
 
 def native_owner(path):
-    for owner in OWNERS:
+    for package, owner in OWNERS.items():
         if (
-            path.is_relative_to(ROOT / "codec" / owner / "encoding")
-            or path.is_relative_to(ROOT / "codec" / owner / "decoding")
-            or path == ROOT / "codec" / owner / "transport.py"
+            path.is_relative_to(package / "encoding")
+            or path.is_relative_to(package / "decoding")
+            or path == package / "transport.py"
         ):
-            return f"my_llm.codec.{owner.replace('/', '.')}"
+            return owner
     return None
+
+
+def test_native_owners_follow_registered_codec_modules():
+    class ExternalCodec:
+        pass
+
+    assert owner_paths([ExternalCodec()]) == {
+        Path(__file__).resolve().parent: __name__.rpartition(".")[0]
+    }
 
 
 def test_native_conditions_and_sdk_clients_stay_inside_native_owners():
@@ -135,14 +166,14 @@ def test_encoders_and_decoders_do_not_depend_on_the_opposite_direction():
 
 
 def test_transports_do_not_import_conversion_implementations():
-    for owner in OWNERS:
-        path = ROOT / "codec" / owner / "transport.py"
+    for package, owner in OWNERS.items():
+        path = package / "transport.py"
         for node in ast.walk(ast.parse(path.read_text())):
             for module in imported_modules(node):
                 assert not module.startswith(
                     (
-                        f"my_llm.codec.{owner.replace('/', '.')}.encoding",
-                        f"my_llm.codec.{owner.replace('/', '.')}.decoding",
+                        f"{owner}.encoding",
+                        f"{owner}.decoding",
                     )
                 ), (path, module)
 

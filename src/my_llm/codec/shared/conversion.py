@@ -30,19 +30,22 @@ def plain(value: Any) -> Any:
     return value.copy() if isinstance(value, (dict, list)) else value
 
 
-class Translations(list):
+class Translations(list[dict]):
     """Collect output and its source groups during one decoder translation.
 
     A group may consume or produce any number of values. ``structure`` declares
     containers whose unknown children can be merged into translated output;
     other translated fields remain authoritative as whole values.
+    Call ``group`` before appending the native values produced from those sources.
+    Decoder message and tool hooks return this type; their public methods return
+    ordinary lists after preserving extensions with the declared groups.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
-        self.groups = []
+        self.groups: list[tuple[int, list[dict], dict]] = []
 
-    def group(self, sources, *, structure=None):
+    def group(self, sources: list[dict], *, structure: dict | None = None) -> None:
         self.groups.append((len(self), deepcopy(sources), structure or {}))
 
 
@@ -345,7 +348,7 @@ def encode_functions(tools, protocol, unwrap, *, consumed):
     return result
 
 
-def decode_functions(tools, protocol, wrap, *, structure=None):
+def decode_functions(tools, protocol, wrap, *, structure=None) -> Translations:
     result = Translations()
     for tool in dictionaries(tools):
         result.group([tool], structure=structure)

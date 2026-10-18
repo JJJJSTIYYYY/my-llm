@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, final
 
+from my_llm.codec.shared.conversion import Translations
 from my_llm.codec.shared.options import PreparedOptions
 from my_llm.codec.shared.replay import retain
 from my_llm.profile.resolution import ResolvedProfile
@@ -56,15 +57,15 @@ class BaseDecoder(ABC):
     def messages(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        return retain(
-            values, self._messages(values, profile, **parameters), self.protocol, "messages"
-        )
+        translated = self._messages(values, profile, **parameters)
+        return retain(values, translated, self.protocol, "messages", groups=translated.groups)
 
     @final
     def tools(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        return retain(values, self._tools(values, profile, **parameters), self.protocol, "tools")
+        translated = self._tools(values, profile, **parameters)
+        return retain(values, translated, self.protocol, "tools", groups=translated.groups)
 
     @final
     def chunks(
@@ -78,15 +79,15 @@ class BaseDecoder(ABC):
     @abstractmethod
     def _messages(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict]:
-        """Translate messages into this protocol's native representation."""
+    ) -> Translations:
+        """Translate messages, declaring each output group's sources and merge structure."""
         ...
 
     @abstractmethod
     def _tools(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict]:
-        """Translate tool definitions."""
+    ) -> Translations:
+        """Translate tool definitions, declaring source groups for extension retention."""
         ...
 
     @abstractmethod

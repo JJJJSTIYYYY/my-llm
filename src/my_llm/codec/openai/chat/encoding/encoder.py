@@ -19,7 +19,7 @@ from my_llm.codec.shared.conversion import (
     residual,
 )
 from my_llm.codec.shared.options import path_value
-from my_llm.codec.shared.stream import BlockRef, batch, record
+from my_llm.codec.shared.stream import BlockRef, batch, encode_batch, record
 from my_llm.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
 
@@ -191,10 +191,11 @@ class ChatCompletionsEncoder(BaseEncoder):
                             "allow_tail": ["metadata", "usage"],
                         }
                     )
-            for operation in ops:
-                if operation["type"] == "usage":
-                    operation["usage"] = self.usage(operation["usage"])
-            result.append(batch(event, ops, PROTOCOL, self._consumed_fields(event)))
+            result.append(
+                encode_batch(
+                    event, ops, PROTOCOL, consumed=self._consumed_fields(event), usage=self.usage
+                )
+            )
         return result
 
     def usage(self, value: dict | None) -> dict | None:

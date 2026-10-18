@@ -1,5 +1,6 @@
 """Preserve conversion leftovers and restore unchanged protocol histories."""
 
+from collections.abc import Sequence
 from copy import deepcopy
 
 from my_llm.codec.shared.conversion import (
@@ -7,7 +8,6 @@ from my_llm.codec.shared.conversion import (
     OPAQUE,
     REPLAY,
     SOURCE,
-    Translations,
     dictionaries,
     extras,
     residual,
@@ -78,13 +78,20 @@ def merge_extensions(extension, converted, structure=None, *, positional=True):
     return deepcopy(converted)
 
 
-def retain(values, converted, protocol, kind, *, force=False):
+def retain(
+    values,
+    converted,
+    protocol,
+    kind,
+    *,
+    groups: Sequence[tuple[int, list[dict], dict]],
+    force=False,
+):
     """Attach one JSON-safe recovery record to a converted group.
 
     The record stores both the original intermediate values and the exact output
     they describe. Encoders restore it only when that output is unchanged.
     """
-    groups = converted.groups if isinstance(converted, Translations) else []
     converted = list(converted)
     if not converted or not values:
         return converted

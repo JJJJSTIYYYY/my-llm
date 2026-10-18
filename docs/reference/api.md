@@ -5,6 +5,7 @@
 无状态的 `codec: MyCodec` 和输入输出协议 `stdio_protocol`。
 `generate(provider=..., model=..., messages=..., stdio_protocol=..., **parameters)`
 是创建临时实例的一次性入口，其中 model 也可传模型 ID 字符串。
+Protocol 是 str 别名；内置协议之外，也可使用启动时通过 MyCodec.register(codec) 注册的协议名。
 
 ## 协议与返回值
 
@@ -146,7 +147,7 @@ async def add_round_trip(provider, model_id):
 
 ## 独立 Codec
 
-`BaseCodec` 组合协议对应的 `BaseEncoder` / `BaseDecoder` / `BaseTransport`；它们不保存 profile、
+`BaseCodec` 声明 ProtocolDefaults 并组合协议对应的 `BaseEncoder` / `BaseDecoder` / `BaseTransport`；它们不保存 profile、
 流片段或识别结果。每种协议独立一对 encoder/decoder。
 
 - `encode_messages` / `decode_messages`
@@ -173,7 +174,10 @@ assert native["messages"] == [{"role": "user", "parts": [{"text": "Hello"}]}]
 # 同样可用 codec.convert(..., input_format=..., target_format=...) 一步转换。
 ```
 
-MyCodec 同时持有五个 Codec，可复用于不同转换路径。中间态是内部实现，不是应用消息协议。
+MyCodec 持有创建时的注册快照，默认包含五个内置 Codec，可复用于不同转换路径。
+`MyCodec.register(codec: BaseCodec) -> None` 是静态注册入口，须早于 MyCodec / MyLLM 实例创建；
+既有实例保留原快照，重名注册报 ConfigurationError。实现与注册示例见[接入指南](../guides/adding-protocol.md)。
+中间态是内部实现，不是应用消息协议。
 Encoder 和 Decoder 保留未知字段；路径冲突时转换值优先，无法直接共存的信息保存在恢复记录中。
 重新输入完整且未修改的转换结果，可恢复原生数据，包括 Anthropic 签名、redacted thinking 和
 Responses encrypted_content。恢复记录支持 JSON 保存，不依赖实例缓存。
@@ -204,17 +208,23 @@ BaseTransport 负责输入与工具关联验证、模型能力、生成参数和
 
 | 实现 | 必须提供 |
 | --- | --- |
+| BaseCodec | protocol_or_api_style、defaults: ProtocolDefaults、encoder / decoder / transport。 |
 | BaseEncoder | protocol、_messages / _tools / _chunks、match_item、usage。 |
 | BaseDecoder | protocol、_messages / _tools / _chunks、usage、request_parameters、assemble_request；result 可覆盖收集结果形状。 |
 | BaseTransport | message_type / tool_type、message_path / tool_path、validate_request、create_client、upstream。 |
 
 BaseCodec.request 接收中间态，由 Transport.validate_parameters 一次校验、解析生成控制参数，
-再把返回的内部 PreparedOptions 显式传给 Decoder.request 翻译消息、工具和请求选项，
+再把返回的 PreparedOptions 显式传给 Decoder.request 翻译消息、工具和请求选项，
 最后进入 Transport.request，验证工具关联、模型能力和原生结构，并过滤不支持字段。
 自定义 Decoder 的 request_parameters(profile, options) 与 assemble_request(..., options=options)
 必须复用已准备的选项；直接调用这些方法也必须提供 options，不重新解析原始生成参数。
 原始参数继续传给消息翻译，以保留显式思考开关和兼容服务的回放语义。
-Profile 默认值来自纯配置表，解析负责分层合并、通用字段校验和快照；协议特有限制与 SDK 约束由 Transport 补充验证。
+PreparedOptions、Translations 和 ProtocolDefaults 均从 my_llm 公开导出。
+Decoder._messages / _tools 必须返回 Translations 并声明来源分组，公开 messages / tools 返回普通 list；
+内部不把未声明分组的 list 当作兼容实现。
+ProtocolDefaults 的七个配置字段均为必填，不用的字段路径或推理绑定通过 omit 禁用；声明及嵌套内容按只读借用。
+Profile 默认值来自已注册 Codec.defaults 的副本，解析负责分层合并、通用字段校验和快照，
+不创建 Codec 或 SDK 客户端；协议特有限制与 SDK 约束由 Transport 补充验证。
 直接使用 resolve_profiles / MyCodec 的集成应调用 codec.validate_profile(resolved)；MyLLM 已在构造时完成此步骤。
 完整实现约定见[接入协议指南](../guides/adding-protocol.md)。
 

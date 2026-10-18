@@ -1,7 +1,6 @@
 """Reusable OpenAI SDK client and request-owned Chat streams."""
 
 from copy import deepcopy
-from dataclasses import replace
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -11,9 +10,8 @@ from my_llm.codec.base.transport import BaseTransport
 from my_llm.codec.shared.options import (
     PreparedOptions,
     check_protected,
-    merge_bindings,
+    prepare_overlay_options,
     validate_bindings,
-    validate_max_tokens_path,
 )
 from my_llm.codec.shared.transport import owned_stream
 from my_llm.exceptions import ConfigurationError, MessageValidationError, UnsupportedCapabilityError
@@ -58,23 +56,14 @@ class ChatCompletionsTransport(BaseTransport):
 
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
         options = super().validate_parameters(profile, **parameters)
-        tokens, body = options.tokens, options.body
-        check_protected(body, PROTECTED)
+        check_protected(options.body, PROTECTED)
         bindings = validate_bindings(
             options, protected=PROTECTED, allowed={"reasoning_effort", "extra_body"}
         )
         for binding in bindings:
             if "reasoning_effort" in binding and not isinstance(binding["reasoning_effort"], str):
                 raise ConfigurationError("reasoning_effort must be a string")
-        body = merge_bindings(body, *(binding.get("extra_body") for binding in options.bindings))
-        validate_max_tokens_path(
-            profile,
-            tokens,
-            protected=PROTECTED,
-            containers=("extra_body",),
-            request={"extra_body": body},
-        )
-        return replace(options, body=body)
+        return prepare_overlay_options(profile, options, protected=PROTECTED, overlay="extra_body")
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
         for field in ("max_tokens", "max_completion_tokens"):

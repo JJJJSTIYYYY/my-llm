@@ -80,7 +80,7 @@ class OllamaDecoder(BaseDecoder):
 
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict]:
+    ) -> Translations:
         result = Translations()
         names = {}
         for sources, message in coalesce_groups(messages):
@@ -150,7 +150,7 @@ class OllamaDecoder(BaseDecoder):
 
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict]:
+    ) -> Translations:
         return decode_functions(
             tools,
             "ollama",

@@ -23,9 +23,8 @@ from my_llm.codec.shared.conversion import (
 )
 from my_llm.codec.shared.options import (
     PreparedOptions,
-    apply_max_tokens,
     merge_bindings,
-    overlay_generated,
+    overlay_request_parameters,
 )
 from my_llm.codec.shared.stream import counts, events
 from my_llm.exceptions import ResponseFailedError, UnsupportedCapabilityError
@@ -41,8 +40,7 @@ class ResponsesDecoder(BaseDecoder):
     protocol = PROTOCOL
 
     def request_parameters(self, profile: ResolvedProfile, options: PreparedOptions) -> dict:
-        tokens, headers, effort = options.tokens, options.headers, options.effort
-        body = deepcopy(options.body)
+        effort = options.effort
         layers = []
         for index, binding in enumerate(options.bindings):
             if "reasoning" in binding:
@@ -51,13 +49,9 @@ class ResponsesDecoder(BaseDecoder):
                     value = {"effort": effort, **value}
                 layers.append({"reasoning": value})
         request = merge_bindings({"reasoning": {"summary": "detailed"}}, *layers) if layers else {}
-        body = overlay_generated(request, body)
-        if headers:
-            request["extra_headers"] = deepcopy(headers)
-        if body:
-            request["extra_body"] = body
-        apply_max_tokens(request, profile, tokens, overlay="extra_body")
-        return request
+        return overlay_request_parameters(
+            request, profile, options, overlay="extra_body", headers_field="extra_headers"
+        )
 
     def assemble_request(
         self,
@@ -80,7 +74,7 @@ class ResponsesDecoder(BaseDecoder):
 
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict]:
+    ) -> Translations:
         result = Translations()
         for message in dictionaries(messages):
             result.group([message], structure={"content": [{"image_url": {}}]})
@@ -186,7 +180,7 @@ class ResponsesDecoder(BaseDecoder):
 
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict]:
+    ) -> Translations:
         return decode_functions(
             tools,
             "openai_responses",

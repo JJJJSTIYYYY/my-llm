@@ -12,7 +12,7 @@ from openai import Omit, omit
 from my_llm.codec.converter import MyCodec
 from my_llm.codec.shared.conversion import dictionaries
 from my_llm.exceptions import ConfigurationError, MessageValidationError, StreamError
-from my_llm.profile.configuration import PROTOCOLS, Protocol, ReasoningEffort
+from my_llm.profile.configuration import Protocol, ReasoningEffort
 from my_llm.profile.model_profile import ModelProfile
 from my_llm.profile.provider_profile import ProviderProfile
 from my_llm.profile.resolution import resolve_profiles
@@ -39,9 +39,11 @@ class MyLLM:
         model: ModelProfile,
         stdio_protocol: Protocol | None = None,
     ) -> None:
-        if stdio_protocol is not None and stdio_protocol not in PROTOCOLS:
-            raise ConfigurationError(f"unsupported stdio_protocol: {stdio_protocol!r}")
         self.codec = MyCodec()
+        if stdio_protocol is not None and (
+            not isinstance(stdio_protocol, str) or stdio_protocol not in self.codec.codecs
+        ):
+            raise ConfigurationError(f"unsupported stdio_protocol: {stdio_protocol!r}")
         self.resolved_profile = resolve_profiles(provider, model)
         self.codec.validate_profile(self.resolved_profile)
         self.provider = deepcopy(provider)

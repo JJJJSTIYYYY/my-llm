@@ -1,6 +1,5 @@
 """openai/chat: intermediate to native output."""
 
-from copy import deepcopy
 from typing import Any
 
 from my_llm.codec.base.decoder import BaseDecoder
@@ -24,9 +23,8 @@ from my_llm.codec.shared.conversion import (
 )
 from my_llm.codec.shared.options import (
     PreparedOptions,
-    apply_max_tokens,
     merge_bindings,
-    overlay_generated,
+    overlay_request_parameters,
 )
 from my_llm.codec.shared.stream import counts, events
 from my_llm.exceptions import ResponseFailedError
@@ -53,8 +51,6 @@ class ChatCompletionsDecoder(BaseDecoder):
     protocol = PROTOCOL
 
     def request_parameters(self, profile: ResolvedProfile, options: PreparedOptions) -> dict:
-        tokens, headers = options.tokens, options.headers
-        body = deepcopy(options.body)
         request = merge_bindings(
             *(
                 {key: value for key, value in binding.items() if key != "extra_body"}
@@ -63,13 +59,9 @@ class ChatCompletionsDecoder(BaseDecoder):
         )
         if profile.get("usage_mode", "none") == "stream_options":
             request["stream_options"] = {"include_usage": True}
-        body = overlay_generated(request, body)
-        if headers:
-            request["extra_headers"] = deepcopy(headers)
-        if body:
-            request["extra_body"] = body
-        apply_max_tokens(request, profile, tokens, overlay="extra_body")
-        return request
+        return overlay_request_parameters(
+            request, profile, options, overlay="extra_body", headers_field="extra_headers"
+        )
 
     def assemble_request(
         self,
@@ -89,7 +81,7 @@ class ChatCompletionsDecoder(BaseDecoder):
 
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict]:
+    ) -> Translations:
         result = Translations()
         for sources, message in coalesce_groups(messages):
             result.group(
@@ -151,7 +143,7 @@ class ChatCompletionsDecoder(BaseDecoder):
 
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict]:
+    ) -> Translations:
         return decode_functions(
             tools,
             "openai_chat",

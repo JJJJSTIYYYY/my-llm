@@ -94,7 +94,7 @@ class AnthropicDecoder(BaseDecoder):
 
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict]:
+    ) -> Translations:
         result = Translations()
         for sources, message in coalesce_groups(messages):
             result.group(sources, structure={"content": [{"source": {}}]})
@@ -113,7 +113,7 @@ class AnthropicDecoder(BaseDecoder):
 
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict]:
+    ) -> Translations:
         return decode_functions(
             tools,
             "anthropic",

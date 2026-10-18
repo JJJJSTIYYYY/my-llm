@@ -1,6 +1,6 @@
 """anthropic decoding: content, fields and tool helpers."""
 
-from my_llm.codec.shared.rendering import project_block, select, text_result
+from my_llm.codec.shared.conversion import project_block, select, text_result
 
 FIELDS = {
     "text": ("type", "text"),

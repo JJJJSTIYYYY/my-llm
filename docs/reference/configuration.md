@@ -21,6 +21,12 @@ llm = MyLLM(
 
 None 继承上层值；`openai.omit`（也可从 my_llm 导入）禁用继承值。
 字典按键覆盖，嵌套值整体替换；字典中的 omit 删除该键。
+
+`reasoning_enable_parameter` / `reasoning_effort_parameter` 是待应用的参数绑定模板，
+其中的 omit 会保留到请求准备阶段。五协议均先应用启用绑定、再应用强度绑定：
+绑定字典递归按键合并，omit 删除对应深度的旧键，未修改的兄弟键保留；列表和标量整体替换。
+后续绑定可以显式重新设置已删除的键。这个规则同样适用于绑定内的 extra_body，
+最终 SDK 请求不会携带这些删除标记；协议核心字段、必需参数和生成参数优先级仍受各协议约束。
 Profiles 是 frozen dataclass；使用 `dataclasses.replace()` 创建新配置，再创建 MyLLM。
 嵌套可变值在 MyLLM 构造时隔离，每次生成也隔离消息、工具及生成选项。
 
@@ -47,7 +53,7 @@ assert resolve_profiles(provider, model).get("extra_body") == {"a": 3}
 
 只有一个 `protocol` 字段，没有单独的 API 类型选择。
 `stdio_protocol` 是 MyLLM 的输入输出协议，不属于 provider。
-所有 SDK client 都由请求创建并关闭，不接受自定义 client。
+SDK 客户端由 MyLLM 实例延迟创建、复用并统一关闭；响应流按请求关闭，不接受自定义 client。
 Ollama SDK 没有原生 max_retries 选项；None / omit / 0 保留原生行为，正数在构造时明确拒绝。
 
 ## Model 字段
@@ -158,13 +164,17 @@ SDK 会验证目标协议具体参数和字段；未知扩展在 Codec 转换中
 
 ## 跨协议请求的处理边界
 
-外来字段不再因为同名就直接进入目标消息。目标 Decoder 仅投影已知可表达语义；
-未知扩展仍留在中间态和同协议快照中。跨协议的未知事件不透传成其他协议的事件。
+转换结果保留未知字段，并在需要时携带 JSON 可序列化的恢复记录。未修改的转换分组可恢复原生轮次，
+包括签名、密文与工具 ID；路径冲突时转换值优先，剩余信息保存在恢复记录中。
+BaseTransport 在实际请求前按公开 SDK 类型过滤不支持字段与恢复记录，不修改业务保存的历史。
+工具参数、结果对象和 JSON Schema 中的应用字段不作为协议结构过滤。
+完整规则见[字段保留与轮次恢复](../audits/lossless.md)。
 
-外来思考在 Chat / Responses / Anthropic / Gemini 中按普通文本表达，在 Ollama 中可使用
-原生 thinking；不会伪造 Anthropic 签名或 Responses 加密 reasoning。Gemini 的外来工具历史
+外来思考的可见内容在 Chat / Responses / Anthropic / Gemini 中按普通文本表达，在 Ollama 中可使用
+原生 thinking；签名与密文保存在恢复记录中，仅在回到原协议时恢复，不伪造签名或解密 reasoning。Gemini 的外来工具历史
 使用其[官方迁移标记](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures#faqs)
 `skip_thought_signature_validator`；原生 Gemini 历史的签名和并行调用位置不改变。
+请求能力、生成选项、SDK 表达限制及思考回放开关均由 Transport 校验；Encoder / Decoder 只翻译并保留数据。
 
 Chat / Ollama 不能把 URL 文档作为原生文件读取时保留文本引用；没有隐式下载或文件系统读写。
 必要的不透明内容、不能安全表达的媒体或 SDK 会静默丢弃的工具 Schema 约束，

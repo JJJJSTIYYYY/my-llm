@@ -1,55 +1,104 @@
 """openai/chat: intermediate to native output."""
 
+from copy import deepcopy
 from typing import Any
-
-from openai import Omit
 
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.openai.chat.decoding.content import (
     chat_call,
     foreign_block,
     render_content,
-    thinking_enabled,
 )
-from my_llm.codec.shared.chunks import events
 from my_llm.codec.shared.conversion import (
+    OPAQUE,
+    Translations,
     blocks,
-    coalesce_messages,
+    coalesce_groups,
+    decode_functions,
     extras,
     original,
+    project_message,
+    select_present,
     source_protocol,
     tool_output,
 )
-from my_llm.codec.shared.keys import OPAQUE
 from my_llm.codec.shared.options import (
+    PreparedOptions,
     apply_max_tokens,
-    bindings,
-    check_protected,
+    merge_bindings,
     overlay_generated,
-    resolve_options,
 )
-from my_llm.codec.shared.rendering import project_message, select_present
-from my_llm.codec.shared.tools import decode_functions
-from my_llm.codec.shared.usage import counts
-from my_llm.exceptions import ConfigurationError, ResponseFailedError, UnsupportedCapabilityError
+from my_llm.codec.shared.stream import counts, events
+from my_llm.exceptions import ResponseFailedError
 from my_llm.profile.configuration import merge_dicts
 from my_llm.profile.resolution import ResolvedProfile
 
 PROTOCOL = "openai_chat"
-PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response_id"}
+
+
+def thinking_enabled(profile: ResolvedProfile, parameters: dict) -> bool:
+    if parameters.get("reasoning") is True or parameters.get("reasoning_effort", "none") != "none":
+        return True
+    body = merge_dicts(profile.get("extra_body", {}), parameters.get("extra_body"))
+    thinking = body.get("thinking", {})
+    return (
+        isinstance(thinking, dict) and thinking.get("type") in ("enabled", "adaptive")
+    ) or body.get("enable_thinking") is True
 
 
 class ChatCompletionsDecoder(BaseDecoder):
-    """Render intermediate values and assemble native request dictionaries."""
+    """Translate intermediate values into protocol dictionaries, retaining replay data."""
 
     __slots__ = ()
-    usage_modes = ("none", "stream_options")
+    protocol = PROTOCOL
 
-    def messages(
+    def request_parameters(self, profile: ResolvedProfile, options: PreparedOptions) -> dict:
+        tokens, headers = options.tokens, options.headers
+        body = deepcopy(options.body)
+        request = merge_bindings(
+            *(
+                {key: value for key, value in binding.items() if key != "extra_body"}
+                for binding in options.bindings
+            )
+        )
+        if profile.get("usage_mode", "none") == "stream_options":
+            request["stream_options"] = {"include_usage": True}
+        body = overlay_generated(request, body)
+        if headers:
+            request["extra_headers"] = deepcopy(headers)
+        if body:
+            request["extra_body"] = body
+        apply_max_tokens(request, profile, tokens, overlay="extra_body")
+        return request
+
+    def assemble_request(
+        self,
+        messages: list,
+        tools: list | None,
+        profile: ResolvedProfile,
+        *,
+        options: PreparedOptions,
+        **parameters: Any,
+    ) -> dict:
+        result = self.request_parameters(profile, options)
+        result.update(model=profile.model, stream=True, messages=messages)
+        if tools is not None:
+            result["tools"] = tools
+
+        return result
+
+    def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        result = []
-        for message in coalesce_messages(messages):
+        result = Translations()
+        for sources, message in coalesce_groups(messages):
+            result.group(
+                sources,
+                structure={
+                    "content": [{"image_url": {}, "file": {}}],
+                    "tool_calls": [{"function": {}}],
+                },
+            )
             if message.get(OPAQUE):
                 result.extend(original(message, PROTOCOL))
                 continue
@@ -93,20 +142,14 @@ class ChatCompletionsDecoder(BaseDecoder):
                 }
                 for b in tool_results
             )
-        if profile:
-            for value in result:
-                if not profile.get("supports_message_name", False):
-                    value.pop("name", None)
-                if value.get("role") != "assistant":
-                    continue
-                if not profile.get("replay_reasoning_content_when_tool_calls", False):
-                    value.pop("reasoning_content", None)
-                elif value.get("tool_calls") and thinking_enabled(profile, parameters):
-                    # Only active tool-call turns need a missing reasoning field padded.
-                    value.setdefault("reasoning_content", "")
+        if profile is not None and profile.get("replay_reasoning_content_when_tool_calls", False):
+            if thinking_enabled(profile, parameters):
+                for value in result:
+                    if value.get("role") == "assistant" and value.get("tool_calls"):
+                        value.setdefault("reasoning_content", "")
         return result
 
-    def tools(
+    def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         return decode_functions(
@@ -119,9 +162,10 @@ class ChatCompletionsDecoder(BaseDecoder):
                 }
                 for f in functions
             ],
+            structure={"function": {}},
         )
 
-    def chunks(
+    def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
@@ -197,57 +241,6 @@ class ChatCompletionsDecoder(BaseDecoder):
             result["prompt_tokens_details"] = {"cached_tokens": cached}
         if reasoning is not None:
             result["completion_tokens_details"] = {"reasoning_tokens": reasoning}
-        return result
-
-    def profile_defaults(self) -> dict:
-        return {
-            "replay_reasoning_content_when_tool_calls": False,
-            "supports_reasoning_effort": False,
-            "max_tokens_path": "$.max_completion_tokens",
-            "content_path": "$.choices[0].delta.content",
-            "reasoning_content_path": "$.choices[0].delta.reasoning_content",
-            "reasoning_enable_parameter": {"reasoning_effort": "medium"},
-            "reasoning_effort_parameter": {"reasoning_effort": "{effort}"},
-        }
-
-    def request_parameters(self, profile: ResolvedProfile, **parameters: Any) -> dict:
-        tokens, headers, body, effort = resolve_options(profile, protected=PROTECTED, **parameters)
-        request = {}
-        for binding in bindings(profile, effort):
-            if set(binding) - {"reasoning_effort", "extra_body"}:
-                raise ConfigurationError("reasoning bindings contain unsupported SDK parameters")
-            extra = binding.get("extra_body", {})
-            check_protected(extra, PROTECTED)
-            body = merge_dicts(body, extra)
-            if "reasoning_effort" in binding:
-                value = binding["reasoning_effort"]
-                if not isinstance(value, str):
-                    raise ConfigurationError("reasoning_effort must be a string")
-                request["reasoning_effort"] = value
-        if body.get("n") not in (None, 1):
-            raise UnsupportedCapabilityError("only one generated candidate is supported")
-        if profile.get("usage_mode", "none") == "stream_options":
-            request["stream_options"] = {"include_usage": True}
-        body = overlay_generated(request, body)
-        if headers:
-            request["extra_headers"] = headers
-        if body:
-            request["extra_body"] = body
-        apply_max_tokens(request, profile, tokens, protected=PROTECTED)
-        return request
-
-    def assemble_request(
-        self, messages: list, tools: list | None, profile: ResolvedProfile, **parameters: Any
-    ) -> dict:
-        previous = parameters.pop("previous_response_id", None)
-        has_previous = previous is not None and not isinstance(previous, Omit)
-        if has_previous:
-            raise ConfigurationError("previous_response_id requires Responses and a non-empty ID")
-        result = self.request_parameters(profile, **parameters)
-        result.update(model=profile.model, stream=True, messages=messages)
-        if tools is not None:
-            result["tools"] = tools
-
         return result
 
     def _envelope(self, **parameters: Any) -> dict:

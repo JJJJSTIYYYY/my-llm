@@ -1,66 +1,85 @@
 # 接入新的协议
 
-转换始终经过中间态：`源原生输入 → 源 Encoder → 中间态 → 目标 Decoder → 目标原生输出`。
-实现只理解自己的原生格式与中间态，不读取另一个协议的 Encoder / Decoder，
-也不在 MyCodec、MyLLM 或 shared 中增加厂商判断。
+每个协议提供 Encoder、Decoder、Transport，由 BaseCodec 组合。
+Encoder / Decoder 只翻译并保留信息；请求验证、字段过滤与 SDK 调用归 Transport。
 
-## 文件边界
+## 原生实现目录
 
-每个协议保留一个 codec.py，以及 encoding / decoding 两个方向。
-主类分别放在 encoder.py 和 decoder.py；消息、工具、事件和用量的方法可在同一类中阅读。
-本方向复用的内容块、字段、工具调用及 Schema 辅助放在 content.py；
-SDK 的打开和关闭独立放在协议根目录的 transport.py，与 encoding / decoding 并列，
-由 Codec 组合其 Transport 实例。没有对应辅助逻辑时不创建空模块。
-__init__.py 只导出接口。
+```text
+<protocol>/
+├── __init__.py                 # 仅导出
+├── codec.py                    # 协议身份与三个组件
+├── transport.py                # 参数验证、过滤、SDK 生命周期
+├── encoding/
+│   ├── __init__.py
+│   ├── encoder.py              # 原生 → 中间态
+│   └── content.py              # 按需提供的翻译辅助
+└── decoding/
+    ├── __init__.py
+    ├── decoder.py              # 中间态与生成选项 → 原生请求
+    └── content.py
+```
 
-## 必需的抽象接口
+实现保持无状态，使用空 `__slots__`。Profile 按调用传入，不保存流片段、客户端或请求历史。
+包初始化文件只导出接口；原生实现不导入其他协议、相反翻译方向或 Transport 的实现。
 
-[BaseEncoder](../../src/my_llm/codec/base/encoder.py) 的输入是本协议原生值，输出是中间态。
+## Encoder 与 Decoder
 
-| 方法 | 职责 |
+两个基类均要求提供 `protocol` 属性，可用类属性实现。
+messages / tools / chunks 是固定公开入口；原生实现提供对应的下划线钩子，
+签名为 `(values: list, profile: ResolvedProfile | None = None, **parameters)`。
+
+| 实现 | 必需接口 |
 | --- | --- |
-| match_item(item: dict) → bool | 判断单条原生消息或工具的形状。整批遍历、空输入和畸形容器处理由继承的 matches(values) 完成。 |
-| messages(values, profile=None, **parameters) → list[dict] | 消息及内容块转中间态，保留原生来源与未知字段。 |
-| tools(values, profile=None, **parameters) → list[dict] | 工具声明转中间态。 |
-| chunks(values, profile=None, **parameters) → list[dict] | 原生事件转中间态操作；不累积消息、文本或工具参数。 |
-| usage(value: dict \| None) → dict \| None | 原生计数转统一用量，同时保留原始计数；None 表示尚无用量。 |
+| BaseEncoder | `_messages`、`_tools`、`_chunks`、`usage`、`match_item`、`protocol`。 |
+| BaseDecoder | `_messages`、`_tools`、`_chunks`、`usage`、`protocol`、`request_parameters`、`assemble_request`。 |
 
-[BaseDecoder](../../src/my_llm/codec/base/decoder.py) 的输入是中间态，输出是本协议原生值。
+Encoder.matches 统一整批识别；Encoder 的固定入口处理恢复记录，
+保证同一批中新增工具结果仍可与恢复的原始调用 ID 对应。
+Decoder 的固定消息与工具入口保留未知扩展，并在需要时附带恢复记录。
+原生钩子内部复用本方向方法时调用 `_messages` 等钩子，避免重复包装。
+Decoder.result 默认返回首条消息，Responses 等协议可覆盖为 items 列表。
 
-| 方法或属性 | 职责 |
+Decoder.request_parameters(profile, options) 将已验证的 PreparedOptions 映射为原生字段，
+assemble_request(messages, tools, profile, *, options, **parameters) 将原生消息、工具和选项放入原生请求结构。
+Decoder.request 同样必须显式接收 options；这些入口不接受缺失选项后重新解析的兼容路径。
+PreparedOptions 是 codec.shared.options 中的请求独立内部值，字段与嵌套内容按只读借用；
+生成可变请求时复制所需字段。bindings 保存按原顺序展开占位符的绑定，并保留 omit 删除标记；
+不再分别保存 raw / expanded 两套副本。五协议统一使用 codec.shared.options.merge_bindings 递归合并绑定，
+在合并对应层时消费 omit，保留未修改的兄弟字段；列表和标量整体替换。
+Profile 只为 reasoning_enable_parameter / reasoning_effort_parameter 延迟消费删除标记，
+其余配置仍按既有按键覆盖规则合并。删除标记不发送给 SDK；生成参数优先级和必需字段校验仍由协议实现负责。
+这两个方向不实现请求参数校验、模型能力验证、SDK 字段过滤或请求执行。
+工具 JSON、媒体及原生 Schema 的解析仍属于翻译；上游失败事件仍需转换为相应流错误。
+
+## Transport
+
+[BaseTransport](../../src/my_llm/codec/base/transport.py) 提供固定的 request 流程：
+检查工具关联与能力 → filter_messages / filter_tools → SDK 消息与工具类型校验 → validate_request。
+过滤读取公开 SDK 类型，不把任意工具参数、结果字典或 JSON Schema 当作协议字段清理。
+
+| 接口 | 职责 |
 | --- | --- |
-| messages / tools / chunks / usage | 签名与 Encoder 对称，方向相反。只根据中间态和本协议的表达能力生成目标值。 |
-| request_parameters(profile, **parameters) → dict | 生成参数映射、受保护字段、推理绑定和 SDK 可接受的选项。 |
-| assemble_request(messages, tools, profile, **parameters) → dict | 接收已经解码的原生消息和工具，调用 request_parameters，放置 system / history / tools 等字段并校验原生服务端历史参数。 |
-| profile_defaults() → dict | 返回新的默认配置字典；不绑定 provider 或 model。 |
-| usage_modes: tuple[str, ...] | 声明支持的用量策略。 |
+| message_type / tool_type | 必需。公开 SDK 的消息与工具类型，用于结构字段过滤。 |
+| message_path / tool_path | 必需。声明原生请求中消息与工具的字段路径。 |
+| validate_parameters(profile, **parameters) | 验证并返回 PreparedOptions；协议在父类结果上检查原生参数绑定和能力限制，并返回准备好的选项。 |
+| validate_request(request, profile, **parameters) | 必需。验证原生选项，按 SDK 要求构造公开请求类型。 |
+| create_client(profile, **parameters) | 必需。同步创建官方 SDK 客户端。 |
+| upstream(client, request, profile, **parameters) | 必需。执行请求，返回清理本次响应资源的异步上下文管理器。 |
+| validate_input | 默认按公开 SDK 类型验证声明的输入协议，保留原始输入。 |
+| validate_profile / usage_modes | 默认检查用量模式，可增加连接和协议限制。 |
+| filter_messages / filter_tools | 默认按 SDK 类型过滤；可按 Profile 放行兼容字段或检查 Schema 表达能力，不改写消息内容。 |
+| allows_external_calls(previous_response_id) | 默认 False；服务端历史协议可覆盖。 |
+| close_client / client_key | 默认关闭 SDK 客户端、使用单个复用键；按 SDK 生命周期与请求头绑定规则覆盖。 |
 
-不覆盖 BaseEncoder.matches 或 BaseDecoder.request；这两个入口用 `typing.final` 标明固定流程。
-request 的入参始终为中间态，执行顺序为能力检查、messages、tools、assemble_request。
-tools=None 表示未提供，tools=[] 表示显式空列表，两者保持区别。
-MyCodec.request 只选择目标 Decoder，不再预先解码消息或工具。
+不覆盖 BaseTransport.request；tools=None 表示省略，tools=[] 表示显式空列表。
+BaseCodec.request 接收中间态，由 Transport 一次校验、解析统一生成控制参数，
+再将返回的 options 显式传给 Decoder.request 翻译，
+最后将原生请求交给 Transport.request 过滤和校验。MyCodec.request 只路由。
+BaseCodec.validate_profile 委托 Transport；协议默认值由 Profile 从 profile/defaults.py 配置表读取。
+Profile 解析负责合并配置、校验通用字段并建立快照，不创建 Codec 或 SDK 对象。
 
-Decoder 还有三个按需覆盖的默认钩子：validate_profile 调用通用用量策略校验，
-可扩展原生限制；result 默认返回首条完成消息，可改为原生列表形状；
-allows_external_calls 默认 False，支持服务端历史时才覆盖。
-
-[BaseTransport](../../src/my_llm/codec/base/transport.py) 独立负责官方 SDK 的生命周期与原生请求执行，
-不读取中间态，也不引用 Encoder / Decoder：
-
-| 方法 | 职责 |
-| --- | --- |
-| create_client(profile, **parameters) | 必需。同步创建官方 SDK 客户端，MyLLM 负责保存与复用。 |
-| upstream(client, request, profile, **parameters) | 必需。借用客户端，执行已组装的原生请求，返回负责关闭本次响应流和响应体的异步上下文管理器。 |
-| close_client(client) | 默认 await client.close()；需要分别关闭同步与异步 SDK 部分时覆盖。 |
-| client_key(profile, **parameters) | 默认 None；SDK 将请求头等选项绑定到客户端时返回不可变缓存键。 |
-| validate_profile(profile) | 默认无操作；校验 SDK 连接、重试等限制，不创建客户端。 |
-
-客户端关闭由 MyLLM 调用 Transport.close_client；不要把响应、工具参数或序号放进客户端缓存键。
-BaseCodec.validate_profile 协调 Decoder 的转换策略校验与 Transport 的连接校验。
-详见[客户端生命周期](../design/client-lifecycle.md)。
-
-[BaseCodec](../../src/my_llm/codec/base/codec.py) 要求提供 protocol_or_api_style、encoder、decoder 和 transport。
-可以用类属性满足这四个抽象属性，与内置实现一致：
+## Codec 组合
 
 ```python
 from my_llm.codec.base.codec import BaseCodec
@@ -76,40 +95,29 @@ class ChatCompletionsCodec(BaseCodec):
     transport = ChatCompletionsTransport()
 ```
 
-新协议用自己的实现替换示例中的身份与三个实现类即可。缺少必需接口的类不能实例化。
-Encoder / Decoder / Transport / Codec 均使用空 __slots__，只声明方法、不可变策略和无状态实现；
-不保存 profile、识别结果、响应 ID、流序号或片段。profile 按调用传入，None 表示标准协议；
-所有调用均不得修改输入字典或解析后的配置。请求状态由 StreamState 持有。
+## 中间态与恢复
 
-## 中间态约定
+消息使用 role 与 content 块；工具调用与结果使用 tool_use / tool_result。
+它是内部开放字典，不是新的应用消息类型。
 
-中间态是 codec 内部开放字典，不是新增的应用消息协议。应复用现有机制，
-避免另造一套协议间交换格式：
+- conversion.remember / original 保存来源与原生快照；residual 提取未知字段，保留层级和列表位置。
+- remember 的 preserve 参数同时记录原路径残留，供 Decoder 在输出中保留。
+- replay 中的恢复数据随转换结果保存；只有整个对应分组未修改时才恢复原始中间态。
+- Decoder 使用 conversion.Translations 标记每组输出的来源；合并消息使用 coalesce_groups，不根据输出下标猜测来源。
+- Translations.group 的 structure 声明允许递归保留扩展的原生容器；工具参数和结果等应用数据整体由翻译值决定。
+- conversion.encode_functions / decode_functions 管理工具声明；stream 管理原生事件操作与用量计数。
+- options 管理配置字段路径与生成选项；transport 提供 SDK 字段过滤、工具关联验证及响应资源关闭。
+- 保留键从 [conversion.py](../../src/my_llm/codec/shared/conversion.py) 导入，不在原生输入中复用这些名称。
 
-- 消息使用 role 和 content 块；文本为 `{"type": "text", "text": "..."}`，工具调用与结果使用 tool_use / tool_result 块。
-- [conversion.py](../../src/my_llm/codec/shared/conversion.py) 的 dictionaries 负责值展开与复制，remember / original 负责来源快照和同协议回放，residual 负责原路径的未消费字段。
-- [tools.py](../../src/my_llm/codec/shared/tools.py) 的 encode_functions / decode_functions 管理统一工具声明和不透明工具的拒绝；保留键从 [keys.py](../../src/my_llm/codec/shared/keys.py) 导入。
-- [chunks.py](../../src/my_llm/codec/shared/chunks.py) 的 batch 包装原生事件与操作，BlockRef 标识来源块；块、快照、终态和请求累积规则见[流状态设计](../design/stream-state.md)。
-- [usage.py](../../src/my_llm/codec/shared/usage.py) 的 record / counts 管理统一计数组，不凭空补充供应商未报告的计数。
-
-同协议回放保留原生扩展、签名和不透明值；跨协议只输出目标能够表示的字段。
-源编码不根据目标格式丢字段，目标解码不借用其他协议的转换逻辑。
-用同方向的 self.messages / self.usage 或 content 辅助复用逻辑。
+恢复记录不进入请求。不能把其他协议的密文解释为本协议的签名；
+翻译的可见内容与保留的原生回放数据应区分处理。详见[保留规则](../audits/lossless.md)。
 
 ## 注册与验证
 
-1. 实现两个转换方向与 Transport，由 Codec 组合，在 [MyCodec 注册表](../../src/my_llm/codec/converter.py) 加入实例；匹配优先级由注册顺序决定。
-2. 在 [configuration.py](../../src/my_llm/profile/configuration.py) 的 Protocol / PROTOCOLS 中加入公开身份，同步包导出和协议文档。MyLLM、公共流状态和 shared 无需增加原生协议分支。
-3. 独立编写原生消息、工具和流样例，不用待测转换器生成预期。新增协议与全部已有协议双向验证消息、工具、完整流和请求，并检查同协议扩展保留、未知值拒绝、用量和终态。
-4. 通过官方 SDK 和本地 HTTP transport 验证请求、正常完成、异常、取消、提前退出及并发隔离。无需调用真实模型服务。
+1. 在 MyCodec 注册表、Protocol / PROTOCOLS 与 profile/defaults.py 配置表中加入协议，更新公开文档。
+2. 独立编写原生样例，覆盖消息、工具、完整流、未知字段和未修改分组的往返。
+3. 使用官方 SDK 和本地 HTTP transport 检查实际请求：保留数据已过滤，原生签名可回放，工具参数与 JSON Schema 不被误删。
+4. 验证正常、取消、失败、提前退出、并发隔离和客户端关闭。
 
-基类完整性和请求流水线测试见 [test_native_codecs.py](../../tests/unit/test_native_codecs.py)，
-方向与协议隔离测试见 [test_codec_boundaries.py](../../tests/contract/test_codec_boundaries.py)。
-完整检查与发行包验证见[本地开发规范](development.md)和[构建指南](building.md)。
-
-旧的 messages/、tools/、stream/、request/ 内部模块已合并，没有保留旧路径的转发。
-自定义实现需将 matches 改为 match_item，将原先接收原生历史的 request 改为 assemble_request，
-并提供 request_parameters；调用 Decoder.request 的代码应改传中间态。
-SDK 客户端职责已从 BaseDecoder 迁至 BaseTransport。原先 Decoder 上的 create_client、
-upstream、close_client、client_key 迁入 Transport，SDK 连接限制也在 Transport.validate_profile 校验；
-由 Codec.transport 组合。旧 decoding/transport.py 路径已移除，无兼容转发。
+组件与依赖约束见[契约测试](../../tests/unit/test_native_codecs.py)和[边界测试](../../tests/contract/test_codec_boundaries.py)。
+构建及完整验证命令见[开发规范](development.md)。

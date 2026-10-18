@@ -9,7 +9,7 @@ from copy import deepcopy
 import pytest
 
 from my_llm import MyCodec, UnsupportedCapabilityError
-from my_llm.codec.shared.validation import validate_history
+from my_llm.codec.shared.transport import validate_history
 from tests.helpers.protocols import CHAT_HISTORY, PROTOCOLS, history, tools
 
 
@@ -133,7 +133,7 @@ def test_unknown_tool_wrapper_extension_is_preserved(target):
     result = MyCodec().convert(tools=incoming, input_format="openai_chat", target_format=target)[
         "tools"
     ]
-    assert ("wrapper_extension" in result[0]) is (target == "openai_chat")
+    assert result[0]["wrapper_extension"] == {"nested": [1, 2]}
 
 
 @pytest.mark.parametrize("source", PROTOCOLS)

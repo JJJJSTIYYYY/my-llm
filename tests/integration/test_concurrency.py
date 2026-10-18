@@ -201,8 +201,8 @@ def make_llm(protocol, stdio):
             usage_mode="stream_options" if protocol == "openai_chat" else "native",
         ),
         model=ModelProfile(model="demo", max_tokens=2048, supports_function_calling=True),
-        # Exercise first-call format binding while other requests are in flight.
-        stdio_protocol=None if stdio == "openai_chat" else stdio,
+        # Exercise unique format binding while other requests are in flight.
+        stdio_protocol=None if stdio == "gemini" else stdio,
     )
 
 

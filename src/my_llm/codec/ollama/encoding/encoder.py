@@ -4,20 +4,19 @@ from typing import Any
 
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.ollama.encoding.content import media_type, tool_block
-from my_llm.codec.shared.chunks import BlockRef, batch
 from my_llm.codec.shared.conversion import (
     allocate_call_id,
     associate_tool_result,
     blocks,
     dictionaries,
+    encode_functions,
     extras,
+    mapping_list,
     remember,
     residual,
 )
-from my_llm.codec.shared.matching import mapping_list
-from my_llm.codec.shared.tools import encode_functions
-from my_llm.codec.shared.usage import record
-from my_llm.exceptions import MessageValidationError, ResponseFailedError
+from my_llm.codec.shared.stream import BlockRef, batch, record
+from my_llm.exceptions import ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
 
 PROTOCOL = "ollama"
@@ -28,6 +27,7 @@ class OllamaEncoder(BaseEncoder):
     """Convert native messages, tools, events and usage to intermediate values."""
 
     __slots__ = ()
+    protocol = PROTOCOL
 
     def match_item(self, item: dict) -> bool:
         if item.get("type") == "function":
@@ -48,7 +48,7 @@ class OllamaEncoder(BaseEncoder):
             return False
         return isinstance(item.get("content"), str) or item.get("content") is None
 
-    def messages(
+    def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         pending = []
@@ -62,12 +62,6 @@ class OllamaEncoder(BaseEncoder):
             if call.get("id")
         }
         for index, message in enumerate(messages):
-            if (
-                message.get("role") not in ("system", "user", "assistant", "tool")
-                or "parts" in message
-                or "type" in message
-            ):
-                raise MessageValidationError("message does not use the bound ollama protocol")
             content = blocks(message.get("content"))
             content.extend(
                 {
@@ -132,7 +126,7 @@ class OllamaEncoder(BaseEncoder):
             )
         return result
 
-    def tools(
+    def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         return encode_functions(
@@ -149,7 +143,7 @@ class OllamaEncoder(BaseEncoder):
             },
         )
 
-    def chunks(
+    def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []

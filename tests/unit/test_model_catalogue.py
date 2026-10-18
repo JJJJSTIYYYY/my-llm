@@ -145,7 +145,12 @@ async def test_metadata_does_not_change_request_or_limit_content(protocol, windo
         lambda **kwargs: client,
     )
     text = "content longer than the configured context window " * 10
-    await generate(provider=provider, model=model, messages=[{"role": "user", "content": text}])
+    await generate(
+        stdio_protocol="openai_chat",
+        provider=provider,
+        model=model,
+        messages=[{"role": "user", "content": text}],
+    )
     request = client.requests[0]
     assert "models" not in request and "max_context_window" not in request
     encoded = request["input" if protocol == "openai_responses" else "messages"]

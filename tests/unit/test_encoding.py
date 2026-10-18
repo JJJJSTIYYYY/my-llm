@@ -140,7 +140,7 @@ def test_tools_conversion_and_no_input_mutation(
     ]
     before = copy.deepcopy(tools)
     request = codec(profile_factory(protocol, supports_function_calling=True)).encode(
-        [{"role": "user", "content": "x"}], tools=tools
+        [{"role": "user", "content": "x"}], tools=tools, tools_format=input_format
     )
     assert request["tools"] == (
         [{"type": "function", **function_tool["function"]}]
@@ -153,7 +153,7 @@ def test_tools_conversion_and_no_input_mutation(
 
 @pytest.mark.parametrize("protocol", ["openai_responses", "openai_chat"])
 @pytest.mark.parametrize("input_format", ["openai_responses", "openai_chat"])
-def test_tool_extensions_are_native_only_and_foreign_null_options_are_omitted(
+def test_tool_extensions_are_filtered_and_foreign_null_options_are_omitted(
     profile_factory, protocol, input_format
 ):
     function = {
@@ -169,12 +169,20 @@ def test_tool_extensions_are_native_only_and_foreign_null_options_are_omitted(
         else {"type": "function", "function": function}
     )
     request = codec(profile_factory(protocol, supports_function_calling=True)).encode(
-        [{"role": "user", "content": "x"}], tools=[tool]
+        [{"role": "user", "content": "x"}], tools=[tool], tools_format=input_format
     )
     if protocol == input_format:
-        assert request["tools"] == [tool]
+        expected = copy.deepcopy(tool)
+        native_function = expected["function"] if protocol == "openai_chat" else expected
+        native_function.pop("x_provider")
+        if protocol == "openai_chat":
+            native_function.pop("description")
+            native_function.pop("parameters")
+        assert request["tools"] == [expected]
     elif protocol == "openai_responses":
-        assert request["tools"] == [{"type": "function", "name": "weather", "strict": False}]
+        assert request["tools"] == [
+            {"type": "function", "name": "weather", "parameters": None, "strict": False}
+        ]
     else:
         assert request["tools"] == [{"type": "function", "function": {"name": "weather"}}]
 
@@ -226,6 +234,7 @@ def test_reasoning_replay_only_pads_tool_calls_when_thinking(
         profile=profile,
         reasoning=thinking,
     )["messages"][0]
+    result = MyCodec().transport(protocol).filter_messages([result], profile, reasoning=thinking)[0]
     assert (key in result) is (replay and (bool(visible) or (has_calls and thinking)))
     if key in result:
         assert result[key] == (visible or "")

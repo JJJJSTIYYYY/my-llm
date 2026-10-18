@@ -10,19 +10,19 @@ from my_llm.codec.openai.responses.encoding.content import (
     response_fields,
     tool_operations,
 )
-from my_llm.codec.shared.chunks import BlockRef, batch
 from my_llm.codec.shared.conversion import (
+    OPAQUE,
+    SOURCE,
     arguments,
     dictionaries,
+    encode_functions,
     extras,
+    mapping_list,
     remember,
     residual,
 )
-from my_llm.codec.shared.keys import OPAQUE, SOURCE
-from my_llm.codec.shared.matching import mapping_list
-from my_llm.codec.shared.tools import encode_functions
-from my_llm.codec.shared.usage import record
-from my_llm.codec.shared.values import path_value
+from my_llm.codec.shared.options import path_value
+from my_llm.codec.shared.stream import BlockRef, batch, record
 from my_llm.exceptions import ResponseFailedError, ResponseIncompleteError
 from my_llm.profile.resolution import ResolvedProfile
 
@@ -33,6 +33,7 @@ class ResponsesEncoder(BaseEncoder):
     """Convert native messages, tools, events and usage to intermediate values."""
 
     __slots__ = ()
+    protocol = PROTOCOL
 
     def match_item(self, item: dict) -> bool:
         kind = item.get("type")
@@ -71,7 +72,7 @@ class ResponsesEncoder(BaseEncoder):
             )
         )
 
-    def messages(
+    def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
@@ -133,7 +134,7 @@ class ResponsesEncoder(BaseEncoder):
             result.append(value)
         return result
 
-    def tools(
+    def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         return encode_functions(
@@ -149,7 +150,7 @@ class ResponsesEncoder(BaseEncoder):
             },
         )
 
-    def chunks(
+    def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
@@ -201,7 +202,7 @@ class ResponsesEncoder(BaseEncoder):
                 kind == "response.output_item.done"
                 and event.get("item", {}).get("type") == "function_call"
             ):
-                block = dictionaries(self.messages([event["item"]]))[0]["content"][0]
+                block = dictionaries(self._messages([event["item"]]))[0]["content"][0]
                 ops.append(
                     {"type": "block_set", "ref": BlockRef("tool_use", index), "block": block}
                 )
@@ -370,7 +371,7 @@ class ResponsesEncoder(BaseEncoder):
 
     def _snapshot(self, output: list) -> dict:
         """Address final blocks with the same item/part coordinates as live deltas."""
-        encoded = self.messages(output)
+        encoded = self._messages(output)
         blocks = []
         for index, (item, message) in enumerate(zip(output, dictionaries(encoded))):
             if message.get(OPAQUE):

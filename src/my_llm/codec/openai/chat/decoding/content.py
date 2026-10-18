@@ -2,10 +2,14 @@
 
 from typing import Any
 
-from my_llm.codec.shared.conversion import extras, json_arguments
-from my_llm.codec.shared.rendering import project_block, select, text_result
+from my_llm.codec.shared.conversion import (
+    extras,
+    json_arguments,
+    project_block,
+    select,
+    text_result,
+)
 from my_llm.exceptions import UnsupportedCapabilityError
-from my_llm.profile.configuration import merge_dicts
 
 FIELDS = {
     "text": ("type", "text"),
@@ -79,18 +83,6 @@ def foreign_block(block: dict) -> dict | None:
     return project_block(
         block, FIELDS, text_fields={"thinking": "thinking"}, omitted=("redacted_thinking",)
     )
-
-
-def thinking_enabled(profile: Any, parameters: dict) -> bool:
-    if parameters.get("reasoning") is True or parameters.get("reasoning_effort", "none") != "none":
-        return True
-    body = merge_dicts(
-        profile.get("extra_body", {}) if profile else {}, parameters.get("extra_body")
-    )
-    thinking = body.get("thinking", {})
-    return (
-        isinstance(thinking, dict) and thinking.get("type") in ("enabled", "adaptive")
-    ) or body.get("enable_thinking") is True
 
 
 def chat_call(block: dict) -> dict:

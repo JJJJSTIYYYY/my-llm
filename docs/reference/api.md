@@ -17,14 +17,16 @@
 | `ollama` | 原生 role/content 消息列表 | assistant 消息字典 | ChatResponse 字典 |
 
 返回的是消息或 items，可直接追加到相同协议的历史；不额外包一层统一结果对象。
+跨协议消息可能带有恢复扩展，保存完整字典可在下一轮恢复原生签名、密文与未知字段。
 Responses 使用 `history.extend(result)`，其他协议使用 `history.append(result)`。
 完成原因和用量出现在各协议标准流事件的位置，不增加自定义消息字段。
 所有输入可使用普通字典或可转为字典的官方 SDK 模型。
 
 `stdio_protocol` 与 `ProviderProfile.protocol` 独立。前者未指定时，
-`guess_stdio_protocol(messages_or_tools)` 从整个列表识别并绑定一次；空列表或无法识别的
-输入报 `MessageValidationError`。纯文本 Chat / Responses / Anthropic / Ollama 输入有重叠，
-默认按 `openai_chat`；显式指定可消除歧义。绑定后不会重新猜测。
+`guess_stdio_protocol(messages_or_tools)` 从整个列表识别，仅在唯一匹配一种协议时绑定；
+空列表、零匹配或多匹配均报 `MessageValidationError`，错误不会绑定协议。
+纯文本 Chat / Responses / Anthropic / Ollama 输入有重叠，应显式指定 `stdio_protocol`。
+显式指定会跳过推测，输入仍按所选协议验证；绑定后不会重新猜测。
 messages 和 tools 都遵循这个协议，历史不混用不同协议格式。
 
 ```python
@@ -72,6 +74,7 @@ provider、model、protocol、连接参数和 SDK client 不作为实例 generat
 先完成或关闭所有响应流，再关闭实例。关闭操作可重复调用，关闭后新请求及尚未开始消费的流
 均报 RuntimeError，不重新创建客户端。实例应在同一异步事件循环内使用。
 独立函数 `generate(...)` 的临时实例自动清理；返回流时，其所有权延续至 MessageStream 关闭。
+高级集成可通过 `stream.add_close_callback(async_callback)` 登记异步清理；回调在流关闭时执行一次，包含尚未开始消费的情况。
 
 Ollama 的公开 chat 接口不接受逐请求 headers，因此它按合并后的请求头分别缓存 SDK 客户端；
 相同请求头复用，不修改共享客户端的 headers。其余协议将请求头作为本次 SDK 调用的参数。
@@ -154,6 +157,7 @@ async def add_round_trip(provider, model_id):
 encode 从标准协议到内部开放字典；decode 从内部字典到标准协议。
 `profile=None` 表示标准协议，有 profile 时应用厂商配置。
 BaseCodec 的 `match_protocol(values)` 返回协议名或 None。
+MyCodec 的 `match_protocol(values)` 只有在整批输入唯一匹配时返回协议名；零匹配或多匹配返回 None。
 
 ```python
 from my_llm import MyCodec
@@ -169,9 +173,16 @@ assert native["messages"] == [{"role": "user", "parts": [{"text": "Hello"}]}]
 # 同样可用 codec.convert(..., input_format=..., target_format=...) 一步转换。
 ```
 
-MyCodec 同时持有五个 Codec，可在不同调用中复用。中间态是内部实现，不是应用消息协议；
-源编码将未知字段保留在中间态的原层级，字段冲突时转换值优先；标准格式（`profile=None`）下，同协议与未经修改的中间态之间无损。跨协议输出可能丢弃目标协议不支持的字段，不保证跨协议往返无损。详见[保留规则与验证](../audits/lossless.md)。外来扩展仅在目标有已知表示时迁移；必要的不透明内容或 SDK 无法完整表达的约束在请求前明确拒绝，详见[配置与兼容边界](configuration.md#跨协议请求的处理边界)。
-增量 encode/decode 不累积片段；需要完整消息或完整工具时由 MyLLM 的请求状态负责累积。
+MyCodec 同时持有五个 Codec，可复用于不同转换路径。中间态是内部实现，不是应用消息协议。
+Encoder 和 Decoder 保留未知字段；路径冲突时转换值优先，无法直接共存的信息保存在恢复记录中。
+重新输入完整且未修改的转换结果，可恢复原生数据，包括 Anthropic 签名、redacted thinking 和
+Responses encrypted_content。恢复记录支持 JSON 保存，不依赖实例缓存。
+
+修改对应转换分组会使旧快照失效；新增消息和工具结果仍可接在未修改的分组之后。
+流式多轮对话应保存 stream.result。完整事件列表可离线往返；实时逐事件转换不积累完整回放历史。
+
+实际请求由 Transport 过滤不支持字段与恢复记录，不修改业务历史；工具参数、结果对象和 JSON Schema
+作为应用数据保留。详见[保留规则](../audits/lossless.md)与[兼容边界](configuration.md#跨协议请求的处理边界)。
 
 ## 异常边界
 
@@ -185,26 +196,29 @@ MyCodec 同时持有五个 Codec，可在不同调用中复用。中间态是内
 整个流；跨协议的完整 batch 在本次调用内组装，不保存到转换器。
 实时消费使用 MyLLM，由每次请求持有累积状态；BaseEncoder/BaseDecoder 仍只转换单次传入的块。
 
-协议策略由各自 Encoder / Decoder 管理：Encoder 还负责原生格式识别及用量归一化；
-Decoder 还负责默认值、用量策略、请求组装与收集结果形状。
-SDK 客户端的创建、关闭、复用键及请求执行由 BaseTransport 独立负责，作为 Codec.transport 统一组合。
-MyCodec 只路由，MyLLM 只编排每次请求；这些方法不在转换器实例上保留流状态。
+Encoder / Decoder 负责翻译、原生来源与字段保留；Decoder 还翻译生成选项并组织原生请求结构。
+BaseTransport 负责输入与工具关联验证、模型能力、生成参数和原生结构验证、字段过滤，
+同时管理官方 SDK 创建、关闭、复用键及请求执行。MyLLM 只编排每次请求并缓存客户端。
 
-自定义实现除 messages / tools / chunks 外，需实现以下抽象接口：
+自定义实现需提供以下接口；公开 messages / tools / chunks 入口由基类固定实现：
 
 | 实现 | 必须提供 |
 | --- | --- |
-| BaseEncoder | match_item(item)、usage(value)；整批 matches(values) 继承固定实现。 |
-| BaseDecoder | request_parameters(profile, **parameters)、assemble_request(messages, tools, profile, **parameters)、profile_defaults()、usage(value)，以及 usage_modes 属性。 |
-| BaseTransport | create_client(profile, **parameters)、upstream(client, request, profile, **parameters)；不处理消息中间态。 |
+| BaseEncoder | protocol、_messages / _tools / _chunks、match_item、usage。 |
+| BaseDecoder | protocol、_messages / _tools / _chunks、usage、request_parameters、assemble_request；result 可覆盖收集结果形状。 |
+| BaseTransport | message_type / tool_type、message_path / tool_path、validate_request、create_client、upstream。 |
 
-BaseCodec 的协议身份、encoder、decoder 和 transport 均为必需的抽象属性。
-Decoder.request 继承固定实现，接收中间态，依次检查能力、解码消息和工具、调用 assemble_request；
-assemble_request 才接收原生消息与工具。完整实现和迁移约定见[接入协议指南](../guides/adding-protocol.md)。
+BaseCodec.request 接收中间态，由 Transport.validate_parameters 一次校验、解析生成控制参数，
+再把返回的内部 PreparedOptions 显式传给 Decoder.request 翻译消息、工具和请求选项，
+最后进入 Transport.request，验证工具关联、模型能力和原生结构，并过滤不支持字段。
+自定义 Decoder 的 request_parameters(profile, options) 与 assemble_request(..., options=options)
+必须复用已准备的选项；直接调用这些方法也必须提供 options，不重新解析原始生成参数。
+原始参数继续传给消息翻译，以保留显式思考开关和兼容服务的回放语义。
+Profile 默认值来自纯配置表，解析负责分层合并、通用字段校验和快照；协议特有限制与 SDK 约束由 Transport 补充验证。
+直接使用 resolve_profiles / MyCodec 的集成应调用 codec.validate_profile(resolved)；MyLLM 已在构造时完成此步骤。
+完整实现约定见[接入协议指南](../guides/adding-protocol.md)。
 
-Transport.create_client 创建官方 SDK 客户端，MyLLM 保存并复用；close_client 默认调用 SDK 的异步 close，
-可覆盖原生关闭顺序。client_key 默认 None，SDK 将请求选项绑定到客户端时可覆盖。
-Transport.upstream 借用客户端，返回异步上下文管理器，只关闭本次 SDK 流与响应体。
-Transport.validate_profile 校验连接限制，BaseCodec.validate_profile 统一协调 Decoder 与 Transport 校验。
-validate_profile、result 和 allows_external_calls 有通用默认实现；
-需要额外校验、列表结果或服务端历史能力的协议在自己的 Decoder 中覆盖。
+Transport.create_client 创建官方 SDK 客户端，由 MyLLM 保存并复用；close_client 默认调用异步 close。
+client_key 默认 None，SDK 将请求选项绑定到客户端时可覆盖。
+Transport.upstream 借用客户端，只关闭本次响应流与响应体。
+validate_profile 与 allows_external_calls 可按协议覆盖；Decoder 不再提供这些方法。

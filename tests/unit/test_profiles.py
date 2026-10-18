@@ -3,6 +3,7 @@ import pytest
 from my_llm import (
     ConfigurationError,
     ModelProfile,
+    MyLLM,
     OverridableProfile,
     ProviderProfile,
     UnsupportedProviderError,
@@ -160,8 +161,9 @@ def test_bad_provider_configuration(field, value):
 )
 def test_incompatible_usage_modes(protocol, usage):
     with pytest.raises(ConfigurationError):
-        resolve_profiles(
-            ProviderProfile(protocol=protocol, usage_mode=usage), ModelProfile(model="demo")
+        MyLLM(
+            provider=ProviderProfile(protocol=protocol, usage_mode=usage),
+            model=ModelProfile(model="demo"),
         )
 
 

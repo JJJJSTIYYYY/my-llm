@@ -51,6 +51,7 @@ async def test_unknown_option_fails_before_client_creation(monkeypatch):
 
     monkeypatch.setattr("my_llm.codec.anthropic.transport.AsyncAnthropic", must_not_open)
     llm = MyLLM(
+        stdio_protocol="openai_chat",
         provider=ProviderProfile(protocol="anthropic"),
         model=ModelProfile(model="demo", max_tokens=64),
     )
@@ -91,11 +92,15 @@ def test_ollama_effort_mapping_can_use_model_defined_strings(profile_factory):
 
 
 @pytest.mark.parametrize("retries", [1, 3])
-def test_ollama_cannot_silently_ignore_requested_retries(profile_factory, retries):
+def test_ollama_cannot_silently_ignore_requested_retries(retries):
     from my_llm import UnsupportedCapabilityError
 
     with pytest.raises(UnsupportedCapabilityError, match="max_retries"):
-        profile_factory("ollama", provider=ProviderProfile(protocol="ollama", max_retries=retries))
+        MyLLM(
+            stdio_protocol="openai_chat",
+            provider=ProviderProfile(protocol="ollama", max_retries=retries),
+            model=ModelProfile(model="demo"),
+        )
 
 
 @pytest.mark.parametrize("protocol,field", [("openai_chat", "n"), ("gemini", "candidate_count")])

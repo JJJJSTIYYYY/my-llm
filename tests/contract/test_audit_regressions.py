@@ -14,6 +14,7 @@ from my_llm import (
 )
 from my_llm.codec.gemini.encoding.content import json_schema
 from my_llm.stream._state import StreamState
+from tests.helpers.preservation import translated
 from tests.helpers.protocols import PROTOCOLS, response_completed, stream_events
 from tests.helpers.sdk import EVENT_TYPES, MESSAGE_TYPES, TOOL_TYPES, assert_native
 from tests.helpers.streaming import render
@@ -29,7 +30,7 @@ def native_events(protocol, events):
 
 
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_a01_gemini_native_schema_is_normalized_and_replay_is_exact(target):
+def test_a01_gemini_native_schema_is_normalized_and_replay_is_exact(target, profile_factory):
     incoming = types.Tool(
         function_declarations=[
             types.FunctionDeclaration(
@@ -57,7 +58,9 @@ def test_a01_gemini_native_schema_is_normalized_and_replay_is_exact(target):
     encoded = codec.encode(tools=[incoming], input_format="gemini")
     if target == "ollama":
         with pytest.raises(UnsupportedCapabilityError, match="discard tool parameter schema"):
-            codec.decode(**encoded, target_format=target)
+            codec.transport(target).filter_tools(
+                codec.decode(**encoded, target_format=target)["tools"], profile_factory(target)
+            )
         return
     result = codec.decode(**encoded, target_format=target)["tools"]
     assert_native(result[0], TOOL_TYPES[target])
@@ -140,7 +143,7 @@ def test_a03_refusal_is_accumulated_inside_target_lifecycle(source, target):
             )
             == "No"
         )
-        assert MyCodec().decode(state.messages(), target_format=target)["messages"] == [
+        assert translated(MyCodec().decode(state.messages(), target_format=target)["messages"]) == [
             {"role": "assistant", "content": None, "refusal": "No"}
         ]
     if target == "openai_responses":
@@ -281,6 +284,7 @@ def test_a08_tool_result_becomes_an_ollama_string(content, expected):
 )
 def test_a09_foreign_thinking_does_not_forge_an_anthropic_signature(source, incoming):
     result = MyCodec().convert(incoming, input_format=source, target_format="anthropic")["messages"]
+    result = translated(result)
     assert result == [{"role": "assistant", "content": [{"type": "text", "text": "Thinking"}]}]
     assert_native(result[0], MESSAGE_TYPES["anthropic"])
 
@@ -409,7 +413,9 @@ def test_foreign_thinking_streams_can_be_consumed_without_forged_signatures(sour
 
 @pytest.mark.parametrize("source", PROTOCOLS)
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_foreign_message_extensions_cannot_become_native_request_fields(source, target):
+def test_foreign_message_extensions_cannot_become_native_request_fields(
+    source, target, profile_factory
+):
     from tests.helpers.protocols import history
 
     incoming = history(source)
@@ -419,15 +425,19 @@ def test_foreign_message_extensions_cannot_become_native_request_fields(source, 
     if source == target:
         assert converted == incoming
     else:
-        assert all("vendor_metadata" not in message for message in converted)
-        for message in converted:
+        assert converted[0]["vendor_metadata"] == incoming[0]["vendor_metadata"]
+        filtered = MyCodec().transport(target).filter_messages(converted, profile_factory(target))
+        assert all("vendor_metadata" not in message for message in filtered)
+        for message in filtered:
             assert_native(message, MESSAGE_TYPES[target])
     assert incoming == before
 
 
 @pytest.mark.parametrize("source", PROTOCOLS)
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_foreign_tool_extensions_cannot_become_native_request_fields(source, target):
+def test_foreign_tool_extensions_cannot_become_native_request_fields(
+    source, target, profile_factory
+):
     from tests.helpers.protocols import tools
 
     incoming = tools(source)
@@ -439,8 +449,10 @@ def test_foreign_tool_extensions_cannot_become_native_request_fields(source, tar
     if source == target:
         assert converted == incoming
     else:
-        assert all("vendor_metadata" not in tool for tool in converted)
-        for tool in converted:
+        assert converted[0]["vendor_metadata"] == incoming[0]["vendor_metadata"]
+        filtered = MyCodec().transport(target).filter_tools(converted, profile_factory(target))
+        assert all("vendor_metadata" not in tool for tool in filtered)
+        for tool in filtered:
             assert_native(tool, TOOL_TYPES[target])
     assert incoming == before
 

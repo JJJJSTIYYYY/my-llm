@@ -1,57 +1,100 @@
 """gemini: intermediate to native output."""
 
+from copy import deepcopy
 from typing import Any
-
-from google.genai import types
-from openai import Omit
 
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.gemini.decoding.content import decode_part, foreign_block
-from my_llm.codec.shared.chunks import events
 from my_llm.codec.shared.conversion import (
-    coalesce_messages,
+    OPAQUE,
+    Translations,
+    coalesce_groups,
+    decode_functions,
     extras,
     original,
+    plain,
+    project_message,
+    select_present,
     source_protocol,
 )
-from my_llm.codec.shared.keys import OPAQUE
-from my_llm.codec.shared.options import apply_max_tokens, native_options
-from my_llm.codec.shared.rendering import project_message, select_present
-from my_llm.codec.shared.tools import decode_functions
-from my_llm.codec.shared.usage import counts
-from my_llm.codec.shared.values import plain
-from my_llm.exceptions import ConfigurationError, UnsupportedCapabilityError
+from my_llm.codec.shared.options import PreparedOptions, apply_max_tokens
+from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile
 
-PROTECTED = {
-    "model",
-    "stream",
-    "messages",
-    "contents",
-    "input",
-    "tools",
-    "system_instruction",
-    "previous_response_id",
-    "config",
-    "automatic_function_calling",
-    "http_options",
-}
-REQUEST_FIELDS = set(types.GenerateContentConfig.model_fields) - PROTECTED
 PROTOCOL = "gemini"
 
 
 class GeminiDecoder(BaseDecoder):
-    """Render intermediate values and assemble native request dictionaries."""
+    """Translate intermediate values into protocol dictionaries, retaining replay data."""
 
     __slots__ = ()
-    usage_modes = ("none", "native")
+    protocol = PROTOCOL
 
-    def messages(
+    def request_parameters(
+        self, profile: ResolvedProfile, options: PreparedOptions
+    ) -> dict[str, Any]:
+        tokens, headers, effort = options.tokens, options.headers, options.effort
+        config = deepcopy(options.body)
+        # Admit native generation settings only, never native cloud tools or AFC overrides.
+        config["automatic_function_calling"] = {"disable": True}
+        if headers:
+            config["http_options"] = {"headers": deepcopy(headers)}
+        if effort:
+            self._apply_reasoning(config, profile, effort)
+        request = {"config": config}
+        apply_max_tokens(request, profile, tokens)
+        return request
+
+    def assemble_request(
+        self,
+        messages: list,
+        tools: list | None,
+        profile: ResolvedProfile,
+        *,
+        options: PreparedOptions,
+        **parameters: Any,
+    ) -> dict:
+        result = self.request_parameters(profile, options)
+        config = result["config"]
+        system = [m for m in messages if m.get("role") in ("system", "developer")]
+        history = [m for m in messages if m.get("role") not in ("system", "developer")]
+        if system:
+            config["system_instruction"] = {"parts": [part for m in system for part in m["parts"]]}
+        if tools is not None:
+            config["tools"] = tools
+        result.update(model=profile.model, contents=history, config=config)
+        return result
+
+    def _apply_reasoning(
+        self, config: dict[str, Any], profile: ResolvedProfile, effort: str
+    ) -> None:
+        thinking = {"include_thoughts": True, **plain(config.get("thinking_config") or {})}
+        if profile.get("supports_reasoning_effort", False):
+            thinking["thinking_level"] = effort
+            thinking.pop("thinking_budget", None)
+        elif not any(key in thinking for key in ("thinking_level", "thinking_budget")):
+            thinking["thinking_budget"] = -1
+        config["thinking_config"] = thinking
+
+    def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        result = []
+        result = Translations()
         names = {}
-        for message in coalesce_messages(messages):
+        for sources, message in coalesce_groups(messages):
+            result.group(
+                sources,
+                structure={
+                    "parts": [
+                        {
+                            "inline_data": {},
+                            "file_data": {},
+                            "function_call": {},
+                            "function_response": {},
+                        }
+                    ]
+                },
+            )
             if message.get(OPAQUE):
                 result.extend(original(message, PROTOCOL))
                 continue
@@ -79,7 +122,7 @@ class GeminiDecoder(BaseDecoder):
                 )
         return result
 
-    def tools(
+    def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         return decode_functions(
@@ -97,9 +140,10 @@ class GeminiDecoder(BaseDecoder):
                     ]
                 }
             ],
+            structure={"function_declarations": [{}]},
         )
 
-    def chunks(
+    def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
@@ -174,7 +218,7 @@ class GeminiDecoder(BaseDecoder):
             return None
         native = original(value, "gemini")
         if native is not None:
-            return native if set() <= native.keys() else None
+            return native
         input_tokens, output_tokens, total, cached, cache_write, reasoning = counts(value)
         return {
             key: child
@@ -189,66 +233,3 @@ class GeminiDecoder(BaseDecoder):
             }.items()
             if child is not None
         } or None
-
-    def profile_defaults(self) -> dict:
-        return {
-            "replay_reasoning_content_when_tool_calls": True,
-            "supports_reasoning_effort": False,
-            "max_tokens_path": "$.config.max_output_tokens",
-            "content_path": "$.candidates[0].content.parts[0].text",
-            "reasoning_content_path": "$.candidates[0].content.parts[0].text",
-            "reasoning_enable_parameter": {},
-            "reasoning_effort_parameter": {},
-        }
-
-    def request_parameters(self, profile: ResolvedProfile, **parameters: Any) -> dict[str, Any]:
-        tokens, headers, config, effort = native_options(
-            profile, request_fields=REQUEST_FIELDS, protected=PROTECTED, **parameters
-        )
-        if config.get("candidate_count") not in (None, 1):
-            raise UnsupportedCapabilityError("only one generated candidate is supported")
-        # Admit native generation settings only, never native cloud tools or AFC overrides.
-        config["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(disable=True)
-        if headers:
-            config["http_options"] = types.HttpOptions(headers=headers)
-        if effort:
-            self._apply_reasoning(config, profile, effort)
-        request = {"config": config}
-        apply_max_tokens(request, profile, tokens, protected=PROTECTED)
-        return request
-
-    def assemble_request(
-        self, messages: list, tools: list | None, profile: ResolvedProfile, **parameters: Any
-    ) -> dict:
-        previous = parameters.pop("previous_response_id", None)
-        if previous is not None and not isinstance(previous, Omit):
-            raise ConfigurationError("previous_response_id requires OpenAI Responses API")
-        result = self.request_parameters(profile, **parameters)
-        config = result["config"]
-        system = [m for m in messages if m.get("role") in ("system", "developer")]
-        history = [m for m in messages if m.get("role") not in ("system", "developer")]
-        if not history:
-            raise ConfigurationError("a non-system message is required")
-        if system:
-            config["system_instruction"] = {"parts": [part for m in system for part in m["parts"]]}
-        if tools is not None:
-            config["tools"] = tools
-        result.update(
-            model=profile.model, contents=history, config=types.GenerateContentConfig(**config)
-        )
-        return result
-
-    def _apply_reasoning(
-        self, config: dict[str, Any], profile: ResolvedProfile, effort: str
-    ) -> None:
-        thinking = {"include_thoughts": True, **plain(config.get("thinking_config") or {})}
-        if profile.get("supports_reasoning_effort", False):
-            if effort not in ("minimal", "low", "medium", "high"):
-                raise UnsupportedCapabilityError("map reasoning effort to a Gemini-supported level")
-            thinking["thinking_level"] = effort
-            thinking.pop("thinking_budget", None)
-        elif not any(key in thinking for key in ("thinking_level", "thinking_budget")):
-            thinking["thinking_budget"] = -1
-        config["thinking_config"] = thinking
-        if thinking.get("thinking_budget") == 0:
-            raise ConfigurationError("reasoning conflicts with a zero Gemini thinking budget")

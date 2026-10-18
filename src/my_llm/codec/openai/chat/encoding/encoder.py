@@ -10,18 +10,17 @@ from my_llm.codec.openai.chat.encoding.content import (
     tool_block,
     tool_operations,
 )
-from my_llm.codec.shared.chunks import BlockRef, batch
 from my_llm.codec.shared.conversion import (
     dictionaries,
+    encode_functions,
     extras,
+    mapping_list,
     remember,
     residual,
 )
-from my_llm.codec.shared.matching import mapping_list
-from my_llm.codec.shared.tools import encode_functions
-from my_llm.codec.shared.usage import record
-from my_llm.codec.shared.values import path_value
-from my_llm.exceptions import ConfigurationError, MessageValidationError, ResponseFailedError
+from my_llm.codec.shared.options import path_value
+from my_llm.codec.shared.stream import BlockRef, batch, record
+from my_llm.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
 
 PROTOCOL = "openai_chat"
@@ -31,6 +30,7 @@ class ChatCompletionsEncoder(BaseEncoder):
     """Convert native messages, tools, events and usage to intermediate values."""
 
     __slots__ = ()
+    protocol = PROTOCOL
 
     def match_item(self, item: dict) -> bool:
         if item.get("type") == "function":
@@ -59,17 +59,11 @@ class ChatCompletionsEncoder(BaseEncoder):
             )
         )
 
-    def messages(
+    def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
         for message in dictionaries(messages):
-            if (
-                message.get("role") not in ("system", "developer", "user", "assistant", "tool")
-                or "parts" in message
-                or "type" in message
-            ):
-                raise MessageValidationError("message does not use the bound openai_chat protocol")
             content = encode_content(message.get("content"))
             # Appending preserves the original indices of content-block extensions.
             if message.get("reasoning_content"):
@@ -124,7 +118,7 @@ class ChatCompletionsEncoder(BaseEncoder):
             )
         return result
 
-    def tools(
+    def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         return encode_functions(
@@ -141,7 +135,7 @@ class ChatCompletionsEncoder(BaseEncoder):
             },
         )
 
-    def chunks(
+    def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []

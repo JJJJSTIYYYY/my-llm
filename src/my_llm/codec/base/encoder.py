@@ -1,54 +1,68 @@
-"""Stateless standard-protocol to intermediate conversion contract."""
+"""Stateless standard-protocol-to-intermediate translation."""
 
 from abc import ABC, abstractmethod
 from typing import Any, final
 
-from my_llm.codec.shared.matching import match_all
+from my_llm.codec.shared.conversion import match_all
+from my_llm.codec.shared.replay import encode_retained, replay_inputs
+from my_llm.exceptions import MessageValidationError
 from my_llm.profile.resolution import ResolvedProfile
 
 
 class BaseEncoder(ABC):
-    """Native input to intermediate values, without knowing the output protocol.
-
-    Implement the five abstract hooks directly in the protocol's encoder.py.
-    Keep content helpers in the same direction and mutable state request-owned.
-    Profiles are call arguments; implementations must not mutate inputs.
-    """
+    """Translate values and recover unchanged converted histories."""
 
     __slots__ = ()
 
+    @property
+    @abstractmethod
+    def protocol(self) -> str: ...
+
     @final
     def matches(self, values: list) -> bool:
-        """Recognize the whole native list; malformed inputs never match."""
+        try:
+            values, _ = replay_inputs(values, self.protocol)
+        except MessageValidationError:
+            return False
         return match_all(values, self.match_item)
 
-    @abstractmethod
-    def match_item(self, item: dict) -> bool:
-        """Recognize one native message/tool; list handling is fixed in matches."""
-        ...
-
-    @abstractmethod
-    def usage(self, value: dict | None) -> dict | None:
-        """Normalize native token accounting while retaining native counters."""
-        ...
-
-    @abstractmethod
+    @final
     def messages(
-        self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict[str, Any]]:
-        """Convert messages, preserving unknown fields and nested dictionaries."""
-        ...
+        self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
+    ) -> list[dict]:
+        return encode_retained(
+            self._messages, values, self.protocol, "messages", profile, **parameters
+        )
 
-    @abstractmethod
+    @final
     def tools(
-        self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict[str, Any]]:
-        """Convert tool declarations."""
-        ...
+        self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
+    ) -> list[dict]:
+        return encode_retained(self._tools, values, self.protocol, "tools", profile, **parameters)
+
+    @final
+    def chunks(
+        self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
+    ) -> list[dict]:
+        return encode_retained(self._chunks, values, self.protocol, "chunks", profile, **parameters)
 
     @abstractmethod
-    def chunks(
-        self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict[str, Any]]:
-        """Convert stream events without accumulating fragments on this object."""
-        ...
+    def match_item(self, item: dict) -> bool: ...
+
+    @abstractmethod
+    def _messages(
+        self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
+    ) -> list[dict]: ...
+
+    @abstractmethod
+    def _tools(
+        self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
+    ) -> list[dict]: ...
+
+    @abstractmethod
+    def _chunks(
+        self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
+    ) -> list[dict]: ...
+
+    @abstractmethod
+    def usage(self, value: dict | None) -> dict | None: ...

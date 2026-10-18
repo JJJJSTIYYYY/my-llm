@@ -1,8 +1,8 @@
-"""Open dictionaries used only inside the codec boundary.
+"""Intermediate dictionaries, provenance keys and protocol translation mechanics.
 
-Known fields are translated; extensions keep their original nesting. Provenance
-allows exact replay in the source protocol, including signed and opaque blocks.
-This is deliberately not a public message schema.
+Known fields are translated; extensions retain their nesting and native source.
+This module owns message/tool projection and source grouping, without protocol
+branches or SDK request validation. It defines no public application schema.
 """
 
 from __future__ import annotations
@@ -11,9 +11,39 @@ import json
 from copy import deepcopy
 from typing import Any
 
-from my_llm.codec.shared.keys import OPAQUE, SOURCE, TRANSLATED
-from my_llm.codec.shared.values import plain
 from my_llm.exceptions import MessageValidationError, UnsupportedCapabilityError
+
+SOURCE = "__my_llm_codec_source__"
+TRANSLATED = "__my_llm_codec_translated_fields__"
+FUNCTIONS = "__my_llm_codec_function_definitions__"
+OPAQUE = "__my_llm_codec_opaque_message__"
+REPLAY = "__my_llm_codec_replay__"
+
+
+def read(value: Any, key: str, default: Any = None) -> Any:
+    return value.get(key, default) if isinstance(value, dict) else getattr(value, key, default)
+
+
+def plain(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json", exclude_none=True)
+    return value.copy() if isinstance(value, (dict, list)) else value
+
+
+class Translations(list):
+    """Collect output and its source groups during one decoder translation.
+
+    A group may consume or produce any number of values. ``structure`` declares
+    containers whose unknown children can be merged into translated output;
+    other translated fields remain authoritative as whole values.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.groups = []
+
+    def group(self, sources, *, structure=None):
+        self.groups.append((len(self), deepcopy(sources), structure or {}))
 
 
 def dictionaries(values: Any) -> list[dict[str, Any]]:
@@ -51,6 +81,8 @@ def _overlay(value: Any, extension: Any) -> Any:
 
 def remember(value: dict, original: Any, protocol: str, *, preserve: dict | None = None) -> dict:
     source = {"protocol": protocol, "value": deepcopy(original)}
+    if preserve is not None:
+        source["residual"] = deepcopy(preserve)
     if preserve:
         combined = _overlay(value, preserve)
         # A converted field is authoritative as a whole: merging native
@@ -132,8 +164,8 @@ def residual(value: dict, consumed: dict) -> dict:
     return {} if result is _CONSUMED else result
 
 
-def coalesce_messages(messages: list) -> list[dict]:
-    """Group adjacent assistant fragments marked as parts of one native turn."""
+def coalesce_groups(messages: list) -> list[tuple[list[dict], dict]]:
+    """Return original sources alongside each grouped assistant message."""
     result = []
     # A source may represent one assistant turn as several native items.
     # Its encoder declares whether those fragments may be grouped for rendering.
@@ -141,14 +173,15 @@ def coalesce_messages(messages: list) -> list[dict]:
         if (
             result
             and message.get(SOURCE, {}).get("coalesce_assistant", False)
-            and result[-1].get(SOURCE, {}).get("coalesce_assistant", False)
-            and message.get("role") == result[-1].get("role") == "assistant"
+            and result[-1][1].get(SOURCE, {}).get("coalesce_assistant", False)
+            and message.get("role") == result[-1][1].get("role") == "assistant"
             and not message.get(OPAQUE)
-            and not result[-1].get(OPAQUE)
+            and not result[-1][1].get(OPAQUE)
         ):
-            result[-1]["content"].extend(message.get("content", []))
+            result[-1][0].append(deepcopy(message))
+            result[-1][1]["content"].extend(message.get("content", []))
         else:
-            result.append(message)
+            result.append(([deepcopy(message)], message))
     return result
 
 
@@ -158,6 +191,18 @@ def blocks(content: Any) -> list[dict]:
     if isinstance(content, str):
         return [{"type": "text", "text": content}]
     return dictionaries(content)
+
+
+def uri_source(uri: str) -> dict:
+    """Translate a remote or inline URI into an intermediate media source."""
+    if not uri.startswith("data:"):
+        return {"type": "url", "url": uri}
+    header, _, data = uri.partition(",")
+    return {
+        "type": "base64",
+        "media_type": header[5:].removesuffix(";base64"),
+        "data": data,
+    }
 
 
 def text(content: list[dict]) -> str:
@@ -219,3 +264,98 @@ def associate_tool_result(pending: list[dict], call_id: str | None, name: str | 
     # Remove explicit matches too, or a later ID-less result could reuse them.
     pending.remove(match)
     return call_id or match["id"]
+
+
+def mapping_list(value) -> bool:
+    return isinstance(value, list) and all(isinstance(item, dict) for item in value)
+
+
+def match_all(values, predicate) -> bool:
+    try:
+        items = dictionaries(values)
+        return bool(items) and all(predicate(item) for item in items)
+    except (MessageValidationError, TypeError, AttributeError, KeyError):
+        return False
+
+
+def select(value: dict, *fields: str) -> dict:
+    return {key: deepcopy(value[key]) for key in fields if key in value}
+
+
+def select_present(value: dict, *fields: str) -> dict:
+    return {key: child for key, child in select(value, *fields).items() if child is not None}
+
+
+def project_message(message: dict, project, *, fields: tuple[str, ...] = ("role",)) -> dict:
+    content = []
+    for block in blocks(message.get("content")):
+        rendered = project(block)
+        if rendered is not None:
+            content.append(rendered)
+    return {**select(message, *fields, SOURCE), "content": content}
+
+
+def unsupported(block: dict):
+    raise UnsupportedCapabilityError(
+        f"target protocol cannot represent content type {block.get('type')!r}"
+    )
+
+
+def project_block(
+    block: dict, fields: dict, *, text_fields: dict | None = None, omitted: tuple = ()
+):
+    """Apply the target's declared field projection and visible-text fallbacks."""
+    kind = block.get("type")
+    if kind in omitted:
+        return None
+    if kind in (text_fields or {}):
+        return {"type": "text", "text": block.get(text_fields[kind], "")}
+    if kind not in fields:
+        return unsupported(block)
+    return select(block, *fields[kind])
+
+
+def text_result(value) -> str:
+    """Represent canonical text blocks and structured results as a string."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and all(
+        isinstance(block, dict) and block.get("type") == "text" for block in value
+    ):
+        return "".join(block.get("text", "") for block in value)
+    return json.dumps(value, ensure_ascii=False)
+
+
+def encode_functions(tools, protocol, unwrap, *, consumed):
+    result = []
+    for tool in dictionaries(tools):
+        functions = unwrap(tool)
+        fields = consumed(tool) if callable(consumed) else consumed
+        remaining = residual(tool, fields if functions is not None else {})
+        result.append(
+            remember(
+                {FUNCTIONS: functions},
+                tool,
+                protocol,
+                preserve=remaining,
+            )
+        )
+    return result
+
+
+def decode_functions(tools, protocol, wrap, *, structure=None):
+    result = Translations()
+    for tool in dictionaries(tools):
+        result.group([tool], structure=structure)
+        native = original(tool, protocol)
+        if native is not None:
+            result.append(native)
+        elif tool.get(FUNCTIONS) is None:
+            raise UnsupportedCapabilityError(
+                "opaque native tools cannot be replayed to another protocol"
+            )
+        else:
+            result.extend(wrap(tool[FUNCTIONS]))
+    return result

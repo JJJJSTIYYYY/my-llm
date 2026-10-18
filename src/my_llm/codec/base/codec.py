@@ -41,9 +41,21 @@ class BaseCodec(ABC):
 
     @final
     def validate_profile(self, profile: ResolvedProfile) -> None:
-        """Coordinate conversion-policy and SDK-connection validation."""
-        self.decoder.validate_profile(profile)
+        """Delegate protocol and SDK configuration validation to Transport."""
         self.transport.validate_profile(profile)
+
+    @final
+    def validate_input(self, messages: list, tools: list | None = None) -> None:
+        """Route input schema validation to the SDK boundary."""
+        self.transport.validate_input(messages, tools)
+
+    @final
+    def request(
+        self, messages: list, tools: list | None, profile: ResolvedProfile, **parameters: Any
+    ) -> dict:
+        options = self.transport.validate_parameters(profile, **parameters)
+        request = self.decoder.request(messages, tools, profile, options=options, **parameters)
+        return self.transport.request(request, profile, history=messages, **parameters)
 
     @final
     def encode_messages(

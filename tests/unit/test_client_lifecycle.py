@@ -25,7 +25,9 @@ def sdk_factory(monkeypatch):
 
 
 def make_llm():
-    return MyLLM(provider=ProviderProfile(), model=ModelProfile(model="demo"))
+    return MyLLM(
+        stdio_protocol="openai_chat", provider=ProviderProfile(), model=ModelProfile(model="demo")
+    )
 
 
 async def test_llm_uses_the_transport_composed_by_its_codec():
@@ -149,6 +151,7 @@ async def test_one_shot_stream_owns_and_closes_temporary_client(
     sdk_factory, monkeypatch, exit_mode
 ):
     stream = await generate(
+        stdio_protocol="openai_chat",
         provider=ProviderProfile(),
         model="demo",
         messages=[{"role": "user", "content": "hi"}],
@@ -192,6 +195,7 @@ async def test_one_shot_stream_owns_and_closes_temporary_client(
 
 async def test_unstarted_one_shot_stream_does_not_create_client(sdk_factory):
     stream = await generate(
+        stdio_protocol="openai_chat",
         provider=ProviderProfile(),
         model="demo",
         messages=[{"role": "user", "content": "hi"}],

@@ -3,17 +3,17 @@
 from typing import Any
 
 from my_llm.codec.base.encoder import BaseEncoder
-from my_llm.codec.shared.chunks import BlockRef, batch
 from my_llm.codec.shared.conversion import (
     blocks,
     dictionaries,
+    encode_functions,
     extras,
+    mapping_list,
     remember,
+    residual,
 )
-from my_llm.codec.shared.matching import mapping_list
-from my_llm.codec.shared.tools import encode_functions
-from my_llm.codec.shared.usage import record
-from my_llm.exceptions import MessageValidationError, ResponseFailedError
+from my_llm.codec.shared.stream import BlockRef, batch, record
+from my_llm.exceptions import ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
 
 PROTOCOL = "anthropic"
@@ -30,6 +30,7 @@ class AnthropicEncoder(BaseEncoder):
     """Convert native messages, tools, events and usage to intermediate values."""
 
     __slots__ = ()
+    protocol = PROTOCOL
 
     def match_item(self, item: dict) -> bool:
         if "input_schema" in item:
@@ -73,25 +74,44 @@ class AnthropicEncoder(BaseEncoder):
             )
         )
 
-    def messages(
+    def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
         for message in dictionaries(messages):
-            if (
-                message.get("role") not in ("system", "user", "assistant")
-                or "content" not in message
-                or "parts" in message
-            ):
-                raise MessageValidationError("message does not use the bound anthropic protocol")
             result.append(
                 remember(
-                    {**message, "content": blocks(message.get("content"))}, [message], PROTOCOL
+                    {**message, "content": blocks(message.get("content"))},
+                    [message],
+                    PROTOCOL,
+                    preserve=residual(
+                        message,
+                        {"role": True, "content": [self._content_fields]}
+                        if isinstance(message.get("content"), list)
+                        else {"role": True, "content": True},
+                    ),
                 )
             )
         return result
 
-    def tools(
+    @staticmethod
+    def _content_fields(block: dict) -> dict:
+        fields = {
+            "text": ("text", "citations"),
+            "thinking": ("thinking",),
+            "redacted_thinking": (),
+            "image": ("source",),
+            "document": ("source",),
+            "tool_use": ("id", "name", "input"),
+            "tool_result": ("tool_use_id", "content", "is_error"),
+        }
+        kind = block.get("type")
+        consumed = dict.fromkeys(("type", *fields[kind]), True) if kind in fields else {}
+        if kind in ("image", "document"):
+            consumed["source"] = dict.fromkeys(("type", "url", "media_type", "data"), True)
+        return consumed
+
+    def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         return encode_functions(
@@ -105,7 +125,7 @@ class AnthropicEncoder(BaseEncoder):
             consumed={"name": True, "description": True, "input_schema": True},
         )
 
-    def chunks(
+    def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []

@@ -2,6 +2,7 @@
 
 None inherits a value, while OpenAI's omit disables it. Dictionary layering
 overrides individual keys (not whole dictionaries); omit removes a key.
+Generation bindings retain deletion markers until request preparation merges them.
 """
 
 from __future__ import annotations
@@ -38,8 +39,11 @@ class OverridableProfile:
     replay_reasoning_content_when_tool_calls: bool | Omit | None = None
 
 
-def merge_dicts(*layers: Parameter) -> dict[str, Any]:
-    """Merge keys without mutating layers; nested values are borrowed read-only."""
+def merge_dicts(*layers: Parameter, preserve_omit: bool = False) -> dict[str, Any]:
+    """Merge keys, optionally retaining binding deletion markers for later application.
+
+    Layers are not mutated; nested values are borrowed read-only.
+    """
     result: dict[str, Any] = {}
     for layer in layers:
         if isinstance(layer, Omit):
@@ -50,7 +54,7 @@ def merge_dicts(*layers: Parameter) -> dict[str, Any]:
             for key, value in layer.items():
                 if not isinstance(key, str):
                     raise ConfigurationError("configuration keys must be strings")
-                if isinstance(value, Omit):
+                if isinstance(value, Omit) and not preserve_omit:
                     result.pop(key, None)
                 else:
                     result[key] = value

@@ -6,6 +6,8 @@ dist/
 wheels/
 *.egg-info
 .ruff_cache
+.pytest_cache/
+.DS_Store
 
 # Virtual environments
 .venv

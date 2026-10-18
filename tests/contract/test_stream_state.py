@@ -11,6 +11,7 @@ import pytest
 
 from my_llm import IncompleteStreamError, MessageValidationError, MyCodec
 from my_llm.stream._state import StreamState
+from tests.helpers.preservation import translated
 from tests.helpers.protocols import PROTOCOLS, chat_event, response_completed, stream_events
 from tests.helpers.sdk import EVENT_TYPES, assert_native
 from tests.helpers.streaming import render
@@ -107,7 +108,7 @@ def test_accumulation_survives_json_round_trips_and_batch_boundaries(source, bat
     reconstructed.finish()
     collected = codec.decode(state.messages(), target_format="openai_chat")["messages"]
     replayed = codec.decode(reconstructed.messages(), target_format="openai_chat")["messages"]
-    assert replayed == collected
+    assert translated(replayed) == translated(collected)
     assert native == before
 
 

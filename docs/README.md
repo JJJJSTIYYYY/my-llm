@@ -11,12 +11,13 @@
 - [本地开发规范](guides/development.md)：目录职责、导入、测试辅助代码与结构验证。
 - [接入新的协议](guides/adding-protocol.md)：Encoder / Decoder 必需接口、固定流程与注册验证。
 - [构建与发行包验证](guides/building.md)：安装、构建和 CI。
-- [架构与职责边界](design/architecture.md)：代码目录、请求和返回路径、既有重构验收。
+- [架构与职责边界](design/architecture.md)：当前代码目录、组件职责、请求和返回路径。
 - [流状态设计](design/stream-state.md)：块身份、累积操作和终态约束。
 - [SDK 客户端生命周期](design/client-lifecycle.md)：实例复用、请求资源隔离和显式关闭。
 
 ## 审计与验证记录
 
+- [仓库清理与架构约束复核](audits/architecture-audit-2026-10-18.md)：当前约束、清理范围和验证依据。
 - [最初重构需求与当前实现对照](audits/refactor-requirements-2026-10-17.md)：逐项核对、验收范围与后续设计调整。
 - [官方协议审计](audits/protocol-audit-2026-10-17.md)及[修复验收](audits/protocol-fixes-2026-10-17.md)。
 - [协议定义与测试预期复核](audits/protocol-conformance.md)。
@@ -24,5 +25,6 @@
 - [并发与资源生命周期验证](audits/concurrency.md)。
 
 reference 保存接口、配置与协议模板；guides 保存操作步骤；design 保存实现约束；
-audits 保存带有范围和验证依据的审计记录。审计中的测试数量对应当时快照，
-当前状态以实际测试输出为准。
+audits 保存带有范围和验证依据的审计记录。审计和开发规范中的历史验收对应当时的
+目录、接口和测试快照；当前结构与契约以 design 和 guides 的当前说明为准，
+验证结果以实际测试输出为准。

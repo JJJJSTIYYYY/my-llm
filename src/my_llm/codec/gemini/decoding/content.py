@@ -2,8 +2,8 @@
 
 from my_llm.codec.shared.conversion import (
     extras,
+    project_block,
 )
-from my_llm.codec.shared.rendering import project_block
 
 FIELDS = {
     "text": ("type", "text"),

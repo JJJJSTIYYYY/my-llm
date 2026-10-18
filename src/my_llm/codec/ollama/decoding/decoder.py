@@ -1,51 +1,90 @@
 """ollama: intermediate to native output."""
 
-from inspect import signature
+from copy import deepcopy
 from typing import Any
-
-from ollama import AsyncClient
-from openai import Omit
 
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.ollama.decoding.content import (
     chat_call,
     foreign_block,
     function_tool,
-    thinking_enabled,
 )
-from my_llm.codec.shared.chunks import events
 from my_llm.codec.shared.conversion import (
-    coalesce_messages,
+    OPAQUE,
+    Translations,
+    coalesce_groups,
+    decode_functions,
     extras,
     original,
+    project_message,
     source_protocol,
     text,
+    text_result,
 )
-from my_llm.codec.shared.keys import OPAQUE
-from my_llm.codec.shared.options import apply_max_tokens, native_options
-from my_llm.codec.shared.rendering import project_message, text_result
-from my_llm.codec.shared.tools import decode_functions
-from my_llm.codec.shared.usage import counts
-from my_llm.exceptions import ConfigurationError, MessageValidationError
+from my_llm.codec.shared.options import PreparedOptions, apply_max_tokens
+from my_llm.codec.shared.stream import counts, events
+from my_llm.exceptions import MessageValidationError
+from my_llm.profile.configuration import merge_dicts
 from my_llm.profile.resolution import ResolvedProfile
 
 PROTOCOL = "ollama"
-PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response_id"}
-REQUEST_FIELDS = set(signature(AsyncClient.chat).parameters) - PROTECTED - {"self"}
+
+
+def thinking_enabled(profile: ResolvedProfile, parameters: dict) -> bool:
+    if parameters.get("reasoning") is True or parameters.get("reasoning_effort", "none") != "none":
+        return True
+    body = merge_dicts(profile.get("extra_body", {}), parameters.get("extra_body"))
+    return body.get("think") not in (None, False)
 
 
 class OllamaDecoder(BaseDecoder):
-    """Render intermediate values and assemble native request dictionaries."""
+    """Translate intermediate values into protocol dictionaries, retaining replay data."""
 
     __slots__ = ()
-    usage_modes = ("none", "native")
+    protocol = PROTOCOL
 
-    def messages(
+    def request_parameters(
+        self, profile: ResolvedProfile, options: PreparedOptions
+    ) -> dict[str, Any]:
+        tokens, effort = options.tokens, options.effort
+        request = deepcopy(options.body)
+        if effort:
+            request["think"] = self._thinking_value(request, profile, effort)
+        apply_max_tokens(request, profile, tokens)
+        return request
+
+    def assemble_request(
+        self,
+        messages: list,
+        tools: list | None,
+        profile: ResolvedProfile,
+        *,
+        options: PreparedOptions,
+        **parameters: Any,
+    ) -> dict:
+        result = self.request_parameters(profile, options)
+        result.update(model=profile.model, stream=True, messages=messages)
+        if tools is not None:
+            result["tools"] = tools
+        return result
+
+    def _thinking_value(
+        self, request: dict[str, Any], profile: ResolvedProfile, effort: str
+    ) -> str | bool:
+        if profile.get("supports_reasoning_effort", False):
+            # Ollama's protocol permits model-defined strings. The profile owns
+            # the model's supported mapping; there is no universal level enum.
+            return effort
+        thinking = request.get("think")
+        return True if thinking is None else thinking
+
+    def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        result = []
+        result = Translations()
         names = {}
-        for message in coalesce_messages(messages):
+        for sources, message in coalesce_groups(messages):
+            result.group(sources, structure={"tool_calls": [{"function": {}}]})
             if message.get(OPAQUE):
                 result.extend(original(message, PROTOCOL))
                 continue
@@ -102,27 +141,24 @@ class OllamaDecoder(BaseDecoder):
                     value["content"] += text_result(unknown)
                 result.append(value)
             result.extend(results)
-        if profile:
-            for value in result:
-                if value.get("role") != "assistant":
-                    continue
-                if not profile.get("replay_reasoning_content_when_tool_calls", False):
-                    value.pop("thinking", None)
-                elif value.get("tool_calls") and thinking_enabled(profile, parameters):
-                    # Only active tool-call turns need a missing reasoning field padded.
-                    value.setdefault("thinking", "")
+        if profile is not None and profile.get("replay_reasoning_content_when_tool_calls", False):
+            if thinking_enabled(profile, parameters):
+                for value in result:
+                    if value.get("role") == "assistant" and value.get("tool_calls"):
+                        value.setdefault("thinking", "")
         return result
 
-    def tools(
+    def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         return decode_functions(
             tools,
             "ollama",
             lambda functions: [function_tool(function) for function in functions],
+            structure={},
         )
 
-    def chunks(
+    def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
@@ -161,7 +197,7 @@ class OllamaDecoder(BaseDecoder):
             return None
         native = original(value, "ollama")
         if native is not None:
-            return native if set() <= native.keys() else None
+            return native
         input_tokens, output_tokens, total, cached, cache_write, reasoning = counts(value)
         return {
             key: child
@@ -171,47 +207,3 @@ class OllamaDecoder(BaseDecoder):
             }.items()
             if child is not None
         } or None
-
-    def profile_defaults(self) -> dict:
-        return {
-            "replay_reasoning_content_when_tool_calls": True,
-            "supports_reasoning_effort": False,
-            "max_tokens_path": "$.options.num_predict",
-            "content_path": "$.message.content",
-            "reasoning_content_path": "$.message.thinking",
-            "reasoning_enable_parameter": {},
-            "reasoning_effort_parameter": {},
-        }
-
-    def request_parameters(self, profile: ResolvedProfile, **parameters: Any) -> dict[str, Any]:
-        tokens, _, request, effort = native_options(
-            profile, request_fields=REQUEST_FIELDS, protected=PROTECTED, **parameters
-        )
-        if effort:
-            request["think"] = self._thinking_value(request, profile, effort)
-        apply_max_tokens(request, profile, tokens, protected=PROTECTED)
-        return request
-
-    def assemble_request(
-        self, messages: list, tools: list | None, profile: ResolvedProfile, **parameters: Any
-    ) -> dict:
-        previous = parameters.pop("previous_response_id", None)
-        if previous is not None and not isinstance(previous, Omit):
-            raise ConfigurationError("previous_response_id requires OpenAI Responses API")
-        result = self.request_parameters(profile, **parameters)
-        result.update(model=profile.model, stream=True, messages=messages)
-        if tools is not None:
-            result["tools"] = tools
-        return result
-
-    def _thinking_value(
-        self, request: dict[str, Any], profile: ResolvedProfile, effort: str
-    ) -> str | bool:
-        if profile.get("supports_reasoning_effort", False):
-            # Ollama's protocol permits model-defined strings. The profile owns
-            # the model's supported mapping; there is no universal level enum.
-            return effort
-        thinking = request.get("think")
-        if thinking is False:
-            raise ConfigurationError("reasoning conflicts with think=False")
-        return True if thinking is None else thinking

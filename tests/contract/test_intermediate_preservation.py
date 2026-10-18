@@ -11,6 +11,7 @@ import pytest
 
 from my_llm import MyCodec
 from my_llm.codec.shared.conversion import residual
+from tests.helpers.preservation import translated
 from tests.helpers.protocols import PROTOCOLS, tools
 
 EXT = {"nested": [{"sentinel": "must-survive"}], "empty": {}, "null": None}
@@ -444,6 +445,7 @@ def test_each_target_reads_namespaced_translation_instead_of_native_collision(ta
         "gemini", "messages", [{"role": "user", "parts": [{"text": "hello"}], "content": EXT}]
     )
     result = MyCodec().decode(messages=value, target_format=target)["messages"]
+    result = translated(result)
     content = result[0]["content"]
     if isinstance(content, list):
         assert content[0]["text"] == "hello"
@@ -453,7 +455,7 @@ def test_each_target_reads_namespaced_translation_instead_of_native_collision(ta
 
 
 def test_history_validation_reads_converted_role_and_content():
-    from my_llm.codec.shared.validation import validate_history
+    from my_llm.codec.shared.transport import validate_history
 
     native = [
         {
@@ -471,7 +473,7 @@ def test_history_validation_reads_converted_role_and_content():
 
 
 def test_short_extension_names_are_not_treated_as_internal_control_keys():
-    from my_llm.codec.shared.validation import validate_history
+    from my_llm.codec.shared.transport import validate_history
     from my_llm.exceptions import MessageValidationError
 
     tool = {"type": "function", "function": {"name": "f", "parameters": {}}, "__functions__": EXT}
@@ -508,6 +510,7 @@ def test_translated_content_is_not_extended_by_preserved_collision(extension):
     )
     assert value[0]["content"] == extension
     result = MyCodec().decode(messages=value, target_format="openai_chat")["messages"]
+    result = translated(result)
     assert result == [{"role": "user", "content": "hello"}]
 
 

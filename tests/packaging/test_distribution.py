@@ -62,7 +62,9 @@ def test_build_contains_runtime_modules_and_source_tests(tmp_path, version_overr
         assert "my_llm/codec/base/codec.py" in names
         assert "my_llm/codec/base/encoder.py" in names
         assert "my_llm/codec/base/decoder.py" in names
-        assert "my_llm/codec/shared/values.py" in names
+        assert "my_llm/codec/shared/conversion.py" in names
+        assert "my_llm/codec/shared/stream.py" in names
+        assert "my_llm/codec/shared/transport.py" in names
         assert "my_llm/profile/configuration.py" in names
         assert "my_llm/profile/resolution.py" in names
         assert not any(name.startswith("my_llm/codec/utils/") for name in names)

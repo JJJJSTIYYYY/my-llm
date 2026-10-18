@@ -1,27 +1,118 @@
-"""Protocol-independent validation and ownership of generation options."""
+"""Declarative field paths, generation-option translation and validation helpers."""
 
 from copy import deepcopy
+from dataclasses import dataclass, replace
 from typing import Any
 
 from openai import Omit
 
-from my_llm.codec.shared.values import _expand, path_keys, set_path
+from my_llm.codec.shared.conversion import plain, read
 from my_llm.exceptions import ConfigurationError, UnsupportedCapabilityError
 from my_llm.profile.configuration import EFFORTS, merge_dicts
+from my_llm.profile.paths import path_keys
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedOptions:
+    """Request-owned settings; binding templates retain omit until their layers merge."""
+
+    tokens: int | None
+    headers: dict
+    body: dict
+    effort: str | None
+    bindings: tuple[dict, ...]
+
+
+def set_path(value: dict, path: str, item: Any) -> None:
+    """Write a path, creating containers and retaining existing sibling fields."""
+    keys = path_keys(path)
+    for index, key in enumerate(keys):
+        if isinstance(key, int):
+            if not isinstance(value, list):
+                raise ConfigurationError(f"path requires a list: {path!r}")
+            if key >= len(value):
+                value.extend([None] * (key + 1 - len(value)))
+        elif not isinstance(value, dict):
+            raise ConfigurationError(f"path requires a dictionary: {path!r}")
+        if index == len(keys) - 1:
+            value[key] = item
+            return
+        child = value.get(key) if isinstance(value, dict) else value[key]
+        child = (
+            plain(child) if child is not None else ([] if isinstance(keys[index + 1], int) else {})
+        )
+        value[key] = child
+        value = child
+
+
+def path_value(value: Any, path: str | Omit) -> Any:
+    """Read dotted attributes/mapping keys and numeric indexes, without dumping SDK objects."""
+    if isinstance(path, Omit):
+        return None
+    for key in path_keys(path):
+        if isinstance(key, int):
+            if not isinstance(value, (list, tuple)) or key >= len(value):
+                return None
+            value = value[key]
+        else:
+            value = read(value, key)
+        if value is None:
+            return None
+    return value
+
+
+def expand_value(value: Any, effort: str) -> Any:
+    """Expand effort placeholders, retaining omit until binding layers are merged."""
+    if isinstance(value, dict):
+        return {key: expand_value(item, effort) for key, item in value.items()}
+    if isinstance(value, list):
+        return [expand_value(item, effort) for item in value]
+    return effort if value == "{effort}" else value
+
+
+def _binding_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return merge_bindings(value)
+    if isinstance(value, list):
+        return [_binding_value(item) for item in value]
+    return deepcopy(value)
+
+
+def merge_bindings(*layers: dict | Omit | None) -> dict:
+    """Merge binding dictionaries recursively; omit deletes a key at its own depth.
+
+    Lists and scalar values replace earlier values. Profile layering remains
+    governed by merge_dicts; this rule applies to generation bindings only.
+    """
+    result = {}
+    for layer in layers:
+        if isinstance(layer, Omit):
+            result.clear()
+        elif layer is not None:
+            for key, value in layer.items():
+                if isinstance(value, Omit):
+                    result.pop(key, None)
+                elif isinstance(value, dict):
+                    previous = plain(result.get(key))
+                    result[key] = merge_bindings(
+                        previous if isinstance(previous, dict) else None, value
+                    )
+                else:
+                    result[key] = _binding_value(value)
+    return result
 
 
 def resolve_options(
     profile: ResolvedProfile,
     *,
-    protected: set[str],
     extra_headers: Any = None,
     extra_body: Any = None,
     max_tokens: Any = None,
     reasoning: bool | None = None,
     reasoning_effort: str = "none",
-) -> tuple[Any, dict, dict, str | None]:
-    """Resolve common policy; native names and bindings belong to the decoder."""
+) -> PreparedOptions:
+    """Validate and resolve common settings once at the Transport boundary."""
     if reasoning_effort not in EFFORTS:
         raise ConfigurationError(f"unsupported reasoning_effort: {reasoning_effort!r}")
     if reasoning is not None and not isinstance(reasoning, bool):
@@ -44,8 +135,19 @@ def resolve_options(
     validate_max_tokens(tokens)
     headers = merge_dicts(profile.get("extra_headers", {}), extra_headers)
     body = merge_dicts(profile.get("extra_body", {}), extra_body)
-    check_protected(body, protected)
-    return tokens, deepcopy(headers), deepcopy(body), None if effort == "none" else effort
+    effort = None if effort == "none" else effort
+    bindings = []
+    if effort is not None:
+        bindings.append(deepcopy(profile.get("reasoning_enable_parameter", {})))
+        if profile.get("supports_reasoning_effort", False):
+            bindings.append(deepcopy(profile.get("reasoning_effort_parameter", {})))
+    return PreparedOptions(
+        tokens,
+        deepcopy(headers),
+        deepcopy(body),
+        effort,
+        tuple(expand_value(binding, effort) for binding in bindings),
+    )
 
 
 def check_protected(body: dict, protected: set[str]) -> None:
@@ -55,52 +157,88 @@ def check_protected(body: dict, protected: set[str]) -> None:
         raise ConfigurationError("extra_body cannot override protocol parameters")
 
 
-def apply_max_tokens(
-    request: dict, profile: ResolvedProfile, tokens: int | None, *, protected: set[str]
+def validate_max_tokens_path(
+    profile: ResolvedProfile,
+    tokens: int | None,
+    *,
+    protected: set[str],
+    containers: tuple[str, ...] = (),
+    request: dict | None = None,
 ) -> None:
-    """Insert the resolved limit at its SDK path, after other option bindings."""
+    """Validate a token route using container names declared by the native transport."""
     path = profile.get("max_tokens_path")
     if tokens is None or path is None:
         return
     keys = path_keys(path)
-    target = keys[1:] if keys[0] in ("extra_body", "config") else keys
+    target = keys[1:] if keys[0] in containers else keys
     if not target or target[0] in protected:
         raise ConfigurationError("max_tokens_path cannot override protocol parameters")
-    set_path(request, path, tokens)
-    # SDK extra_body is a final wire overlay; keep the generated limit authoritative.
-    body = request.get("extra_body")
-    if keys[0] != "extra_body" and isinstance(body, dict) and keys[0] in body:
-        body[keys[0]] = deepcopy(request[keys[0]])
+    if request is not None:
+        set_path(deepcopy(request), path, tokens)
 
 
-def bindings(profile: ResolvedProfile, effort: str | None, *, expand: bool = True):
-    """Yield isolated, expanded declarative bindings in layer order."""
-    if effort is None:
-        return
-    values = [profile.get("reasoning_enable_parameter", {})]
-    if profile.get("supports_reasoning_effort", False):
-        values.append(profile.get("reasoning_effort_parameter", {}))
-    for value in values:
-        yield _expand(value, effort) if expand else deepcopy(value)
+def apply_max_tokens(
+    request: dict, profile: ResolvedProfile, tokens: int | None, *, overlay: str | None = None
+) -> None:
+    """Translate the output-token limit to its configured request path."""
+    path = profile.get("max_tokens_path")
+    if tokens is not None and path is not None:
+        set_path(request, path, tokens)
+        keys = path_keys(path)
+        body = request.get(overlay) if overlay is not None else None
+        if keys[0] != overlay and isinstance(body, dict) and keys[0] in body:
+            body[keys[0]] = deepcopy(request[keys[0]])
 
 
-def native_options(
-    profile: ResolvedProfile, *, request_fields: set[str], protected: set[str], **parameters: Any
-):
-    """Merge declarative body bindings and reject unsupported options explicitly."""
-    tokens, headers, body, effort = resolve_options(profile, protected=protected, **parameters)
-    for binding in bindings(profile, effort):
-        expanded_body = binding.pop("extra_body", None)
+def native_options(options: PreparedOptions) -> PreparedOptions:
+    """Merge validated declarative bindings without resolving settings again."""
+    body = merge_bindings(options.body)
+    for binding in options.bindings:
+        body = merge_bindings(
+            body,
+            binding.get("extra_body"),
+            {key: value for key, value in binding.items() if key != "extra_body"},
+        )
+    return replace(options, body=body)
+
+
+def validate_bindings(
+    options: PreparedOptions,
+    *,
+    protected: set[str],
+    allowed: set[str] | None = None,
+) -> tuple[dict, ...]:
+    """Validate declarative SDK bindings without changing their values."""
+    checked = []
+    for binding in options.bindings:
+        if not isinstance(binding, dict):
+            raise ConfigurationError("request body bindings must be dictionaries")
+        binding = merge_bindings(binding)
+        if allowed is not None and set(binding) - allowed:
+            raise ConfigurationError("reasoning bindings contain unsupported SDK parameters")
         check_protected(binding, protected)
-        if expanded_body is not None:
-            check_protected(expanded_body, protected)
-        body = merge_dicts(body, expanded_body, binding)
-    unknown = set(body) - request_fields
+        if "extra_body" in binding:
+            check_protected(binding["extra_body"], protected)
+        checked.append(binding)
+    return tuple(checked)
+
+
+def validate_native_options(
+    options: PreparedOptions,
+    *,
+    request_fields: set[str],
+    protected: set[str],
+) -> PreparedOptions:
+    """Validate and merge native bindings once, before request translation."""
+    check_protected(options.body, protected)
+    validate_bindings(options, protected=protected)
+    options = native_options(options)
+    unknown = set(options.body) - request_fields
     if unknown:
         raise ConfigurationError(
             f"unsupported native request options: {', '.join(sorted(unknown))}"
         )
-    return tokens, headers, deepcopy(body), effort
+    return options
 
 
 def overlay_generated(request: dict, body: dict) -> dict:

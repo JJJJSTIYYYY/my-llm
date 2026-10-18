@@ -7,15 +7,15 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from my_llm.codec.shared.chunks import BlockRef, operations
 from my_llm.codec.shared.conversion import (
+    SOURCE,
     arguments,
     dictionaries,
     extras,
     merge_fields,
     source_protocol,
 )
-from my_llm.codec.shared.keys import SOURCE
+from my_llm.codec.shared.stream import BlockRef, operations
 from my_llm.exceptions import IncompleteStreamError
 
 

@@ -4,19 +4,18 @@ from typing import Any
 
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.gemini.encoding.content import encode_part, json_schema, part_fields
-from my_llm.codec.shared.chunks import batch
 from my_llm.codec.shared.conversion import (
     allocate_call_id,
     associate_tool_result,
     dictionaries,
+    encode_functions,
     extras,
+    mapping_list,
     remember,
     residual,
 )
-from my_llm.codec.shared.matching import mapping_list
-from my_llm.codec.shared.tools import encode_functions
-from my_llm.codec.shared.usage import record
-from my_llm.exceptions import ConfigurationError, MessageValidationError, ResponseFailedError
+from my_llm.codec.shared.stream import batch, record
+from my_llm.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
 
 PROTOCOL = "gemini"
@@ -26,6 +25,7 @@ class GeminiEncoder(BaseEncoder):
     """Convert native messages, tools, events and usage to intermediate values."""
 
     __slots__ = ()
+    protocol = PROTOCOL
 
     def match_item(self, item: dict) -> bool:
         if "function_declarations" in item:
@@ -37,14 +37,12 @@ class GeminiEncoder(BaseEncoder):
             "developer",
         ) and mapping_list(item.get("parts"))
 
-    def messages(
+    def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
         pending: list[dict] = []
         messages = dictionaries(messages)
-        if any(not isinstance(message.get("parts"), list) for message in messages):
-            raise MessageValidationError("message does not use the bound gemini protocol")
         # Reserve IDs from later messages too, before synthesizing any missing IDs.
         used_ids = {
             part["function_call"]["id"]
@@ -85,7 +83,7 @@ class GeminiEncoder(BaseEncoder):
             )
         return result
 
-    def tools(
+    def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         return encode_functions(
@@ -116,7 +114,7 @@ class GeminiEncoder(BaseEncoder):
             },
         )
 
-    def chunks(
+    def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []

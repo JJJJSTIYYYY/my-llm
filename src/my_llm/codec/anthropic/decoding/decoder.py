@@ -1,37 +1,29 @@
 """anthropic: intermediate to native output."""
 
-from inspect import signature
+from copy import deepcopy
 from typing import Any
-
-from anthropic.resources.messages import AsyncMessages
-from openai import Omit
 
 from my_llm.codec.anthropic.decoding.content import foreign_block
 from my_llm.codec.base.decoder import BaseDecoder
-from my_llm.codec.shared.chunks import events
 from my_llm.codec.shared.conversion import (
+    OPAQUE,
+    Translations,
     blocks,
-    coalesce_messages,
+    coalesce_groups,
+    decode_functions,
     extras,
     json_arguments,
     original,
+    project_message,
+    select_present,
     source_protocol,
 )
-from my_llm.codec.shared.keys import OPAQUE
-from my_llm.codec.shared.options import apply_max_tokens, native_options
-from my_llm.codec.shared.rendering import project_message, select_present
-from my_llm.codec.shared.tools import decode_functions
-from my_llm.codec.shared.usage import counts
-from my_llm.exceptions import ConfigurationError, ResponseFailedError, UnsupportedCapabilityError
+from my_llm.codec.shared.options import PreparedOptions, apply_max_tokens
+from my_llm.codec.shared.stream import counts, events
+from my_llm.exceptions import ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
 
 PROTOCOL = "anthropic"
-PROTECTED = {"model", "stream", "messages", "input", "tools", "system", "previous_response_id"}
-REQUEST_FIELDS = (
-    set(signature(AsyncMessages.create).parameters)
-    - PROTECTED
-    - {"self", "extra_headers", "extra_query", "extra_body", "timeout"}
-)
 REASONS = {
     "stop": "end_turn",
     "tool_calls": "tool_use",
@@ -41,16 +33,71 @@ REASONS = {
 
 
 class AnthropicDecoder(BaseDecoder):
-    """Render intermediate values and assemble native request dictionaries."""
+    """Translate intermediate values into protocol dictionaries, retaining replay data."""
 
     __slots__ = ()
-    usage_modes = ("none", "native")
+    protocol = PROTOCOL
 
-    def messages(
+    def request_parameters(
+        self, profile: ResolvedProfile, options: PreparedOptions
+    ) -> dict[str, Any]:
+        tokens, headers, effort = options.tokens, options.headers, options.effort
+        body = deepcopy(options.body)
+        request = dict(body)
+        if headers:
+            request["extra_headers"] = deepcopy(headers)
+        if effort:
+            self._apply_reasoning(request, body, profile, effort)
+        apply_max_tokens(request, profile, tokens)
+        return request
+
+    def assemble_request(
+        self,
+        messages: list,
+        tools: list | None,
+        profile: ResolvedProfile,
+        *,
+        options: PreparedOptions,
+        **parameters: Any,
+    ) -> dict:
+        result = self.request_parameters(profile, options)
+        system = [m for m in messages if m.get("role") in ("system", "developer")]
+        history = [m for m in messages if m.get("role") not in ("system", "developer")]
+        result.update(model=profile.model, stream=True, messages=history)
+        if system:
+            result["system"] = [
+                block
+                for message in system
+                for block in (
+                    [{"type": "text", "text": message["content"]}]
+                    if isinstance(message["content"], str)
+                    else message["content"]
+                )
+            ]
+        if tools is not None:
+            result["tools"] = tools
+        return result
+
+    def _apply_reasoning(
+        self,
+        request: dict[str, Any],
+        body: dict[str, Any],
+        profile: ResolvedProfile,
+        effort: str,
+    ) -> None:
+        thinking = body.get("thinking", {"type": "enabled", "budget_tokens": 1024})
+        if thinking.get("type") == "enabled" and "budget_tokens" not in thinking:
+            thinking = {**thinking, "budget_tokens": 1024}
+        request["thinking"] = thinking
+        if profile.get("supports_reasoning_effort", False):
+            request["output_config"] = {**body.get("output_config", {}), "effort": effort}
+
+    def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        result = []
-        for message in coalesce_messages(messages):
+        result = Translations()
+        for sources, message in coalesce_groups(messages):
+            result.group(sources, structure={"content": [{"source": {}}]})
             if message.get(OPAQUE):
                 result.extend(original(message, PROTOCOL))
                 continue
@@ -64,7 +111,7 @@ class AnthropicDecoder(BaseDecoder):
                 result.append({**extras(message, "parts", "tool_calls"), "content": content})
         return result
 
-    def tools(
+    def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         return decode_functions(
@@ -77,9 +124,10 @@ class AnthropicDecoder(BaseDecoder):
                 }
                 for f in functions
             ],
+            structure={},
         )
 
-    def chunks(
+    def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
@@ -228,81 +276,3 @@ class AnthropicDecoder(BaseDecoder):
         if cache_write is not None:
             result["cache_creation_input_tokens"] = cache_write
         return result
-
-    def profile_defaults(self) -> dict:
-        return {
-            "replay_reasoning_content_when_tool_calls": True,
-            "supports_reasoning_effort": False,
-            "max_tokens_path": "$.max_tokens",
-            "content_path": "$.delta.text",
-            "reasoning_content_path": "$.delta.thinking",
-            "reasoning_enable_parameter": {},
-            "reasoning_effort_parameter": {},
-        }
-
-    def request_parameters(self, profile: ResolvedProfile, **parameters: Any) -> dict[str, Any]:
-        tokens, headers, body, effort = native_options(
-            profile, request_fields=REQUEST_FIELDS, protected=PROTECTED, **parameters
-        )
-        if tokens is None:
-            raise ConfigurationError("Anthropic requires max_tokens in the model or generation")
-        request = dict(body)
-        if headers:
-            request["extra_headers"] = headers
-        if effort:
-            self._apply_reasoning(request, body, profile, tokens, effort)
-        apply_max_tokens(request, profile, tokens, protected=PROTECTED)
-        return request
-
-    def assemble_request(
-        self, messages: list, tools: list | None, profile: ResolvedProfile, **parameters: Any
-    ) -> dict:
-        previous = parameters.pop("previous_response_id", None)
-        if previous is not None and not isinstance(previous, Omit):
-            raise ConfigurationError("previous_response_id requires OpenAI Responses API")
-        result = self.request_parameters(profile, **parameters)
-        system = [m for m in messages if m.get("role") in ("system", "developer")]
-        history = [m for m in messages if m.get("role") not in ("system", "developer")]
-        if not history:
-            raise ConfigurationError("a non-system message is required")
-        result.update(model=profile.model, stream=True, messages=history)
-        if system:
-            result["system"] = [
-                block
-                for message in system
-                for block in (
-                    [{"type": "text", "text": message["content"]}]
-                    if isinstance(message["content"], str)
-                    else message["content"]
-                )
-            ]
-        if tools is not None:
-            result["tools"] = tools
-        return result
-
-    def _apply_reasoning(
-        self,
-        request: dict[str, Any],
-        body: dict[str, Any],
-        profile: ResolvedProfile,
-        tokens: int,
-        effort: str,
-    ) -> None:
-        thinking = body.get("thinking", {"type": "enabled", "budget_tokens": 1024})
-        if not isinstance(thinking, dict) or thinking.get("type") not in ("enabled", "adaptive"):
-            raise ConfigurationError("reasoning requires enabled or adaptive Anthropic thinking")
-        if thinking.get("type") == "enabled" and "budget_tokens" not in thinking:
-            thinking = {**thinking, "budget_tokens": 1024}
-        if thinking.get("type") == "enabled" and (
-            not isinstance(thinking.get("budget_tokens"), int)
-            or thinking["budget_tokens"] < 1024
-            or thinking["budget_tokens"] >= tokens
-        ):
-            raise ConfigurationError("Anthropic thinking budget must be >=1024 and < max_tokens")
-        request["thinking"] = thinking
-        if profile.get("supports_reasoning_effort", False):
-            if effort not in ("low", "medium", "high", "xhigh", "max"):
-                raise UnsupportedCapabilityError(
-                    "map reasoning effort to an Anthropic-supported level"
-                )
-            request["output_config"] = {**body.get("output_config", {}), "effort": effort}

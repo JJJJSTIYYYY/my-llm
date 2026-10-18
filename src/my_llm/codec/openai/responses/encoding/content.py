@@ -2,8 +2,8 @@
 
 from typing import Any
 
-from my_llm.codec.shared.chunks import BlockRef
-from my_llm.codec.shared.conversion import blocks, extras, residual
+from my_llm.codec.shared.conversion import blocks, extras, residual, uri_source
+from my_llm.codec.shared.stream import BlockRef
 
 
 def encode_content(content: Any) -> list[dict]:
@@ -14,33 +14,22 @@ def encode_content(content: Any) -> list[dict]:
         if kind in ("input_text", "output_text"):
             value["type"] = "text"
         elif kind in ("input_image", "input_file"):
-            file = block
             uri = (
                 block.get("image_url")
                 if kind == "input_image"
-                else file.get("file_data", file.get("file_url"))
+                else block.get("file_data", block.get("file_url"))
             )
             image_options = (
-                {"detail": uri["detail"]} if isinstance(uri, dict) and "detail" in uri else {}
+                {"detail": block["detail"]} if kind == "input_image" and "detail" in block else {}
             )
-            if isinstance(uri, dict):
-                uri = uri.get("url")
             # Without a usable URI (for example, a file_id-only block), leave
             # the native block intact instead of consuming fields we cannot map.
             if isinstance(uri, str):
-                source = {"type": "url", "url": uri}
-                if uri.startswith("data:"):
-                    header, _, data = uri.partition(",")
-                    source = {
-                        "type": "base64",
-                        "media_type": header[5:].removesuffix(";base64"),
-                        "data": data,
-                    }
                 value = {
                     **residual(block, content_fields(block)),
                     **image_options,
                     "type": "image" if kind == "input_image" else "document",
-                    "source": source,
+                    "source": uri_source(uri),
                 }
         result.append(value)
     return result

@@ -2,8 +2,8 @@
 
 from typing import Any
 
-from my_llm.codec.shared.chunks import BlockRef
-from my_llm.codec.shared.conversion import arguments, blocks, extras, residual
+from my_llm.codec.shared.conversion import arguments, blocks, extras, residual, uri_source
+from my_llm.codec.shared.stream import BlockRef
 
 CALL = {"id": True, "type": True, "function": {"name": True, "arguments": True}}
 
@@ -28,19 +28,11 @@ def encode_content(content: Any) -> list[dict]:
             # Without a usable URI (for example, a file_id-only block), leave
             # the native block intact instead of consuming fields we cannot map.
             if isinstance(uri, str):
-                source = {"type": "url", "url": uri}
-                if uri.startswith("data:"):
-                    header, _, data = uri.partition(",")
-                    source = {
-                        "type": "base64",
-                        "media_type": header[5:].removesuffix(";base64"),
-                        "data": data,
-                    }
                 value = {
                     **residual(block, content_fields(block)),
                     **image_options,
                     "type": "image" if kind == "image_url" else "document",
-                    "source": source,
+                    "source": uri_source(uri),
                 }
         result.append(value)
     return result

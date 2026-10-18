@@ -7,6 +7,7 @@ from my_llm import (
     BaseDecoder,
     BaseEncoder,
     BaseTransport,
+    MessageValidationError,
     MyCodec,
     UnsupportedCapabilityError,
 )
@@ -14,6 +15,7 @@ from my_llm.codec.openai.chat.codec import ChatCompletionsCodec
 from my_llm.codec.openai.chat.decoding.decoder import ChatCompletionsDecoder
 from my_llm.codec.openai.chat.encoding.encoder import ChatCompletionsEncoder
 from my_llm.codec.openai.chat.transport import ChatCompletionsTransport
+from tests.helpers.preservation import translated
 from tests.helpers.protocols import PROTOCOLS, history, tools
 
 
@@ -57,9 +59,10 @@ def test_codec_requires_conversion_directions_and_transport(missing):
     "base,concrete,missing",
     [
         (BaseEncoder, ChatCompletionsEncoder, "match_item"),
-        (BaseEncoder, ChatCompletionsEncoder, "chunks"),
+        (BaseEncoder, ChatCompletionsEncoder, "_chunks"),
         (BaseDecoder, ChatCompletionsDecoder, "assemble_request"),
         (BaseDecoder, ChatCompletionsDecoder, "request_parameters"),
+        (BaseTransport, ChatCompletionsTransport, "validate_request"),
         (BaseTransport, ChatCompletionsTransport, "upstream"),
         (BaseTransport, ChatCompletionsTransport, "create_client"),
     ],
@@ -106,11 +109,11 @@ def test_codec_coordinates_conversion_and_transport_validation(profile_factory):
         transport = Transport()
 
     Codec().validate_profile(profile)
-    assert calls == [("decoder", profile), ("transport", profile)]
+    assert calls == [("transport", profile)]
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
-def test_decoder_request_accepts_intermediate_values(profile_factory, protocol):
+def test_codec_request_translates_before_transport_assembly(profile_factory, protocol):
     converter = MyCodec()
     profile = profile_factory(protocol, max_tokens=100, supports_function_calling=True)
     intermediate = converter.encode(
@@ -119,7 +122,7 @@ def test_decoder_request_accepts_intermediate_values(profile_factory, protocol):
         input_format="gemini",
     )
     before = deepcopy(intermediate)
-    request = converter.decoder(protocol).request(**intermediate, profile=profile, max_tokens=50)
+    request = converter.codecs[protocol].request(**intermediate, profile=profile, max_tokens=50)
     if protocol == "gemini":
         assert request["contents"] == [{"role": "user", "parts": [{"text": "hello"}]}]
         assert request["config"].max_output_tokens == 50
@@ -136,7 +139,9 @@ def test_decoder_request_accepts_intermediate_values(profile_factory, protocol):
         if protocol == "openai_responses":
             expected_message["type"] = "message"
         assert request[history_key] == [expected_message]
-        assert request["tools"] == converter.decoder(protocol).tools(intermediate["tools"], profile)
+        assert request["tools"] == converter.transport(protocol).filter_tools(
+            converter.decoder(protocol).tools(intermediate["tools"], profile), profile
+        )
     assert intermediate == before
 
 
@@ -161,31 +166,61 @@ def test_request_pipeline_decodes_once_before_native_assembly(profile_factory, t
             calls.append(("tools", profile, parameters))
             return super().tools(tools, profile, **parameters)
 
-        def assemble_request(self, messages, tools, profile, **parameters):
+        def assemble_request(self, messages, tools, profile, *, options, **parameters):
             calls.append(("assemble", profile, parameters))
             assert messages == [{"role": "user", "content": "hello"}]
             assert tools == tool_values
-            return super().assemble_request(messages, tools, profile, **parameters)
+            return super().assemble_request(messages, tools, profile, options=options, **parameters)
 
-    RecordingDecoder().request(
+    class RecordingTransport(ChatCompletionsTransport):
+        __slots__ = ()
+
+        def validate_parameters(self, profile, **parameters):
+            calls.append(("parameters", profile, parameters))
+            return super().validate_parameters(profile, **parameters)
+
+        def validate_request(self, request, profile, **parameters):
+            calls.append(("validate", profile, parameters))
+            return super().validate_request(request, profile, **parameters)
+
+    class RecordingCodec(ChatCompletionsCodec):
+        __slots__ = ()
+        decoder = RecordingDecoder()
+        transport = RecordingTransport()
+
+    RecordingCodec().request(
         intermediate["messages"], intermediate.get("tools"), profile, max_tokens=42
     )
-    expected = (
-        ["messages", "assemble"] if tool_values is None else ["messages", "tools", "assemble"]
-    )
+    expected = ["parameters", "messages"]
+    if tool_values is not None:
+        expected.append("tools")
+    expected.extend(["assemble", "validate"])
     assert [kind for kind, _, _ in calls] == expected
     assert all(actual is profile and options == {"max_tokens": 42} for _, actual, options in calls)
 
 
-def test_direct_decoder_request_checks_tool_capability_before_conversion(profile_factory):
-    class RejectConversion(ChatCompletionsDecoder):
-        __slots__ = ()
-
-        def messages(self, *args, **kwargs):
-            pytest.fail("unsupported tools must be rejected before converting the request")
-
+def test_transport_checks_native_tool_capability(profile_factory):
     with pytest.raises(UnsupportedCapabilityError, match="function calling"):
-        RejectConversion().request([], [{}], profile_factory())
+        ChatCompletionsTransport().request({"messages": [], "tools": [{}]}, profile_factory())
+
+
+def test_transport_validates_filtered_native_message_structure(profile_factory):
+    request = {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": "hello",
+                "tool_calls": [
+                    {"id": "c", "type": "function", "function": {"name": "f", "arguments": 42}}
+                ],
+                "unknown": {"keep_in_history": True},
+            }
+        ]
+    }
+    before = deepcopy(request)
+    with pytest.raises(MessageValidationError):
+        ChatCompletionsTransport().request(request, profile_factory())
+    assert request == before
 
 
 @pytest.mark.parametrize(
@@ -212,6 +247,6 @@ def test_nullable_native_calls_are_treated_as_absent_and_replayed_exactly(protoc
     intermediate = converter.encode(incoming, input_format=protocol)
     assert intermediate["messages"][0]["content"] == []
     assert converter.decode(**intermediate, target_format=protocol)["messages"] == incoming
-    assert converter.decode(**intermediate, target_format="anthropic")["messages"] == [
+    assert translated(converter.decode(**intermediate, target_format="anthropic")["messages"]) == [
         {"role": "assistant", "content": []}
     ]

@@ -1,9 +1,8 @@
-"""Stateless stream conversion helpers."""
+"""Stateless stream operations, source block identities and token accounting."""
 
 from typing import NamedTuple
 
-from my_llm.codec.shared.conversion import dictionaries, original, remember, residual
-from my_llm.codec.shared.keys import SOURCE
+from my_llm.codec.shared.conversion import SOURCE, dictionaries, original, remember, residual
 
 
 class BlockRef(NamedTuple):
@@ -47,3 +46,58 @@ def events(chunks: list, protocol: str):
         else:
             if chunk.get("type") != "opaque" or chunk.get("protocol", protocol) == protocol:
                 yield chunk
+
+
+def compact(value):
+    if isinstance(value, dict):
+        return {key: compact(child) for key, child in value.items() if child is not None}
+    return value
+
+
+def record(
+    value,
+    protocol,
+    *,
+    input_base=None,
+    input_add=None,
+    output_base=None,
+    output_add=None,
+    total=None,
+    cached=None,
+    cache_write=None,
+    reasoning=None,
+):
+    return remember(
+        compact(
+            {
+                "input": {"base": input_base, "add": input_add},
+                "output": {"base": output_base, "add": output_add},
+                "total": total,
+                "cached": cached,
+                "cache_write": cache_write,
+                "reasoning": reasoning,
+            }
+        ),
+        value,
+        protocol,
+    )
+
+
+def counts(value):
+    def group(name):
+        data = value.get(name, {})
+        base = data.get("base")
+        return base + sum(data.get("add", {}).values()) if base is not None else None
+
+    incoming, outgoing = group("input"), group("output")
+    total = value.get("total")
+    if total is None and incoming is not None and outgoing is not None:
+        total = incoming + outgoing
+    return (
+        incoming,
+        outgoing,
+        total,
+        value.get("cached"),
+        value.get("cache_write"),
+        value.get("reasoning"),
+    )

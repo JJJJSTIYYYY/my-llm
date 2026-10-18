@@ -33,6 +33,7 @@ async def test_owned_client_configuration_and_cleanup(monkeypatch):
         monkeypatch, [chat_event(content="ok"), chat_event(finish="stop")]
     )
     result = await generate(
+        stdio_protocol="openai_chat",
         provider=ProviderProfile(api_key="profile", timeout=30, max_retries=0),
         model="demo",
         messages=[{"role": "user", "content": "x"}],
@@ -47,7 +48,9 @@ async def test_unstarted_and_early_closed_streams_release_resources(monkeypatch)
         monkeypatch,
         [chat_event(content="one"), chat_event(content="two"), chat_event(finish="stop")],
     )
-    llm = MyLLM(provider=ProviderProfile(), model=ModelProfile(model="demo"))
+    llm = MyLLM(
+        stdio_protocol="openai_chat", provider=ProviderProfile(), model=ModelProfile(model="demo")
+    )
     stream = await llm.generate(messages=[{"role": "user", "content": "x"}], stream=True)
     await stream.aclose()
     assert captured == []
@@ -68,7 +71,10 @@ async def test_missing_terminal_event_preserves_partial_message(monkeypatch):
     client, _ = patch_client(monkeypatch, [chat_event(content="partial")])
     with pytest.raises(IncompleteStreamError) as error:
         await generate(
-            provider=ProviderProfile(), model="demo", messages=[{"role": "user", "content": "x"}]
+            stdio_protocol="openai_chat",
+            provider=ProviderProfile(),
+            model="demo",
+            messages=[{"role": "user", "content": "x"}],
         )
     assert error.value.partial_message == {"role": "assistant", "content": "partial"}
     assert client.closed and client.upstream.closed
@@ -78,7 +84,10 @@ async def test_transport_error_closes_everything(monkeypatch):
     client, _ = patch_client(monkeypatch, [], RuntimeError("transport failed"))
     with pytest.raises(RuntimeError, match="transport failed"):
         await generate(
-            provider=ProviderProfile(), model="demo", messages=[{"role": "user", "content": "x"}]
+            stdio_protocol="openai_chat",
+            provider=ProviderProfile(),
+            model="demo",
+            messages=[{"role": "user", "content": "x"}],
         )
     assert client.closed and client.upstream.closed
 
@@ -94,7 +103,10 @@ async def test_cancellation_closes_everything(monkeypatch):
     monkeypatch.setattr(type(client.upstream), "__anext__", wait)
     task = asyncio.create_task(
         generate(
-            provider=ProviderProfile(), model="demo", messages=[{"role": "user", "content": "x"}]
+            stdio_protocol="openai_chat",
+            provider=ProviderProfile(),
+            model="demo",
+            messages=[{"role": "user", "content": "x"}],
         )
     )
     await started.wait()
@@ -107,7 +119,7 @@ async def test_cancellation_closes_everything(monkeypatch):
 async def test_stdio_protocol_binds_once_and_rejects_other_formats(monkeypatch):
     patch_client(monkeypatch, [chat_event(finish="stop")])
     llm = MyLLM(provider=ProviderProfile(), model=ModelProfile(model="demo"))
-    await llm.generate(messages=[{"role": "user", "content": "x"}])
+    await llm.generate(messages=[{"role": "developer", "content": [{"type": "text", "text": "x"}]}])
     assert llm.stdio_protocol == "openai_chat"
     with pytest.raises(MessageValidationError, match="bound"):
         await llm.generate(messages=[{"role": "user", "parts": [{"text": "x"}]}])
@@ -115,7 +127,9 @@ async def test_stdio_protocol_binds_once_and_rejects_other_formats(monkeypatch):
 
 async def test_configuration_errors_happen_before_sdk_creation(monkeypatch):
     _, captured = patch_client(monkeypatch, [])
-    llm = MyLLM(provider=ProviderProfile(), model=ModelProfile(model="demo"))
+    llm = MyLLM(
+        stdio_protocol="openai_chat", provider=ProviderProfile(), model=ModelProfile(model="demo")
+    )
     with pytest.raises(ConfigurationError):
         await llm.generate(messages=[{"role": "user", "content": "x"}], stream="yes")
     for option in ("provider", "model", "client", "api_key", "timeout", "protocol"):
@@ -137,7 +151,10 @@ async def test_provider_error_is_not_masked_by_partial_tool_json(monkeypatch):
     client, _ = patch_client(monkeypatch, events)
     with pytest.raises(ResponseFailedError) as failure:
         await generate(
-            provider=ProviderProfile(), model="demo", messages=[{"role": "user", "content": "hi"}]
+            stdio_protocol="openai_chat",
+            provider=ProviderProfile(),
+            model="demo",
+            messages=[{"role": "user", "content": "hi"}],
         )
     assert failure.value.partial_message["content"] == "partial"
     assert failure.value.details == {"message": "provider failure"}

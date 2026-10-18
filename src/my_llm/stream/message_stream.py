@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from contextlib import AsyncExitStack
 from copy import deepcopy
 from typing import Any
 
@@ -17,11 +18,17 @@ class MessageStream(AsyncIterator[dict[str, Any]]):
     Use ``async with stream`` to release SDK resources after early exit.
     """
 
-    def __init__(self, iterator: AsyncIterator[dict[str, Any]], state: StreamState) -> None:
+    def __init__(self, iterator: AsyncGenerator[dict[str, Any], None], state: StreamState) -> None:
         self._iterator = iterator
         self._state = state
         self._closed = False
-        self._on_close: Callable[[], Awaitable[None]] | None = None
+        self._close_callbacks = AsyncExitStack()
+
+    def add_close_callback(self, callback: Callable[[], Awaitable[None]]) -> None:
+        """Release an async owner once when this stream closes, including before iteration."""
+        if self._closed:
+            raise RuntimeError("MessageStream is closed")
+        self._close_callbacks.push_async_callback(callback)
 
     @property
     def result(self) -> Any:
@@ -48,9 +55,7 @@ class MessageStream(AsyncIterator[dict[str, Any]]):
             try:
                 await self._iterator.aclose()
             finally:
-                if self._on_close is not None:
-                    callback, self._on_close = self._on_close, None
-                    await callback()
+                await self._close_callbacks.aclose()
 
     async def __aenter__(self) -> MessageStream:
         return self

@@ -128,7 +128,9 @@ async def test_sdk_http_errors_retain_their_type_and_preserve_client(monkeypatch
     monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
     monkeypatch.setattr("my_llm.codec.openai.responses.transport.AsyncOpenAI", factory)
     llm = MyLLM(
-        provider=ProviderProfile(api_key="local", max_retries=0), model=ModelProfile(model="demo")
+        stdio_protocol="openai_chat",
+        provider=ProviderProfile(api_key="local", max_retries=0),
+        model=ModelProfile(model="demo"),
     )
     with pytest.raises(BadRequestError):
         await llm.generate(messages=[{"role": "user", "content": "hi"}])

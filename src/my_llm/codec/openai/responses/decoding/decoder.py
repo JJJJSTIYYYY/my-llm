@@ -7,46 +7,84 @@ from openai import Omit
 
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.openai.responses.decoding.content import foreign_block, render_content
-from my_llm.codec.shared.chunks import events
 from my_llm.codec.shared.conversion import (
+    OPAQUE,
+    SOURCE,
+    Translations,
+    decode_functions,
     dictionaries,
     extras,
     json_arguments,
     original,
+    project_message,
+    select_present,
     source_protocol,
     tool_output,
 )
-from my_llm.codec.shared.keys import OPAQUE, SOURCE
 from my_llm.codec.shared.options import (
+    PreparedOptions,
     apply_max_tokens,
-    bindings,
-    check_protected,
+    merge_bindings,
     overlay_generated,
-    resolve_options,
 )
-from my_llm.codec.shared.rendering import project_message, select_present
-from my_llm.codec.shared.tools import decode_functions
-from my_llm.codec.shared.usage import counts
-from my_llm.codec.shared.values import _expand
-from my_llm.exceptions import ConfigurationError, ResponseFailedError, UnsupportedCapabilityError
-from my_llm.profile.configuration import merge_dicts
+from my_llm.codec.shared.stream import counts, events
+from my_llm.exceptions import ResponseFailedError, UnsupportedCapabilityError
 from my_llm.profile.resolution import ResolvedProfile
 
 PROTOCOL = "openai_responses"
-PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response_id"}
 
 
 class ResponsesDecoder(BaseDecoder):
-    """Render intermediate values and assemble native request dictionaries."""
+    """Translate intermediate values into protocol dictionaries, retaining replay data."""
 
     __slots__ = ()
-    usage_modes = ("none", "native")
+    protocol = PROTOCOL
 
-    def messages(
+    def request_parameters(self, profile: ResolvedProfile, options: PreparedOptions) -> dict:
+        tokens, headers, effort = options.tokens, options.headers, options.effort
+        body = deepcopy(options.body)
+        layers = []
+        for index, binding in enumerate(options.bindings):
+            if "reasoning" in binding:
+                value = binding["reasoning"]
+                if index == 1 and not isinstance(value, Omit) and "effort" not in value:
+                    value = {"effort": effort, **value}
+                layers.append({"reasoning": value})
+        request = merge_bindings({"reasoning": {"summary": "detailed"}}, *layers) if layers else {}
+        body = overlay_generated(request, body)
+        if headers:
+            request["extra_headers"] = deepcopy(headers)
+        if body:
+            request["extra_body"] = body
+        apply_max_tokens(request, profile, tokens, overlay="extra_body")
+        return request
+
+    def assemble_request(
+        self,
+        messages: list,
+        tools: list | None,
+        profile: ResolvedProfile,
+        *,
+        options: PreparedOptions,
+        **parameters: Any,
+    ) -> dict:
+        previous = parameters.pop("previous_response_id", None)
+        has_previous = previous is not None and not isinstance(previous, Omit)
+        result = self.request_parameters(profile, options)
+        result.update(model=profile.model, stream=True, input=messages)
+        if tools is not None:
+            result["tools"] = tools
+        if has_previous:
+            result["previous_response_id"] = previous
+        return result
+
+    def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        result = []
+        result = Translations()
         for message in dictionaries(messages):
+            result.group([message], structure={"content": [{"image_url": {}}]})
+            group_start = len(result)
             if message.get(OPAQUE):
                 result.extend(original(message, PROTOCOL))
                 continue
@@ -129,9 +167,24 @@ class ResponsesDecoder(BaseDecoder):
                         }
                     )
             flush()
+            if len(result) == group_start:
+                result.append(
+                    {
+                        "type": "message",
+                        "role": message["role"],
+                        **(
+                            {"id": f"msg_{len(result)}", "status": "completed"}
+                            if message["role"] == "assistant"
+                            else {}
+                        ),
+                        "content": render_content(
+                            [{"type": "text", "text": ""}], role=message["role"]
+                        ),
+                    }
+                )
         return result
 
-    def tools(
+    def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         return decode_functions(
@@ -140,14 +193,16 @@ class ResponsesDecoder(BaseDecoder):
             lambda functions: [
                 {
                     "type": "function",
-                    **select_present(f, "name", "description", "parameters", "strict"),
+                    **select_present(f, "name", "description", "strict"),
+                    "parameters": f.get("parameters"),
                     "strict": f.get("strict") or False,
                 }
                 for f in functions
             ],
+            structure={},
         )
 
-    def chunks(
+    def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
@@ -349,7 +404,7 @@ class ResponsesDecoder(BaseDecoder):
                         details={"reason": event["reason"]},
                     )
                 output = (
-                    self.messages(event.get("messages", []))
+                    self._messages(event.get("messages", []))
                     if self._native_items(parameters)
                     else self._completed_output(event, parameters.get("source_protocol"))
                 )
@@ -428,67 +483,8 @@ class ResponsesDecoder(BaseDecoder):
             "output_tokens_details": {"reasoning_tokens": reasoning or 0},
         }
 
-    def profile_defaults(self) -> dict:
-        return {
-            "replay_reasoning_content_when_tool_calls": True,
-            "supports_reasoning_effort": True,
-            "max_tokens_path": "$.max_output_tokens",
-            "content_path": "response.output_text.delta",
-            "reasoning_content_path": "response.reasoning_summary_text.delta",
-            "reasoning_enable_parameter": {
-                "reasoning": {"summary": "detailed", "effort": "medium"}
-            },
-            "reasoning_effort_parameter": {
-                "reasoning": {"summary": "detailed", "effort": "{effort}"}
-            },
-        }
-
     def result(self, messages: list) -> list:
         return messages
-
-    def allows_external_calls(self, previous_response_id) -> bool:
-        return previous_response_id is not None and not isinstance(previous_response_id, Omit)
-
-    def request_parameters(self, profile: ResolvedProfile, **parameters: Any) -> dict:
-        tokens, headers, body, effort = resolve_options(profile, protected=PROTECTED, **parameters)
-        request = {}
-        for index, binding in enumerate(bindings(profile, effort, expand=False)):
-            binding = {key: value for key, value in binding.items() if not isinstance(value, Omit)}
-            if set(binding) - {"reasoning", "extra_body"}:
-                raise ConfigurationError("reasoning bindings contain unsupported SDK parameters")
-            extra = _expand(binding.get("extra_body", {}), effort)
-            check_protected(extra, PROTECTED)
-            body = merge_dicts(body, extra)
-            if "reasoning" in binding:
-                value = binding["reasoning"]
-                if not isinstance(value, dict):
-                    raise ConfigurationError("reasoning must be a dictionary")
-                combined = merge_dicts({"summary": "detailed"}, request.get("reasoning"), value)
-                if index == 1 and "effort" not in value:
-                    combined["effort"] = effort
-                request["reasoning"] = _expand(combined, effort)
-        body = overlay_generated(request, body)
-        if headers:
-            request["extra_headers"] = headers
-        if body:
-            request["extra_body"] = body
-        apply_max_tokens(request, profile, tokens, protected=PROTECTED)
-        return request
-
-    def assemble_request(
-        self, messages: list, tools: list | None, profile: ResolvedProfile, **parameters: Any
-    ) -> dict:
-        previous = parameters.pop("previous_response_id", None)
-        has_previous = previous is not None and not isinstance(previous, Omit)
-        if has_previous and (not isinstance(previous, str) or not previous):
-            raise ConfigurationError("previous_response_id requires Responses and a non-empty ID")
-        result = self.request_parameters(profile, **parameters)
-        result.update(model=profile.model, stream=True, input=messages)
-        if tools is not None:
-            result["tools"] = tools
-        if has_previous:
-            result["previous_response_id"] = previous
-        return result
 
     def _response_envelope(self, **parameters: Any) -> dict:
         # Other protocols do not report these request settings. Supply valid defaults
@@ -518,7 +514,7 @@ class ResponsesDecoder(BaseDecoder):
         )
 
     def _output_item(self, block: dict, index: int, origin: str | None) -> dict:
-        item = self.messages(
+        item = self._messages(
             [{"role": "assistant", "content": [block], SOURCE: {"protocol": origin}}]
         )[0]
         item.update(id=f"item_{index}", status="completed")
@@ -526,7 +522,7 @@ class ResponsesDecoder(BaseDecoder):
 
     def _completed_output(self, event: dict, origin: str | None) -> list[dict]:
         if "output_blocks" not in event:
-            return self.messages(event.get("messages", []))
+            return self._messages(event.get("messages", []))
         result = [
             self._output_item(entry["block"], entry["index"], origin)
             for entry in event["output_blocks"]

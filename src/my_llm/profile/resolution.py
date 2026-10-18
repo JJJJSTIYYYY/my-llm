@@ -10,16 +10,19 @@ from openai import Omit
 
 from my_llm.exceptions import ConfigurationError, UnsupportedProviderError
 from my_llm.profile.configuration import EFFORTS, PROTOCOLS, Protocol, merge_dicts
+from my_llm.profile.defaults import protocol_defaults
 from my_llm.profile.model_profile import ModelProfile
+from my_llm.profile.paths import path_keys
 from my_llm.profile.provider_profile import ProviderProfile
 
 
 @dataclass(frozen=True)
 class ResolvedProfile:
-    """Validated configuration snapshot for advanced codec integrations.
+    """Configuration snapshot with generic field validation for codec integrations.
 
     Applications normally pass ProviderProfile/ModelProfile to MyLLM instead.
-    Treat values and their nested payloads as read-only.
+    Transport validates protocol-specific constraints. Treat values and their
+    nested payloads as read-only.
     """
 
     protocol: Protocol
@@ -36,7 +39,9 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
     """Validate and snapshot protocol, provider and model settings in order.
 
     Excludes descriptive context-window metadata and the provider's catalogue.
-    Raises ConfigurationError subclasses for invalid settings/capabilities.
+    Standard defaults come from the declarative protocol configuration.
+    Transport validates SDK-specific constraints separately.
+    Raises ConfigurationError subclasses for invalid configuration.
     """
     if not isinstance(provider, ProviderProfile) or not isinstance(model, ModelProfile):
         raise ConfigurationError("provider and model must be profile instances")
@@ -44,12 +49,6 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
         raise UnsupportedProviderError(f"unsupported protocol: {provider.protocol!r}")
     if not isinstance(model.model, str) or not model.model.strip():
         raise ConfigurationError("model must be a non-empty string")
-    # Import lazily: codec contracts refer to ResolvedProfile during definition.
-    from my_llm.codec.converter import MyCodec
-    from my_llm.codec.shared.values import path_keys
-
-    codec = MyCodec()
-    decoder = codec.decoder(provider.protocol)
     values: dict[str, Any] = {
         "extra_headers": {},
         "extra_body": {},
@@ -60,7 +59,7 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
         "supports_message_name": True,
         "usage_mode": "none",
         "reasoning_effort_mapping": {effort: effort for effort in EFFORTS},
-        **decoder.profile_defaults(),
+        **protocol_defaults(provider.protocol),
     }
     for profile in (provider, model):
         for item in fields(profile):
@@ -70,7 +69,12 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
             if value is None:
                 continue
             if isinstance(value, dict):
-                values[item.name] = merge_dicts(values.get(item.name), value)
+                values[item.name] = merge_dicts(
+                    values.get(item.name),
+                    value,
+                    preserve_omit=item.name
+                    in ("reasoning_enable_parameter", "reasoning_effort_parameter"),
+                )
             else:
                 values[item.name] = value
     # Snapshot configuration once, after all layers have been merged.
@@ -91,7 +95,6 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
     usage = resolved.get("usage_mode", "none")
     if usage not in ("none", "native", "stream_options"):
         raise ConfigurationError("invalid usage_mode")
-    codec.validate_profile(resolved)
     for key in (
         "extra_headers",
         "extra_body",
@@ -128,7 +131,7 @@ def client_parameters(profile: ResolvedProfile) -> dict[str, Any]:
     result = {}
     for key in ("base_url", "api_key", "timeout", "max_retries"):
         value = profile.get(key)
-        if value is None or isinstance(value, Omit):
+        if value is None:
             continue
         if key in ("api_key", "base_url") and (not isinstance(value, str) or not value.strip()):
             raise ConfigurationError(f"{key} must be a non-empty string")

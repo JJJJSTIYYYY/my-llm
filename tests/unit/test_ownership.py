@@ -9,15 +9,18 @@ from tests.helpers.transport import FakeClient
 def test_profile_and_request_snapshots_are_independent():
     body = {"nested": {"value": "original"}}
     provider = ProviderProfile(extra_body=body)
-    llm = MyLLM(provider=provider, model=ModelProfile(model="demo"))
+    llm = MyLLM(stdio_protocol="openai_chat", provider=provider, model=ModelProfile(model="demo"))
     body["nested"]["value"] = "changed"
     assert llm.provider.extra_body["nested"]["value"] == "original"
     assert llm.resolved_profile.get("extra_body")["nested"]["value"] == "original"
     decoder = llm.codec.decoder(llm.resolved_profile.protocol)
-    request = decoder.request_parameters(llm.resolved_profile)
-    request["extra_body"]["nested"]["value"] = "transport"
+    options = llm.codec.transport(llm.resolved_profile.protocol).validate_parameters(
+        llm.resolved_profile
+    )
+    request = decoder.request_parameters(llm.resolved_profile, options)
+    request["extra_body"]["nested"]["value"] = "changed request"
     assert (
-        decoder.request_parameters(llm.resolved_profile)["extra_body"]["nested"]["value"]
+        decoder.request_parameters(llm.resolved_profile, options)["extra_body"]["nested"]["value"]
         == "original"
     )
 
@@ -31,7 +34,9 @@ async def test_lazy_generation_captures_history_and_request_options(monkeypatch)
     )
     history = [{"role": "user", "content": [{"type": "text", "text": "original"}]}]
     body = {"nested": {"value": "original"}}
-    llm = MyLLM(provider=ProviderProfile(), model=ModelProfile(model="demo"))
+    llm = MyLLM(
+        stdio_protocol="openai_chat", provider=ProviderProfile(), model=ModelProfile(model="demo")
+    )
     stream = await llm.generate(messages=history, extra_body=body, stream=True)
     history[0]["content"][0]["text"] = "changed"
     body["nested"]["value"] = "changed"
@@ -57,6 +62,6 @@ def test_converter_never_mutates_input_or_profile():
         if protocol == "openai_chat":
             converted["messages"][0]["nested"]["value"].append(2)
         else:
-            assert "nested" not in converted["messages"][0]
+            assert converted["messages"][0]["nested"] == before[0]["nested"]
             converted["messages"][0]["content" if protocol != "gemini" else "parts"] = "changed"
     assert messages == before

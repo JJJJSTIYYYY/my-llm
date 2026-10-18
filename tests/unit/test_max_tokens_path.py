@@ -5,7 +5,7 @@ from copy import deepcopy
 import pytest
 
 from my_llm import ConfigurationError, omit
-from my_llm.codec.shared.values import path_value
+from my_llm.codec.shared.options import path_value
 from tests.helpers.requests import encode_request
 
 DEFAULT_PATHS = [

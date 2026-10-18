@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Hashable, Sequence
+from collections.abc import AsyncGenerator, Hashable, Sequence
 from contextlib import AsyncExitStack, aclosing
 from copy import deepcopy
 from typing import Any
@@ -11,7 +11,6 @@ from openai import Omit, omit
 
 from my_llm.codec.converter import MyCodec
 from my_llm.codec.shared.conversion import dictionaries
-from my_llm.codec.shared.validation import validate_history
 from my_llm.exceptions import ConfigurationError, MessageValidationError, StreamError
 from my_llm.profile.configuration import PROTOCOLS, Protocol, ReasoningEffort
 from my_llm.profile.model_profile import ModelProfile
@@ -25,10 +24,10 @@ class MyLLM:
     """Generate in any standard I/O protocol using a fixed provider/model snapshot.
 
     ``stdio_protocol`` is independent of the provider's ``protocol``. When unset,
-    the first awaited generation guesses it once from the whole history/tools.
-    Ambiguous text-only histories prefer openai_chat. Set it explicitly for
-    native Anthropic/Ollama or Responses text-only input. Each concurrent request
-    owns its stream state and borrows an instance-owned SDK client. Use
+    the first awaited generation binds it only if the whole history/tools match
+    a unique protocol. Ambiguous or unrecognized input requires an explicit
+    stdio_protocol. Each concurrent request owns its stream state and borrows an
+    instance-owned SDK client. Use
     ``async with MyLLM(...)`` or ``await llm.aclose()`` to release clients.
     Configuration copies are captured here; internal mutation is not supported.
     """
@@ -42,10 +41,11 @@ class MyLLM:
     ) -> None:
         if stdio_protocol is not None and stdio_protocol not in PROTOCOLS:
             raise ConfigurationError(f"unsupported stdio_protocol: {stdio_protocol!r}")
+        self.codec = MyCodec()
         self.resolved_profile = resolve_profiles(provider, model)
+        self.codec.validate_profile(self.resolved_profile)
         self.provider = deepcopy(provider)
         self.model = deepcopy(model)
-        self.codec = MyCodec()
         self.stdio_protocol = stdio_protocol
         self._clients: dict[Hashable, Any] = {}
         self._client_resources = AsyncExitStack()
@@ -83,12 +83,13 @@ class MyLLM:
         await self.aclose()
 
     def guess_stdio_protocol(self, messages_or_tools: list[Any]) -> Protocol:
-        """Bind the I/O format once. Ambiguous standard messages prefer Chat."""
+        """Bind a uniquely inferred I/O format once; otherwise require explicit selection."""
         if self.stdio_protocol is None:
             guessed = self.codec.match_protocol(messages_or_tools)
             if guessed is None:
                 raise MessageValidationError(
-                    "cannot recognize a uniform standard protocol; set stdio_protocol explicitly"
+                    "stdio_protocol is not specified and cannot be inferred uniquely "
+                    "from the input; set stdio_protocol explicitly"
                 )
             self.stdio_protocol = guessed
         return self.stdio_protocol
@@ -121,14 +122,9 @@ class MyLLM:
         tool_values = None if tools is None or isinstance(tools, Omit) else dictionaries(tools)
         # Tool declarations can disambiguate otherwise identical text-only histories.
         protocol = self.guess_stdio_protocol([*history, *(tool_values or [])])
+        self.codec.validate_input(protocol, history, tool_values)
         intermediate = self.codec.encode(history, tool_values, input_format=protocol)
         profile = self.resolved_profile
-        validate_history(
-            intermediate["messages"],
-            allow_external_calls=self.codec.decoder(profile.protocol).allows_external_calls(
-                previous_response_id
-            ),
-        )
         options = deepcopy(
             dict(
                 max_tokens=max_tokens,
@@ -162,7 +158,7 @@ class MyLLM:
 
     async def _stream(
         self, request: dict, options: dict, state: StreamState, stdio_protocol: Protocol
-    ) -> AsyncIterator[dict]:
+    ) -> AsyncGenerator[dict, None]:
         profile = self.resolved_profile
         try:
             client = self._get_client(options)
@@ -201,5 +197,5 @@ async def generate(
         )
         result = await llm.generate(messages=messages, **parameters)
         if isinstance(result, MessageStream):
-            result._on_close = resources.pop_all().aclose
+            result.add_close_callback(resources.pop_all().aclose)
         return result

@@ -6,7 +6,7 @@ MyLLM 实例拥有官方 SDK 客户端；请求只拥有响应流与累积状态
 
 ## 创建、复用与关闭
 
-构造 MyLLM 时仍只解析并复制 provider / model 配置。首次真正消费响应流时，
+构造 MyLLM 时解析、校验并复制 provider / model 配置，不创建 SDK 客户端。首次真正消费响应流时，
 MyLLM 从 BaseCodec 统一组合的 Transport 获取 create_client，保存客户端到实例缓存，
 并登记 Transport.close_client 到实例的 AsyncExitStack。
 客户端创建和缓存登记均为同步操作，首次并发请求之间没有 await 切换点，
@@ -28,13 +28,13 @@ SDK 客户端按实例及其事件循环使用，不跨事件循环共享。
 
 ## 协议边界
 
-MyLLM 只管理缓存与生命周期，不导入厂商 SDK 或分支选择关闭方式。
+MyLLM 调度 Transport 的客户端接口并管理缓存；客户端实现类、请求执行和关闭方式由 Transport 决定。
 BaseCodec 组合 Encoder、Decoder 和 BaseTransport 三个独立组件。
-Decoder 只负责中间态到原生输出、请求字段与生成选项，不提供 SDK 客户端方法。
+Encoder / Decoder 负责翻译和信息保留；Decoder 映射生成选项并组织原生请求结构。
+参数验证、SDK 字段过滤及原生结构校验统一由 Transport 处理。
 Transport.create_client 创建客户端，upstream 显式借用 client 执行原生请求；
 close_client 默认 await client.close()，client_key 默认 None。
-SDK 的连接约束由 Transport.validate_profile 校验；BaseCodec.validate_profile 统一协调
-Decoder 的转换校验和 Transport 的连接校验。
+SDK 的连接约束和协议配置由 Transport.validate_profile 校验；BaseCodec.validate_profile 委托 Transport。
 Codec 和 Transport 均保持无状态，实际客户端仍由 MyLLM 缓存，
 消息翻译仍经过 Encoder → 中间态 → Decoder。
 

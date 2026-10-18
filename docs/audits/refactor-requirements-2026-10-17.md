@@ -1,5 +1,8 @@
 # 最初重构需求与当前实现对照
 
+本页记录此前重构快照；2026-10-18 的字段回放及 Transport 验证职责以[当前架构](../design/architecture.md)为准。
+截至 2026-10-18，已按后续要求取消歧义输入默认 Chat 的规则，仅唯一匹配时自动绑定，其他情况需显式指定 stdio_protocol。
+
 核对日期：2026-10-17。基线是用户提供的 `myllm_refactor.md`，共 233 行，
 SHA-256 为 `573045c4a0ba3ec98e914070937d4dfcb9d6e715ddc05fde800a905fc72cf498`。
 以下“原文行号”均指该文件；没有改写原始需求文件。
@@ -65,7 +68,7 @@ SHA-256 为 `573045c4a0ba3ec98e914070937d4dfcb9d6e715ddc05fde800a905fc72cf498`�
 | R20 | 47、229：公开输入输出不再使用自定义消息协议。 | 符合。公开返回原生字典或 Responses items；Message / MessageChunk / ToolCall 等类型已移除。StreamState / BlockState 是内部累积实现；[公开接口](../../tests/unit/test_public_api.py)、[标准协议输出](../../tests/contract/test_protocol_conformance.py)。 |
 | R21 | 55：仅思考开启且当条有调用时补空思考字段。 | 符合空值补充条件。Chat / Ollama 的 replay 开关、thinking、调用、已有可见思考共 32 种组合直接验证；[条件测试](../../tests/unit/test_encoding.py#L201)。已有可见思考的回放和缺失值的补充不是同一行为。 |
 | R22 | 227：外部工具调用必须完整，不做内部中断恢复。 | 符合。工具及后续块等待成功终态和 EOF，参数先完整解析再发布；失败不输出半成品，无自动修复流程；[流状态测试](../../tests/contract/test_stream_state.py#L264)。 |
-| R23 | 228：处理消息间的调用 / 结果 ID 异常。 | 符合。标准协议输入中的重复、缺失、未知、乱序及可选 ID 情况均检查。[历史测试](../../tests/unit/test_messages.py)、[validate_history](../../src/my_llm/codec/shared/validation.py)。 |
+| R23 | 228：处理消息间的调用 / 结果 ID 异常。 | 符合。标准协议输入中的重复、缺失、未知、乱序及可选 ID 情况均检查。[历史测试](../../tests/unit/test_messages.py)、[validate_history](../../src/my_llm/codec/shared/transport.py)。 |
 | R24 | 231：移除自定义 client 支持。 | 符合。构造和实例 generate 均无 client 注入；各原生 transport 创建官方 SDK client，MyLLM 实例复用并统一关闭；[资源测试](../../tests/unit/test_client_lifecycle.py)、[并发验证](../../tests/integration/test_concurrency.py)。 |
 | R25 | 233：无需旧版兼容路径，代码清晰、无冗余。 | 未保留旧消息包、旧 client 参数或旧文件转发；职责按当前目录归位，初始化文件仅导出。见[结构检查](../../tests/contract/test_codec_boundaries.py)、[发行包检查](../../tests/packaging/test_distribution.py)。“最简洁”是设计评价，不能以测试通过证明绝对最优；Decoder 扩展与局部批次累积的具体差异已单列。 |
 

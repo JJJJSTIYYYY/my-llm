@@ -8,7 +8,7 @@ from ollama import AsyncClient as AsyncOllama
 from pydantic import ValidationError
 
 from my_llm.codec.base.transport import BaseTransport
-from my_llm.codec.shared.conversion import plain
+from my_llm.codec.shared.conversion import dictionary_views, plain
 from my_llm.codec.shared.options import (
     PreparedOptions,
     validate_max_tokens_path,
@@ -74,6 +74,7 @@ class OllamaTransport(BaseTransport):
             # before validating Message. Mirror that SDK boundary without
             # changing the dictionaries used for conversion or serialization.
             try:
+                values = list(dictionary_views(values))
                 values = [
                     {
                         **value,

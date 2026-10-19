@@ -5,7 +5,6 @@ import json
 
 from jsonschema import Draft202012Validator
 
-from tests.helpers.preservation import translated
 from tests.helpers.schema import validate_request
 from tests.helpers.sdk import EVENT_TYPES, MESSAGE_TYPES, TOOL_TYPES, assert_native
 from tests.performance.workloads import PNG, Workload, arguments, parameters
@@ -28,7 +27,7 @@ def validate_workload(workload: Workload):
 
 def result_parts(protocol: str, result):
     """Extract public fields directly, independently of MyCodec conversion."""
-    messages = translated(result if isinstance(result, list) else [result])
+    messages = result if isinstance(result, list) else [result]
     texts, thoughts, calls = [], [], []
     for message in messages:
         if protocol == "openai_responses":

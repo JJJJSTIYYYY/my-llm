@@ -1,6 +1,7 @@
 """Independent regressions for the 2026-10-17 official protocol audit."""
 
 import base64
+import json
 from copy import deepcopy
 
 import pytest
@@ -14,7 +15,6 @@ from my_llm import (
 )
 from my_llm.codec.gemini.encoding.content import json_schema
 from my_llm.stream._state import StreamState
-from tests.helpers.preservation import translated
 from tests.helpers.protocols import PROTOCOLS, response_completed, stream_events
 from tests.helpers.sdk import EVENT_TYPES, MESSAGE_TYPES, TOOL_TYPES, assert_native
 from tests.helpers.streaming import render
@@ -30,7 +30,9 @@ def native_events(protocol, events):
 
 
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_a01_gemini_native_schema_is_normalized_and_replay_is_exact(target, profile_factory):
+def test_a01_gemini_native_schema_constraints_survive_explicit_normalization(
+    target, profile_factory
+):
     incoming = types.Tool(
         function_declarations=[
             types.FunctionDeclaration(
@@ -64,23 +66,21 @@ def test_a01_gemini_native_schema_is_normalized_and_replay_is_exact(target, prof
         return
     result = codec.decode(**encoded, target_format=target)["tools"]
     assert_native(result[0], TOOL_TYPES[target])
-    assert codec.decode(**encoded, target_format="gemini")["tools"] == [before]
-    if target != "gemini":
-        normalized = codec.encode(tools=result, input_format=target)
-        schema = codec.decode(**normalized, target_format="openai_chat")["tools"][0]["function"][
-            "parameters"
-        ]
-        assert schema == {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {"anyOf": [{"type": "string", "enum": ["a", "b"]}, {"type": "null"}]},
-                }
-            },
-            "required": ["items"],
-        }
+    normalized = codec.encode(tools=result, input_format=target)
+    schema = codec.decode(**normalized, target_format="openai_chat")["tools"][0]["function"][
+        "parameters"
+    ]
+    assert schema == {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"anyOf": [{"type": "string", "enum": ["a", "b"]}, {"type": "null"}]},
+            }
+        },
+        "required": ["items"],
+    }
     assert incoming.model_dump(mode="json", exclude_none=True) == before
 
 
@@ -143,7 +143,7 @@ def test_a03_refusal_is_accumulated_inside_target_lifecycle(source, target):
             )
             == "No"
         )
-        assert translated(MyCodec().decode(state.messages(), target_format=target)["messages"]) == [
+        assert MyCodec().decode(state.messages(), target_format=target)["messages"] == [
             {"role": "assistant", "content": None, "refusal": "No"}
         ]
     if target == "openai_responses":
@@ -191,7 +191,8 @@ def test_a05_source_control_fields_do_not_leak_into_chat():
     result = codec.convert(call, input_format="ollama", target_format="openai_chat")["messages"]
     assert "index" not in result[0]["tool_calls"][0]["function"]
     assert_native(result[0], MESSAGE_TYPES["openai_chat"])
-    assert codec.convert(call, input_format="ollama", target_format="ollama")["messages"] == call
+    native = codec.convert(call, input_format="ollama", target_format="ollama")["messages"]
+    assert native[0]["tool_calls"][0]["function"] == {"index": 0, "name": "f", "arguments": {}}
 
 
 @pytest.mark.parametrize("image,mime", [(PNG, "image/png"), (JPEG, "image/jpeg")])
@@ -284,7 +285,6 @@ def test_a08_tool_result_becomes_an_ollama_string(content, expected):
 )
 def test_a09_foreign_thinking_does_not_forge_an_anthropic_signature(source, incoming):
     result = MyCodec().convert(incoming, input_format=source, target_format="anthropic")["messages"]
-    result = translated(result)
     assert result == [{"role": "assistant", "content": [{"type": "text", "text": "Thinking"}]}]
     assert_native(result[0], MESSAGE_TYPES["anthropic"])
 
@@ -422,14 +422,11 @@ def test_foreign_message_extensions_cannot_become_native_request_fields(
     incoming[0]["vendor_metadata"] = {"nested": [1, 2]}
     before = deepcopy(incoming)
     converted = MyCodec().convert(incoming, input_format=source, target_format=target)["messages"]
-    if source == target:
-        assert converted == incoming
-    else:
-        assert converted[0]["vendor_metadata"] == incoming[0]["vendor_metadata"]
-        filtered = MyCodec().transport(target).filter_messages(converted, profile_factory(target))
-        assert all("vendor_metadata" not in message for message in filtered)
-        for message in filtered:
-            assert_native(message, MESSAGE_TYPES[target])
+    assert all("vendor_metadata" not in message for message in converted)
+    filtered = MyCodec().transport(target).filter_messages(converted, profile_factory(target))
+    assert all("vendor_metadata" not in message for message in filtered)
+    for message in filtered:
+        assert_native(message, MESSAGE_TYPES[target])
     assert incoming == before
 
 
@@ -446,14 +443,11 @@ def test_foreign_tool_extensions_cannot_become_native_request_fields(
     converted = MyCodec().convert(tools=incoming, input_format=source, target_format=target)[
         "tools"
     ]
-    if source == target:
-        assert converted == incoming
-    else:
-        assert converted[0]["vendor_metadata"] == incoming[0]["vendor_metadata"]
-        filtered = MyCodec().transport(target).filter_tools(converted, profile_factory(target))
-        assert all("vendor_metadata" not in tool for tool in filtered)
-        for tool in filtered:
-            assert_native(tool, TOOL_TYPES[target])
+    assert all("vendor_metadata" not in tool for tool in converted)
+    filtered = MyCodec().transport(target).filter_tools(converted, profile_factory(target))
+    assert all("vendor_metadata" not in tool for tool in filtered)
+    for tool in filtered:
+        assert_native(tool, TOOL_TYPES[target])
     assert incoming == before
 
 
@@ -690,7 +684,12 @@ def test_native_response_reasoning_and_tool_item_ids_remain_replayable():
     output, _ = render("openai_responses", "openai_responses", native)
     native_events("openai_responses", output)
     done = [event["item"] for event in output if event["type"] == "response.output_item.done"]
-    assert done == [reasoning, call] == output[-1]["response"]["output"]
+    assert done == output[-1]["response"]["output"]
+    assert done[0] == reasoning
+    assert {key: value for key, value in done[1].items() if key != "arguments"} == {
+        key: value for key, value in call.items() if key != "arguments"
+    }
+    assert json.loads(done[1]["arguments"]) == json.loads(call["arguments"])
     assert [
         event["item"]["id"] for event in output if event["type"] == "response.output_item.added"
     ] == ["rs_original", "fc_original"]
@@ -699,14 +698,16 @@ def test_native_response_reasoning_and_tool_item_ids_remain_replayable():
         for event in output
         if event["type"] == "response.reasoning_summary_text.delta"
     ] == [0, 1]
-    assert [
-        event["delta"]
-        for event in output
-        if event["type"] == "response.function_call_arguments.delta"
-    ] == [call["arguments"]]
+    assert json.loads(
+        "".join(
+            event["delta"]
+            for event in output
+            if event["type"] == "response.function_call_arguments.delta"
+        )
+    ) == json.loads(call["arguments"])
 
 
-def test_native_response_opaque_progress_keeps_item_identity_and_ordered_sequence():
+def test_unsupported_response_progress_and_items_do_not_pass_through_as_opaque():
     item = {
         "type": "web_search_call",
         "id": "ws_original",
@@ -736,13 +737,9 @@ def test_native_response_opaque_progress_keeps_item_identity_and_ordered_sequenc
     native_events("openai_responses", output)
     assert output[0]["type"] == "response.created"
     assert [event["sequence_number"] for event in output] == list(range(len(output)))
-    assert [
-        event["item"]["id"] for event in output if event["type"] == "response.output_item.added"
-    ] == ["ws_original"]
-    assert [event["item"] for event in output if event["type"] == "response.output_item.done"] == [
-        item
-    ]
-    assert output[-1]["response"]["output"] == [item]
+    assert not any(event["type"] == "response.web_search_call.in_progress" for event in output)
+    assert not any(event["type"] == "response.output_item.added" for event in output)
+    assert output[-1]["response"]["output"] == []
 
 
 def test_response_stream_metadata_does_not_alias_request_state():
@@ -754,8 +751,9 @@ def test_response_stream_metadata_does_not_alias_request_state():
     output = codec.decode(chunks=events, target_format="openai_responses", **state.metadata)[
         "chunks"
     ]
+    before = deepcopy(state.metadata)
     output[0]["response"]["metadata"]["source"] = "changed"
-    assert state.metadata["native_response"]["metadata"] == {"source": "original"}
+    assert state.metadata == before
     assert created["response"]["metadata"] == {"source": "original"}
 
 

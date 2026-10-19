@@ -3,17 +3,15 @@
 from typing import Any
 
 from my_llm.codec.base.encoder import BaseEncoder
-from my_llm.codec.gemini.encoding.content import encode_part, json_schema, part_fields
+from my_llm.codec.gemini.encoding.content import encode_part, json_schema
 from my_llm.codec.shared.conversion import (
     allocate_call_id,
     associate_tool_result,
     encode_functions,
-    extras,
     mapping_list,
-    remember,
-    residual,
+    select,
 )
-from my_llm.codec.shared.stream import batch, encode_batch, record
+from my_llm.codec.shared.stream import encode_batch, record
 from my_llm.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
 
@@ -58,6 +56,8 @@ class GeminiEncoder(BaseEncoder):
                     else ""
                 )
                 block = encode_part(part, call_id)
+                if block is None:
+                    continue
                 if block.get("type") == "tool_use":
                     pending.append(block)
                 elif block.get("type") == "tool_result":
@@ -66,18 +66,13 @@ class GeminiEncoder(BaseEncoder):
                     )
                 content.append(block)
             result.append(
-                remember(
-                    {
-                        **extras(message, "role", "parts"),
-                        "role": "assistant"
-                        if message.get("role") == "model"
-                        else message.get("role", "user"),
-                        "content": content,
-                    },
-                    [message],
-                    PROTOCOL,
-                    preserve=residual(message, {"role": True, "parts": [part_fields]}),
-                )
+                {
+                    "protocol": PROTOCOL,
+                    "role": "assistant"
+                    if message.get("role") == "model"
+                    else message.get("role", "user"),
+                    "content": content,
+                }
             )
         return result
 
@@ -86,11 +81,10 @@ class GeminiEncoder(BaseEncoder):
     ) -> list[dict]:
         return encode_functions(
             tools,
-            "gemini",
             lambda tool: (
                 [
                     {
-                        **extras(f, "parameters_json_schema"),
+                        **select(f, "name", "description", "response_json_schema", "behavior"),
                         "parameters": f["parameters_json_schema"]
                         if "parameters_json_schema" in f
                         else json_schema(f.get("parameters", {})),
@@ -100,16 +94,6 @@ class GeminiEncoder(BaseEncoder):
                 if "function_declarations" in tool
                 else None
             ),
-            consumed={
-                "function_declarations": [
-                    {
-                        "name": True,
-                        "description": True,
-                        "parameters": True,
-                        "parameters_json_schema": True,
-                    }
-                ]
-            },
         )
 
     def _chunks(
@@ -131,7 +115,6 @@ class GeminiEncoder(BaseEncoder):
                     "model_version",
                 )
             ):
-                result.append(batch(event, [{"type": "opaque", "value": event}], PROTOCOL))
                 continue
             if event.get("prompt_feedback", {}).get("block_reason") not in (
                 None,
@@ -158,7 +141,8 @@ class GeminiEncoder(BaseEncoder):
                 # Append each part explicitly, including empty signed text parts.
                 for part in candidate.get("content", {}).get("parts", []):
                     block = encode_part(part, "")
-                    ops.append({"type": "block_append", "block": block})
+                    if block is not None:
+                        ops.append({"type": "block_append", "block": block})
                 reason = candidate.get("finish_reason")
                 if reason not in (None, "FINISH_REASON_UNSPECIFIED"):
                     if reason not in ("STOP", "MAX_TOKENS"):
@@ -170,11 +154,7 @@ class GeminiEncoder(BaseEncoder):
                             "allow_tail": ["metadata", "usage"],
                         }
                     )
-            result.append(
-                encode_batch(
-                    event, ops, PROTOCOL, consumed=self._consumed_fields(event), usage=self.usage
-                )
-            )
+            result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
         return result
 
     def usage(self, value: dict | None) -> dict | None:
@@ -182,8 +162,6 @@ class GeminiEncoder(BaseEncoder):
             return None
         thoughts = value.get("thoughts_token_count")
         return record(
-            value,
-            "gemini",
             input_base=value.get("prompt_token_count"),
             input_add={"tools": value.get("tool_use_prompt_token_count")},
             output_base=value.get("candidates_token_count"),
@@ -192,13 +170,3 @@ class GeminiEncoder(BaseEncoder):
             cached=value.get("cached_content_token_count"),
             reasoning=thoughts,
         )
-
-    def _consumed_fields(self, event: dict) -> dict:
-        return {
-            "response_id": True,
-            "model_version": True,
-            "prompt_feedback": {"block_reason": True},
-            "candidates": [
-                {"index": True, "finish_reason": True, "content": {"parts": [part_fields]}}
-            ],
-        }

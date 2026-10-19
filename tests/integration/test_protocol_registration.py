@@ -19,7 +19,6 @@ from my_llm import (
     PreparedOptions,
     ProtocolDefaults,
     ProviderProfile,
-    Translations,
     UnsupportedProviderError,
     registry,
     resolve_profiles,
@@ -27,8 +26,6 @@ from my_llm import (
 from my_llm.codec.shared.conversion import (
     decode_functions,
     encode_functions,
-    original,
-    remember,
     text,
 )
 from my_llm.codec.shared.options import apply_max_tokens
@@ -57,29 +54,23 @@ class Encoder(BaseEncoder):
 
     def _messages(self, values, profile=None, **parameters):
         return [
-            remember(
-                {
-                    "role": value["speaker"],
-                    "content": [{"type": "text", "text": value["body"]}],
-                },
-                [value],
-                self.protocol,
-            )
+            {
+                "role": value["speaker"],
+                "content": [{"type": "text", "text": value["body"]}],
+                "protocol": self.protocol,
+            }
             for value in values
         ]
 
     def _tools(self, values, profile=None, **parameters):
         return encode_functions(
             values,
-            self.protocol,
             lambda value: [{"name": value["fn"], "parameters": value["schema"]}],
-            consumed={"fn": True, "schema": True},
         )
 
     def _chunks(self, values, profile=None, **parameters):
         return [
             batch(
-                value,
                 [{"type": "finish", "reason": "stop"}]
                 if value["done"]
                 else [
@@ -104,22 +95,12 @@ class Decoder(BaseDecoder):
     __slots__ = ()
     protocol = PROTOCOL
 
-    def _messages(self, values, profile=None, **parameters) -> Translations:
-        result = Translations()
-        for value in values:
-            result.group([value])
-            native = original(value, self.protocol)
-            result.extend(
-                native
-                if native is not None
-                else [{"speaker": value["role"], "body": text(value["content"])}]
-            )
-        return result
+    def _messages(self, values, profile=None, **parameters):
+        return [{"speaker": value["role"], "body": text(value["content"])} for value in values]
 
-    def _tools(self, values, profile=None, **parameters) -> Translations:
+    def _tools(self, values, profile=None, **parameters):
         return decode_functions(
             values,
-            self.protocol,
             lambda functions: [
                 {"fn": value["name"], "schema": value["parameters"]} for value in functions
             ],
@@ -127,7 +108,7 @@ class Decoder(BaseDecoder):
 
     def _chunks(self, values, profile=None, **parameters):
         result = []
-        for event in events(values, self.protocol):
+        for event in events(values):
             if event["type"] == "delta":
                 result.append({"body": event["value"], "done": False})
             elif event["type"] == "finish":

@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from my_llm.codec.shared.conversion import extras, project_block, select, text_result
+from my_llm.codec.shared.conversion import project_block, select, text_result
 
 FIELDS = {
     "text": ("type", "text"),
@@ -17,19 +17,51 @@ FIELDS = {
 def render_content(content: list[dict], *, role: str = "user") -> Any:
     result = []
     for block in content:
-        # Gemini signatures have meaning only when replayed to Gemini.
-        block = extras(block, "thought_signature")
         kind = block.get("type")
         if kind in ("thinking", "redacted_thinking", "tool_use", "tool_result"):
             continue
-        value = extras(block)
+        value = select(block, "type", "text", "refusal", "annotations", "logprobs")
         if kind == "text":
-            value["type"] = "output_text" if role == "assistant" else "input_text"
+            value = {
+                "type": "output_text" if role == "assistant" else "input_text",
+                "text": block.get("text", ""),
+            }
             if role == "assistant":
-                value.setdefault("annotations", [])
-                value.setdefault("logprobs", [])
-        elif kind == "refusal" and role != "assistant":
-            value = {"type": "input_text", "text": block.get("refusal", "")}
+                value["annotations"] = [
+                    select(
+                        item,
+                        "type",
+                        "file_id",
+                        "index",
+                        "filename",
+                        "start_index",
+                        "end_index",
+                        "title",
+                        "url",
+                        "container_id",
+                    )
+                    for item in block.get("annotations", [])
+                ]
+                value["logprobs"] = [
+                    select(item, "token", "logprob", "bytes")
+                    | (
+                        {
+                            "top_logprobs": [
+                                select(child, "token", "logprob", "bytes")
+                                for child in item["top_logprobs"]
+                            ]
+                        }
+                        if "top_logprobs" in item
+                        else {}
+                    )
+                    for item in block.get("logprobs", [])
+                ]
+        elif kind == "refusal":
+            value = (
+                {"type": "refusal", "refusal": block.get("refusal", "")}
+                if role == "assistant"
+                else {"type": "input_text", "text": block.get("refusal", "")}
+            )
         elif kind == "image":
             source = block.get("source", {})
             uri = source.get("url")
@@ -37,25 +69,32 @@ def render_content(content: list[dict], *, role: str = "user") -> Any:
                 uri = f"data:{source['media_type']};base64,{source['data']}"
             detail = {"detail": block.get("detail", "auto")}
             value = {
-                **extras(block, "type", "source", "detail"),
                 "type": "input_image",
-                "image_url": uri,
+                **(
+                    {"file_id": source["file_id"]}
+                    if source.get("type") == "file"
+                    else {"image_url": uri}
+                ),
                 **detail,
             }
         elif kind == "document":
             source = block.get("source", {})
             file = (
-                {"file_url": source["url"]}
+                {"file_id": source["file_id"]}
+                if source.get("type") == "file"
+                else {"file_url": source["url"]}
                 if "url" in source
                 else {
                     "file_data": f"data:{source.get('media_type', 'application/pdf')};base64,{source.get('data', '')}"
                 }
             )
             value = {
-                **extras(block, "type", "source"),
                 "type": "input_file",
+                **select(block, "filename"),
                 **file,
             }
+        else:
+            continue
         result.append(value)
     return result
 
@@ -67,7 +106,7 @@ def foreign_block(block: dict) -> dict | None:
             parts = [
                 projected for child in value if (projected := foreign_block(child)) is not None
             ]
-            output = render_content(parts, role="user")
+            output = parts
         else:
             output = text_result(value)
         return {

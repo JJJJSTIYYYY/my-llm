@@ -3,7 +3,7 @@
 import base64
 import binascii
 
-from my_llm.codec.shared.conversion import arguments, extras
+from my_llm.codec.shared.conversion import arguments, select
 from my_llm.exceptions import MessageValidationError
 
 
@@ -25,12 +25,10 @@ def media_type(value: str) -> str:
 
 def tool_block(call: dict, *, call_id: str | None = None) -> dict:
     fn = call.get("function", call)
-    extensions = extras(fn, "name", "arguments", "index")
     return {
-        **extras(call, "id", "type", "function", "index"),
         "type": "tool_use",
         "id": call.get("id") or call_id,
         "name": fn.get("name"),
         "input": arguments(fn.get("arguments", {})),
-        **({"function": extensions} if extensions else {}),
+        **select(fn, "index"),
     }

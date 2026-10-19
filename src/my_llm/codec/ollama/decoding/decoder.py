@@ -10,13 +10,9 @@ from my_llm.codec.ollama.decoding.content import (
     function_tool,
 )
 from my_llm.codec.shared.conversion import (
-    OPAQUE,
-    Translations,
     blocks,
-    coalesce_groups,
+    coalesce_messages,
     decode_functions,
-    extras,
-    original,
     project_message,
     source_protocol,
     text,
@@ -39,7 +35,7 @@ def thinking_enabled(profile: ResolvedProfile, parameters: dict) -> bool:
 
 
 class OllamaDecoder(BaseDecoder):
-    """Translate intermediate values into protocol dictionaries, retaining replay data."""
+    """Translate recognized intermediate values into protocol dictionaries."""
 
     __slots__ = ()
     protocol = PROTOCOL
@@ -81,32 +77,23 @@ class OllamaDecoder(BaseDecoder):
 
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> Translations:
-        result = Translations()
+    ) -> list[dict]:
+        result = []
         names = {}
-        for sources, message in coalesce_groups(messages):
-            result.group(sources, structure={"tool_calls": [{"function": {}}]})
-            if message.get(OPAQUE):
-                result.extend(original(message, PROTOCOL))
-                continue
+        for message in coalesce_messages(messages):
             content = message.get("content", [])
             for block in content:
                 if block.get("type") == "tool_use":
                     names[block["id"]] = block["name"]
-            native = original(message, PROTOCOL)
-            if native is not None:
-                result.extend(native)
-                continue
             if source_protocol(message) != PROTOCOL:
                 message = project_message(message, foreign_block)
                 content = message["content"]
             else:
-                # Calls rendered without a native snapshot own their arguments.
+                # Public calls own independently mutable arguments.
                 content = blocks(content)
             calls = []
             images = []
             reasoning = ""
-            unknown = []
             results = []
             for block in content:
                 kind = block.get("type")
@@ -128,11 +115,9 @@ class OllamaDecoder(BaseDecoder):
                     if source.get("type") != "base64":
                         raise MessageValidationError("Ollama images require base64 data")
                     images.append(source.get("data"))
-                elif kind != "text":
-                    unknown.append(block)
             if len(content) != len(results) or not results:
                 value = {
-                    **extras(message, "content", "parts", "tool_calls"),
+                    "role": message["role"],
                     "content": text(content),
                 }
                 if calls:
@@ -141,8 +126,6 @@ class OllamaDecoder(BaseDecoder):
                     value["images"] = images
                 if reasoning:
                     value["thinking"] = reasoning
-                if unknown:
-                    value["content"] += text_result(unknown)
                 result.append(value)
             result.extend(results)
         if profile is not None and profile.get("replay_reasoning_content_when_tool_calls", False):
@@ -154,27 +137,27 @@ class OllamaDecoder(BaseDecoder):
 
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> Translations:
+    ) -> list[dict]:
         return decode_functions(
             tools,
-            "ollama",
             lambda functions: [function_tool(function) for function in functions],
-            structure={},
         )
 
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for event in events(chunks, PROTOCOL):
+        for event in events(chunks):
             kind = event.get("type")
             usage = self.usage(event.get("usage"))
-            if kind == "opaque":
-                result.append(event["value"])
-                continue
             message = {"role": "assistant", "content": ""}
             if kind == "delta":
-                message["thinking" if event["field"] == "thinking" else "content"] = event["value"]
+                field = {"text": "content", "thinking": "thinking", "refusal": "content"}.get(
+                    event.get("field")
+                )
+                if field is None:
+                    continue
+                message[field] = event["value"]
             elif kind == "tool":
                 block = event["block"]
                 if parameters.get("source_protocol") != PROTOCOL:
@@ -199,9 +182,6 @@ class OllamaDecoder(BaseDecoder):
     def usage(self, value: dict | None) -> dict | None:
         if value is None:
             return None
-        native = original(value, "ollama")
-        if native is not None:
-            return native
         input_tokens, output_tokens, total, cached, cache_write, reasoning = counts(value)
         return {
             key: child

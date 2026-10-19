@@ -3,8 +3,7 @@
 from copy import deepcopy
 
 from my_llm.codec.shared.conversion import (
-    extras,
-    residual,
+    select,
 )
 from my_llm.exceptions import MessageValidationError
 
@@ -40,29 +39,32 @@ SCALARS = {
 }
 
 
-def encode_part(part: dict, call_id: str) -> dict:
+def encode_part(part: dict, call_id: str) -> dict | None:
+    common = select(part, "thought_signature", "part_metadata")
     if "function_call" in part:
         call = part["function_call"]
         return {
-            **residual(part, part_fields(part)),
+            **common,
             "type": "tool_use",
             "id": call.get("id") or call_id,
             "name": call.get("name"),
-            "input": call.get("args", {}),
+            "input": deepcopy(call.get("args", {})),
         }
     if "function_response" in part:
         call = part["function_response"]
         return {
-            **residual(part, part_fields(part)),
+            **common,
             "type": "tool_result",
             "name": call.get("name"),
             "tool_use_id": call.get("id"),
-            "content": call.get("response", {}),
+            "content": deepcopy(call.get("response", {})),
         }
     if "text" in part:
-        if part.get("thought"):
-            return {**extras(part, "text", "thought"), "type": "thinking", "thinking": part["text"]}
-        return {**extras(part, "thought"), "type": "text"}
+        return (
+            {**common, "type": "thinking", "thinking": part["text"]}
+            if part.get("thought")
+            else {**common, "type": "text", "text": part["text"]}
+        )
     if "inline_data" in part or "file_data" in part:
         data = part.get("inline_data", part.get("file_data"))
         mime = data.get("mime_type", "application/octet-stream")
@@ -71,26 +73,23 @@ def encode_part(part: dict, call_id: str) -> dict:
             if "inline_data" in part
             else {"type": "url", "url": data.get("file_uri"), "media_type": mime}
         )
-        return {
-            **residual(part, part_fields(part)),
+        value = {
+            **common,
             "type": "image" if mime.startswith("image/") else "document",
             "source": source,
         }
-    return part
-
-
-def part_fields(part: dict) -> dict:
-    if "function_call" in part:
-        return {"function_call": {"id": True, "name": True, "args": True}}
-    if "function_response" in part:
-        return {"function_response": {"id": True, "name": True, "response": True}}
-    if "text" in part:
-        return {"text": True, "thought": True}
-    if "inline_data" in part:
-        return {"inline_data": {"mime_type": True, "data": True}}
-    if "file_data" in part:
-        return {"file_data": {"mime_type": True, "file_uri": True}}
-    return {}
+        if "video_metadata" in part:
+            value["video_metadata"] = select(
+                part["video_metadata"], "start_offset", "end_offset", "fps"
+            )
+        return value
+    for kind, fields in (
+        ("executable_code", ("language", "code")),
+        ("code_execution_result", ("outcome", "output")),
+    ):
+        if kind in part:
+            return {**common, "type": kind, **select(part[kind], *fields)}
+    return None
 
 
 def json_schema(schema: dict) -> dict:

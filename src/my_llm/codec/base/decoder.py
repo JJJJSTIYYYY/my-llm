@@ -1,11 +1,9 @@
-"""Stateless, loss-preserving intermediate-to-protocol translation."""
+"""Stateless translation of recognized intermediate values and request options."""
 
 from abc import ABC, abstractmethod
 from typing import Any, final
 
-from my_llm.codec.shared.conversion import Translations
 from my_llm.codec.shared.options import PreparedOptions
-from my_llm.codec.shared.replay import retain
 from my_llm.profile.resolution import ResolvedProfile
 
 
@@ -28,7 +26,7 @@ class BaseDecoder(ABC):
         options: PreparedOptions,
         **parameters: Any,
     ) -> dict:
-        """Translate one request, preserving extensions until the SDK boundary."""
+        """Translate recognized values and assemble a native request."""
         native_messages = self.messages(messages, profile, **parameters)
         native_tools = self.tools(tools, profile, **parameters) if tools is not None else None
         return self.assemble_request(
@@ -57,15 +55,13 @@ class BaseDecoder(ABC):
     def messages(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        translated = self._messages(values, profile, **parameters)
-        return retain(values, translated, self.protocol, "messages", groups=translated.groups)
+        return self._messages(values, profile, **parameters)
 
     @final
     def tools(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        translated = self._tools(values, profile, **parameters)
-        return retain(values, translated, self.protocol, "tools", groups=translated.groups)
+        return self._tools(values, profile, **parameters)
 
     @final
     def chunks(
@@ -79,15 +75,15 @@ class BaseDecoder(ABC):
     @abstractmethod
     def _messages(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> Translations:
-        """Translate messages, declaring each output group's sources and merge structure."""
+    ) -> list[dict]:
+        """Translate recognized message fields without retaining source envelopes."""
         ...
 
     @abstractmethod
     def _tools(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> Translations:
-        """Translate tool definitions, declaring source groups for extension retention."""
+    ) -> list[dict]:
+        """Translate recognized tool definitions and their open parameter schemas."""
         ...
 
     @abstractmethod

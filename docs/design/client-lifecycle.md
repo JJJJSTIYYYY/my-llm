@@ -30,7 +30,7 @@ SDK 客户端按实例及其事件循环使用，不跨事件循环共享。
 
 MyLLM 调度 Transport 的客户端接口并管理缓存；客户端实现类、请求执行和关闭方式由 Transport 决定。
 BaseCodec 组合 Encoder、Decoder 和 BaseTransport 三个独立组件。
-Encoder / Decoder 负责翻译和信息保留；Decoder 映射生成选项并组织原生请求结构。
+Encoder / Decoder 负责已识别字段翻译；Decoder 映射生成选项并组织原生请求结构。
 参数验证、SDK 字段过滤及原生结构校验统一由 Transport 处理。
 Transport.create_client 创建客户端，upstream 显式借用 client 执行原生请求；
 close_client 默认 await client.close()，client_key 默认 None。

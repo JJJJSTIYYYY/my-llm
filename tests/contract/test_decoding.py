@@ -1,7 +1,7 @@
-"""Stream semantics and vendor/opaque extension retention through all protocol pairs.
+"""Recognized stream semantics through all protocol pairs.
 
 Official native schemas and lifecycle assertions are checked independently in
-test_protocol_conformance.py; opaque/vendor cases below test preservation only.
+test_protocol_conformance.py; unknown fields must not enter translated output.
 """
 
 import json
@@ -45,12 +45,19 @@ def test_native_streams_convert_to_complete_target_streams(source, target, tool)
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
-def test_chunk_conversion_is_stateless_and_lossless_with_native_input(protocol):
-    codec = MyCodec().codecs[protocol]
-    incoming = stream_events(protocol, tool=True)
-    assert codec.decode_chunks(codec.encode_chunks(incoming)) == incoming
-    other = stream_events(protocol)
-    assert codec.decode_chunks(codec.encode_chunks(other)) == other
+def test_native_stream_conversion_does_not_reuse_previous_call_state(protocol):
+    converter = MyCodec()
+    for tool in (True, False):
+        incoming = stream_events(protocol, tool=tool)
+        before = deepcopy(incoming)
+        converted = converter.convert(
+            chunks=incoming, input_format=protocol, target_format=protocol
+        )["chunks"]
+        _, state = render(protocol, "openai_chat", converted)
+        content = state.messages()[0]["content"]
+        assert any(block["type"] == "tool_use" for block in content) is tool
+        assert "Hello" in str(content)
+        assert incoming == before
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
@@ -146,9 +153,15 @@ def test_standalone_converter_handles_complete_stream_batches(source, target):
     assert "Hello" in str(chat)
     assert chat[0]["tool_calls"][0]["function"]["name"] == "weather"
     # Reusing the same converter retains no state from the prior batch.
-    assert codec.convert(chunks=stream_events(target), input_format=target, target_format=target)[
+    second = codec.convert(chunks=stream_events(target), input_format=target, target_format=target)[
         "chunks"
-    ] == stream_events(target)
+    ]
+    _, second_state = render(target, "openai_chat", second)
+    assert second_state.finished
+    content = second_state.messages()[0]["content"]
+    assert len(content) == 1
+    assert content[0]["type"] == "text"
+    assert content[0]["text"] == "Hello"
 
 
 def test_responses_completed_output_matches_emitted_item_ids_and_content():
@@ -178,23 +191,24 @@ def test_redacted_anthropic_block_survives_collected_and_streamed_output():
 
 @pytest.mark.parametrize("source", PROTOCOLS)
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_unknown_stream_events_are_replayed_only_to_their_native_protocol(source, target):
+def test_unknown_stream_events_are_ignored_for_all_protocol_pairs(source, target):
     unknown = {"type": "vendor.future_event", "payload": {"nested": [{"data": 1}]}}
     incoming = [unknown, *stream_events(source)]
     output, _ = render(source, target, incoming)
-    assert (unknown in output) is (source == target)
+    assert unknown not in output
+    assert "vendor.future_event" not in str(output)
 
 
-def test_unknown_responses_output_item_stays_at_output_root_in_stream():
+def test_unknown_responses_output_item_does_not_enter_stream_output():
     item = {"type": "future_output", "id": "future_1", "payload": {"nested": [1, 2]}}
     from tests.helpers.protocols import response_completed
 
     output, _ = render("openai_responses", "openai_responses", [response_completed([item])])
-    assert output[-1]["response"]["output"] == [item]
+    assert output[-1]["response"]["output"] == []
 
 
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_buffered_tool_extensions_survive_stream_conversion(target):
+def test_buffered_tool_unknown_fields_do_not_survive_stream_conversion(target):
     incoming = stream_events("openai_chat", tool=True)
     incoming[1]["choices"][0]["delta"]["tool_calls"][0]["function"]["future"] = {"nested": [1, 2]}
     converted, _ = render("openai_chat", target, incoming)
@@ -205,7 +219,8 @@ def test_buffered_tool_extensions_survive_stream_conversion(target):
         for choice in event.get("choices", [])
         for call in choice["delta"].get("tool_calls", [])
     ]
-    assert ("future" in calls[0]["function"]) is (target == "openai_chat")
+    assert "future" not in calls[0]["function"]
+    assert calls[0]["function"]["name"] == "weather"
 
 
 def test_gemini_text_extension_cannot_change_the_translated_block_type():

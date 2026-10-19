@@ -171,15 +171,7 @@ def test_tool_extensions_are_filtered_and_foreign_null_options_are_omitted(
     request = codec(profile_factory(protocol, supports_function_calling=True)).encode(
         [{"role": "user", "content": "x"}], tools=[tool], tools_format=input_format
     )
-    if protocol == input_format:
-        expected = copy.deepcopy(tool)
-        native_function = expected["function"] if protocol == "openai_chat" else expected
-        native_function.pop("x_provider")
-        if protocol == "openai_chat":
-            native_function.pop("description")
-            native_function.pop("parameters")
-        assert request["tools"] == [expected]
-    elif protocol == "openai_responses":
+    if protocol == "openai_responses":
         assert request["tools"] == [
             {"type": "function", "name": "weather", "parameters": None, "strict": False}
         ]

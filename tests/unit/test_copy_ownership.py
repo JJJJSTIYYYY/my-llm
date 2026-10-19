@@ -7,7 +7,6 @@ from google.genai import types
 from pydantic import BaseModel
 
 from my_llm import MyCodec
-from my_llm.codec.shared.conversion import REPLAY, SOURCE
 from my_llm.codec.shared.options import resolve_options
 from tests.helpers.protocols import PROTOCOLS, history, tools
 
@@ -28,9 +27,7 @@ def edit_containers(value):
 
 
 def native_values(protocol, kind):
-    values = history(protocol) if kind == "messages" else tools(protocol)
-    values[0]["x_vendor"] = {"nested": [{"labels": ["original"]}]}
-    return values
+    return history(protocol) if kind == "messages" else tools(protocol)
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
@@ -85,67 +82,6 @@ def test_public_decoder_captures_nested_input(source, target, kind):
     edit_containers(intermediate)
 
     assert converted == before
-
-
-@pytest.mark.parametrize("protocol", PROTOCOLS)
-@pytest.mark.parametrize("kind", ["messages", "tools"])
-def test_public_decoder_without_native_snapshot_owns_nested_output(protocol, kind):
-    codec = MyCodec()
-    intermediate = codec.encode(**{kind: native_values(protocol, kind)}, input_format=protocol)[
-        kind
-    ]
-    for value in intermediate:
-        value[SOURCE].pop("value", None)
-    before = deepcopy(intermediate)
-
-    converted = getattr(codec.codecs[protocol], f"decode_{kind}")(intermediate)
-    assert intermediate == before
-    edit_containers(converted)
-
-    assert intermediate == before
-
-
-@pytest.mark.parametrize("protocol", PROTOCOLS)
-@pytest.mark.parametrize("kind", ["messages", "tools"])
-def test_public_decoder_without_native_snapshot_captures_nested_input(protocol, kind):
-    codec = MyCodec()
-    intermediate = codec.encode(**{kind: native_values(protocol, kind)}, input_format=protocol)[
-        kind
-    ]
-    for value in intermediate:
-        value[SOURCE].pop("value", None)
-    converted = getattr(codec.codecs[protocol], f"decode_{kind}")(intermediate)
-    before = deepcopy(converted)
-
-    edit_containers(intermediate)
-
-    assert converted == before
-
-
-def test_saved_replay_is_independent_of_later_intermediate_edits():
-    codec = MyCodec()
-    native = [
-        {
-            "role": "assistant",
-            "content": [
-                {"type": "thinking", "thinking": "reason", "signature": "signed"},
-                {"type": "text", "text": "answer"},
-            ],
-            "x_vendor": {"labels": ["original"]},
-        }
-    ]
-    intermediate = codec.encode(native, input_format="anthropic")["messages"]
-    converted = codec.decode(intermediate, target_format="openai_chat")["messages"]
-    assert REPLAY in converted[0]
-    before = deepcopy(converted)
-
-    edit_containers(intermediate)
-
-    assert converted == before
-    restored = codec.convert(converted, input_format="openai_chat", target_format="anthropic")[
-        "messages"
-    ]
-    assert restored == native
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)

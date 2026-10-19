@@ -153,4 +153,20 @@ def test_generated_optional_call_ids_do_not_collide_with_explicit_ids(protocol):
     assert calls[0] == "call_0_1"
     assert calls[1] != calls[0]
     assert results == calls
-    assert converter.decode(intermediate, target_format=protocol)["messages"] == messages
+    decoded = converter.decode(intermediate, target_format=protocol)["messages"]
+    normalized = converter.encode(decoded, input_format=protocol)["messages"]
+    validate_history(normalized)
+    next_calls = [
+        block["id"]
+        for message in normalized
+        for block in message["content"]
+        if block["type"] == "tool_use"
+    ]
+    next_results = [
+        block["tool_use_id"]
+        for message in normalized
+        for block in message["content"]
+        if block["type"] == "tool_result"
+    ]
+    assert len(next_calls) == len(set(next_calls)) == 2
+    assert next_results == next_calls

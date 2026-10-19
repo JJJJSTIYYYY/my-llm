@@ -5,7 +5,6 @@ from copy import deepcopy
 import pytest
 
 from my_llm import MessageValidationError, MyCodec
-from my_llm.codec.shared.conversion import SOURCE
 from my_llm.codec.shared.stream import BlockRef
 from my_llm.stream import _state
 from my_llm.stream._state import StreamState
@@ -76,7 +75,9 @@ def test_public_conversions_do_not_expose_cached_terminal_material(source, targe
     state, codec = StreamState("demo"), MyCodec()
     operations = complete_tool_stream()
     incoming = (
-        operations if source is None else [{SOURCE: {"protocol": source, "events": operations}}]
+        operations
+        if source is None
+        else [{"type": "batch", "protocol": source, "events": operations}]
     )
     events = [*state.feed(incoming), *state.finish()]
     assert state.source_protocol == source
@@ -103,10 +104,10 @@ def test_public_conversions_do_not_expose_cached_terminal_material(source, targe
     assert state.messages() == expected, f"{source} -> {target}: chunks exposed cache"
 
 
-def test_nested_updates_leave_previous_materialized_version_unchanged():
+def test_nested_annotations_leave_previous_materialized_version_unchanged():
     state = StreamState("demo")
     ref = BlockRef("text")
-    block = {"type": "text", "text": "", "citations": [{"title": "first"}], "extra": {"a": 1}}
+    block = {"type": "text", "text": "", "citations": [{"title": "first"}]}
     state.feed([{"type": "block_set", "ref": ref, "block": block}])
     block["citations"][0]["title"] = "external mutation"
     previous = state._blocks[0].materialize()
@@ -119,7 +120,6 @@ def test_nested_updates_leave_previous_materialized_version_unchanged():
                 "field": "citations",
                 "value": {"title": "second"},
             },
-            {"type": "block_update", "ref": ref, "block": {"extra": {"b": 2}}, "merge": ["extra"]},
             {"type": "block_delta", "ref": ref, "kind": "text", "field": "text", "value": "next"},
             {"type": "finish", "reason": "stop"},
         ]
@@ -131,7 +131,6 @@ def test_nested_updates_leave_previous_materialized_version_unchanged():
             "type": "text",
             "text": "next",
             "citations": [{"title": "first"}, {"title": "second"}],
-            "extra": {"a": 1, "b": 2},
         }
     ]
 

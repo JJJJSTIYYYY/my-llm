@@ -1,9 +1,4 @@
-"""Intermediate dictionaries, provenance keys and protocol translation mechanics.
-
-Known fields are translated; extensions retain their nesting and native source.
-This module owns message/tool projection and source grouping, without protocol
-branches or SDK request validation. It defines no public application schema.
-"""
+"""Explicit intermediate values and standard protocol conversion helpers."""
 
 from __future__ import annotations
 
@@ -14,11 +9,7 @@ from typing import Any
 
 from my_llm.exceptions import MessageValidationError, UnsupportedCapabilityError
 
-SOURCE = "__my_llm_codec_source__"
-TRANSLATED = "__my_llm_codec_translated_fields__"
-FUNCTIONS = "__my_llm_codec_function_definitions__"
-OPAQUE = "__my_llm_codec_opaque_message__"
-REPLAY = "__my_llm_codec_replay__"
+FUNCTIONS = "functions"
 
 
 def read(value: Any, key: str, default: Any = None) -> Any:
@@ -31,29 +22,8 @@ def plain(value: Any) -> Any:
     return value.copy() if isinstance(value, (dict, list)) else value
 
 
-class Translations(list[dict]):
-    """Collect output and its source groups during one decoder translation.
-
-    A group may consume or produce any number of values. ``structure`` declares
-    containers whose unknown children can be merged into translated output;
-    other translated fields remain authoritative as whole values.
-    Call ``group`` before appending the native values produced from those sources.
-    Decoder message and tool hooks return this type; their public methods return
-    ordinary lists after preserving extensions with the declared groups.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.groups: list[tuple[int, list[dict], dict]] = []
-
-    def group(self, sources: list[dict], *, structure: dict | None = None) -> None:
-        # Groups are consumed by retain() before this translation returns. They
-        # describe read-only sources, not independently mutable snapshots.
-        self.groups.append((len(self), sources, structure or {}))
-
-
 def dictionary_views(values: Any) -> Iterator[dict[str, Any]]:
-    """Read normalized protocol dictionaries without copying their payloads."""
+    """Read protocol dictionaries or public SDK models without retaining them."""
     if not isinstance(values, (list, tuple)):
         raise MessageValidationError("expected a list of protocol dictionaries or SDK objects")
     for value in values:
@@ -61,150 +31,34 @@ def dictionary_views(values: Any) -> Iterator[dict[str, Any]]:
             value = value.model_dump(mode="json", exclude_none=True)
         if not isinstance(value, dict):
             raise MessageValidationError("expected protocol dictionaries or SDK objects")
-        # Rebuild only the envelope that needs translated fields applied.
-        if TRANSLATED in value:
-            value = {
-                **{key: child for key, child in value.items() if key != TRANSLATED},
-                **value[TRANSLATED],
-            }
         yield value
 
 
 def dictionaries(values: Any) -> list[dict[str, Any]]:
-    """Capture independent mutable values at a public conversion boundary."""
-    # SDK JSON dumps already produce owned trees; dictionary inputs still need
-    # their one snapshot before hooks or callers can modify the result.
+    """Capture owned input values at a public conversion boundary."""
     return [
         value if hasattr(values[index], "model_dump") else deepcopy(value)
         for index, value in enumerate(dictionary_views(values))
     ]
 
 
-def _overlay(value: Any, extension: Any) -> Any:
-    """Merge trees, with the right-hand value winning conflicts."""
-    if isinstance(value, dict) and isinstance(extension, dict):
-        return {
-            **value,
-            **{
-                key: _overlay(value[key], child) if key in value else deepcopy(child)
-                for key, child in extension.items()
-            },
-        }
-    if isinstance(value, list) and isinstance(extension, list):
-        return [
-            _overlay(child, extension[index]) if index < len(extension) else deepcopy(child)
-            for index, child in enumerate(value)
-        ] + [deepcopy(child) for child in extension[len(value) :]]
-    return deepcopy(extension)
-
-
-def remember(value: dict, original: Any, protocol: str, *, preserve: dict | None = None) -> dict:
-    source = {"protocol": protocol, "value": deepcopy(original)}
-    if preserve is not None:
-        source["residual"] = deepcopy(preserve)
-    if preserve:
-        combined = _overlay(value, preserve)
-        # A converted field is authoritative as a whole: merging native
-        # collisions into it can add list elements or tool arguments.
-        conflicts = {key: child for key, child in value.items() if combined[key] != child}
-        if conflicts:
-            # Keep the native path and use a separate, reserved key for its
-            # translation. dictionaries() always reads this translation first.
-            combined[TRANSLATED] = conflicts
-        value = combined
-    return {**value, SOURCE: source}
-
-
-def original(value: dict, protocol: str) -> Any:
-    source = value.get(SOURCE, {})
-    # Replay is valid only for the source protocol; another target must
-    # render translated fields rather than reinterpret the native snapshot.
-    if source.get("protocol") == protocol:
-        return deepcopy(source.get("value"))
-    if value.get(OPAQUE):
-        raise UnsupportedCapabilityError(
-            "opaque native items cannot be replayed to another protocol"
-        )
-    return None
-
-
-def extras(value: dict, *known: str) -> dict:
-    return {k: deepcopy(v) for k, v in value.items() if k not in (*known, SOURCE, TRANSLATED)}
-
-
-def merge_fields(previous: dict, update: dict) -> dict:
-    """Overwrite snapshot leaves, retaining independently updated mapping fields."""
-    result = dict(previous)
-    for key, value in update.items():
-        result[key] = (
-            merge_fields(result[key], value)
-            if isinstance(value, dict) and isinstance(result.get(key), dict)
-            else value
-        )
-    return result
-
-
-# None is a valid extension value, so consumption needs a distinct sentinel.
-_CONSUMED = object()
-
-
-def _remaining(value: Any, consumed: Any) -> Any:
-    if callable(consumed):
-        consumed = consumed(value)
-    if consumed is True:
-        return _CONSUMED
-    if isinstance(value, dict) and isinstance(consumed, dict):
-        result = {}
-        for key, child in value.items():
-            if key not in consumed:
-                result[key] = deepcopy(child)
-            else:
-                residue = _remaining(child, consumed[key])
-                if residue is not _CONSUMED:
-                    result[key] = residue
-        return result if result or not value else _CONSUMED
-    if isinstance(value, list) and isinstance(consumed, list):
-        residues = [_remaining(child, consumed[0]) for child in value]
-        if not value or any(child is not _CONSUMED for child in residues):
-            # Keep holes so an extension in element i stays at its source index.
-            return [child if child is not _CONSUMED else {} for child in residues]
-        return _CONSUMED
-    return deepcopy(value)
-
-
-def residual(value: dict, consumed: dict) -> dict:
-    """Remove recognized leaves, retaining unknown siblings and list indices.
-
-    True moves an entire atomic value (arguments, results or JSON schemas).
-    Mappings consume declared children only; [rule] applies to list elements.
-    Empty containers and null extension values are preserved.
-    """
-    result = _remaining(value, consumed)
-    return {} if result is _CONSUMED else result
-
-
-def coalesce_groups(messages: list) -> list[tuple[list[dict], dict]]:
-    """Return original sources alongside each grouped assistant message."""
+def coalesce_messages(messages: list) -> list[dict]:
+    """Combine consecutive Responses fragments from one assistant history turn."""
     result = []
-    # A source may represent one assistant turn as several native items.
-    # Its encoder declares whether those fragments may be grouped for rendering.
     for message in dictionary_views(messages):
         if (
             result
-            and message.get(SOURCE, {}).get("coalesce_assistant", False)
-            and result[-1][1].get(SOURCE, {}).get("coalesce_assistant", False)
-            and message.get("role") == result[-1][1].get("role") == "assistant"
-            and not message.get(OPAQUE)
-            and not result[-1][1].get(OPAQUE)
+            and message.get("coalesce")
+            and result[-1].get("coalesce")
+            and message.get("role") == result[-1].get("role") == "assistant"
+            and source_protocol(message) == source_protocol(result[-1])
         ):
-            sources, previous = result[-1]
-            sources.append(message)
-            result[-1] = (
-                sources,
-                {**previous, "content": [*previous["content"], *message.get("content", [])]},
-            )
+            result[-1] = {
+                **result[-1],
+                "content": [*result[-1]["content"], *message.get("content", [])],
+            }
         else:
-            result.append(([message], message))
+            result.append(message)
     return result
 
 
@@ -254,7 +108,7 @@ def tool_output(value: Any) -> Any:
 
 
 def source_protocol(value: dict) -> str | None:
-    return value.get(SOURCE, {}).get("protocol")
+    return value.get("protocol")
 
 
 def allocate_call_id(used: set[str], preferred: str) -> str:
@@ -315,7 +169,7 @@ def project_message(message: dict, project, *, fields: tuple[str, ...] = ("role"
         rendered = project(block)
         if rendered is not None:
             content.append(rendered)
-    return {**select(message, *fields, SOURCE), "content": content}
+    return {**select(message, *fields, "protocol"), "content": content}
 
 
 def unsupported(block: dict):
@@ -335,7 +189,10 @@ def project_block(
         return {"type": "text", "text": block.get(text_fields[kind], "")}
     if kind not in fields:
         return unsupported(block)
-    return select(block, *fields[kind])
+    value = select(block, *fields[kind])
+    if "source" in value:
+        value["source"] = select(value["source"], "type", "url", "media_type", "data", "file_id")
+    return value
 
 
 def text_result(value) -> str:
@@ -351,37 +208,23 @@ def text_result(value) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def encode_functions(tools, protocol, unwrap, *, consumed):
+def encode_functions(tools, unwrap) -> list[dict]:
     result = []
-    # Encoder hooks receive values already captured by replay_inputs().
     for tool in tools:
         functions = unwrap(tool)
-        fields = consumed(tool) if callable(consumed) else consumed
-        remaining = residual(tool, fields if functions is not None else {})
-        result.append(
-            remember(
-                {FUNCTIONS: functions},
-                tool,
-                protocol,
-                preserve=remaining,
-            )
-        )
+        if functions is None:
+            raise UnsupportedCapabilityError("tool type is not supported by the selected protocol")
+        result.append({FUNCTIONS: functions})
     return result
 
 
-def decode_functions(tools, protocol, wrap, *, structure=None) -> Translations:
-    result = Translations()
+def decode_functions(tools, wrap) -> list[dict]:
+    result = []
     for tool in dictionary_views(tools):
-        result.group([tool], structure=structure)
-        native = original(tool, protocol)
-        if native is not None:
-            result.append(native)
-        elif tool.get(FUNCTIONS) is None:
+        functions = tool.get(FUNCTIONS)
+        if functions is None:
             raise UnsupportedCapabilityError(
-                "opaque native tools cannot be replayed to another protocol"
+                "intermediate tool requires recognized function definitions"
             )
-        else:
-            # Only the translated definitions become mutable public output;
-            # their surrounding provenance is consumed read-only by retain().
-            result.extend(wrap(deepcopy(tool[FUNCTIONS])))
+        result.extend(wrap(deepcopy(functions)))
     return result

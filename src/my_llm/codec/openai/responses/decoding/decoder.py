@@ -7,16 +7,13 @@ from openai import Omit
 
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.openai.responses.decoding.content import foreign_block, render_content
+from my_llm.codec.openai.responses.utils.metadata import response_parameters
 from my_llm.codec.shared.conversion import (
-    OPAQUE,
-    SOURCE,
-    Translations,
     decode_functions,
     dictionaries,
-    extras,
     json_arguments,
-    original,
     project_message,
+    select,
     select_present,
     source_protocol,
     tool_output,
@@ -34,7 +31,7 @@ PROTOCOL = "openai_responses"
 
 
 class ResponsesDecoder(BaseDecoder):
-    """Translate intermediate values into protocol dictionaries, retaining replay data."""
+    """Translate recognized intermediate values into protocol dictionaries."""
 
     __slots__ = ()
     protocol = PROTOCOL
@@ -74,18 +71,10 @@ class ResponsesDecoder(BaseDecoder):
 
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> Translations:
-        result = Translations()
+    ) -> list[dict]:
+        result = []
         for message in dictionaries(messages):
-            result.group([message], structure={"content": [{"image_url": {}}]})
             group_start = len(result)
-            if message.get(OPAQUE):
-                result.extend(original(message, PROTOCOL))
-                continue
-            native = original(message, PROTOCOL)
-            if native is not None:
-                result.extend(native)
-                continue
             if source_protocol(message) != PROTOCOL:
                 message = project_message(message, foreign_block)
             content = message.get("content", [])
@@ -109,11 +98,17 @@ class ResponsesDecoder(BaseDecoder):
                         )
                     result.append(
                         {
-                            **extras(message, "role", "content"),
                             "type": "message",
                             **(
                                 {"id": f"msg_{len(result)}", "status": "completed"}
                                 if message["role"] == "assistant" and not input_media
+                                else {}
+                            ),
+                            **select(message, "id", "status"),
+                            **({"id": pending[0]["item_id"]} if pending[0].get("item_id") else {}),
+                            **(
+                                {"status": pending[0]["item_status"]}
+                                if pending[0].get("item_status")
                                 else {}
                             ),
                             "role": message["role"],
@@ -126,14 +121,21 @@ class ResponsesDecoder(BaseDecoder):
 
             for block in content:
                 kind = block.get("type")
+                if kind == "item_reference":
+                    flush()
+                    result.append(select(block, "type", "id"))
+                    continue
                 if kind not in ("tool_use", "tool_result", "thinking"):
+                    if pending and block.get("item_id") != pending[0].get("item_id"):
+                        flush()
                     pending.append(block)
                     continue
                 flush()
                 if kind == "tool_use":
                     result.append(
                         {
-                            **extras(block, "type", "id", "input", "thought_signature"),
+                            **select(block, "name", "status"),
+                            **({"id": block["item_id"]} if "item_id" in block else {}),
                             "type": "function_call",
                             "call_id": block["id"],
                             "arguments": json_arguments(block["input"]),
@@ -142,24 +144,36 @@ class ResponsesDecoder(BaseDecoder):
                 elif kind == "tool_result":
                     result.append(
                         {
-                            **extras(block, "type", "tool_use_id", "content", "name"),
+                            **select(block, "id", "status"),
                             "type": "function_call_output",
                             "call_id": block["tool_use_id"],
-                            "output": tool_output(block.get("content", "")),
+                            "output": render_content(block["content"], role="user")
+                            if isinstance(block.get("content"), list)
+                            else tool_output(block.get("content", "")),
                         }
                     )
                 else:
-                    result.append(
-                        {
-                            **extras(block, "type", "thinking", "signature", "thought_signature"),
-                            "type": "reasoning",
-                            "id": block.get("id", f"rs_{len(result)}"),
-                            "summary": block.get(
+                    item = {
+                        **select(block, "status", "encrypted_content"),
+                        "type": "reasoning",
+                        "id": block.get("id", f"rs_{len(result)}"),
+                        "summary": [
+                            select(part, "type", "text")
+                            for part in block.get(
                                 "summary",
                                 [{"type": "summary_text", "text": block.get("thinking", "")}],
-                            ),
-                        }
-                    )
+                            )
+                        ],
+                    }
+                    if (
+                        result
+                        and result[-1].get("type") == "reasoning"
+                        and result[-1].get("id") == item["id"]
+                    ):
+                        result[-1]["summary"].extend(item["summary"])
+                        result[-1].update(select(item, "status", "encrypted_content"))
+                    else:
+                        result.append(item)
             flush()
             if len(result) == group_start:
                 result.append(
@@ -180,10 +194,9 @@ class ResponsesDecoder(BaseDecoder):
 
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> Translations:
+    ) -> list[dict]:
         return decode_functions(
             tools,
-            "openai_responses",
             lambda functions: [
                 {
                     "type": "function",
@@ -193,26 +206,17 @@ class ResponsesDecoder(BaseDecoder):
                 }
                 for f in functions
             ],
-            structure={},
         )
 
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        passthrough = set()
-        for event in events(chunks, PROTOCOL):
+        for event in events(chunks):
             kind = event.get("type")
             usage = self.usage(event.get("usage"))
             index, part_index, item_id, native = self._address(event, parameters)
-            if kind == "opaque":
-                value = event["value"]
-                if event.get("protocol") == PROTOCOL and "sequence_number" in value:
-                    value = {key: child for key, child in value.items() if key != "sequence_number"}
-                else:
-                    passthrough.add(id(value))
-                result.append(value)
-            elif kind == "start":
+            if kind == "start":
                 result.append(
                     {
                         "type": "response.created",
@@ -261,7 +265,7 @@ class ResponsesDecoder(BaseDecoder):
                         else {"type": "output_text", "text": "", "annotations": [], "logprobs": []},
                     }
                 )
-            elif kind == "delta":
+            elif kind == "delta" and event.get("field") in ("text", "thinking", "refusal"):
                 thinking = (
                     event["field"] == "thinking" and parameters.get("source_protocol") == PROTOCOL
                 )
@@ -287,6 +291,18 @@ class ResponsesDecoder(BaseDecoder):
                     and parameters.get("source_protocol") == PROTOCOL
                 )
                 refusal = block.get("type") == "refusal"
+                rendered_text = (
+                    render_content(
+                        [
+                            {"type": "text", "text": block.get("thinking", "")}
+                            if block.get("type") == "thinking"
+                            else block
+                        ],
+                        role="assistant",
+                    )[0]
+                    if not thinking and not refusal
+                    else {}
+                )
                 value = block.get(
                     "thinking"
                     if block.get("type") == "thinking"
@@ -307,7 +323,7 @@ class ResponsesDecoder(BaseDecoder):
                         "summary_index" if thinking else "content_index": part_index,
                         "refusal" if refusal else "text": value,
                         **(
-                            {"logprobs": block.get("logprobs") or []}
+                            {"logprobs": rendered_text.get("logprobs", [])}
                             if not thinking and not refusal
                             else {}
                         ),
@@ -321,8 +337,8 @@ class ResponsesDecoder(BaseDecoder):
                     else {
                         "type": "output_text",
                         "text": value,
-                        "annotations": block.get("annotations", []),
-                        "logprobs": block.get("logprobs") or [],
+                        "annotations": rendered_text.get("annotations", []),
+                        "logprobs": rendered_text.get("logprobs", []),
                     }
                 )
                 result.append(
@@ -343,7 +359,18 @@ class ResponsesDecoder(BaseDecoder):
                     )
             elif kind == "tool":
                 item = (
-                    deepcopy(parameters["response_items"][str(index)])
+                    {
+                        **self._output_item(
+                            event["block"], index, parameters.get("source_protocol")
+                        ),
+                        **select(
+                            parameters["response_items"][str(index)],
+                            "id",
+                            "status",
+                            "name",
+                            "call_id",
+                        ),
+                    }
                     if native
                     else self._output_item(event["block"], index, parameters.get("source_protocol"))
                 )
@@ -397,10 +424,8 @@ class ResponsesDecoder(BaseDecoder):
                         "Responses cannot represent the source finish reason",
                         details={"reason": event["reason"]},
                     )
-                output = (
-                    self._messages(event.get("messages", []))
-                    if self._native_items(parameters)
-                    else self._completed_output(event, parameters.get("source_protocol"))
+                output = self._completed_output(
+                    event, parameters.get("source_protocol"), parameters
                 )
                 if self._native_items(parameters):
                     represented = {
@@ -409,8 +434,6 @@ class ResponsesDecoder(BaseDecoder):
                         if entry.get("source_ref") is not None
                     }
                     for output_index, item in enumerate(output):
-                        if item.get("type") not in ("message", "reasoning", "function_call"):
-                            continue  # Native opaque item envelopes were relayed in order.
                         if output_index not in represented:
                             result.append(
                                 {
@@ -442,27 +465,12 @@ class ResponsesDecoder(BaseDecoder):
                 )
         sequence = parameters.get("sequence_number", 0)
         for offset, event in enumerate(result):
-            if id(event) not in passthrough:
-                event.setdefault("sequence_number", sequence + offset)
+            event.setdefault("sequence_number", sequence + offset)
         return result
 
     def usage(self, value: dict | None) -> dict | None:
         if value is None:
             return None
-        native = original(value, "openai_responses")
-        if native is not None:
-            return (
-                native
-                if {
-                    "input_tokens",
-                    "output_tokens",
-                    "total_tokens",
-                    "input_tokens_details",
-                    "output_tokens_details",
-                }
-                <= native.keys()
-                else None
-            )
         input_tokens, output_tokens, total, cached, cache_write, reasoning = counts(value)
         if input_tokens is None or output_tokens is None:
             return None
@@ -496,11 +504,11 @@ class ResponsesDecoder(BaseDecoder):
                 "object": "response",
                 "model": parameters.get("model", ""),
                 "created_at": parameters.get("created_at", parameters.get("created", 0)),
-                "parallel_tool_calls": parameters.get("parallel_tool_calls", True),
-                "tool_choice": parameters.get("tool_choice", "auto"),
-                "tools": parameters.get("response_tools", []),
+                "parallel_tool_calls": True,
+                "tool_choice": "auto",
+                "tools": [],
                 **(
-                    parameters.get("native_response", {})
+                    response_parameters(parameters.get("response_parameters", {}))
                     if parameters.get("source_protocol") == PROTOCOL
                     else {}
                 ),
@@ -508,23 +516,57 @@ class ResponsesDecoder(BaseDecoder):
         )
 
     def _output_item(self, block: dict, index: int, origin: str | None) -> dict:
-        item = self._messages(
-            [{"role": "assistant", "content": [block], SOURCE: {"protocol": origin}}]
-        )[0]
-        item.update(id=f"item_{index}", status="completed")
+        item = self._messages([{"role": "assistant", "content": [block], "protocol": origin}])[0]
+        if origin != PROTOCOL:
+            item["id"] = f"item_{index}"
+        item.setdefault("id", f"item_{index}")
+        item.setdefault("status", "completed")
         return item
 
-    def _completed_output(self, event: dict, origin: str | None) -> list[dict]:
-        if "output_blocks" not in event:
-            return self._messages(event.get("messages", []))
-        result = [
-            self._output_item(entry["block"], entry["index"], origin)
-            for entry in event["output_blocks"]
-            if origin == PROTOCOL or entry["block"].get("type") != "redacted_thinking"
-        ]
-        result.extend(
-            extras(message, OPAQUE) for message in event["messages"] if message.get(OPAQUE)
-        )
+    def _completed_output(self, event: dict, origin: str | None, parameters: dict) -> list[dict]:
+        entries = event.get("output_blocks", [])
+        if not self._native_items(parameters):
+            return [
+                self._output_item(entry["block"], entry["index"], origin)
+                for entry in entries
+                if origin == PROTOCOL or entry["block"].get("type") != "redacted_thinking"
+            ]
+        grouped = {}
+        for entry in entries:
+            ref = entry.get("source_ref")
+            index = ref[1] if ref is not None else entry["index"]
+            grouped.setdefault(index, []).append(entry["block"])
+        result = []
+        for index, header in sorted(
+            parameters["response_items"].items(), key=lambda pair: int(pair[0])
+        ):
+            blocks = grouped.get(int(index), [])
+            kind = header.get("type")
+            if kind == "message":
+                item = {
+                    "type": kind,
+                    "role": "assistant",
+                    "content": render_content(blocks, role="assistant"),
+                }
+            elif kind == "reasoning":
+                item = {
+                    "type": kind,
+                    "summary": [
+                        select(part, "type", "text")
+                        for block in blocks
+                        for part in block.get(
+                            "summary", [{"type": "summary_text", "text": block.get("thinking", "")}]
+                        )
+                    ],
+                }
+                for block in blocks:
+                    item.update(select(block, "encrypted_content"))
+            elif kind == "function_call" and blocks:
+                item = self._output_item(blocks[0], int(index), origin)
+            else:
+                continue
+            item.update(select(header, "id", "status", "name", "call_id"))
+            result.append(item)
         return result
 
     def _native_items(self, parameters: dict) -> bool:

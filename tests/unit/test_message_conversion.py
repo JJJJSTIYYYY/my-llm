@@ -1,14 +1,10 @@
-"""Conversion semantics and extension retention, using independent native fixtures.
-
-Vendor/opaque extension assertions do not claim acceptance by native APIs.
-Official schema conformance is checked in test_protocol_conformance.py.
-"""
+"""Recognized conversion semantics, using independent native fixtures."""
 
 from copy import deepcopy
 
 import pytest
 
-from my_llm import MyCodec, UnsupportedCapabilityError
+from my_llm import MyCodec
 from my_llm.codec.shared.transport import validate_history
 from tests.helpers.protocols import CHAT_HISTORY, PROTOCOLS, history, tools
 
@@ -45,27 +41,6 @@ def test_every_tool_conversion_preserves_schema(source, target):
     assert chat[0]["function"]["parameters"]["properties"]["city"] == {"type": "string"}
 
 
-@pytest.mark.parametrize("protocol", PROTOCOLS)
-def test_native_round_trip_preserves_arbitrary_fields_and_nested_blocks(protocol):
-    codec = MyCodec()
-    incoming = history(protocol)
-    incoming[1]["future"] = {"nested": [{"new": True}]}
-    before = deepcopy(incoming)
-    result = codec.convert(incoming, input_format=protocol, target_format=protocol)["messages"]
-    assert result == before
-    result[1]["future"]["nested"][0]["new"] = False
-    assert incoming == before
-
-
-@pytest.mark.parametrize("protocol", PROTOCOLS)
-def test_unknown_tool_round_trip(protocol):
-    value = [{"type": "future_tool", "configuration": {"nested": [1, 2]}}]
-    assert (
-        MyCodec().convert(tools=value, input_format=protocol, target_format=protocol)["tools"]
-        == value
-    )
-
-
 def test_signed_anthropic_and_gemini_replay():
     codec = MyCodec()
     for protocol, message in (
@@ -92,48 +67,12 @@ def test_signed_anthropic_and_gemini_replay():
         ] == [message]
 
 
-def test_unknown_content_is_preserved_natively_and_rejected_for_foreign_protocols():
-    message = {
-        "role": "assistant",
-        "content": [{"type": "future", "nested": {"value": [1, 2]}}],
-        "extension": {"a": 1},
-    }
-    codec = MyCodec()
-    assert codec.convert([message], input_format="openai_chat", target_format="openai_chat")[
-        "messages"
-    ] == [message]
-    with pytest.raises(UnsupportedCapabilityError, match="content type"):
-        codec.convert([message], input_format="openai_chat", target_format="anthropic")
-
-
 def test_converter_can_be_reused_for_unrelated_paths():
     codec = MyCodec()
     for source, target in zip(PROTOCOLS, reversed(PROTOCOLS)):
         assert codec.convert(history(source), input_format=source, target_format=target)["messages"]
     assert not hasattr(codec, "profile")
     assert CHAT_HISTORY[0]["content"] == "Weather?"
-
-
-@pytest.mark.parametrize("target", PROTOCOLS)
-def test_unknown_responses_item_keeps_root_hierarchy(target):
-    item = {"type": "future_item", "id": "opaque_1", "configuration": {"nested": [{"value": 1}]}}
-    codec = MyCodec()
-    intermediate = codec.encode([item], input_format="openai_responses")
-    if target != "openai_responses":
-        with pytest.raises(UnsupportedCapabilityError, match="opaque native items"):
-            codec.decode(**intermediate, target_format=target)
-    else:
-        assert codec.decode(**intermediate, target_format=target)["messages"] == [item]
-
-
-@pytest.mark.parametrize("target", PROTOCOLS)
-def test_unknown_tool_wrapper_extension_is_preserved(target):
-    incoming = tools("openai_chat")
-    incoming[0]["wrapper_extension"] = {"nested": [1, 2]}
-    result = MyCodec().convert(tools=incoming, input_format="openai_chat", target_format=target)[
-        "tools"
-    ]
-    assert result[0]["wrapper_extension"] == {"nested": [1, 2]}
 
 
 @pytest.mark.parametrize("source", PROTOCOLS)
@@ -181,60 +120,3 @@ def test_chat_image_detail_moves_to_responses_field():
     assert result[0]["content"] == [
         {"type": "input_image", "image_url": "https://example.test/p.png", "detail": "low"}
     ]
-
-
-@pytest.mark.parametrize("source", ["openai_chat", "ollama"])
-def test_nested_function_extensions_survive_native_conversion_and_stay_out_of_foreign_calls(source):
-    arguments = {} if source == "ollama" else "{}"
-    function = {"name": "weather", "arguments": arguments, "future": {"nested": [{"flag": True}]}}
-    incoming = [
-        {
-            "role": "assistant",
-            "tool_calls": [{"id": "call_1", "type": "function", "function": function}],
-        }
-    ]
-    codec = MyCodec()
-    intermediate = codec.encode(incoming, input_format=source)
-    block = intermediate["messages"][0]["content"][0]
-    assert block["function"] == {"future": function["future"]}
-    anthropic = codec.decode(**intermediate, target_format="anthropic")["messages"]
-    assert anthropic[0]["content"][0] == {
-        "type": "tool_use",
-        "id": "call_1",
-        "name": "weather",
-        "input": {},
-    }
-    assert codec.decode(**intermediate, target_format=source)["messages"] == incoming
-
-
-def test_gemini_nested_extensions_are_not_flattened():
-    codec = MyCodec()
-    incoming = [
-        {
-            "role": "model",
-            "parts": [
-                {
-                    "part_extension": {"value": 1},
-                    "function_call": {
-                        "id": "call_1",
-                        "name": "weather",
-                        "args": {},
-                        "call_extension": {"nested": [1, 2]},
-                    },
-                }
-            ],
-        }
-    ]
-    intermediate = codec.encode(incoming, input_format="gemini")
-    block = intermediate["messages"][0]["content"][0]
-    assert block["part_extension"] == {"value": 1}
-    assert "call_extension" not in block
-    assert block["function_call"] == {"call_extension": {"nested": [1, 2]}}
-    anthropic = codec.decode(**intermediate, target_format="anthropic")["messages"]
-    assert anthropic[0]["content"][0] == {
-        "type": "tool_use",
-        "id": "call_1",
-        "name": "weather",
-        "input": {},
-    }
-    assert codec.decode(**intermediate, target_format="gemini")["messages"] == incoming

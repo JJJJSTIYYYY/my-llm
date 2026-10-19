@@ -1,6 +1,6 @@
 # 项目架构与职责边界
 
-2026-10-19 更新。Encoder / Decoder 负责翻译与信息保留，Transport 负责请求验证、
+2026-10-19 更新。Encoder / Decoder 负责已识别字段的翻译，Transport 负责请求验证、
 字段过滤及官方 SDK 执行。请求参数映射和原生请求结构由 Decoder 翻译。
 历史重构记录见[需求对照报告](../audits/refactor-requirements-2026-10-17.md)。
 
@@ -17,13 +17,12 @@ src/my_llm/
     ├── converter.py            # MyCodec，协议注册与转换路由
     ├── base/
     │   ├── codec.py            # 组合翻译与请求流程
-    │   ├── encoder.py          # 原生 → 中间态、未修改结果的恢复
-    │   ├── decoder.py          # 中间态与生成选项 → 原生请求、保留转换剩余信息
+    │   ├── encoder.py          # 已识别的原生字段 → 中间态
+    │   ├── decoder.py          # 已识别的中间态与生成选项 → 原生请求
     │   └── transport.py        # 请求验证、过滤及 SDK 生命周期
     ├── shared/
-    │   ├── conversion.py       # 中间态、保留键、消息 / 工具翻译及来源分组
+    │   ├── conversion.py       # 中间态与消息 / 工具翻译辅助
     │   ├── options.py          # 配置路径、生成选项翻译与独立校验辅助
-    │   ├── replay.py           # 随值保存的恢复记录、修改检测与工具 ID 恢复
     │   ├── stream.py           # 原生事件操作、块身份与用量计数
     │   └── transport.py        # SDK 字段过滤、工具关联验证与响应资源关闭
     ├── anthropic/
@@ -38,12 +37,14 @@ src/my_llm/
 
 每种协议包含 `codec.py`、`transport.py`、`encoding/` 和 `decoding/`。
 两个方向的主要实现放在 `encoder.py` / `decoder.py`，内容辅助放在本方向的 `content.py`。
+同一协议两个方向共用的标准字段投影器放在该协议的 `utils/` 目录（如 `utils/content.py`、`utils/metadata.py`），
+避免让 Encoder / Decoder 相互导入。
 Codec 统一组合三个无状态组件；实际 SDK 客户端由 MyLLM 实例持有。
 
 | 组件 | 职责 |
 | --- | --- |
-| BaseEncoder | 识别格式；翻译消息、工具、流事件与用量；恢复未修改的转换分组。 |
-| BaseDecoder | 翻译消息、工具、流事件、用量和生成选项；组织原生请求结构；保留扩展及原生恢复数据；决定收集结果形状。 |
+| BaseEncoder | 识别格式；翻译已识别的消息、工具、流事件与用量字段。 |
+| BaseDecoder | 翻译已识别的消息、工具、流事件、用量和生成选项；组织原生请求结构；决定收集结果形状。 |
 | BaseTransport | 验证输入格式、工具关联、模型能力及生成参数；返回请求独立的已解析选项；过滤不支持字段并校验原生结构；管理客户端创建、关闭和请求执行。 |
 | BaseCodec | 声明协议身份、ProtocolDefaults 和三个组件，统筹翻译、验证及请求流程。 |
 | MyCodec | 持有注册快照，路由转换与请求；内置五种协议，允许启动时注册新协议；完整离线流使用本次调用内的累积器。 |
@@ -52,7 +53,7 @@ Codec 统一组合三个无状态组件；实际 SDK 客户端由 MyLLM 实例�
 | StreamState / BlockState | 按请求独立维护块身份、内容、签名、工具参数和终态；不持有 SDK 客户端。 |
 | MessageStream | 包装本次请求的异步生成器，提供迭代、完成结果副本和响应关闭；独立 generate 的流还负责临时实例的关闭回调。 |
 
-Encoder / Decoder 不承担请求参数验证、字段过滤或 SDK 执行。
+Encoder / Decoder 不承担请求参数验证、SDK 结构过滤或 SDK 执行；翻译时只读取明确支持的协议字段。
 Decoder 的 request_parameters 与 assemble_request 只映射选项和组织原生请求结构。
 Transport.validate_parameters 只解析一次共同选项与声明式绑定，并返回公开类型 PreparedOptions。
 BaseCodec 显式将其传给 Decoder.request；request_parameters(profile, options) 与
@@ -61,21 +62,20 @@ assemble_request(..., options=options) 直接复用结果，不重新解析或�
 五协议共用删除语义，Profile 的两个推理绑定字段也会保留顶层删除标记；
 不保留 Responses 专属的 raw binding 路径。普通 Profile 字典仍按既有按键覆盖规则处理。
 公开 messages / tools / chunks 入口继承基类固定流程；协议实现 `_messages` / `_tools` / `_chunks`。
-Decoder._messages / _tools 返回 Translations，显式声明每组输出的来源；公开入口仍返回普通 list。
+Decoder._messages / _tools 返回原生结果列表，不附加未知字段或恢复记录。
 翻译中的格式解析错误和上游失败事件仍按[异常边界](../reference/api.md#异常边界)报告。
 
 Transport 从公开 SDK 消息与工具类型取得字段定义。过滤仅作用于请求副本，
 不修改业务保存的消息，也不递归删除工具参数、结果或 JSON Schema 中的应用键。
-Pydantic 模型配置 extra="allow" 时保留额外字段；已声明字段仍按各自类型递归处理，
-库保留的来源与恢复键仍在协议结构层过滤。
+TypedDict 与 Pydantic 协议结构仅处理声明字段；开放 dict / Any 内部保留应用键值。
 兼容服务的显式 extra_body、extra_headers 与思考回放策略仍由 Profile 配置。
 
 ### 数据所有权与缓存
 
 `MyLLM.generate` 的准备阶段不发生异步等待：先只读规范化并验证输入，再由 Encoder
 在公开转换边界捕获一次可变数据，完成后才进入 SDK 执行。协议私有编码 hook 直接使用
-这份已隔离的输入。来源分组、历史关联校验与回放比较只读借用数据；合并内容或覆盖字段时，
-只重建实际改写的容器。公开转换结果、回放快照、请求选项及完成结果仍拥有需要独立修改的内容。
+这份已隔离的输入。历史关联校验只读借用数据；合并内容或覆盖字段时，
+只重建实际改写的容器。公开转换结果、请求选项及完成结果拥有需要独立修改的内容。
 
 Transport 的 Schema 缓存只保存类型分析结果：字段子计划、Literal 判别信息和 Union 候选顺序。
 只读验证使用 `projected`，重建需要过滤的协议结构并借用应用 payload；生成请求使用 `supported`，
@@ -109,25 +109,20 @@ MyCodec / MyLLM 保存创建时的注册快照，后续注册只影响新实例�
 客户端延迟创建并按实例复用，响应流按请求关闭。实例退出前先完成或关闭响应流，再统一释放客户端，
 详见[客户端生命周期](client-lifecycle.md)。流操作、块身份及完整工具发布规则见[流状态设计](stream-state.md)。
 
-## 字段保留与轮次恢复
+## 翻译字段边界
 
-转换结果保留未知扩展；路径可以共存时保留原层级。发生类型冲突或存在原生签名、密文时，
-结果附带 JSON 可序列化的恢复记录。重新输入未修改的结果可恢复原始中间态，
-再转换或请求原协议时保留原生思考块和工具身份。
-
-恢复记录随消息保存，不依赖客户端、进程缓存或 MyLLM 实例；修改对应转换分组会使旧快照失效。
-消息合并或拆分时，Decoder 显式记录来源分组，未知字段不会按列表下标串到下一轮。
-实际请求由 Transport 过滤扩展与恢复记录，避免它们进入 SDK 请求。
+Encoder 只将明确支持的协议字段和已配置兼容字段翻译为中间态；Decoder 只构造目标协议
+已识别的字段。未知字段在两个方向均不透传，已识别开放字典内部的键值随整个字段保留。
+不保存原始对象、剩余字段或跨协议恢复记录；同协议也通过明确的字段映射处理原生内容。
+原生签名、密文与工具身份属于显式支持的标准语义，不作为未知扩展搬运到其他协议。
 流式多轮对话应保存 `stream.result`，逐字拼接文本不能替代完整历史。
-规则与边界见[字段保留说明](../audits/lossless.md)。
+规则与示例见[翻译字段边界](translation-boundaries.md)。
 
 ## 验证
 
-- [恢复契约](../../tests/contract/test_replay_preservation.py)：五协议消息、工具、完整流的保存与往返，编辑失效、加密思考及工具 ID 恢复。
-- [SDK 两轮回放](../../tests/integration/test_replay_transport.py)：真实 Anthropic SDK、本地 HTTP 响应，验证签名、密文、工具结果和实际请求过滤。
 - [组件契约](../../tests/unit/test_native_codecs.py)与[依赖边界](../../tests/contract/test_codec_boundaries.py)：翻译、验证及 SDK 职责隔离。
 - [独立协议注册](../../tests/integration/test_protocol_registration.py)：第六协议的默认值、注册快照及完整请求路径。
-- [原路径保留](../../tests/contract/test_intermediate_preservation.py)与[协议符合性](../../tests/contract/test_protocol_conformance.py)：字段层级、转换优先级与协议结构。
+- [协议符合性](../../tests/contract/test_protocol_conformance.py)：独立原生样例与目标协议结构。
 - [并发验证](../audits/concurrency.md)：五协议组合、混合请求、失败隔离和资源关闭。
 - [数据所有权](../../tests/unit/test_copy_ownership.py)、[过滤计划](../../tests/unit/test_schema_filter_plans.py)与[终态物化](../../tests/contract/test_stream_materialization.py)：深层隔离、缓存复用及请求间数据独立。
 

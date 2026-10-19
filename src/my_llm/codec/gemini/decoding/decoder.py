@@ -6,15 +6,12 @@ from typing import Any
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.gemini.decoding.content import decode_part, foreign_block
 from my_llm.codec.shared.conversion import (
-    OPAQUE,
-    Translations,
     blocks,
-    coalesce_groups,
+    coalesce_messages,
     decode_functions,
-    extras,
-    original,
     plain,
     project_message,
+    select,
     select_present,
     source_protocol,
 )
@@ -26,7 +23,7 @@ PROTOCOL = "gemini"
 
 
 class GeminiDecoder(BaseDecoder):
-    """Translate intermediate values into protocol dictionaries, retaining replay data."""
+    """Translate recognized intermediate values into protocol dictionaries."""
 
     __slots__ = ()
     protocol = PROTOCOL
@@ -79,39 +76,18 @@ class GeminiDecoder(BaseDecoder):
 
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> Translations:
-        result = Translations()
+    ) -> list[dict]:
+        result = []
         names = {}
-        for sources, message in coalesce_groups(messages):
-            result.group(
-                sources,
-                structure={
-                    "parts": [
-                        {
-                            "inline_data": {},
-                            "file_data": {},
-                            "function_call": {},
-                            "function_response": {},
-                        }
-                    ]
-                },
-            )
-            if message.get(OPAQUE):
-                result.extend(original(message, PROTOCOL))
-                continue
-            native = original(message, PROTOCOL)
+        for message in coalesce_messages(messages):
             for block in message.get("content", []):
                 if block.get("type") == "tool_use":
                     names[block["id"]] = block["name"]
-            if native is not None:
-                result.extend(native)
-                continue
             foreign = source_protocol(message) != PROTOCOL
             if foreign:
                 message = project_message(message, foreign_block)
             else:
-                # Without a native snapshot, these parts become the public
-                # result. Capture their mutable payloads once at that boundary.
+                # Public output owns independently mutable application data.
                 message = {**message, "content": blocks(message.get("content"))}
             parts = []
             for block in message.get("content", []):
@@ -121,7 +97,6 @@ class GeminiDecoder(BaseDecoder):
                 parts.append(decode_part(block, foreign=foreign))
             result.append(
                 {
-                    **extras(message, "role", "content", "tool_calls"),
                     "role": "model" if message["role"] == "assistant" else message["role"],
                     "parts": parts,
                 }
@@ -130,15 +105,14 @@ class GeminiDecoder(BaseDecoder):
 
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> Translations:
+    ) -> list[dict]:
         return decode_functions(
             tools,
-            "gemini",
             lambda functions: [
                 {
                     "function_declarations": [
                         {
-                            **select_present(f, "name"),
+                            **select_present(f, "name", "response_json_schema", "behavior"),
                             "description": f.get("description") or "",
                             "parameters_json_schema": f.get("parameters") or {"type": "object"},
                         }
@@ -146,22 +120,18 @@ class GeminiDecoder(BaseDecoder):
                     ]
                 }
             ],
-            structure={"function_declarations": [{}]},
         )
 
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for event in events(chunks, PROTOCOL):
+        for event in events(chunks):
             kind = event.get("type")
             usage = self.usage(event.get("usage"))
-            if kind == "opaque":
-                result.append(event["value"])
-                continue
             parts = []
             reason = None
-            if kind == "delta":
+            if kind == "delta" and event.get("field") in ("text", "thinking", "refusal"):
                 parts = [
                     {
                         "text": event["value"],
@@ -182,12 +152,12 @@ class GeminiDecoder(BaseDecoder):
                         continue
                 parts = [decode_part(block, foreign=foreign)]
             elif kind == "block_stop":
-                signature = event["block"].get("thought_signature")
-                if signature and parameters.get("source_protocol") == PROTOCOL:
+                metadata = select(event["block"], "thought_signature", "part_metadata")
+                if metadata and parameters.get("source_protocol") == PROTOCOL:
                     parts = [
                         {
                             "text": "",
-                            "thought_signature": signature,
+                            **metadata,
                             **(
                                 {"thought": True}
                                 if event["block"].get("type") == "thinking"
@@ -222,9 +192,6 @@ class GeminiDecoder(BaseDecoder):
     def usage(self, value: dict | None) -> dict | None:
         if value is None:
             return None
-        native = original(value, "gemini")
-        if native is not None:
-            return native
         input_tokens, output_tokens, total, cached, cache_write, reasoning = counts(value)
         return {
             key: child

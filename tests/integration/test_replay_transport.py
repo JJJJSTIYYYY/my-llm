@@ -1,4 +1,4 @@
-"""Two real-SDK requests replay encrypted thinking through persisted Chat history."""
+"""Real-SDK native tool turns keep recognized signatures without hidden records."""
 
 import json
 
@@ -7,7 +7,6 @@ import pytest
 from anthropic import AsyncAnthropic
 
 from my_llm import ModelProfile, MyLLM, ProviderProfile
-from my_llm.codec.shared.conversion import REPLAY
 from tests.helpers.protocols import stream_events
 from tests.helpers.schema import validate_request
 from tests.helpers.transport import sse
@@ -68,7 +67,7 @@ async def test_signed_tool_round_trip_uses_only_supported_wire_fields(monkeypatc
     def handler(request):
         body = json.loads(request.content)
         validate_request("anthropic", body)
-        assert REPLAY not in request.content.decode()
+        assert "__my_llm_codec_" not in request.content.decode()
         assert "future_block" not in request.content.decode()
         requests.append(body)
         response = events if len(requests) == 1 else stream_events("anthropic")
@@ -87,16 +86,13 @@ async def test_signed_tool_round_trip_uses_only_supported_wire_fields(monkeypatc
     async with MyLLM(
         provider=ProviderProfile(protocol="anthropic", api_key="local-test"),
         model=ModelProfile(model="demo", max_tokens=4096, supports_function_calling=True),
-        stdio_protocol="openai_chat",
+        stdio_protocol="anthropic",
     ) as llm:
         history = [{"role": "user", "content": "weather?"}]
         tools = [
             {
-                "type": "function",
-                "function": {
-                    "name": "weather",
-                    "parameters": {"type": "object", "properties": {"city": {"type": "string"}}},
-                },
+                "name": "weather",
+                "input_schema": {"type": "object", "properties": {"city": {"type": "string"}}},
             }
         ]
         response = await llm.generate(messages=history, tools=tools, reasoning=True, stream=stream)
@@ -106,13 +102,17 @@ async def test_signed_tool_round_trip_uses_only_supported_wire_fields(monkeypatc
                     pass
             response = response.result
         assert "encrypted-payload" in json.dumps(response)
-        assert "future_block" in json.dumps(response)
+        assert "future_block" not in json.dumps(response)
+        assert "__my_llm_codec_" not in json.dumps(response)
         history.append(json.loads(json.dumps(response)))
         history.append(
-            {"role": "tool", "tool_call_id": response["tool_calls"][0]["id"], "content": "Sunny"}
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "call_1", "content": "Sunny"}],
+            }
         )
         final = await llm.generate(messages=history, tools=tools, reasoning=True)
-        assert final["content"] == "Hello"
+        assert final["content"] == [{"type": "text", "text": "Hello"}]
     assert requests[1]["messages"][1]["content"] == [thinking, redacted, call]
     assert requests[1]["messages"][2]["content"][0]["tool_use_id"] == "call_1"
     assert len(clients) == 1 and clients[0].is_closed()

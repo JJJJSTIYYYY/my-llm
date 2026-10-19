@@ -3,7 +3,6 @@
 from typing import Any
 
 from my_llm.codec.shared.conversion import (
-    extras,
     json_arguments,
     project_block,
     select,
@@ -24,8 +23,6 @@ FIELDS = {
 def render_content(content: list[dict], *, role: str = "user") -> Any:
     result = []
     for block in content:
-        # Gemini signatures have meaning only when replayed to Gemini.
-        block = extras(block, "thought_signature")
         kind = block.get("type")
         if kind in ("image", "document") and role != "user":
             source = block.get("source", {})
@@ -37,10 +34,14 @@ def render_content(content: list[dict], *, role: str = "user") -> Any:
             )
         if kind in ("thinking", "redacted_thinking", "tool_use", "tool_result"):
             continue
-        value = extras(block)
+        value = select(block, "type", "text", "refusal", "annotations", "logprobs")
         if kind == "text":
-            value.pop("annotations", None)
-            value["type"] = "text"
+            value = {"type": "text", "text": block.get("text", "")}
+        elif kind == "input_audio":
+            value = {
+                "type": "input_audio",
+                "input_audio": select(block.get("input_audio", {}), "data", "format"),
+            }
         elif kind == "image":
             source = block.get("source", {})
             uri = source.get("url")
@@ -48,7 +49,6 @@ def render_content(content: list[dict], *, role: str = "user") -> Any:
                 uri = f"data:{source['media_type']};base64,{source['data']}"
             detail = {"detail": block.get("detail", "auto")} if "detail" in block else {}
             value = {
-                **extras(block, "type", "source", "detail"),
                 "type": "image_url",
                 "image_url": {"url": uri, **detail},
             }
@@ -59,16 +59,22 @@ def render_content(content: list[dict], *, role: str = "user") -> Any:
                 # a textual reference without downloading content implicitly.
                 result.append({"type": "text", "text": source["url"]})
                 continue
-            file = {
-                "file_data": f"data:{source.get('media_type', 'application/pdf')};base64,{source.get('data', '')}"
-            }
+            file = (
+                select(source, "file_id")
+                if source.get("type") == "file"
+                else {
+                    "file_data": f"data:{source.get('media_type', 'application/pdf')};base64,{source.get('data', '')}"
+                }
+            )
+            file.update(select(block, "filename"))
             value = {
-                **extras(block, "type", "source"),
                 "type": "file",
                 "file": file,
             }
+        else:
+            continue
         result.append(value)
-    # A string cannot retain block extensions; collapse only bare text blocks.
+    # Bare text blocks can use the native string form.
     if all(set(b) == {"type", "text"} and b["type"] == "text" for b in result):
         return "".join(b["text"] for b in result) or None
     return result
@@ -87,11 +93,9 @@ def foreign_block(block: dict) -> dict | None:
 
 def chat_call(block: dict) -> dict:
     return {
-        **extras(block, "type", "id", "name", "input", "function", "thought_signature"),
         "id": block["id"],
         "type": "function",
         "function": {
-            **block.get("function", {}),
             "name": block["name"],
             "arguments": json_arguments(block["input"]),
         },

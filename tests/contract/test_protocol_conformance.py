@@ -1,7 +1,7 @@
 """Native protocol shapes, checked independently against official SDK schemas.
 
 Sources and scope are recorded in docs/audits/protocol-conformance.md.
-Unknown/vendor extensions have separate preservation tests; SDK parsing alone
+Unknown/vendor fields must be ignored; SDK parsing alone
 is not proof of conformance because several SDKs allow or ignore extra keys.
 """
 
@@ -13,7 +13,6 @@ from jsonschema import ValidationError as SchemaValidationError
 from pydantic import ValidationError
 
 from my_llm import MyCodec
-from tests.helpers.preservation import translated
 from tests.helpers.protocols import PROTOCOLS, history, stream_events, tools
 from tests.helpers.sdk import EVENT_TYPES, MESSAGE_TYPES, TOOL_TYPES, assert_native
 from tests.helpers.streaming import render
@@ -62,7 +61,6 @@ def test_histories_match_independent_native_expectations(source, target):
     converted = MyCodec().convert(history(source), input_format=source, target_format=target)[
         "messages"
     ]
-    converted = translated(converted)
     for message in converted:
         assert_native(message, MESSAGE_TYPES[target])
     expected = history(target)
@@ -86,7 +84,6 @@ def test_tools_match_independent_native_definitions(source, target):
     converted = MyCodec().convert(tools=tools(source), input_format=source, target_format=target)[
         "tools"
     ]
-    converted = translated(converted)
     for tool in converted:
         assert_native(tool, TOOL_TYPES[target])
     expected = tools(target)
@@ -103,7 +100,7 @@ def test_tools_match_independent_native_definitions(source, target):
 def test_stream_events_match_official_models_and_lifecycle(source, target, mode):
     incoming = stream_events(source, tool=True)
     # Validate the fixtures as well as outputs; source==target can otherwise
-    # hide an invalid native event behind the exact-replay snapshot.
+    # hide an invalid native event behind an SDK model that ignores fields.
     for event in incoming:
         schema = EVENT_TYPES[source]
         assert_native(event, schema[event["type"]] if isinstance(schema, dict) else schema)
@@ -113,7 +110,6 @@ def test_stream_events_match_official_models_and_lifecycle(source, target, mode)
         converted = MyCodec().convert(chunks=incoming, input_format=source, target_format=target)[
             "chunks"
         ]
-    converted = translated(converted)
     for event in converted:
         schema = EVENT_TYPES[target]
         assert_native(event, schema[event["type"]] if isinstance(schema, dict) else schema)
@@ -271,7 +267,6 @@ def test_native_thinking_events_use_only_target_supported_fields(target):
     for event in incoming:
         assert_native(event, EVENT_TYPES["anthropic"][event["type"]])
     converted, _ = render("anthropic", target, incoming)
-    converted = translated(converted)
     for event in converted:
         schema = EVENT_TYPES[target]
         assert_native(event, schema[event["type"]] if isinstance(schema, dict) else schema)

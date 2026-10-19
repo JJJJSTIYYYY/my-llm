@@ -1,5 +1,7 @@
 # 五协议修复与代码复核
 
+> 历史验收记录：本文描述对应审计时点。当前翻译字段契约以[翻译字段边界](../design/translation-boundaries.md)为准；文中未知字段透传、恢复记录及开放模型扩展结论已撤销。
+
 日期：2026-10-17。对应[原始审计](protocol-audit-2026-10-17.md)的 A01—A11。
 范围是 OpenAI Responses、OpenAI Chat Completions、Gemini GenerateContent、
 Anthropic Messages、Ollama Chat；不包含 Interactions、Live 或 Ollama Generate。

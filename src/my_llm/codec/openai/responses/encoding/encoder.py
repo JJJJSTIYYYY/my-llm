@@ -7,19 +7,15 @@ from openai import Omit
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.openai.responses.encoding.content import (
     encode_content,
-    response_fields,
     tool_operations,
 )
+from my_llm.codec.openai.responses.utils.metadata import response_parameters
 from my_llm.codec.shared.conversion import (
-    OPAQUE,
-    SOURCE,
     arguments,
     dictionary_views,
     encode_functions,
-    extras,
     mapping_list,
-    remember,
-    residual,
+    select,
 )
 from my_llm.codec.shared.options import path_value
 from my_llm.codec.shared.stream import BlockRef, encode_batch, record
@@ -78,60 +74,62 @@ class ResponsesEncoder(BaseEncoder):
         result = []
         for item in messages:
             kind = item.get("type", "message")
-            # A role extension on a non-message item cannot change its translated role.
             role = item.get("role", "assistant") if kind == "message" else "assistant"
             if kind == "function_call":
                 content = [
                     {
-                        **extras(item, "type", "call_id", "name", "arguments", "id", "status"),
                         "type": "tool_use",
                         "id": item.get("call_id"),
                         "name": item.get("name"),
                         "input": arguments(item.get("arguments", {})),
+                        **({"item_id": item["id"]} if "id" in item else {}),
+                        **select(item, "status"),
                     }
                 ]
             elif kind == "function_call_output":
                 role = "user"
                 content = [
                     {
-                        **extras(item, "type", "call_id", "output"),
                         "type": "tool_result",
                         "tool_use_id": item.get("call_id"),
                         "content": encode_content(item["output"])
                         if isinstance(item.get("output"), list)
                         else item.get("output"),
+                        **select(item, "id", "status"),
                     }
                 ]
             elif kind == "reasoning":
+                summary = [select(part, "type", "text") for part in item.get("summary", [])]
                 content = [
                     {
-                        **extras(item, "type"),
                         "type": "thinking",
-                        "thinking": "".join(b.get("text", "") for b in item.get("summary", [])),
+                        "thinking": "".join(part.get("text", "") for part in summary),
+                        "summary": summary,
+                        **select(item, "id", "status", "encrypted_content"),
                     }
                 ]
             elif kind == "message":
-                content = encode_content(item.get("content"))
+                content = [
+                    {
+                        **block,
+                        **({"item_id": item["id"]} if "id" in item else {}),
+                        **({"item_status": item["status"]} if "status" in item else {}),
+                    }
+                    for block in encode_content(item.get("content"))
+                ]
+            elif kind == "item_reference":
+                content = [{"type": "item_reference", **select(item, "id")}]
             else:
-                result.append(remember({**item, OPAQUE: True}, [item], PROTOCOL))
                 continue
-            value = remember(
+            result.append(
                 {
-                    **(
-                        extras(item, "type", "content", "status", "id")
-                        if kind == "message"
-                        else residual(item, response_fields(item))
-                    ),
+                    "protocol": PROTOCOL,
+                    "coalesce": kind != "item_reference",
                     "role": role,
                     "content": content,
-                },
-                [item],
-                PROTOCOL,
-                preserve=residual(item, response_fields(item)),
+                    **(select(item, "id", "status") if kind == "message" else {}),
+                }
             )
-            value[SOURCE]["coalesce_assistant"] = True
-            # Keep per-item metadata here; target decoders decide whether to group items.
-            result.append(value)
         return result
 
     def _tools(
@@ -139,15 +137,11 @@ class ResponsesEncoder(BaseEncoder):
     ) -> list[dict]:
         return encode_functions(
             tools,
-            "openai_responses",
-            lambda tool: [extras(tool, "type")] if tool.get("type") == "function" else None,
-            consumed={
-                "type": True,
-                "name": True,
-                "description": True,
-                "parameters": True,
-                "strict": True,
-            },
+            lambda tool: (
+                [select(tool, "name", "description", "parameters", "strict")]
+                if tool.get("type") == "function"
+                else None
+            ),
         )
 
     def _chunks(
@@ -243,7 +237,7 @@ class ResponsesEncoder(BaseEncoder):
                         "block": {
                             "type": "thinking",
                             "thinking": part.get("text", ""),
-                            "summary": [part],
+                            "summary": [select(part, "type", "text")],
                         },
                     }
                 )
@@ -255,7 +249,11 @@ class ResponsesEncoder(BaseEncoder):
                         {"type": "metadata", **self._response_metadata(response)},
                         {
                             "type": "metadata",
-                            "response_items": {str(i): item for i, item in enumerate(output)},
+                            "response_items": {
+                                str(i): select(item, "id", "type", "status", "name", "call_id")
+                                for i, item in enumerate(output)
+                                if item.get("type") in ("message", "reasoning", "function_call")
+                            },
                         },
                         self._snapshot(output),
                         {
@@ -305,27 +303,13 @@ class ResponsesEncoder(BaseEncoder):
                             "value": value,
                         }
                     )
-            structural = {
-                "response.output_item.added",
-                "response.output_item.done",
-                "response.content_part.added",
-                "response.content_part.done",
-                "response.output_text.done",
-                "response.refusal.done",
-                "response.reasoning_summary_text.done",
-                "response.reasoning_summary_part.added",
-                "response.reasoning_summary_part.done",
-                "response.function_call_arguments.done",
-            }
-            # Known structural events need no operation: their payload is represented
-            # by deltas or the final snapshot. Only unknown events pass through opaquely.
-            if not ops and kind not in structural:
-                ops = [{"type": "opaque", "value": event}]
             if "output_index" in event:
                 item = event.get("item") or {}
                 item_id = item.get("id") or event.get("item_id")
                 if item_id:
-                    header = item or {"id": item_id}
+                    header = select(item, "id", "type", "status", "name", "call_id") or {
+                        "id": item_id
+                    }
                     if not item:
                         if "reasoning_summary" in kind:
                             header["type"] = "reasoning"
@@ -343,23 +327,13 @@ class ResponsesEncoder(BaseEncoder):
                             "response_items": {str(index): header},
                         },
                     )
-                if kind in ("response.output_item.added", "response.output_item.done") and item.get(
-                    "type"
-                ) not in ("message", "reasoning", "function_call"):
-                    ops.append({"type": "opaque", "value": event})
-            result.append(
-                encode_batch(
-                    event, ops, PROTOCOL, consumed=self._consumed_fields(event), usage=self.usage
-                )
-            )
+            result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
         return result
 
     def usage(self, value: dict | None) -> dict | None:
         if value is None:
             return None
         return record(
-            value,
-            "openai_responses",
             input_base=value.get("input_tokens"),
             output_base=value.get("output_tokens"),
             total=value.get("total_tokens"),
@@ -372,18 +346,17 @@ class ResponsesEncoder(BaseEncoder):
         return {key: event[key] for key in ("id", "model", "created_at") if key in event}
 
     def _snapshot(self, output: list) -> dict:
-        """Address final blocks with the same item/part coordinates as live deltas."""
-        encoded = self._messages(output)
+        """Address recognized final blocks with their live item/part coordinates."""
         blocks = []
-        for index, (item, message) in enumerate(zip(output, dictionary_views(encoded))):
-            if message.get(OPAQUE):
+        for index, item in enumerate(output):
+            encoded = self._messages([item])
+            if not encoded:
                 continue
+            message = encoded[0]
             for part, block in enumerate(message.get("content", [])):
-                kind = block.get("type", "unknown")
+                kind = block["type"]
                 if kind == "thinking":
-                    # Message conversion groups summaries; live operations address
-                    # each summary part separately using the native summary_index.
-                    for summary_index, summary in enumerate(item.get("summary") or [{}]):
+                    for summary_index, summary in enumerate(block.get("summary") or [{}]):
                         blocks.append(
                             {
                                 "ref": BlockRef(kind, index, summary_index),
@@ -396,41 +369,7 @@ class ResponsesEncoder(BaseEncoder):
                         )
                 else:
                     blocks.append({"ref": BlockRef(kind, index, part), "block": block})
-        return {"type": "snapshot", "messages": encoded, "blocks": blocks}
+        return {"type": "snapshot", "blocks": blocks}
 
     def _response_metadata(self, response: dict) -> dict:
-        return {
-            **self._metadata(response),
-            "native_response": extras(response, "output", "usage"),
-            **{
-                # `tools` is also MyCodec.decode's input argument. Keep response
-                # metadata separate so it cannot be mistaken for tool conversion.
-                "response_tools" if key == "tools" else key: response[key]
-                for key in ("tools", "tool_choice", "parallel_tool_calls")
-                if key in response
-            },
-        }
-
-    def _consumed_fields(self, event: dict) -> dict:
-        kind = event.get("type", "")
-        return {
-            "type": True,
-            "output_index": True,
-            "content_index": True,
-            "response": {
-                **dict.fromkeys(("id", "model", "created_at"), True),
-                **({"output": [response_fields]} if kind == "response.completed" else {}),
-            },
-            "item": response_fields if kind == "response.output_item.done" else {},
-            **(
-                {"delta": True}
-                if kind
-                in (
-                    "response.output_text.delta",
-                    "response.reasoning_summary_text.delta",
-                    "response.function_call_arguments.delta",
-                    "response.refusal.delta",
-                )
-                else {}
-            ),
-        }
+        return {**self._metadata(response), "response_parameters": response_parameters(response)}

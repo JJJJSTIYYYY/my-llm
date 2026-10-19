@@ -43,7 +43,7 @@ async def test_lazy_generation_captures_history_and_request_options(monkeypatch)
     async with stream:
         async for _ in stream:
             pass
-    assert client.requests[0]["messages"][0]["content"][0]["text"] == "original"
+    assert client.requests[0]["messages"][0]["content"] == "original"
     assert client.requests[0]["extra_body"]["nested"]["value"] == "original"
     result = stream.result
     result["content"] = "changed"
@@ -59,9 +59,6 @@ def test_converter_never_mutates_input_or_profile():
         converted = codec.convert(
             messages, input_format="openai_chat", target_format=protocol, profile=profile
         )
-        if protocol == "openai_chat":
-            converted["messages"][0]["nested"]["value"].append(2)
-        else:
-            assert converted["messages"][0]["nested"] == before[0]["nested"]
-            converted["messages"][0]["content" if protocol != "gemini" else "parts"] = "changed"
+        assert "nested" not in converted["messages"][0]
+        converted["messages"][0]["content" if protocol != "gemini" else "parts"] = "changed"
     assert messages == before

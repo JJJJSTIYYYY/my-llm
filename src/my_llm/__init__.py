@@ -10,7 +10,6 @@ from my_llm.codec import (
     BaseTransport,
     MyCodec,
     PreparedOptions,
-    Translations,
 )
 from my_llm.exceptions import (
     ConfigurationError,
@@ -52,7 +51,6 @@ __all__ = [
     "Protocol",
     "ProtocolDefaults",
     "PreparedOptions",
-    "Translations",
     "ReasoningEffort",
     "Omit",
     "omit",

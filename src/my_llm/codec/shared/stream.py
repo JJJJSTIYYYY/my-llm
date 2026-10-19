@@ -3,7 +3,7 @@
 from collections.abc import Callable
 from typing import NamedTuple
 
-from my_llm.codec.shared.conversion import SOURCE, dictionaries, original, remember, residual
+from my_llm.codec.shared.conversion import dictionaries
 
 
 class BlockRef(NamedTuple):
@@ -14,54 +14,38 @@ class BlockRef(NamedTuple):
     part: int = 0
 
 
-def batch(event: dict, operations: list[dict], protocol: str, consumed: dict | None = None) -> dict:
-    # Opaque passthrough has interpreted no fields, even if their names happen
-    # to match the consumption rules of a known event.
-    if any(op.get("type") == "opaque" for op in operations):
-        consumed = {}
-        operations = [
-            {**op, "protocol": protocol} if op.get("type") == "opaque" else op for op in operations
-        ]
-    value = remember(residual(event, consumed or {}), event, protocol)
-    # Keep control data in our reserved namespace so native "type" / "events"
-    # extensions can remain untouched at their original source paths.
-    value[SOURCE]["events"] = operations
-    return value
+def batch(operations: list[dict], protocol: str) -> dict:
+    """Group recognized operations with their source protocol, without native payloads."""
+    return {"type": "batch", "protocol": protocol, "events": operations}
 
 
 def encode_batch(
-    event: dict,
     operations: list[dict],
     protocol: str,
     *,
-    consumed: dict,
     usage: Callable[[dict | None], dict | None],
 ) -> dict:
-    """Translate native usage operations before retaining their source event."""
+    """Translate token counts before grouping recognized stream operations."""
     for operation in operations:
         if operation["type"] == "usage":
             operation["usage"] = usage(operation["usage"])
-    return batch(event, operations, protocol, consumed)
+    return batch(operations, protocol)
 
 
 def is_batch(value: dict) -> bool:
-    return "events" in value.get(SOURCE, {})
+    return value.get("type") == "batch"
 
 
 def operations(value: dict) -> list[dict]:
-    return value[SOURCE]["events"] if is_batch(value) else [value]
+    return value["events"] if is_batch(value) else [value]
 
 
-def events(chunks: list, protocol: str):
+def events(chunks: list):
     for chunk in dictionaries(chunks):
-        native = original(chunk, protocol)
-        if native is not None:
-            yield {"type": "opaque", "value": native}
-        elif is_batch(chunk):
-            yield from events(operations(chunk), protocol)
+        if is_batch(chunk):
+            yield from events(operations(chunk))
         else:
-            if chunk.get("type") != "opaque" or chunk.get("protocol", protocol) == protocol:
-                yield chunk
+            yield chunk
 
 
 def compact(value):
@@ -71,8 +55,6 @@ def compact(value):
 
 
 def record(
-    value,
-    protocol,
     *,
     input_base=None,
     input_add=None,
@@ -83,19 +65,15 @@ def record(
     cache_write=None,
     reasoning=None,
 ):
-    return remember(
-        compact(
-            {
-                "input": {"base": input_base, "add": input_add},
-                "output": {"base": output_base, "add": output_add},
-                "total": total,
-                "cached": cached,
-                "cache_write": cache_write,
-                "reasoning": reasoning,
-            }
-        ),
-        value,
-        protocol,
+    return compact(
+        {
+            "input": {"base": input_base, "add": input_add},
+            "output": {"base": output_base, "add": output_add},
+            "total": total,
+            "cached": cached,
+            "cache_write": cache_write,
+            "reasoning": reasoning,
+        }
     )
 
 

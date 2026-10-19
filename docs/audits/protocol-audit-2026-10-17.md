@@ -1,5 +1,7 @@
 # 四家官方协议独立审计
 
+> 历史验收记录：本文描述对应审计时点。当前翻译字段契约以[翻译字段边界](../design/translation-boundaries.md)为准；文中未知字段透传、恢复记录及开放模型扩展结论已撤销。
+
 审计日期：2026-10-17。代码基线：`5c41153`，工作区起始状态干净。
 本轮核对 OpenAI Chat Completions / Responses、Anthropic Messages、
 Gemini GenerateContent 和 Ollama Chat，共五种协议实现。

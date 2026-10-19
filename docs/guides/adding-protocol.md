@@ -1,8 +1,8 @@
 # 接入新的协议
 
 每个协议实现 BaseEncoder、BaseDecoder、BaseTransport，由 BaseCodec 组合并声明默认值。
-Encoder / Decoder 只翻译并保留信息；请求验证、字段过滤与 SDK 调用归 Transport。
-四个基类及 PreparedOptions、Translations、ProtocolDefaults 均可从 `my_llm` 导入。
+Encoder / Decoder 只翻译已识别字段；请求验证、SDK 结构过滤与 SDK 调用归 Transport。
+四个基类及 PreparedOptions、ProtocolDefaults 均可从 `my_llm` 导入。
 
 ## 原生实现目录
 
@@ -11,6 +11,8 @@ Encoder / Decoder 只翻译并保留信息；请求验证、字段过滤与 SDK 
 ├── __init__.py                 # 仅导出
 ├── codec.py                    # 协议身份、默认值与三个组件
 ├── transport.py                # 参数验证、过滤、SDK 生命周期
+├── utils/                      # 按需提供的双向共用辅助
+│   └── __init__.py
 ├── encoding/
 │   ├── __init__.py
 │   ├── encoder.py              # 原生 → 中间态
@@ -35,18 +37,15 @@ messages / tools / chunks 是固定公开入口；原生实现提供对应的下
 | BaseEncoder | `_messages`、`_tools`、`_chunks`、`usage`、`match_item`、`protocol`。 |
 | BaseDecoder | `_messages`、`_tools`、`_chunks`、`usage`、`protocol`、`request_parameters`、`assemble_request`。 |
 
-Encoder.matches 统一整批识别；Encoder 的固定入口处理恢复记录，
-保证同一批中新增工具结果仍可与恢复的原始调用 ID 对应。
-Decoder 的固定消息与工具入口保留未知扩展，并在需要时附带恢复记录。
-Decoder._messages / _tools 必须返回 Translations，并在写入每组输出前调用
-`group(sources, structure=...)` 声明来源和允许合并扩展的容器；`decode_functions` 可代为管理工具分组。
-公开的 Decoder.messages / tools 仍返回普通 list，内部不为未分组的 list 提供兼容路径。
+Encoder.matches 统一整批识别。Encoder 与 Decoder 的 `_messages` / `_tools` 返回普通 list，
+每个实现显式读取与构造受支持的字段，不透传未知协议键，也不附加原生恢复记录。
+工具参数、工具结果和 JSON Schema 等已识别开放字典整体按应用数据处理。
 原生钩子内部复用本方向方法时调用 `_messages` 等钩子，避免重复包装。
 Decoder.result 默认返回首条消息，Responses 等协议可覆盖为 items 列表。
 
 Encoder 的固定入口已捕获一次输入，私有钩子接收隔离后的标准字典，不再重复复制整批数据。
-Decoder 只读借用中间态及来源分组，在实际生成可变公开内容时隔离对应 payload；
-完整原生快照可直接恢复，没有快照的同协议内容仍需拥有自己的工具参数及结果。
+Decoder 只读借用中间态，在实际生成可变公开内容时隔离对应 payload；
+同协议转换也必须显式翻译字段，不能直接返回原生对象快照。
 不要通过修改输入块补齐字段，应重建实际变化的字典或列表。
 
 Decoder.request_parameters(profile, options) 将已验证的 PreparedOptions 映射为原生字段，
@@ -141,29 +140,25 @@ llm = MyLLM(
 协议名须为非空字符串，重名注册抛出 ConfigurationError，不覆盖已有实现。
 MyCodec / MyLLM 实例保留创建时的注册快照；注册新协议后需创建新实例才能使用。
 
-## 中间态与恢复
+## 中间态与字段边界
 
 消息使用 role 与 content 块；工具调用与结果使用 tool_use / tool_result。
 它是内部开放字典，不是新的应用消息类型。
 
-- conversion.remember / original 保存来源与原生快照；residual 提取未知字段，保留层级和列表位置。
-- remember 的 preserve 参数同时记录原路径残留，供 Decoder 在输出中保留。
-- replay 中的恢复数据随转换结果保存；只有整个对应分组未修改时才恢复原始中间态。
-- Decoder 使用 conversion.Translations 标记每组输出的来源；合并消息使用 coalesce_groups，不根据输出下标猜测来源。
-- Translations.group 的 structure 声明允许递归保留扩展的原生容器；工具参数和结果等应用数据整体由翻译值决定。
+- 中间态只包含已识别字段；未知输入键不复制到中间态，未知中间态键不合并进输出。
+- protocol 字符串记录必要的来源语义，Responses 的 coalesce 标志控制已识别内容的合并；不保存原始对象或事件。
+- functions 表示规范化工具声明，参数、结果及工具 JSON Schema 的开放键值完整保留。
 - conversion.encode_functions / decode_functions 管理工具声明；stream 管理原生事件操作与用量计数。
 - options 管理配置字段路径与生成选项；transport 提供 SDK 字段过滤、工具关联验证及响应资源关闭。
-- 保留键从 [conversion.py](../../src/my_llm/codec/shared/conversion.py) 导入，不在原生输入中复用这些名称。
-
-恢复记录不进入请求。不能把其他协议的密文解释为本协议的签名；
-翻译的可见内容与保留的原生回放数据应区分处理。详见[保留规则](../audits/lossless.md)。
+不能把其他协议的密文解释为本协议的签名，也不通过隐藏记录恢复跨协议无法表达的信息。
+标准签名与密文必须在对应协议实现中明确处理。详见[翻译字段边界](../design/translation-boundaries.md)。
 
 ## 注册与验证
 
 1. 实现四个基类并通过 `MyCodec.register(codec)` 注册。Protocol 是 str 别名，
    不需要修改公共入口、协议枚举、默认值表或公共编排。
-2. 独立编写原生样例，覆盖消息、工具、完整流、未知字段和未修改分组的往返。
-3. 使用官方 SDK 和本地 HTTP transport 检查实际请求：保留数据已过滤，原生签名可回放，工具参数与 JSON Schema 不被误删。
+2. 独立编写原生样例，覆盖消息、工具、完整流、两个翻译方向未知字段不泄漏及开放字典内部键值保留。
+3. 使用官方 SDK 和本地 HTTP transport 检查实际请求：Profile 兼容能力生效，标准签名按原协议处理，工具参数与 JSON Schema 不被误删。
 4. 验证正常、取消、失败、提前退出、并发隔离和客户端关闭。
 
 组件与依赖约束见[契约测试](../../tests/unit/test_native_codecs.py)和[边界测试](../../tests/contract/test_codec_boundaries.py)。

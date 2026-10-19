@@ -11,7 +11,6 @@ import pytest
 
 from my_llm import IncompleteStreamError, MessageValidationError, MyCodec
 from my_llm.stream._state import StreamState
-from tests.helpers.preservation import translated
 from tests.helpers.protocols import PROTOCOLS, chat_event, response_completed, stream_events
 from tests.helpers.sdk import EVENT_TYPES, assert_native
 from tests.helpers.streaming import render
@@ -108,7 +107,7 @@ def test_accumulation_survives_json_round_trips_and_batch_boundaries(source, bat
     reconstructed.finish()
     collected = codec.decode(state.messages(), target_format="openai_chat")["messages"]
     replayed = codec.decode(reconstructed.messages(), target_format="openai_chat")["messages"]
-    assert translated(replayed) == translated(collected)
+    assert replayed == collected
     assert native == before
 
 
@@ -438,10 +437,16 @@ def test_snapshot_cannot_omit_previously_streamed_blocks(final_texts):
 @pytest.mark.parametrize(
     "content", ["native extension", {"nested": [1, 2]}, [{"type": "text", "text": "extension"}]]
 )
-def test_opaque_output_content_is_not_interpreted_as_accumulation_blocks(content):
+def test_unrecognized_output_item_does_not_enter_intermediate_or_native_output(content):
     item = {"type": "future_output", "id": "future_1", "content": content}
     output, state = render("openai_responses", "openai_responses", [response_completed([item])])
-    assert output[-1]["response"]["output"] == [item]
-    assert MyCodec().decode(state.messages(), target_format="openai_responses")["messages"] == [
-        item
-    ]
+    assert output[-1]["response"]["output"] == []
+    assert state.messages()[0]["content"] == []
+    decoded = MyCodec().decode(state.messages(), target_format="openai_responses")["messages"]
+    assert all(
+        part["type"] == "output_text" and part["text"] == ""
+        for message in decoded
+        for part in message["content"]
+    )
+    assert "future_output" not in str(decoded)
+    assert "future_1" not in str(decoded)

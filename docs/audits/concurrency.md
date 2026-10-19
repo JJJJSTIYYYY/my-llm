@@ -1,5 +1,7 @@
 # MyLLM 并发调用验证
 
+> 历史验收记录：本文描述对应审计时点。当前翻译字段契约以[翻译字段边界](../design/translation-boundaries.md)为准；文中未知字段透传、恢复记录及开放模型扩展结论已撤销。
+
 2026-10-17，使用真实官方 SDK 和本地可控 HTTP transport 验证同一 MyLLM 实例的异步并发。
 [测试文件](../../tests/integration/test_concurrency.py)覆盖五种上游协议和五种 I/O 协议。
 2026-10-18 更新为实例复用 SDK 客户端，并新增同一客户端首次并发复用及跨任务关闭验证；

@@ -123,6 +123,69 @@ replay=False/omit 在 Chat/Ollama 请求中去掉可见思考字段；True 保�
 没有思考内容时，普通 assistant 消息保持不带思考字段；仅在思考开启且有工具调用时
 分别补 `reasoning_content=""` / `thinking=""`。签名回放保持协议原生块。
 
+## SDK 参数与参数内部的协议字段
+
+项目按字段所在的位置、协议实现明确识别的字段以及 SDK 类型处理数据。
+标准协议的已识别字段无需逐项配置；非标准字段只通过 Profile 已提供的兼容能力处理。
+Profile 不是任意字段的通用放行表，SDK 接受某个扩展也不代表翻译层会识别它。
+SDK 参数与协议字段也不是互斥的概念：例如 messages 是 SDK 调用参数，同时对应 HTTP 请求体的字段，
+而 messages 中各项的 role / content 是消息内部字段。
+
+以 Chat 的 SDK 调用参数为例：
+
+```python
+sdk_arguments = {
+    "model": "your-model",
+    "messages": [{"role": "user", "content": "hello"}],
+    "extra_body": {"vendor_options": {"enabled": True}},
+    "extra_headers": {"X-Client": "example"},
+}
+```
+
+这里 model / messages / extra_body / extra_headers 是传给 SDK 方法的参数。
+messages 内部的 role / content 按消息类型处理；extra_body 内部是额外 JSON 请求体，
+extra_headers 内部是 HTTP headers，都不套用消息字段的过滤规则。
+
+| 层级 | 项目如何确定边界 | 处理位置 |
+| --- | --- | --- |
+| SDK 客户端参数 | Profile 连接字段及各协议的客户端构造规则 | Transport.create_client；例如 api_key、base_url、timeout。 |
+| SDK 请求参数 | Decoder 构造的请求字典；协议 Transport 的允许参数、保护字段和 SDK 调用接口 | validate_parameters / validate_request 及 SDK 方法；例如 model、messages、max_tokens。 |
+| 消息、工具内部字段 | Transport 显式声明的 message_path / tool_path，以及 message_type / tool_type | BaseTransport 定位对应值，再按缓存的 SDK 类型计划过滤和验证。 |
+| 其他结构参数内部字段 | 对应协议显式绑定的 SDK 类型 | 例如 Anthropic thinking、Responses reasoning、Ollama options 的类型处理。 |
+| 开放应用数据 | 字段声明为 dict / Any，或协议明确保留的应用字典 | 保留内部键值，例如工具参数、工具结果和 JSON Schema；不按 role / type 等键名猜测其协议。 |
+
+消息和工具的路径由各协议实现明确给出：
+
+| 协议 | 消息路径 | 工具路径 |
+| --- | --- | --- |
+| Chat | messages | tools |
+| Responses | input | tools |
+| Anthropic | messages | tools |
+| Gemini | contents | config.tools |
+| Ollama | messages | tools |
+
+例如 Chat 指定 message_path=("messages",)，message_type=ChatCompletionMessageParam，
+过滤器据此分析每条消息，而不是对整个 SDK 请求字典套用消息类型。
+Gemini 先定位 config.tools，才按 Tool 类型处理其中各项；config 的其他生成参数另行验证。
+这些根类型由协议实现者根据 SDK 接口选择，缓存不自动搜索 SDK 或证明选型完整。
+
+生成参数的允许范围也由各协议确定：Anthropic 读取 AsyncMessages.create 的参数签名，
+Ollama 读取 AsyncClient.chat 的参数签名，Gemini 读取 GenerateContentConfig.model_fields，
+再排除库管理的参数。Chat / Responses 对推理绑定使用显式允许键，并检查保护字段；
+实际 SDK 调用参数仍须符合各自 SDK 方法的接口。
+
+Profile.extra_body 在不同协议中的落点不同：Chat / Responses 写入 SDK 的 extra_body 参数，
+由 SDK 合入 JSON 请求体；Anthropic / Ollama 作为原生生成参数，Gemini 作为 config 字段。
+因此，Chat / Responses 的 extra_body 可以携带额外 JSON 键；其他协议仍检查当前 SDK 支持的生成字段。
+这些配置都不能覆盖库管理的 messages / input / contents / tools 等核心结构。
+
+翻译层只构造已识别的协议字段，不复制未知字段或原生对象作为恢复记录。
+Transport 再按声明的 SDK 类型过滤并校验请求；TypedDict 和 Pydantic 协议结构只保留声明字段，
+即使 SDK 模型配置 extra="allow"，也不将额外字段作为协议翻译的扩展入口。
+已识别字段若声明为开放 dict / Any，其内部应用键值完整保留。
+Schema 缓存只保存这些类型规则，不保存 Profile 或请求字段样本；兼容策略每次读取当前配置和当前值。
+详细对象与执行过程见[Schema 过滤计划缓存](../design/schema-filter-cache.md)。
+
 ## 协议参数
 
 | protocol | 输出 token 限制 | 思考 | tools |
@@ -164,21 +227,22 @@ gemini = MyLLM(
 
 生成的推理参数优先于 extra_body 同名键。extra_body 和 reasoning 绑定不能覆盖
 model / stream / messages / input / tools 等核心协议字段。
-SDK 会验证目标协议具体参数和字段；未知扩展在 Codec 转换中保留，不代表目标 API 一定支持。
+SDK 会验证目标协议具体参数和字段；兼容配置须符合当前 Transport 与 SDK 的调用接口。
 
 ## 跨协议请求的处理边界
 
-转换结果保留未知字段，并在需要时携带 JSON 可序列化的恢复记录。未修改的转换分组可恢复原生轮次，
-包括签名、密文与工具 ID；路径冲突时转换值优先，剩余信息保存在恢复记录中。
-BaseTransport 在实际请求前按公开 SDK 类型过滤不支持字段与恢复记录，不修改业务保存的历史。
-工具参数、结果对象和 JSON Schema 中的应用字段不作为协议结构过滤。
-完整规则见[字段保留与轮次恢复](../audits/lossless.md)。
+Encoder 只将明确识别的标准字段和已配置兼容字段翻译为中间态；Decoder 只构造目标协议
+已识别的字段。两个方向都不透传未知协议字段，也不保存原始对象、剩余字段或跨协议恢复记录。
+工具参数、结果对象和 JSON Schema 等已识别的开放字典完整保留内部应用键值。
+BaseTransport 在 SDK 请求边界统一过滤并校验原生结构，不修改调用者传入的历史。
+完整规则见[翻译字段边界](../design/translation-boundaries.md)。
 
 外来思考的可见内容在 Chat / Responses / Anthropic / Gemini 中按普通文本表达，在 Ollama 中可使用
-原生 thinking；签名与密文保存在恢复记录中，仅在回到原协议时恢复，不伪造签名或解密 reasoning。Gemini 的外来工具历史
+原生 thinking；原生签名、redacted_thinking、encrypted_content 按对应协议的明确字段处理，
+不伪造签名、不解密 reasoning，也不在其他协议的隐藏记录中保存它们供后续恢复。Gemini 的外来工具历史
 使用其[官方迁移标记](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures#faqs)
 `skip_thought_signature_validator`；原生 Gemini 历史的签名和并行调用位置不改变。
-请求能力、生成选项、SDK 表达限制及思考回放开关均由 Transport 校验；Encoder / Decoder 只翻译并保留数据。
+请求能力、生成选项、SDK 表达限制及思考回放开关均由 Transport 校验；Encoder / Decoder 只翻译已识别的数据。
 
 Chat / Ollama 不能把 URL 文档作为原生文件读取时保留文本引用；没有隐式下载或文件系统读写。
 必要的不透明内容、不能安全表达的媒体或 SDK 会静默丢弃的工具 Schema 约束，

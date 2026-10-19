@@ -12,7 +12,6 @@ from typing_extensions import TypedDict
 
 from my_llm import MyCodec, UnsupportedCapabilityError
 from my_llm.codec.shared import transport
-from my_llm.codec.shared.conversion import FUNCTIONS, OPAQUE, REPLAY, SOURCE, TRANSLATED
 from tests.helpers.protocols import PROTOCOLS, history, tools
 
 
@@ -127,82 +126,81 @@ def test_recursive_pydantic_plan_filters_nested_fields():
     }
     model = Recursive(name="root", children=[Recursive(name="child")])
     copied = transport.supported(model, Recursive)
-    assert copied == model
-    assert copied is not model
-    assert copied.children[0] is not model.children[0]
+    assert copied == model.model_dump(mode="json", exclude_none=True)
+    copied["children"][0]["name"] = "changed"
+    assert model.children[0].name == "child"
 
 
 @pytest.mark.parametrize("extra", [None, "ignore", "forbid", "allow"])
 @pytest.mark.parametrize("operation", [transport.supported, transport.projected])
-def test_pydantic_extra_policy_preserves_only_allowed_extensions(extra, operation):
+def test_pydantic_protocol_structures_filter_unknown_keys_regardless_of_extra_policy(
+    extra, operation
+):
     class Message(BaseModel):
         model_config = ConfigDict(extra=extra)
         content: list[Text]
+        metadata: dict[str, Any]
 
     class Wrapper(TypedDict):
         message: Message
 
     value = {
         "content": [{"type": "text", "text": "hello", "vendor": "drop"}],
+        "metadata": {"business": {"arbitrary": [1, None]}},
         "vendor": {"nested": [{"type": "custom", "new_key": True}]},
     }
-    expected = {"content": [{"type": "text", "text": "hello"}]}
-    if extra == "allow":
-        expected["vendor"] = value["vendor"]
+    expected = {
+        "content": [{"type": "text", "text": "hello"}],
+        "metadata": value["metadata"],
+    }
     original = deepcopy(value)
     assert operation(value, Message) == expected
     assert operation({"message": value, "outer_vendor": True}, Wrapper) == {"message": expected}
     assert value == original
 
 
-def test_cached_open_model_accepts_later_extensions_with_copy_and_projection_ownership(monkeypatch):
-    class OpenBase(BaseModel):
+def test_cached_model_handles_later_optional_fields_and_open_dictionary_keys(monkeypatch):
+    class Message(BaseModel):
         model_config = ConfigDict(extra="allow")
-
-    class Message(OpenBase):
         content: str
+        metadata: dict[str, Any] | None = None
 
     assert transport.supported({"content": "first"}, Message) == {"content": "first"}
     plan = transport._plan(Message)
 
     def unexpected(*args, **kwargs):
-        pytest.fail("a cached open model must not inspect annotations again")
+        pytest.fail("a cached model must not inspect annotations again")
 
     monkeypatch.setattr(transport, "fields", unexpected)
     monkeypatch.setattr(transport, "get_origin", unexpected)
     monkeypatch.setattr(transport, "get_args", unexpected)
-    value = {"content": "second", "vendor": {"new_key": [{"value": 1}]}}
+    value = {"content": "second", "metadata": {"new_key": [{"value": 1}]}, "vendor": True}
     copied = transport.supported(value, Message)
     projected = transport.projected(value, Message)
-    assert copied == projected == value
+    expected = {"content": "second", "metadata": value["metadata"]}
+    assert copied == projected == expected
     assert transport._plan(Message) is plan
-    assert projected is not value
-    assert projected["vendor"] is value["vendor"]
-    copied["vendor"]["new_key"][0]["value"] = 2
-    assert value["vendor"]["new_key"][0]["value"] == 1
+    assert projected["metadata"] is value["metadata"]
+    copied["metadata"]["new_key"][0]["value"] = 2
+    assert value["metadata"]["new_key"][0]["value"] == 1
 
 
 @pytest.mark.parametrize("operation", [transport.supported, transport.projected])
-def test_recursive_open_models_preserve_extras_without_leaking_recovery_records(operation):
+def test_recursive_models_filter_unknown_protocol_fields_at_every_level(operation):
     class Node(BaseModel):
         model_config = ConfigDict(extra="allow")
         name: str
         children: list["Node"] = []
 
-    internal = {key: {"private": True} for key in (SOURCE, TRANSLATED, FUNCTIONS, OPAQUE, REPLAY)}
-    # Extra values are application data, even when their nested keys happen to
-    # match the library's protocol-level recovery keys.
     value = {
         "name": "root",
-        "vendor": internal,
-        "children": [{"name": "child", "children": [], "later": [1, None], **internal}],
-        **internal,
+        "vendor": {"private": True},
+        "children": [{"name": "child", "children": [], "later": [1, None]}],
     }
     original = deepcopy(value)
     assert operation(value, Node) == {
         "name": "root",
-        "vendor": internal,
-        "children": [{"name": "child", "children": [], "later": [1, None]}],
+        "children": [{"name": "child", "children": []}],
     }
     assert value == original
 
@@ -258,7 +256,9 @@ def test_projection_handles_optional_annotated_and_recursive_models():
     value = {"name": "root", "children": [{"name": "child", "children": [], "vendor": True}]}
     assert transport.projected(value, Recursive) == transport.supported(value, Recursive)
     model = Recursive(name="root", children=[Recursive(name="child")])
-    assert transport.projected(model, Recursive) is model
+    before = model.model_dump()
+    assert transport.projected(model, Recursive) == model.model_dump(mode="json", exclude_none=True)
+    assert model.model_dump() == before
 
 
 @pytest.mark.parametrize("operation", [transport.supported, transport.projected])
@@ -326,8 +326,35 @@ def test_official_sdk_validation_and_serialization_do_not_mutate_projected_input
             if isinstance(schema, type) and issubclass(schema, BaseModel):
                 model = schema.model_validate(projected)
                 before_model_validation = model.model_dump()
-                assert transport.projected(model, schema) is model
-                parsed_model = validator.validate_python(model)
+                projected_model = transport.projected(model, schema)
+                assert isinstance(projected_model, dict)
+                parsed_model = validator.validate_python(projected_model)
                 validator.dump_json(parsed_model, warnings="error")
                 assert model.model_dump() == before_model_validation
         assert values == original
+
+
+@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+def test_sdk_model_instances_cannot_bypass_nested_structure_filtering(operation):
+    class Nested(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        text: str
+        payload: dict[str, Any]
+
+    class Message(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        content: list[Nested]
+
+    application = {"arbitrary": [{"type": "vendor", "keep": True}]}
+    model = Message.model_validate(
+        {
+            "content": [{"text": "known", "payload": application, "nested_vendor": True}],
+            "root_vendor": {"unknown": True},
+        }
+    )
+    before = model.model_dump(mode="json", exclude_none=True)
+
+    actual = operation(model, Message)
+
+    assert actual == {"content": [{"text": "known", "payload": application}]}
+    assert model.model_dump(mode="json", exclude_none=True) == before

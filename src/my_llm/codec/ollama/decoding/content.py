@@ -1,6 +1,6 @@
 """ollama decoding: content, fields and tool helpers."""
 
-from my_llm.codec.shared.conversion import extras, project_block, select_present, unsupported
+from my_llm.codec.shared.conversion import project_block, select, select_present, unsupported
 
 FIELDS = {
     "text": ("type", "text"),
@@ -27,7 +27,7 @@ def foreign_block(block: dict) -> dict | None:
 def chat_call(block: dict) -> dict:
     return {
         "function": {
-            **extras(block.get("function", {}), "index"),
+            **select(block, "index"),
             "name": block["name"],
             "arguments": block["input"],
         }

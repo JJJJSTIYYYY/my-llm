@@ -8,15 +8,14 @@ from my_llm.codec.openai.chat.decoding.content import (
     foreign_block,
     render_content,
 )
+from my_llm.codec.openai.chat.utils.content import annotations as render_annotations
+from my_llm.codec.openai.chat.utils.content import text_blocks
 from my_llm.codec.shared.conversion import (
-    OPAQUE,
-    Translations,
     blocks,
-    coalesce_groups,
+    coalesce_messages,
     decode_functions,
-    extras,
-    original,
     project_message,
+    select,
     select_present,
     source_protocol,
     tool_output,
@@ -45,7 +44,7 @@ def thinking_enabled(profile: ResolvedProfile, parameters: dict) -> bool:
 
 
 class ChatCompletionsDecoder(BaseDecoder):
-    """Translate intermediate values into protocol dictionaries, retaining replay data."""
+    """Translate recognized intermediate values into protocol dictionaries."""
 
     __slots__ = ()
     protocol = PROTOCOL
@@ -81,23 +80,9 @@ class ChatCompletionsDecoder(BaseDecoder):
 
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> Translations:
-        result = Translations()
-        for sources, message in coalesce_groups(messages):
-            result.group(
-                sources,
-                structure={
-                    "content": [{"image_url": {}, "file": {}}],
-                    "tool_calls": [{"function": {}}],
-                },
-            )
-            if message.get(OPAQUE):
-                result.extend(original(message, PROTOCOL))
-                continue
-            native = original(message, PROTOCOL)
-            if native is not None:
-                result.extend(native)
-                continue
+    ) -> list[dict]:
+        result = []
+        for message in coalesce_messages(messages):
             if source_protocol(message) != PROTOCOL:
                 message = project_message(message, foreign_block)
             content = blocks(message.get("content"))
@@ -105,7 +90,16 @@ class ChatCompletionsDecoder(BaseDecoder):
             other = [b for b in content if b.get("type") != "tool_result"]
             if other or not tool_results:
                 value = {
-                    **extras(message, "content", "parts", "tool_calls"),
+                    **select(message, "role", "name"),
+                    **(
+                        {
+                            "audio": select(
+                                message["audio"], "id", "expires_at", "data", "transcript"
+                            )
+                        }
+                        if message.get("audio") is not None
+                        else {}
+                    ),
                     "content": render_content(
                         [b for b in other if b.get("type") != "refusal"], role=message["role"]
                     ),
@@ -116,9 +110,14 @@ class ChatCompletionsDecoder(BaseDecoder):
                 calls = [chat_call(b) for b in other if b.get("type") == "tool_use"]
                 if calls:
                     value["tool_calls"] = calls
-                annotations = [annotation for b in other for annotation in b.get("annotations", [])]
-                if annotations:
-                    value["annotations"] = annotations
+                citations = render_annotations(
+                    [
+                        *message.get("annotations", []),
+                        *(annotation for b in other for annotation in b.get("annotations", [])),
+                    ]
+                )
+                if citations:
+                    value["annotations"] = citations
                 reasoning = "".join(
                     b.get("thinking", "") for b in other if b.get("type") == "thinking"
                 )
@@ -127,10 +126,11 @@ class ChatCompletionsDecoder(BaseDecoder):
                 result.append(value)
             result.extend(
                 {
-                    **extras(b, "type", "tool_use_id", "name"),
                     "role": "tool",
                     "tool_call_id": b["tool_use_id"],
-                    "content": tool_output(b.get("content")),
+                    "content": text_blocks(b["content"])
+                    if isinstance(b.get("content"), list)
+                    else tool_output(b.get("content")),
                 }
                 for b in tool_results
             )
@@ -143,10 +143,9 @@ class ChatCompletionsDecoder(BaseDecoder):
 
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> Translations:
+    ) -> list[dict]:
         return decode_functions(
             tools,
-            "openai_chat",
             lambda functions: [
                 {
                     "type": "function",
@@ -154,19 +153,15 @@ class ChatCompletionsDecoder(BaseDecoder):
                 }
                 for f in functions
             ],
-            structure={"function": {}},
         )
 
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for event in events(chunks, PROTOCOL):
+        for event in events(chunks):
             kind = event.get("type")
             usage = self.usage(event.get("usage"))
-            if kind == "opaque":
-                result.append(event["value"])
-                continue
             delta = {}
             finish = None
             if kind == "start":
@@ -214,13 +209,6 @@ class ChatCompletionsDecoder(BaseDecoder):
     def usage(self, value: dict | None) -> dict | None:
         if value is None:
             return None
-        native = original(value, "openai_chat")
-        if native is not None:
-            return (
-                native
-                if {"completion_tokens", "total_tokens", "prompt_tokens"} <= native.keys()
-                else None
-            )
         input_tokens, output_tokens, total, cached, cache_write, reasoning = counts(value)
         if input_tokens is None or output_tokens is None:
             return None

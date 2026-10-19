@@ -11,7 +11,6 @@ from my_llm.codec.gemini.codec import GeminiCodec
 from my_llm.codec.ollama.codec import OllamaCodec
 from my_llm.codec.openai.chat.codec import ChatCompletionsCodec
 from my_llm.codec.openai.responses.codec import ResponsesCodec
-from my_llm.codec.shared.replay import retain
 from my_llm.codec.shared.stream import is_batch
 from my_llm.exceptions import ConfigurationError, UnsupportedProviderError
 from my_llm.profile.configuration import Protocol, ProtocolDefaults
@@ -20,7 +19,7 @@ from my_llm.registry import register_codec, registered_codecs
 
 
 class MyCodec:
-    """Convert standard input to open intermediate dictionaries and back.
+    """Convert recognized standard fields to intermediate dictionaries and back.
 
     No profile, format guess or stream fragments are retained between calls.
     ``profile=None`` means the standard protocol without provider overrides.
@@ -127,29 +126,20 @@ class MyCodec:
         **parameters: Any,
     ) -> dict[str, Any]:
         codec = self._codec(target_format)
-        replay_chunks = None
         if chunks and all(is_batch(chunk) for chunk in chunks):
-            from my_llm.codec.shared.conversion import source_protocol
+            # Complete offline streams use the same request-owned accumulation
+            # as live calls, regardless of their source and target protocols.
+            from my_llm.stream._state import StreamState
 
-            if any(source_protocol(chunk) != target_format for chunk in chunks):
-                replay_chunks = chunks
-                # A complete batch is a pure per-call conversion. Live streams
-                # use MyLLM's request-owned state instead of retaining it here.
-                from my_llm.stream._state import StreamState
-
-                state = StreamState(parameters.get("model", profile.model if profile else ""))
-                converted_chunks = state.feed(chunks)
-                converted_chunks.extend(state.finish())
-                chunks = converted_chunks
-                parameters = {**state.metadata, **parameters}
+            state = StreamState(parameters.get("model", profile.model if profile else ""))
+            converted_chunks = state.feed(chunks)
+            converted_chunks.extend(state.finish())
+            chunks = converted_chunks
+            parameters = {**state.metadata, **parameters}
         result = {}
         for kind, values in (("messages", messages), ("tools", tools), ("chunks", chunks)):
             if values is not None:
                 result[kind] = getattr(codec, f"decode_{kind}")(values, profile, **parameters)
-                if kind == "chunks" and replay_chunks is not None:
-                    result[kind] = retain(
-                        replay_chunks, result[kind], target_format, kind, groups=(), force=True
-                    )
         return result
 
     def convert(

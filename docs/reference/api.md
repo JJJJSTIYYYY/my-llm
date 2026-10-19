@@ -18,7 +18,7 @@ Protocol 是 str 别名；内置协议之外，也可使用启动时通过 MyCod
 | `ollama` | 原生 role/content 消息列表 | assistant 消息字典 | ChatResponse 字典 |
 
 返回的是消息或 items，可直接追加到相同协议的历史；不额外包一层统一结果对象。
-跨协议消息可能带有恢复扩展，保存完整字典可在下一轮恢复原生签名、密文与未知字段。
+结果只包含目标协议已识别的字段，不附加未知字段或跨协议恢复记录。
 Responses 使用 `history.extend(result)`，其他协议使用 `history.append(result)`。
 完成原因和用量出现在各协议标准流事件的位置，不增加自定义消息字段。
 所有输入可使用普通字典或可转为字典的官方 SDK 模型。
@@ -178,15 +178,16 @@ MyCodec 持有创建时的注册快照，默认包含五个内置 Codec，可复
 `MyCodec.register(codec: BaseCodec) -> None` 是静态注册入口，须早于 MyCodec / MyLLM 实例创建；
 既有实例保留原快照，重名注册报 ConfigurationError。实现与注册示例见[接入指南](../guides/adding-protocol.md)。
 中间态是内部实现，不是应用消息协议。
-Encoder 和 Decoder 保留未知字段；路径冲突时转换值优先，无法直接共存的信息保存在恢复记录中。
-重新输入完整且未修改的转换结果，可恢复原生数据，包括 Anthropic 签名、redacted thinking 和
-Responses encrypted_content。恢复记录支持 JSON 保存，不依赖实例缓存。
+Encoder 和 Decoder 只翻译明确识别的协议字段。未知字段不进入中间态，也不出现在翻译输出中；
+非标准差异通过 Profile 明确支持的字段路径、参数绑定或思考回放配置处理。
+工具参数、结果对象和 JSON Schema 等已识别开放字典完整保留内部应用键值。
 
-修改对应转换分组会使旧快照失效；新增消息和工具结果仍可接在未修改的分组之后。
-流式多轮对话应保存 stream.result。完整事件列表可离线往返；实时逐事件转换不积累完整回放历史。
+原生 Anthropic 签名、redacted thinking、Responses encrypted_content 等标准字段由协议实现
+显式处理；跨协议转换不附加隐藏快照或恢复记录，也不保证转换回原协议后恢复原始对象。
+流式多轮对话应保存 stream.result，完整文本不能替代工具调用及原生内容块。
 
-实际请求由 Transport 过滤不支持字段与恢复记录，不修改业务历史；工具参数、结果对象和 JSON Schema
-作为应用数据保留。详见[保留规则](../audits/lossless.md)与[兼容边界](configuration.md#跨协议请求的处理边界)。
+实际请求由 Transport 再过滤并校验目标 SDK 支持的结构，不修改业务历史。
+详见[翻译字段边界](../design/translation-boundaries.md)与[兼容边界](configuration.md#跨协议请求的处理边界)。
 
 ## 异常边界
 
@@ -200,7 +201,7 @@ Responses encrypted_content。恢复记录支持 JSON 保存，不依赖实例�
 整个流；跨协议的完整 batch 在本次调用内组装，不保存到转换器。
 实时消费使用 MyLLM，由每次请求持有累积状态；BaseEncoder/BaseDecoder 仍只转换单次传入的块。
 
-Encoder / Decoder 负责翻译、原生来源与字段保留；Decoder 还翻译生成选项并组织原生请求结构。
+Encoder / Decoder 负责已识别字段的翻译；Decoder 还翻译生成选项并组织原生请求结构。
 BaseTransport 负责输入与工具关联验证、模型能力、生成参数和原生结构验证、字段过滤，
 同时管理官方 SDK 创建、关闭、复用键及请求执行。MyLLM 只编排每次请求并缓存客户端。
 
@@ -219,9 +220,8 @@ BaseCodec.request 接收中间态，由 Transport.validate_parameters 一次校�
 自定义 Decoder 的 request_parameters(profile, options) 与 assemble_request(..., options=options)
 必须复用已准备的选项；直接调用这些方法也必须提供 options，不重新解析原始生成参数。
 原始参数继续传给消息翻译，以保留显式思考开关和兼容服务的回放语义。
-PreparedOptions、Translations 和 ProtocolDefaults 均从 my_llm 公开导出。
-Decoder._messages / _tools 必须返回 Translations 并声明来源分组，公开 messages / tools 返回普通 list；
-内部不把未声明分组的 list 当作兼容实现。
+PreparedOptions 和 ProtocolDefaults 均从 my_llm 公开导出。
+Decoder._messages / _tools 与公开 messages / tools 均返回普通 list。
 ProtocolDefaults 的七个配置字段均为必填，不用的字段路径或推理绑定通过 omit 禁用；声明及嵌套内容按只读借用。
 Profile 默认值来自已注册 Codec.defaults 的副本，解析负责分层合并、通用字段校验和快照，
 不创建 Codec 或 SDK 客户端；协议特有限制与 SDK 约束由 Transport 补充验证。

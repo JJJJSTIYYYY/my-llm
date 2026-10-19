@@ -7,21 +7,14 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from my_llm.codec.shared.conversion import (
-    SOURCE,
-    TRANSLATED,
-    arguments,
-    dictionaries,
-    merge_fields,
-    source_protocol,
-)
+from my_llm.codec.shared.conversion import arguments, source_protocol
 from my_llm.codec.shared.stream import BlockRef, operations
 from my_llm.exceptions import IncompleteStreamError
 
 
 @dataclass(slots=True)
 class BlockState:
-    """Content and lifecycle for one block; extensions never hold control data."""
+    """Recognized content and lifecycle for one block."""
 
     index: int
     content: dict
@@ -87,7 +80,6 @@ class StreamState:
         self._blocks: list[BlockState] = []
         self._references: dict[BlockRef, BlockState] = {}
         self._deferred_from: int | None = None
-        self.snapshot: list[dict] | None = None
         self.reason: str | None = None
         self.usage: dict | None = None
         self.source_protocol: str | None = None
@@ -130,6 +122,8 @@ class StreamState:
         for chunk in chunks:
             origin = source_protocol(chunk)
             if origin is not None:
+                if not isinstance(origin, str):
+                    raise IncompleteStreamError("stream source protocol must be a string")
                 if self.source_protocol not in (None, origin):
                     raise IncompleteStreamError("stream mixes source protocols")
                 self.source_protocol = origin
@@ -137,23 +131,71 @@ class StreamState:
             for event in operations(chunk):
                 if self.terminal and event["type"] not in self._terminal_tail:
                     raise IncompleteStreamError("event received after protocol terminal event")
-                result.extend(_HANDLERS[event["type"]](self, event))
+                handler = _HANDLERS.get(event["type"])
+                if handler is None:
+                    raise IncompleteStreamError(f"unsupported stream operation: {event['type']}")
+                result.extend(handler(self, event))
         return result
 
     def _metadata(self, event: dict) -> list[dict]:
-        values = {
-            ("response_id" if k == "id" else k): deepcopy(v)
-            for k, v in event.items()
-            if k not in ("type", "merge") and v is not None
-        }
-        for key in event.get("merge", ()):
-            if key in values:
-                values[key] = merge_fields(self.metadata.get(key, {}), values[key])
-        self.metadata.update(values)
+        for key in (
+            "id",
+            "response_id",
+            "model",
+            "created",
+            "created_at",
+            "native_stop_reason",
+            "native_stop_sequence",
+        ):
+            if isinstance(event.get(key), (str, int, float)):
+                self.metadata["response_id" if key == "id" else key] = event[key]
+        if "response_items" in event:
+            headers = dict(self.metadata.get("response_items", {}))
+            for index, item in event["response_items"].items():
+                header = {
+                    key: item[key]
+                    for key in ("id", "type", "status", "name", "call_id")
+                    if key in item and isinstance(item[key], str)
+                }
+                headers[str(index)] = {**headers.get(str(index), {}), **header}
+            self.metadata["response_items"] = headers
+        if "response_parameters" in event:
+            # Protocol encoders project these standard settings; decoders
+            # project them again at the public output boundary.
+            self.metadata["response_parameters"] = {
+                **self.metadata.get("response_parameters", {}),
+                **deepcopy(event["response_parameters"]),
+            }
         return []
 
     def _usage(self, event: dict) -> list[dict]:
-        self.usage = merge_fields(self.usage or {}, deepcopy(event["usage"]))
+        if event["usage"] is None:
+            return []
+        usage = dict(self.usage or {})
+        for name in ("total", "cached", "cache_write", "reasoning"):
+            if isinstance(event["usage"].get(name), int):
+                usage[name] = event["usage"][name]
+        for name, additions in (
+            ("input", ("cache_read", "cache_write", "tools")),
+            ("output", ("thinking",)),
+        ):
+            if name not in event["usage"]:
+                continue
+            group = dict(usage.get(name, {}))
+            update = event["usage"][name]
+            if isinstance(update.get("base"), int):
+                group["base"] = update["base"]
+            if "add" in update:
+                group["add"] = {
+                    **group.get("add", {}),
+                    **{
+                        key: update["add"][key]
+                        for key in additions
+                        if isinstance(update["add"].get(key), int)
+                    },
+                }
+            usage[name] = group
+        self.usage = usage
         return []
 
     def _begin(self, event: dict) -> list[dict]:
@@ -171,6 +213,8 @@ class StreamState:
         if block.source_closed:
             raise IncompleteStreamError("annotation received after source block stopped")
         name = event["field"]
+        if name != "citations":
+            raise IncompleteStreamError(f"unsupported stream annotation: {name}")
         block.content[name] = [*block.content.get(name, []), deepcopy(event["value"])]
         block.invalidate()
         block.pending_annotations.append(
@@ -195,8 +239,6 @@ class StreamState:
         for entry in event["blocks"]:
             block = self._block(entry["ref"], entry["block"].get("type", "unknown"))
             block.replace(entry["block"])
-        if event["messages"]:
-            self.snapshot = dictionaries(event["messages"])
         return []
 
     def _set_block(self, event: dict) -> list[dict]:
@@ -215,17 +257,20 @@ class StreamState:
         return self._publish(block)
 
     def _update_block(self, event: dict) -> list[dict]:
-        patch = deepcopy(event["block"])
+        patch = {
+            key: event["block"][key]
+            for key in ("type", "id", "name")
+            if isinstance(event["block"].get(key), str)
+        }
         block = self._block(event["ref"], patch.get("type", "unknown"))
-        for key in event.get("merge", ()):
-            if key in patch:
-                block.content[key] = {**block.content.get(key, {}), **patch.pop(key)}
         block.content.update(patch)
         block.invalidate()
         return []
 
     def _delta(self, event: dict) -> list[dict]:
         name, value = event["field"], event["value"]
+        if name not in ("text", "thinking", "refusal", "arguments", "signature"):
+            raise IncompleteStreamError(f"unsupported stream delta: {name}")
         block = self._block(event["ref"], event["kind"])
         block.invalidate()
         if name == "arguments":
@@ -244,9 +289,6 @@ class StreamState:
             return []
         block.source_closed = True
         return [] if self._deferred(block) else self._close(block)
-
-    def _opaque(self, event: dict) -> list[dict]:
-        return [deepcopy(event)]
 
     def _emit_text(self, block: BlockState, value: str) -> list[dict]:
         result = self._start()
@@ -303,11 +345,7 @@ class StreamState:
         block.emitted = True
         # These events stay inside the pipeline; public decoder outputs own
         # their values. Reuse the already validated nested content here.
-        content = {
-            key: value
-            for key, value in block.materialize().items()
-            if key not in (SOURCE, TRANSLATED)
-        }
+        content = block.materialize()
         event = {
             "type": "block",
             "index": block.index,
@@ -321,8 +359,6 @@ class StreamState:
     def messages(self, *, partial: bool = False) -> list[dict]:
         if self._final_messages is not None and not partial:
             return deepcopy(self._final_messages)
-        if self.snapshot is not None:
-            return deepcopy(self.snapshot)
         # Never parse unfinished tool JSON while reporting the original failure.
         content = [
             block.materialize()
@@ -330,7 +366,7 @@ class StreamState:
             if not partial or block.content.get("type") != "tool_use"
         ]
         return deepcopy(
-            [{"role": "assistant", "content": content, SOURCE: {"protocol": self.source_protocol}}]
+            [{"role": "assistant", "content": content, "protocol": self.source_protocol}]
         )
 
     def finish(self) -> list[dict]:
@@ -340,17 +376,7 @@ class StreamState:
             raise IncompleteStreamError("stream ended without its protocol's terminal event")
         # Validate every call before publishing any of them or marking success.
         content = [block.materialize() for block in self._blocks]
-        messages = (
-            self.snapshot
-            if self.snapshot is not None
-            else [
-                {
-                    "role": "assistant",
-                    "content": content,
-                    SOURCE: {"protocol": self.source_protocol},
-                }
-            ]
-        )
+        messages = [{"role": "assistant", "content": content, "protocol": self.source_protocol}]
         output_blocks = [
             {"index": block.index, "source_ref": block.source_ref, "block": materialized}
             for block, materialized in zip(self._blocks, content, strict=True)
@@ -390,5 +416,4 @@ _HANDLERS = {
     "block_delta": StreamState._delta,
     "block_annotation": StreamState._annotation,
     "block_stop": StreamState._stop_block,
-    "opaque": StreamState._opaque,
 }

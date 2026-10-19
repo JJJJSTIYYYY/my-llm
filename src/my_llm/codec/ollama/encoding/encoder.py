@@ -9,17 +9,14 @@ from my_llm.codec.shared.conversion import (
     associate_tool_result,
     blocks,
     encode_functions,
-    extras,
     mapping_list,
-    remember,
-    residual,
+    select,
 )
-from my_llm.codec.shared.stream import BlockRef, batch, encode_batch, record
+from my_llm.codec.shared.stream import BlockRef, encode_batch, record
 from my_llm.exceptions import ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
 
 PROTOCOL = "ollama"
-CALL = {"id": True, "type": True, "function": {"name": True, "arguments": True, "index": True}}
 
 
 class OllamaEncoder(BaseEncoder):
@@ -68,7 +65,6 @@ class OllamaEncoder(BaseEncoder):
                 }
                 for image in (message.get("images") or [])
             )
-            # Appending preserves the original indices of content-block extensions.
             if message.get("thinking"):
                 content.append({"type": "thinking", "thinking": message["thinking"]})
             for call_index, call in enumerate(message.get("tool_calls") or []):
@@ -89,39 +85,7 @@ class OllamaEncoder(BaseEncoder):
                     }
                 ]
                 role = "user"
-            result.append(
-                remember(
-                    {
-                        **extras(
-                            message,
-                            "role",
-                            "content",
-                            "images",
-                            "thinking",
-                            "tool_calls",
-                            "tool_name",
-                            "tool_call_id",
-                        ),
-                        "role": role,
-                        "content": content,
-                    },
-                    [message],
-                    PROTOCOL,
-                    preserve=residual(
-                        message,
-                        {
-                            "role": True,
-                            "content": True,
-                            "tool_calls": [CALL],
-                            "tool_call_id": True,
-                            "reasoning_content": True,
-                            "thinking": True,
-                            "images": True,
-                            "tool_name": True,
-                        },
-                    ),
-                )
-            )
+            result.append({"protocol": PROTOCOL, "role": role, "content": content})
         return result
 
     def _tools(
@@ -129,16 +93,11 @@ class OllamaEncoder(BaseEncoder):
     ) -> list[dict]:
         return encode_functions(
             tools,
-            "ollama",
             lambda tool: (
-                [tool["function"]]
+                [select(tool["function"], "name", "description", "parameters")]
                 if tool.get("type") == "function" and "function" in tool
                 else None
             ),
-            consumed={
-                "type": True,
-                "function": {"name": True, "description": True, "parameters": True, "strict": True},
-            },
         )
 
     def _chunks(
@@ -151,7 +110,6 @@ class OllamaEncoder(BaseEncoder):
                     "provider generation failed", details=event.get("error", event)
                 )
             if not any(key in event for key in ("message", "done")):
-                result.append(batch(event, [{"type": "opaque", "value": event}], PROTOCOL))
                 continue
             ops = [{"type": "metadata", "model": event.get("model")}]
             message = event.get("message", {})
@@ -173,36 +131,17 @@ class OllamaEncoder(BaseEncoder):
                     ops.append(
                         {
                             "type": "usage",
-                            "usage": {
-                                k: v
-                                for k, v in event.items()
-                                if k.endswith(("_count", "_duration"))
-                            },
+                            "usage": select(event, "prompt_eval_count", "eval_count"),
                         }
                     )
                 ops.append({"type": "finish", "reason": event.get("done_reason", "stop")})
-            result.append(
-                encode_batch(
-                    event, ops, PROTOCOL, consumed=self._consumed_fields(event), usage=self.usage
-                )
-            )
+            result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
         return result
 
     def usage(self, value: dict | None) -> dict | None:
         if value is None:
             return None
         return record(
-            value,
-            "ollama",
             input_base=value.get("prompt_eval_count"),
             output_base=value.get("eval_count"),
         )
-
-    def _consumed_fields(self, event: dict) -> dict:
-        return {
-            "model": True,
-            "done": True,
-            "done_reason": True,
-            "message": {"content": True, "thinking": True, "tool_calls": [CALL]},
-            **{key: True for key in event if key.endswith(("_count", "_duration"))},
-        }

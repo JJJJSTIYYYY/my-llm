@@ -11,7 +11,7 @@
 
 - codec/base 的 codec.py、encoder.py、decoder.py、transport.py 定义抽象契约，模块名与五种原生实现一致。
 - 五种协议各自维护 encoding 和 decoding；转换方法直接落在 encoder.py / decoder.py。
-  内容、字段及工具翻译辅助放在本方向的 content.py；生成参数映射和请求结构放在 Decoder；请求验证、过滤及官方 SDK 执行放在协议根目录的 transport.py。
+  内容、字段及工具翻译辅助放在本方向的 content.py，双向共用的辅助放在本协议的 utils/；生成参数映射和请求结构放在 Decoder；请求验证、过滤及官方 SDK 执行放在协议根目录的 transport.py。
   BaseCodec 声明 ProtocolDefaults 并组合 encoder / decoder / transport，转换与执行组件互不导入。
   仅在存在对应职责时保留辅助模块，不为每个转换方法或短小函数建立分组包。
 - codec/shared 保存不选择厂商的公共机制；conversion.py 负责 SDK 值读取及媒体 URI 转换，
@@ -26,7 +26,7 @@
 新增模块应以职责命名；避免重新引入 common.py 或 utils 作为未分类代码的容器。
 新增协议依据[接入协议指南](adding-protocol.md)实现四个基类的契约并调用 MyCodec.register(codec)。
 Protocol 使用 str，新增协议不修改公共入口、枚举、默认值表或公共编排。
-Decoder._messages / _tools 必须返回带来源分组的 Translations；公开 messages / tools 仍返回普通 list。
+Decoder._messages / _tools 与公开 messages / tools 均返回普通 list，不添加恢复分组。
 
 ## 导入约定
 
@@ -52,7 +52,7 @@ conftest.py 只注册 pytest fixture；通用测试辅助代码使用 tests.help
 | helpers/streaming.py | 离线完整流的累积与渲染辅助。 |
 | helpers/schema.py | 固定官方 Schema 的读取和校验。 |
 | helpers/sdk.py | 原生 SDK 类型及未消费字段校验。 |
-| helpers/preservation.py | 区分实际翻译字段与保留扩展，协议预期仍由独立样例给出。 |
+| helpers/ | 提供独立协议样例、SDK 本地响应及测试共用辅助；不通过隐藏恢复记录判定翻译结果。 |
 
 测试模块之间不相互导入，避免依赖收集顺序。只供本文件使用的小型辅助函数可留在测试文件中。
 协议预期样例仍独立于生产转换代码，移动文件不改变验证依据。

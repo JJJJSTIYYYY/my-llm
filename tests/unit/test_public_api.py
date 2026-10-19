@@ -19,7 +19,6 @@ def test_public_contract_uses_standard_messages_and_one_protocol_field():
         "OverridableProfile",
         "ProtocolDefaults",
         "PreparedOptions",
-        "Translations",
     ):
         assert name in my_llm.__all__
     for name in (
@@ -30,6 +29,7 @@ def test_public_contract_uses_standard_messages_and_one_protocol_field():
         "FunctionCall",
         "APIType",
         "Codec",
+        "Translations",
     ):
         assert not hasattr(my_llm, name)
     assert "api_type" not in ProviderProfile.__dataclass_fields__

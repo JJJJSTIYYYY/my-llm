@@ -1,5 +1,7 @@
 # 最初重构需求与当前实现对照
 
+> 历史验收记录：本文描述对应审计时点。当前翻译字段契约以[翻译字段边界](../design/translation-boundaries.md)为准；文中未知字段透传、恢复记录及开放模型扩展结论已撤销。
+
 本页记录此前重构快照；2026-10-18 的字段回放及 Transport 验证职责以[当前架构](../design/architecture.md)为准。
 截至 2026-10-18，已按后续要求取消歧义输入默认 Chat 的规则，仅唯一匹配时自动绑定，其他情况需显式指定 stdio_protocol。
 
@@ -50,7 +52,7 @@ SHA-256 为 `573045c4a0ba3ec98e914070937d4dfcb9d6e715ddc05fde800a905fc72cf498`�
 | R02 | 73：每种协议独立一对无状态 Encoder / Decoder。 | 符合。五对实现独立，实例无 __dict__ / profile；[对象契约](../../tests/unit/test_native_codecs.py#L8)、[目录边界](../../tests/contract/test_codec_boundaries.py)。 |
 | R03 | 73：协议参数差异收入 **parameters。 | 符合。六个 BaseCodec 转换方法均有 profile=None 和 **parameters；[统一方法](../../src/my_llm/codec/base/codec.py)。previous_response_id 由请求阶段的参数字典传递。 |
 | R04 | 74—75、89—116：消息、工具、流块双向转换。 | 符合核心对称契约；完整 ABC 的职责扩展见上表。[BaseCodec](../../src/my_llm/codec/base/codec.py)、[转换测试](../../tests/contract/test_protocol_conformance.py)。 |
-| R05 | 76：中间态不使用固定模板，未知字典保留层级。 | 符合。中间态为开放字典，协议数据的嵌套扩展、列表索引和冲突字段有直接检查；验收输入范围见上文。[保留测试](../../tests/contract/test_intermediate_preservation.py)。 |
+| R05 | 76：中间态不使用固定模板，未知字典保留层级。 | 符合。中间态为开放字典，协议数据的嵌套扩展、列表索引和冲突字段有直接检查；验收输入范围见上文。`保留测试`（原文件已移除）。 |
 | R06 | 80：BaseCodec 无状态且不保存 profile。 | 符合。只声明协议身份和转换器，无请求级字段；[BaseCodec](../../src/my_llm/codec/base/codec.py)。 |
 | R07 | 119—120：match_protocol 返回协议名或 None。 | 符合。[BaseCodec.match_protocol](../../src/my_llm/codec/base/codec.py)委托自身 Encoder；MyCodec 遍历所有候选直到匹配，全部失败返回 None。 |
 | R08 | 136—138：MyCodec 同时持有五个无状态实例，不固定 profile。 | 符合。仅保存 codecs 注册表；[MyCodec](../../src/my_llm/codec/converter.py)。 |

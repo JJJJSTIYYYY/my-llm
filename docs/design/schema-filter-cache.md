@@ -100,7 +100,7 @@ class _FilterPlan:
 
 | 类型节点 | 编译后保留的规则或引用 |
 | --- | --- |
-| TypedDict / Pydantic 结构 | `children`：字段名到子 `_FilterPlan` 的字典；`allow_extra`：是否保留额外字段；评分函数另保留 `annotation`、`declared_keys` 和 `literal_fields`。 |
+| TypedDict / Pydantic 结构 | `children`：字段名到子 `_FilterPlan` 的字典；评分函数另保留 `annotation`、`declared_keys` 和 `literal_fields`。 |
 | 有元素类型的列表 | `item_plan`：元素类型的子计划。 |
 | Union | `choices`：按声明顺序排列的候选计划元组；`apply` / `project` 通过 `select` 使用它。 |
 | Literal | 声明中的常量参数，用于评分。 |
@@ -110,26 +110,23 @@ class _FilterPlan:
 `value` 始终是上述函数的调用参数。函数执行结束后，不会把这个参数追加到计划中。
 `children`、`choices` 等也不会因某次请求增加了字段而改变。
 
-### 开放字典、TypedDict 与 Pydantic 的区别
+### 开放字典与协议结构的区别
 
 处理方式取决于传入的类型声明，而不是运行时的值是否为 dict：
 
 | 类型声明 | 当前值中未声明的字段 |
 | --- | --- |
-| `dict[str, Any]`、Any 等开放应用数据 | 保留内部全部键值。 |
-| TypedDict | 只保留声明的字段；字段内部仍按各自类型处理。 |
-| Pydantic 模型，`extra="allow"` | 保留额外字段，包括后续请求才出现的新字段。 |
-| Pydantic 模型，extra 未设置、ignore 或 forbid | 沿用按声明字段过滤的行为。 |
+| `dict[str, Any]`、Any 等已识别开放应用数据 | 保留内部全部键值。 |
+| TypedDict / Pydantic 协议结构 | 只保留声明字段；字段内部仍按各自类型处理。 |
 
-Pydantic 的 `model_config`（包括从基类继承的配置）只在编译时读取，
-`allow_extra` 布尔值保存在处理函数的闭包中。它不记录首条请求中的额外字段名。
-已声明的字段继续递归执行子计划；开放模型的额外字段作为应用数据完整处理：
-`apply` 复制其可变值，`project` 只读借用。
-若模型为 `__pydantic_extra__` 声明了值类型，仍由后续 TypeAdapter 逐次验证。
+SDK 模型的 extra 策略不提供未知协议字段的透传能力。项目只允许在已识别开放字典内部保留任意键，
+不把模型的 `extra="allow"` 等同于协议翻译规则。非标准差异通过 Profile 明确支持的兼容能力处理。
 
-即使模型允许额外字段，协议结构层的 SOURCE、TRANSLATED、FUNCTIONS、OPAQUE、REPLAY
-五个库保留键也会过滤，不会随请求发送。它们在普通应用 payload 内同名的键不会被递归删除。
-具体字符串见[保留命名空间](../audits/lossless.md#保留命名空间)。
+缓存规则也不会读取首条请求中的额外字段名。新的已声明可选字段可在后续请求出现，开放应用字典
+内部的新键随当前值处理；未知协议结构字段仍会过滤。完整边界见[翻译字段边界](translation-boundaries.md)。
+
+协议结构的输入若为 SDK 的 Pydantic 对象，先按公开的 model_dump 接口取得结构，再执行同一类型计划；
+不能通过模型实例绕过字典输入的字段规则。SDK 的标量序列化对象仍按其原生标量接口处理。
 
 ## 5. 用一个缩小类型把缓存展开
 
@@ -183,14 +180,12 @@ cache entry:
 
   value: Message 的 _FilterPlan
     apply: structured_copy 函数
-      closure.allow_extra: False（Message 是 TypedDict）
       closure.children:
         role     -> Literal["user"] 的计划
         content  -> str | list[TextPart | ImagePart] 的计划
         metadata -> dict[str, Any] 的计划
 
     project: structured_projection 函数
-      closure.allow_extra: False
       closure.children: 同一份字段子计划字典
 
     score: structured_score 函数
@@ -294,7 +289,7 @@ plan.project(second)
 | 1 | generate 只读规范化消息与工具。 | 不在这里查询计划。 |
 | 2 | 输入 Transport 调用 projected，随后通过 TypeAdapter 验证。 | 首次遇到对应 SDK 类型时编译；后续复用。 |
 | 3 | Encoder 编码当前消息与工具，生成本次中间态。 | 不跳过 Encoder。 |
-| 4 | 校验生成选项，Decoder 恢复或构造当前原生请求。 | 不跳过 Decoder。 |
+| 4 | 校验生成选项，Decoder 构造当前原生请求。 | 不跳过 Decoder。 |
 | 5 | 上游 Transport 调用 supported 过滤消息与工具，再验证。 | 同一 SDK 类型的计划可与步骤2复用；输入输出协议不同时分别使用对应类型计划。 |
 | 6 | 官方 SDK 执行请求、解析返回事件。 | 仍执行 SDK 自己的处理。 |
 | 7 | 每个事件经过 Encoder、StreamState、Decoder，再转换完整结果。 | 本计划缓存不替代返回路径，也不缓存响应结果。 |
@@ -422,7 +417,7 @@ root callbacks: structured_copy structured_projection structured_score
 | 缓存键和值的实际字段 | [transport.py](../../src/my_llm/codec/shared/transport.py) 的 `_SchemaKey`、`_FilterPlan`、`_compiled_plan`。 |
 | 命中后不重复分析字段类型 | [计划测试](../../tests/unit/test_schema_filter_plans.py) 把类型分析函数替换为失败函数，继续执行已缓存计划。 |
 | Union 顺序与递归类型保持正确 | 同一测试文件覆盖直接/嵌套 Union 同分顺序、Annotated 与递归模型。 |
-| Pydantic 开放模型保留扩展 | 同一测试文件覆盖 extra 策略、继承、递归、缓存命中后新增字段、复制隔离及内部恢复键过滤；[请求边界测试](../../tests/unit/test_native_request_boundary.py)覆盖额外字段值的验证。 |
+| 协议结构与开放应用字典 | 同一测试文件覆盖结构字段过滤、递归模型、缓存命中后的可选字段、开放字典新键及复制隔离。 |
 | 请求值不会被计划持有 | 同一测试文件用弱引用验证 supported / projected 调用后 payload 可回收。 |
 | 只读投影不复制应用数据 | 同一测试文件用禁止 deepcopy 的 payload 及引用身份断言检查。 |
 | 编码、解码及结果仍隔离 | [所有权测试](../../tests/unit/test_copy_ownership.py)和[终态物化测试](../../tests/contract/test_stream_materialization.py)。 |

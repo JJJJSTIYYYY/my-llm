@@ -1,5 +1,7 @@
 # 五协议请求路径审计
 
+> 历史验收记录：本文描述对应审计时点。当前翻译字段契约以[翻译字段边界](../design/translation-boundaries.md)为准；文中未知字段透传、恢复记录及开放模型扩展结论已撤销。
+
 核对日期：2026-10-19。审计对象是当前工作树，包含已有的未提交重构。
 本次仅新增这份报告，没有修改运行时代码或测试。
 
@@ -139,7 +141,7 @@ close_client、client_key、allows_external_calls 和 Decoder.result 都有默�
 ### 3.2 实际缺口：Decoder 返回类型未表达来源分组要求
 
 [BaseDecoder._messages / _tools:79](../../src/my_llm/codec/base/decoder.py#L79)
-仅标注 list[dict]，但 [retain:87](../../src/my_llm/codec/shared/replay.py#L87)
+仅标注 list[dict]，但 `retain:87`（原文件已移除）
 只在返回值为 Translations 时读取 groups，随后才执行原路径扩展合并。
 返回普通 list 满足声明，却会跳过这部分逻辑；replay 仍可保存来源，不能称为信息全部永久丢失。
 

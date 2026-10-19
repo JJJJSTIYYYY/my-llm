@@ -19,17 +19,8 @@ from typing import (
 
 from pydantic import BaseModel, TypeAdapter
 
-from my_llm.codec.shared.conversion import (
-    FUNCTIONS,
-    OPAQUE,
-    REPLAY,
-    SOURCE,
-    TRANSLATED,
-    dictionary_views,
-)
+from my_llm.codec.shared.conversion import dictionary_views
 from my_llm.exceptions import MessageValidationError, UnsupportedCapabilityError
-
-_INTERNAL_FIELDS = frozenset((SOURCE, TRANSLATED, FUNCTIONS, OPAQUE, REPLAY))
 
 
 @cache
@@ -176,10 +167,6 @@ def _compiled_plan(key):
             declared = fields(annotation)
             children = {name: compile(item) for name, item in declared.items()}
             declared_keys = children.keys()
-            allow_extra = (
-                issubclass(annotation, BaseModel)
-                and annotation.model_config.get("extra") == "allow"
-            )
             literal_fields = []
             for name, item in declared.items():
                 unwrapped = _unwrap(item)
@@ -195,21 +182,29 @@ def _compiled_plan(key):
                 return len(value.keys() & declared_keys) + 1
 
             def structured_copy(value):
+                if isinstance(value, BaseModel):
+                    serialized = value.model_dump(mode="json", exclude_none=True)
+                    if isinstance(serialized, dict):
+                        value = serialized
                 if not isinstance(value, dict):
                     return _copy_payload(value)
                 return {
-                    name: children[name].apply(item) if name in children else _copy_payload(item)
+                    name: children[name].apply(item)
                     for name, item in value.items()
-                    if name in children or (allow_extra and name not in _INTERNAL_FIELDS)
+                    if name in children
                 }
 
             def structured_projection(value):
+                if isinstance(value, BaseModel):
+                    serialized = value.model_dump(mode="json", exclude_none=True)
+                    if isinstance(serialized, dict):
+                        value = serialized
                 if not isinstance(value, dict):
                     return value
                 return {
-                    name: children[name].project(item) if name in children else item
+                    name: children[name].project(item)
                     for name, item in value.items()
-                    if name in children or (allow_extra and name not in _INTERNAL_FIELDS)
+                    if name in children
                 }
 
             node.score = structured_score
@@ -241,8 +236,6 @@ def validate_history(messages: list[dict], *, allow_external_calls: bool = False
     calls = set()
     used = set()
     for message in dictionary_views(messages):
-        if message.get(OPAQUE):
-            continue
         if message.get("role") not in ("system", "developer", "user", "assistant"):
             raise MessageValidationError("invalid message role")
         for block in message.get("content", []):

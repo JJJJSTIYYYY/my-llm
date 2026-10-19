@@ -1,6 +1,6 @@
 # 流状态与块身份
 
-复核日期：2026-10-17。依据当天读取的官方在线文档，重构
+协议依据复核日期：2026-10-17；字段边界更新于 2026-10-19。依据官方协议定义，维护
 [`StreamState`](../../src/my_llm/stream/_state.py) 的块身份、累积和发布规则。
 公开接口继续返回各协议的标准字典；下述操作仅属于内部 Codec 边界。
 
@@ -20,20 +20,21 @@ Interactions；本次查阅 GenerateContent 专属文档，没有把 Interaction
 
 ## 操作边界
 
-Encoder 无状态，只翻译本次传入的原生事件。流控制操作继续存放在内部保留命名空间，
-不借用原生扩展的 type、index 或 events 字段。
+Encoder 无状态，只翻译本次传入事件中已识别的字段。内部批次结构为
+`{"type": "batch", "protocol": "来源协议", "events": [...]}`，只包含已识别的操作，
+不保存原始事件或未识别的扩展。
 
 | 操作 | 含义 |
 | --- | --- |
 | block_set | 按源引用创建或以完整内容替换一个块，例如 Anthropic 的开始块、Responses 的完成块。 |
-| block_update | 按源引用更新块元数据，例如工具名称、ID 与函数扩展。 |
+| block_update | 按源引用更新块元数据，例如工具名称与 ID。 |
 | block_delta | 向已引用的块追加 text、thinking、refusal、签名或 arguments 片段；是否发布文本由块的文本字段决定。 |
 | block_annotation | 向引用块的列表字段追加注释，保留到最终内容；需要时在块生命周期内发布。 |
 | start | 源协议显式开始响应；在增量前生成目标开始帧。 |
 | block_append | 追加独立完整块，不携带源引用，例如 GenerateContent Part、Ollama 完整工具调用。 |
 | block_stop | 源协议关闭指定块。 |
-| snapshot | 保存最终消息，并使用与实时操作一致的源引用协调每个块。 |
-| metadata / usage / reason / finish / opaque | 更新响应级信息、标记协议终态，或透传未知原生事件。 |
+| snapshot | 保存已识别的终态块，并使用与实时操作一致的源引用协调每个块；不附加原始消息。 |
+| metadata / usage / reason / finish | 更新已识别的响应级信息并标记协议终态；未知原生事件不透传。 |
 
 `BlockRef(scope, index, part)` 使用固定结构表示源地址；所有累积器映射键都归一为此类型。
 NamedTuple 在中间字典中可直接 JSON 序列化，反序列化后的列表在累积器入口还原。
@@ -52,13 +53,13 @@ Responses Decoder 据此保持原生父 item 身份与内容/摘要索引，不�
 ## 快照与生命周期
 
 最终块按源引用匹配，而非按类型加文本内容搜索。相同文本的两个块可以保有不同引用信息。
-每个摘要部分按原生 summary_index 匹配，最终消息仍保留完整的原生 reasoning item。
+每个摘要部分按原生 summary_index 匹配，最终消息按已识别的 item 身份、摘要和密文字段构造 reasoning item。
 
 快照可以补齐尚未流出的块或文本后缀。若它否定已经发布的文本前缀，或遗漏已累积的块，抛出
 `IncompleteStreamError`，避免对无法撤回的流事件报告成功。
 
 文本块的开启不依赖非空增量；空 thinking 仍能收到签名并正常关闭。
-不透明完整块按发现顺序发布。工具调用在收到协议终态且上游迭代结束、所有参数验证通过后
+redacted_thinking 等已识别完整块按发现顺序发布。工具调用在收到协议终态且上游迭代结束、所有参数验证通过后
 统一发布；其后出现的块一并暂存，以保留工具与后续内容的顺序。这是库的发布策略，
 并非上游协议要求；代价是这些后续块不会即时输出。
 
@@ -84,7 +85,7 @@ EOF 本身不代表成功，必须收到源协议的终止操作。重复原生�
 - 工具先于文本时，延迟发布、原始顺序和目标原生结构同时成立。
 - 多个 reasoning summary 部分不混用身份；工具验证失败不会设置完成状态。
 
-既有协议 schema、25 对转换、扩展保留、官方 SDK 本地 transport、并发隔离和资源关闭
+既有协议 schema、25 对转换、字段边界、官方 SDK 本地 transport、并发隔离和资源关闭
 测试继续覆盖完整路径。测试不调用远端模型服务。
 
 [`test_stream_materialization.py`](../../tests/contract/test_stream_materialization.py) 还验证

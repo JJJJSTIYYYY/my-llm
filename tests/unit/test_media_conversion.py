@@ -84,9 +84,21 @@ def test_openai_files_encode_equivalent_inline_sources(protocol):
     ],
 )
 def test_file_id_only_media_stays_native(protocol, block):
-    block = {**block, "vendor": {"nested": [1, None]}}
-    incoming = [{"role": "user", "content": [block]}]
+    incoming = [{"role": "user", "content": [{**block, "vendor": {"nested": [1, None]}}]}]
+    original = deepcopy(incoming)
     codec = MyCodec()
     intermediate = codec.encode(incoming, input_format=protocol)
-    assert intermediate["messages"][0]["content"] == [block]
-    assert codec.decode(**intermediate, target_format=protocol)["messages"] == incoming
+    normalized = intermediate["messages"][0]["content"][0]
+    assert normalized == {
+        "type": "image" if block["type"] == "input_image" else "document",
+        "source": {"type": "file", "file_id": "file_123"},
+        **({"detail": "high"} if block["type"] == "input_image" else {}),
+    }
+    assert codec.decode(**intermediate, target_format=protocol)["messages"] == [
+        {
+            "role": "user",
+            "content": [block],
+            **({"type": "message"} if protocol == "openai_responses" else {}),
+        }
+    ]
+    assert incoming == original

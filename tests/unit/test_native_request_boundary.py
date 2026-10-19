@@ -8,10 +8,11 @@ from pydantic import BaseModel, ConfigDict
 
 from my_llm import ConfigurationError, MessageValidationError, MyCodec, UnsupportedCapabilityError
 from my_llm.codec.openai.chat.transport import ChatCompletionsTransport
-from my_llm.codec.shared.conversion import REPLAY
 
 
-def test_open_model_extensions_survive_validation_and_repeated_requests(profile_factory):
+def test_open_model_unknown_fields_are_filtered_before_validation_and_repeated_requests(
+    profile_factory,
+):
     class Message(BaseModel):
         model_config = ConfigDict(extra="allow")
         role: Literal["user"]
@@ -31,10 +32,15 @@ def test_open_model_extensions_survive_validation_and_repeated_requests(profile_
         original = deepcopy(message)
         bound.validate_input([message])
         request = bound.request({"messages": [message]}, profile)
-        assert request["messages"] == [original]
+        assert request["messages"] == [{"role": "user", "content": message["content"]}]
         assert message == original
 
-    invalid = {"role": "user", "content": "third", "vendor_count": {"invalid": True}}
+    extra = {"role": "user", "content": "third", "vendor_count": {"invalid": True}}
+    bound.validate_input([extra])
+    assert bound.request({"messages": [extra]}, profile)["messages"] == [
+        {"role": "user", "content": "third"}
+    ]
+    invalid = {"role": "user", "content": ["invalid"], "vendor_count": 1}
     with pytest.raises(MessageValidationError):
         bound.validate_input([invalid])
     with pytest.raises(MessageValidationError):
@@ -44,7 +50,7 @@ def test_open_model_extensions_survive_validation_and_repeated_requests(profile_
 @pytest.mark.parametrize("target", ["anthropic", "gemini"])
 @pytest.mark.parametrize("role", ["system", "developer"])
 @pytest.mark.parametrize("source", ["openai_chat", "gemini"])
-def test_system_extensions_are_preserved_in_history_and_filtered_at_the_sdk_boundary(
+def test_system_unknown_fields_do_not_enter_intermediate_or_sdk_request(
     profile_factory, source, role, target
 ):
     system = (
@@ -70,12 +76,12 @@ def test_system_extensions_are_preserved_in_history_and_filtered_at_the_sdk_boun
     original = deepcopy(history)
     codec = MyCodec()
     intermediate = codec.encode(history, input_format=source)
+    assert "vendor_" not in str(intermediate)
     before_request = deepcopy(intermediate)
     request = codec.request(intermediate, profile_factory(target, max_tokens=2048))
     assert history == original
     assert intermediate == before_request
     assert "vendor_" not in str(request)
-    assert REPLAY not in str(request)
     if target == "anthropic":
         assert request["system"] == [{"type": "text", "text": "instructions"}]
     else:

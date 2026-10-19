@@ -86,5 +86,5 @@ uv run --no-sync pytest -q tests/performance
 
 内部复制、Schema 计划与终态复用的实现及同负载对照结果，见
 [优化记录](../audits/performance-optimization-2026-10-19.md)。
-新增 extra="allow" 支持后的完整矩阵及同进程随机交替对照，见
-[性能复测](../audits/performance-retest-2026-10-19.md)。
+历史 extra="allow" 实现阶段的完整矩阵及同进程随机交替对照，见
+[性能复测](../audits/performance-retest-2026-10-19.md)。该记录不代表当前支持未声明协议字段透传。

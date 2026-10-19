@@ -4,21 +4,18 @@ from typing import Any
 
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.openai.chat.encoding.content import (
-    CALL,
-    content_fields,
     encode_content,
     tool_block,
     tool_operations,
 )
+from my_llm.codec.openai.chat.utils.content import annotations, text_blocks
 from my_llm.codec.shared.conversion import (
     encode_functions,
-    extras,
     mapping_list,
-    remember,
-    residual,
+    select,
 )
 from my_llm.codec.shared.options import path_value
-from my_llm.codec.shared.stream import BlockRef, batch, encode_batch, record
+from my_llm.codec.shared.stream import BlockRef, encode_batch, record
 from my_llm.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
 
@@ -63,58 +60,39 @@ class ChatCompletionsEncoder(BaseEncoder):
     ) -> list[dict]:
         result = []
         for message in messages:
-            content = encode_content(message.get("content"))
-            # Appending preserves the original indices of content-block extensions.
+            role = message.get("role")
+            native_content = message.get("content")
+            content = [] if role in ("tool", "function") else encode_content(native_content)
             if message.get("reasoning_content"):
                 content.append({"type": "thinking", "thinking": message["reasoning_content"]})
             if message.get("refusal") is not None:
                 content.append({"type": "refusal", "refusal": message["refusal"]})
-            content.extend(tool_block(c) for c in (message.get("tool_calls") or []))
-            role = message.get("role")
-            if role == "tool":
+            content.extend(tool_block(call) for call in message.get("tool_calls") or [])
+            if message.get("function_call"):
+                content.append(tool_block(message["function_call"], call_id="legacy_function_call"))
+            if role in ("tool", "function"):
                 content = [
                     {
                         "type": "tool_result",
-                        "tool_use_id": message.get("tool_call_id"),
-                        "content": message.get("content"),
-                        "name": message.get("name"),
+                        "tool_use_id": message.get("tool_call_id") or "legacy_function_call",
+                        "content": text_blocks(native_content)
+                        if isinstance(native_content, list)
+                        else native_content,
+                        **select(message, "name"),
                     }
                 ]
                 role = "user"
-            result.append(
-                remember(
-                    {
-                        **extras(
-                            message,
-                            "content",
-                            "reasoning_content",
-                            "refusal",
-                            "tool_calls",
-                            "tool_call_id",
-                        ),
-                        "role": role,
-                        "content": content,
-                    },
-                    [message],
-                    PROTOCOL,
-                    preserve=residual(
-                        message,
-                        {
-                            "role": True,
-                            "content": [content_fields]
-                            if isinstance(message.get("content"), list)
-                            else True,
-                            "tool_calls": [CALL],
-                            "tool_call_id": True,
-                            "reasoning_content": True,
-                            "refusal": True,
-                            "thinking": True,
-                            "images": True,
-                            "tool_name": True,
-                        },
-                    ),
-                )
-            )
+            value = {
+                "protocol": PROTOCOL,
+                "role": role,
+                "content": content,
+                **select(message, "name"),
+            }
+            if message.get("annotations"):
+                value["annotations"] = annotations(message["annotations"])
+            if message.get("audio") is not None:
+                value["audio"] = select(message["audio"], "id", "expires_at", "data", "transcript")
+            result.append(value)
         return result
 
     def _tools(
@@ -122,16 +100,11 @@ class ChatCompletionsEncoder(BaseEncoder):
     ) -> list[dict]:
         return encode_functions(
             tools,
-            "openai_chat",
             lambda tool: (
-                [tool["function"]]
+                [select(tool["function"], "name", "description", "parameters", "strict")]
                 if tool.get("type") == "function" and "function" in tool
                 else None
             ),
-            consumed={
-                "type": True,
-                "function": {"name": True, "description": True, "parameters": True, "strict": True},
-            },
         )
 
     def _chunks(
@@ -144,7 +117,6 @@ class ChatCompletionsEncoder(BaseEncoder):
                     "provider generation failed", details=event.get("error", event)
                 )
             if not any(key in event for key in ("choices", "usage")):
-                result.append(batch(event, [{"type": "opaque", "value": event}], PROTOCOL))
                 continue
             ops = [{"type": "metadata", **self._metadata(event)}]
             if event.get("usage") is not None and (
@@ -190,19 +162,13 @@ class ChatCompletionsEncoder(BaseEncoder):
                             "allow_tail": ["metadata", "usage"],
                         }
                     )
-            result.append(
-                encode_batch(
-                    event, ops, PROTOCOL, consumed=self._consumed_fields(event), usage=self.usage
-                )
-            )
+            result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
         return result
 
     def usage(self, value: dict | None) -> dict | None:
         if value is None:
             return None
         return record(
-            value,
-            "openai_chat",
             input_base=value.get("prompt_tokens"),
             output_base=value.get("completion_tokens"),
             total=value.get("total_tokens"),
@@ -212,21 +178,3 @@ class ChatCompletionsEncoder(BaseEncoder):
 
     def _metadata(self, event: dict) -> dict:
         return {key: event[key] for key in ("id", "model", "created") if key in event}
-
-    def _consumed_fields(self, event: dict) -> dict:
-        return {
-            **dict.fromkeys(("id", "model", "created"), True),
-            "usage": {},
-            "choices": [
-                {
-                    "index": True,
-                    "finish_reason": True,
-                    "delta": {
-                        "content": True,
-                        "reasoning_content": True,
-                        "refusal": True,
-                        "tool_calls": [{**CALL, "index": True}],
-                    },
-                }
-            ],
-        }

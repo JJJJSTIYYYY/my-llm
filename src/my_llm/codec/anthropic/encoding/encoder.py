@@ -2,14 +2,13 @@
 
 from typing import Any
 
+from my_llm.codec.anthropic.utils.content import CITATION_FIELDS, native_block
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.shared.conversion import (
     dictionary_views,
     encode_functions,
-    extras,
     mapping_list,
-    remember,
-    residual,
+    select,
 )
 from my_llm.codec.shared.stream import BlockRef, encode_batch, record
 from my_llm.exceptions import ResponseFailedError
@@ -78,58 +77,39 @@ class AnthropicEncoder(BaseEncoder):
     ) -> list[dict]:
         result = []
         for message in messages:
-            content = message.get("content")
+            value = message.get("content")
             content = (
-                [{"type": "text", "text": content}]
-                if isinstance(content, str)
-                else list(dictionary_views(content))
-                if content is not None
-                else []
+                [{"type": "text", "text": value}]
+                if isinstance(value, str)
+                else [
+                    block
+                    for item in dictionary_views(value or [])
+                    if (block := native_block(item)) is not None
+                ]
             )
-            result.append(
-                remember(
-                    {**message, "content": content},
-                    [message],
-                    PROTOCOL,
-                    preserve=residual(
-                        message,
-                        {"role": True, "content": [self._content_fields]}
-                        if isinstance(message.get("content"), list)
-                        else {"role": True, "content": True},
-                    ),
-                )
-            )
+            result.append({"protocol": PROTOCOL, "role": message.get("role"), "content": content})
         return result
-
-    @staticmethod
-    def _content_fields(block: dict) -> dict:
-        fields = {
-            "text": ("text", "citations"),
-            "thinking": ("thinking",),
-            "redacted_thinking": (),
-            "image": ("source",),
-            "document": ("source",),
-            "tool_use": ("id", "name", "input"),
-            "tool_result": ("tool_use_id", "content", "is_error"),
-        }
-        kind = block.get("type")
-        consumed = dict.fromkeys(("type", *fields[kind]), True) if kind in fields else {}
-        if kind in ("image", "document"):
-            consumed["source"] = dict.fromkeys(("type", "url", "media_type", "data"), True)
-        return consumed
 
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         return encode_functions(
             tools,
-            "anthropic",
             lambda tool: (
-                [{**extras(tool, "input_schema"), "parameters": tool.get("input_schema", {})}]
+                [
+                    {
+                        **select(tool, "name", "description", "strict"),
+                        **(
+                            {"cache_control": select(tool["cache_control"], "type", "ttl")}
+                            if tool.get("cache_control") is not None
+                            else {}
+                        ),
+                        "parameters": tool.get("input_schema", {}),
+                    }
+                ]
                 if "input_schema" in tool
                 else None
             ),
-            consumed={"name": True, "description": True, "input_schema": True},
         )
 
     def _chunks(
@@ -152,7 +132,9 @@ class AnthropicEncoder(BaseEncoder):
                 ):
                     ops.append({"type": "usage", "usage": message["usage"]})
             elif kind == "content_block_start":
-                block = event["content_block"]
+                block = native_block(event["content_block"])
+                if block is None:
+                    continue
                 ops.append({"type": "block_set", "ref": BlockRef("content", index), "block": block})
             elif kind == "content_block_delta":
                 delta = event["delta"]
@@ -162,7 +144,7 @@ class AnthropicEncoder(BaseEncoder):
                             "type": "block_annotation",
                             "ref": BlockRef("content", index),
                             "field": "citations",
-                            "value": delta["citation"],
+                            "value": select(delta["citation"], *CITATION_FIELDS),
                         }
                     )
                 field = {
@@ -204,12 +186,8 @@ class AnthropicEncoder(BaseEncoder):
             elif kind == "message_stop":
                 ops.append({"type": "finish"})
             if not ops:
-                ops = [{"type": "opaque", "value": event}]
-            result.append(
-                encode_batch(
-                    event, ops, PROTOCOL, consumed=self._consumed_fields(event), usage=self.usage
-                )
-            )
+                continue
+            result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
         return result
 
     def usage(self, value: dict | None) -> dict | None:
@@ -218,8 +196,6 @@ class AnthropicEncoder(BaseEncoder):
         cached = value.get("cache_read_input_tokens")
         written = value.get("cache_creation_input_tokens")
         return record(
-            value,
-            "anthropic",
             input_base=value.get("input_tokens"),
             input_add={"cache_read": cached, "cache_write": written},
             output_base=value.get("output_tokens"),
@@ -229,25 +205,3 @@ class AnthropicEncoder(BaseEncoder):
 
     def _metadata(self, event: dict) -> dict:
         return {key: event[key] for key in ("id", "model") if key in event}
-
-    def _consumed_fields(self, event: dict) -> dict:
-        fields = {
-            "message_start": {"message": dict.fromkeys(("id", "model"), True)},
-            "content_block_start": {"index": True},
-            "content_block_delta": {
-                "index": True,
-                "delta": {
-                    "type": True,
-                    "text": True,
-                    "thinking": True,
-                    "signature": True,
-                    "partial_json": True,
-                    "citation": True,
-                },
-            },
-            "content_block_stop": {"index": True},
-            "message_delta": {"delta": {"stop_reason": True, "stop_sequence": True}},
-            "message_stop": {},
-        }
-        kind = event.get("type")
-        return {"type": True, **fields[kind]} if kind in fields else {}

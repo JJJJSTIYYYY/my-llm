@@ -3,19 +3,12 @@
 from abc import ABC, abstractmethod
 from typing import Any, final
 
-from my_llm.codec.shared.conversion import match_all
-from my_llm.codec.shared.replay import encode_retained, replay_inputs
-from my_llm.exceptions import MessageValidationError
+from my_llm.codec.shared.conversion import dictionaries, match_all
 from my_llm.profile.resolution import ResolvedProfile
 
 
 class BaseEncoder(ABC):
-    """Translate values and recover unchanged converted histories.
-
-    Public translation methods capture the input once in encode_retained().
-    Protocol hooks receive owned, normalized dictionaries and may build their
-    output from those values without repeating boundary copies.
-    """
+    """Capture inputs once, then translate only explicitly recognized fields."""
 
     __slots__ = ()
 
@@ -25,31 +18,25 @@ class BaseEncoder(ABC):
 
     @final
     def matches(self, values: list) -> bool:
-        try:
-            values, _ = replay_inputs(values, self.protocol)
-        except MessageValidationError:
-            return False
         return match_all(values, self.match_item)
 
     @final
     def messages(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        return encode_retained(
-            self._messages, values, self.protocol, "messages", profile, **parameters
-        )
+        return self._messages(dictionaries(values), profile, **parameters)
 
     @final
     def tools(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        return encode_retained(self._tools, values, self.protocol, "tools", profile, **parameters)
+        return self._tools(dictionaries(values), profile, **parameters)
 
     @final
     def chunks(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        return encode_retained(self._chunks, values, self.protocol, "chunks", profile, **parameters)
+        return self._chunks(dictionaries(values), profile, **parameters)
 
     @abstractmethod
     def match_item(self, item: dict) -> bool: ...

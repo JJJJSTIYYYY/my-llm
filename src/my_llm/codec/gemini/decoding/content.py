@@ -1,9 +1,6 @@
-"""gemini decoding: content, fields and tool helpers."""
+"""Render recognized Gemini parts and open function payloads."""
 
-from my_llm.codec.shared.conversion import (
-    extras,
-    project_block,
-)
+from my_llm.codec.shared.conversion import project_block, select, unsupported
 
 FIELDS = {
     "text": ("type", "text"),
@@ -16,35 +13,28 @@ FIELDS = {
 
 def decode_part(block: dict, *, foreign: bool = False) -> dict:
     kind = block.get("type")
+    common = {} if foreign else select(block, "thought_signature", "part_metadata")
     if kind == "tool_use":
         return {
-            **extras(block, "type", "id", "name", "input", "function_call"),
+            **common,
             **({"thought_signature": "skip_thought_signature_validator"} if foreign else {}),
-            "function_call": {
-                **block.get("function_call", {}),
-                "id": block["id"],
-                "name": block["name"],
-                "args": block["input"],
-            },
+            "function_call": {"id": block["id"], "name": block["name"], "args": block["input"]},
         }
     if kind == "tool_result":
         response = block.get("content")
         return {
-            **extras(
-                block, "type", "tool_use_id", "name", "content", "is_error", "function_response"
-            ),
+            **common,
             "function_response": {
-                **block.get("function_response", {}),
                 "id": block["tool_use_id"],
                 "name": block.get("name"),
                 "response": response if isinstance(response, dict) else {"result": response},
             },
         }
-    if kind == "thinking":
+    if kind in ("text", "thinking"):
         return {
-            **extras(block, "type", "thinking", "signature"),
-            "text": block.get("thinking", ""),
-            "thought": True,
+            **common,
+            "text": block.get("thinking" if kind == "thinking" else "text", ""),
+            **({"thought": True} if kind == "thinking" else {}),
         }
     if kind in ("image", "document"):
         source = block.get("source", {})
@@ -57,10 +47,23 @@ def decode_part(block: dict, *, foreign: bool = False) -> dict:
             }
         )
         return {
-            **extras(block, "type", "source", "detail"),
+            **common,
+            **(
+                {
+                    "video_metadata": select(
+                        block["video_metadata"], "start_offset", "end_offset", "fps"
+                    )
+                }
+                if "video_metadata" in block
+                else {}
+            ),
             "inline_data" if source.get("type") == "base64" else "file_data": data,
         }
-    return extras(block, "type", "annotations") if kind == "text" else extras(block)
+    if kind == "executable_code":
+        return {**common, kind: select(block, "language", "code")}
+    if kind == "code_execution_result":
+        return {**common, kind: select(block, "outcome", "output")}
+    return unsupported(block)
 
 
 def foreign_block(block: dict) -> dict | None:

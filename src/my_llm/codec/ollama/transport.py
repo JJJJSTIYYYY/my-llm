@@ -3,7 +3,7 @@
 from inspect import signature
 from typing import Any
 
-from ollama import AsyncClient, Message, Options, Tool
+from ollama import AsyncClient, Image, Message, Options, Tool
 from ollama import AsyncClient as AsyncOllama
 from pydantic import ValidationError
 
@@ -15,7 +15,7 @@ from my_llm.codec.shared.options import (
     validate_native_options,
 )
 from my_llm.codec.shared.transport import owned_stream, supported
-from my_llm.exceptions import ConfigurationError, UnsupportedCapabilityError
+from my_llm.exceptions import ConfigurationError, MessageValidationError, UnsupportedCapabilityError
 from my_llm.profile.configuration import merge_dicts
 from my_llm.profile.resolution import ResolvedProfile, client_parameters
 
@@ -67,6 +67,30 @@ class OllamaTransport(BaseTransport):
     message_type = Message
     message_path = ("messages",)
     tool_path = ("tools",)
+
+    def _validate_values(self, values: list, schema: Any, *, filtered: bool = False) -> None:
+        if schema is Message and isinstance(values, list):
+            # The public chat API wraps wire-format base64 strings in Image
+            # before validating Message. Mirror that SDK boundary without
+            # changing the dictionaries used for conversion or serialization.
+            try:
+                values = [
+                    {
+                        **value,
+                        "images": [
+                            image if isinstance(image, Image) else Image(value=image)
+                            for image in value["images"]
+                        ],
+                    }
+                    if isinstance(value, dict) and value.get("images")
+                    else value
+                    for value in values
+                ]
+            except (ValidationError, TypeError, ValueError) as exc:
+                raise MessageValidationError(
+                    "images do not conform to the native protocol"
+                ) from exc
+        super()._validate_values(values, schema, filtered=filtered)
 
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
         options = super().validate_parameters(profile, **parameters)

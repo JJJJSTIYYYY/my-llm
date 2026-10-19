@@ -12,6 +12,7 @@ from my_llm.codec.ollama.decoding.content import (
 from my_llm.codec.shared.conversion import (
     OPAQUE,
     Translations,
+    blocks,
     coalesce_groups,
     decode_functions,
     extras,
@@ -99,6 +100,9 @@ class OllamaDecoder(BaseDecoder):
             if source_protocol(message) != PROTOCOL:
                 message = project_message(message, foreign_block)
                 content = message["content"]
+            else:
+                # Calls rendered without a native snapshot own their arguments.
+                content = blocks(content)
             calls = []
             images = []
             reasoning = ""

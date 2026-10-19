@@ -7,7 +7,6 @@ from my_llm.codec.gemini.encoding.content import encode_part, json_schema, part_
 from my_llm.codec.shared.conversion import (
     allocate_call_id,
     associate_tool_result,
-    dictionaries,
     encode_functions,
     extras,
     mapping_list,
@@ -42,7 +41,6 @@ class GeminiEncoder(BaseEncoder):
     ) -> list[dict]:
         result = []
         pending: list[dict] = []
-        messages = dictionaries(messages)
         # Reserve IDs from later messages too, before synthesizing any missing IDs.
         used_ids = {
             part["function_call"]["id"]
@@ -118,7 +116,7 @@ class GeminiEncoder(BaseEncoder):
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for event in dictionaries(chunks):
+        for event in chunks:
             if event.get("type") == "error" or event.get("error"):
                 raise ResponseFailedError(
                     "provider generation failed", details=event.get("error", event)

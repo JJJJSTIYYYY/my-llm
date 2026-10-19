@@ -1,5 +1,6 @@
 """Reusable Anthropic SDK client and request-owned Messages streams."""
 
+from copy import deepcopy
 from inspect import signature
 from typing import Any
 
@@ -40,6 +41,15 @@ class AnthropicTransport(BaseTransport):
     message_type = MessageParam
     message_path = ("messages",)
     tool_path = ("tools",)
+
+    def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
+        result = super().filter_tools(tools, profile)
+        for original, filtered in zip(tools, result):
+            # InputSchema is an open JSON Schema, not just the SDK TypedDict's
+            # named type/properties/required fields. Keep its application keys.
+            if "input_schema" in original:
+                filtered["input_schema"] = deepcopy(original["input_schema"])
+        return result
 
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
         options = super().validate_parameters(profile, **parameters)

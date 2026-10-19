@@ -44,6 +44,11 @@ Decoder._messages / _tools 必须返回 Translations，并在写入每组输出�
 原生钩子内部复用本方向方法时调用 `_messages` 等钩子，避免重复包装。
 Decoder.result 默认返回首条消息，Responses 等协议可覆盖为 items 列表。
 
+Encoder 的固定入口已捕获一次输入，私有钩子接收隔离后的标准字典，不再重复复制整批数据。
+Decoder 只读借用中间态及来源分组，在实际生成可变公开内容时隔离对应 payload；
+完整原生快照可直接恢复，没有快照的同协议内容仍需拥有自己的工具参数及结果。
+不要通过修改输入块补齐字段，应重建实际变化的字典或列表。
+
 Decoder.request_parameters(profile, options) 将已验证的 PreparedOptions 映射为原生字段，
 assemble_request(messages, tools, profile, *, options, **parameters) 将原生消息、工具和选项放入原生请求结构。
 Decoder.request 同样必须显式接收 options；这些入口不接受缺失选项后重新解析的兼容路径。
@@ -61,6 +66,9 @@ Profile 只为 reasoning_enable_parameter / reasoning_effort_parameter 延迟消
 [BaseTransport](../../src/my_llm/codec/base/transport.py) 提供固定的 request 流程：
 检查工具关联与能力 → filter_messages / filter_tools → SDK 消息与工具类型校验 → validate_request。
 过滤读取公开 SDK 类型，不把任意工具参数、结果字典或 JSON Schema 当作协议字段清理。
+Schema 结构预编译为共享的类型计划；只读输入校验使用 `projected`，需要独立可变结果的过滤使用
+`supported`。缓存不保存请求值。固定流程只重建会被替换的请求容器，消息和工具由过滤器隔离；
+`validate_request` 若需修改其他嵌套选项，也应只重建其实际改写的容器。
 
 | 接口 | 职责 |
 | --- | --- |

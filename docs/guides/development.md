@@ -61,6 +61,9 @@ conftest.py 只注册 pytest fixture；通用测试辅助代码使用 tests.help
 
 ## 验证
 
+性能基准通过 `python -m tests.performance` 单独运行；普通 pytest 只执行小规模完整性检查。
+复杂负载、计时边界与参数见[性能测试指南](performance.md)。
+
 ```sh
 uv sync --locked --group dev
 uv run --no-sync pytest -q

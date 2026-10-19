@@ -9,9 +9,9 @@ from uuid import uuid4
 
 from my_llm.codec.shared.conversion import (
     SOURCE,
+    TRANSLATED,
     arguments,
     dictionaries,
-    extras,
     merge_fields,
     source_protocol,
 )
@@ -33,6 +33,7 @@ class BlockState:
     source_closed: bool = False
     text_sent: int = 0
     pending_annotations: list[dict] = field(default_factory=list)
+    _materialized: dict | None = field(default=None, init=False, repr=False)
 
     @property
     def text_field(self) -> str | None:
@@ -40,24 +41,38 @@ class BlockState:
         return kind if kind in ("text", "thinking", "refusal") else None
 
     def materialize(self) -> dict:
-        block = deepcopy(self.content)
-        for name, parts in self.fragments.items():
-            block[name] = block.get(name, "") + "".join(parts)
-        if block.get("type") == "tool_use":
-            if self.argument_parts is not None:
-                block["input"] = arguments("".join(self.argument_parts) or "{}")
-            block.setdefault("input", {})
-        return block
+        """Borrow this version's materialized content within the request.
+
+        Nested content is already owned by this state. Mutations replace nested
+        containers and invalidate the cache, so earlier materialized versions
+        remain stable without copying their entire trees.
+        """
+        if self._materialized is None:
+            block = self.content.copy()
+            for name, parts in self.fragments.items():
+                block[name] = block.get(name, "") + "".join(parts)
+            if block.get("type") == "tool_use":
+                if self.argument_parts is not None:
+                    block["input"] = arguments("".join(self.argument_parts) or "{}")
+                block.setdefault("input", {})
+            self._materialized = block
+        return self._materialized
+
+    def invalidate(self) -> None:
+        self._materialized = None
 
     def replace(self, content: dict) -> None:
         name = self.text_field
         if name and self.text_sent:
-            previous = self.materialize().get(name, "")[: self.text_sent]
+            previous = (self.content.get(name, "") + "".join(self.fragments.get(name, ())))[
+                : self.text_sent
+            ]
             if not content.get(name, "").startswith(previous):
                 raise IncompleteStreamError("final block contradicts already emitted text")
         self.content = deepcopy(content)
         self.fragments.clear()
         self.argument_parts = None
+        self.invalidate()
 
 
 class StreamState:
@@ -82,6 +97,7 @@ class StreamState:
         self.finished = False
         self.sequence_number = 0
         self.result: Any = None
+        self._final_messages: list[dict] | None = None
 
     def _new_block(self, content: dict) -> BlockState:
         block = BlockState(len(self._blocks), deepcopy(content))
@@ -154,7 +170,9 @@ class StreamState:
         block = self._block(event["ref"], event.get("kind", "text"))
         if block.source_closed:
             raise IncompleteStreamError("annotation received after source block stopped")
-        block.content.setdefault(event["field"], []).append(deepcopy(event["value"]))
+        name = event["field"]
+        block.content[name] = [*block.content.get(name, []), deepcopy(event["value"])]
+        block.invalidate()
         block.pending_annotations.append(
             {
                 "type": "block_annotation",
@@ -201,13 +219,15 @@ class StreamState:
         block = self._block(event["ref"], patch.get("type", "unknown"))
         for key in event.get("merge", ()):
             if key in patch:
-                block.content.setdefault(key, {}).update(patch.pop(key))
+                block.content[key] = {**block.content.get(key, {}), **patch.pop(key)}
         block.content.update(patch)
+        block.invalidate()
         return []
 
     def _delta(self, event: dict) -> list[dict]:
         name, value = event["field"], event["value"]
         block = self._block(event["ref"], event["kind"])
+        block.invalidate()
         if name == "arguments":
             if block.argument_parts is None:
                 block.argument_parts = []
@@ -281,7 +301,13 @@ class StreamState:
         if block.emitted:
             return []
         block.emitted = True
-        content = extras(block.materialize())
+        # These events stay inside the pipeline; public decoder outputs own
+        # their values. Reuse the already validated nested content here.
+        content = {
+            key: value
+            for key, value in block.materialize().items()
+            if key not in (SOURCE, TRANSLATED)
+        }
         event = {
             "type": "block",
             "index": block.index,
@@ -293,17 +319,19 @@ class StreamState:
         return [*self._start(), event]
 
     def messages(self, *, partial: bool = False) -> list[dict]:
+        if self._final_messages is not None and not partial:
+            return deepcopy(self._final_messages)
         if self.snapshot is not None:
-            return dictionaries(self.snapshot)
+            return deepcopy(self.snapshot)
         # Never parse unfinished tool JSON while reporting the original failure.
         content = [
             block.materialize()
             for block in self._blocks
             if not partial or block.content.get("type") != "tool_use"
         ]
-        return [
-            {"role": "assistant", "content": content, SOURCE: {"protocol": self.source_protocol}}
-        ]
+        return deepcopy(
+            [{"role": "assistant", "content": content, SOURCE: {"protocol": self.source_protocol}}]
+        )
 
     def finish(self) -> list[dict]:
         if self.finished:
@@ -311,10 +339,21 @@ class StreamState:
         if not self.terminal:
             raise IncompleteStreamError("stream ended without its protocol's terminal event")
         # Validate every call before publishing any of them or marking success.
-        messages = self.messages()
+        content = [block.materialize() for block in self._blocks]
+        messages = (
+            self.snapshot
+            if self.snapshot is not None
+            else [
+                {
+                    "role": "assistant",
+                    "content": content,
+                    SOURCE: {"protocol": self.source_protocol},
+                }
+            ]
+        )
         output_blocks = [
-            {"index": block.index, "source_ref": block.source_ref, "block": block.materialize()}
-            for block in self._blocks
+            {"index": block.index, "source_ref": block.source_ref, "block": materialized}
+            for block, materialized in zip(self._blocks, content, strict=True)
         ]
         result = self._start()
         tool_index = 0
@@ -333,6 +372,7 @@ class StreamState:
                 "usage": deepcopy(self.usage),
             }
         )
+        self._final_messages = messages
         self.finished = True
         return result
 

@@ -8,7 +8,6 @@ from my_llm.codec.shared.conversion import (
     allocate_call_id,
     associate_tool_result,
     blocks,
-    dictionaries,
     encode_functions,
     extras,
     mapping_list,
@@ -53,7 +52,6 @@ class OllamaEncoder(BaseEncoder):
     ) -> list[dict]:
         pending = []
         result = []
-        messages = dictionaries(messages)
         # Reserve explicit IDs first so ID-less calls cannot shadow a later native ID.
         used_ids = {
             call["id"]
@@ -147,7 +145,7 @@ class OllamaEncoder(BaseEncoder):
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for event in dictionaries(chunks):
+        for event in chunks:
             if event.get("type") == "error" or event.get("error"):
                 raise ResponseFailedError(
                     "provider generation failed", details=event.get("error", event)

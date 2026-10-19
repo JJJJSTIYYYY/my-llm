@@ -9,14 +9,17 @@
 ## 开发与设计
 
 - [本地开发规范](guides/development.md)：目录职责、导入、测试辅助代码与结构验证。
+- [generate 性能测试](guides/performance.md)：复杂协议负载、无网络 SDK 路径及完整返回耗时。
 - [接入新的协议](guides/adding-protocol.md)：Encoder / Decoder 必需接口、固定流程与注册验证。
 - [构建与发行包验证](guides/building.md)：安装、构建和 CI。
 - [架构与职责边界](design/architecture.md)：当前代码目录、组件职责、请求和返回路径。
 - [流状态设计](design/stream-state.md)：块身份、累积操作和终态约束。
+- [Schema 过滤计划缓存](design/schema-filter-cache.md)：缓存的实际对象、类型计划图、两次请求的执行过程与可运行示例。
 - [SDK 客户端生命周期](design/client-lifecycle.md)：实例复用、请求资源隔离和显式关闭。
 
 ## 审计与验证记录
 
+- [extra="allow" 支持后的性能复测](audits/performance-retest-2026-10-19.md)：完整五协议矩阵、同进程对照及 GC 耗时观察。
 - [仓库清理与架构约束复核](audits/architecture-audit-2026-10-18.md)：当前约束、清理范围和验证依据。
 - [最初重构需求与当前实现对照](audits/refactor-requirements-2026-10-17.md)：逐项核对、验收范围与后续设计调整。
 - [官方协议审计](audits/protocol-audit-2026-10-17.md)及[修复验收](audits/protocol-fixes-2026-10-17.md)。

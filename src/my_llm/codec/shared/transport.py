@@ -19,8 +19,17 @@ from typing import (
 
 from pydantic import BaseModel, TypeAdapter
 
-from my_llm.codec.shared.conversion import OPAQUE, dictionaries
+from my_llm.codec.shared.conversion import (
+    FUNCTIONS,
+    OPAQUE,
+    REPLAY,
+    SOURCE,
+    TRANSLATED,
+    dictionary_views,
+)
 from my_llm.exceptions import MessageValidationError, UnsupportedCapabilityError
+
+_INTERNAL_FIELDS = frozenset((SOURCE, TRANSLATED, FUNCTIONS, OPAQUE, REPLAY))
 
 
 @cache
@@ -47,53 +56,183 @@ def _structured(schema):
     )
 
 
-def _score(value, schema):
-    schema = _unwrap(schema)
-    if isinstance(value, dict) and _structured(schema):
-        declared = fields(schema)
-        for key in value.keys() & declared.keys():
-            annotation = _unwrap(declared[key])
-            if get_origin(annotation) is Literal and value[key] not in get_args(annotation):
-                return -1
-        return len(value.keys() & declared.keys()) + 1
-    if schema in (Any, object):
-        return 0
-    if get_origin(schema) is Literal:
-        return 1 if value in get_args(schema) else -1
-    if isinstance(value, list) and get_origin(schema) in (list, tuple, Iterable):
-        return 1
-    if isinstance(value, dict) and get_origin(schema) is dict:
-        return 0
-    return 1 if isinstance(schema, type) and isinstance(value, schema) else -1
+def _copy_payload(value):
+    if type(value) in (str, int, float, bool, bytes, type(None)):
+        return value
+    return deepcopy(value)
+
+
+def _borrow_payload(value):
+    return value
+
+
+class _FilterPlan:
+    """Type-only graph node; compiled before it is published in the plan cache."""
+
+    __slots__ = ("apply", "project", "score")
+
+
+def _same_schema(left, right):
+    if left is right:
+        return True
+    if left != right:
+        return False
+    # Union equality ignores member order, but filtering resolves tied scores
+    # by that order. Compare nested generic arguments in their declared order.
+    return all(
+        _same_schema(first, second)
+        for first, second in zip(get_args(left), get_args(right), strict=True)
+    )
+
+
+class _SchemaKey:
+    __slots__ = ("schema", "_hash", "_hashable")
+
+    def __init__(self, schema):
+        self.schema = schema
+        try:
+            self._hash = hash(schema)
+            self._hashable = True
+        except TypeError:
+            # Annotated permits unhashable metadata. Such annotations remain
+            # cacheable by identity, with their metadata outside filtering.
+            self._hash = id(schema)
+            self._hashable = False
+
+    def __hash__(self):
+        return self._hash
+
+    def __eq__(self, other):
+        return self.schema is other.schema or (
+            self._hashable and other._hashable and _same_schema(self.schema, other.schema)
+        )
+
+
+def _plan(schema):
+    return _compiled_plan(_SchemaKey(schema))
+
+
+@cache
+def _compiled_plan(key):
+    # SDK models can be recursive. Register each node before its children so
+    # recursive annotations refer to the same plan without storing request data.
+    plans = {}
+
+    def compile(annotation):
+        annotation = _unwrap(annotation)
+        key = id(annotation)
+        if key in plans:
+            return plans[key]
+        node = plans[key] = _FilterPlan()
+        origin = get_origin(annotation)
+        arguments = get_args(annotation)
+
+        if annotation in (Any, object):
+            node.score = lambda value: 0
+        elif origin is Literal:
+            node.score = lambda value: 1 if value in arguments else -1
+        elif origin in (list, tuple, Iterable):
+            node.score = lambda value: 1 if isinstance(value, list) else -1
+        elif origin is dict:
+            node.score = lambda value: 0 if isinstance(value, dict) else -1
+        elif isinstance(annotation, type):
+            node.score = lambda value: 1 if isinstance(value, annotation) else -1
+        else:
+            node.score = lambda value: -1
+
+        if origin in (Union, UnionType):
+            choices = tuple(compile(item) for item in arguments if item is not type(None))
+
+            def select(value):
+                if len(choices) == 1:
+                    return choices[0]
+                # Strictly greater retains the first candidate when scores tie,
+                # matching max(..., key=...) without rescoring the winner.
+                choice = choices[0]
+                score = choice.score(value)
+                for candidate in choices[1:]:
+                    candidate_score = candidate.score(value)
+                    if candidate_score > score:
+                        choice, score = candidate, candidate_score
+                if score < 0:
+                    raise UnsupportedCapabilityError(
+                        "target SDK cannot represent this protocol value"
+                    )
+                return choice
+
+            node.apply = lambda value: None if value is None else select(value).apply(value)
+            node.project = lambda value: None if value is None else select(value).project(value)
+        elif origin in (list, tuple, Iterable) and arguments:
+            item_plan = compile(arguments[0])
+            node.apply = lambda value: (
+                [item_plan.apply(item) for item in value]
+                if isinstance(value, list)
+                else _copy_payload(value)
+            )
+            node.project = lambda value: (
+                [item_plan.project(item) for item in value] if isinstance(value, list) else value
+            )
+        elif _structured(annotation):
+            declared = fields(annotation)
+            children = {name: compile(item) for name, item in declared.items()}
+            declared_keys = children.keys()
+            allow_extra = (
+                issubclass(annotation, BaseModel)
+                and annotation.model_config.get("extra") == "allow"
+            )
+            literal_fields = []
+            for name, item in declared.items():
+                unwrapped = _unwrap(item)
+                if get_origin(unwrapped) is Literal:
+                    literal_fields.append((name, get_args(unwrapped)))
+
+            def structured_score(value):
+                if not isinstance(value, dict):
+                    return 1 if isinstance(value, annotation) else -1
+                for name, literals in literal_fields:
+                    if name in value and value[name] not in literals:
+                        return -1
+                return len(value.keys() & declared_keys) + 1
+
+            def structured_copy(value):
+                if not isinstance(value, dict):
+                    return _copy_payload(value)
+                return {
+                    name: children[name].apply(item) if name in children else _copy_payload(item)
+                    for name, item in value.items()
+                    if name in children or (allow_extra and name not in _INTERNAL_FIELDS)
+                }
+
+            def structured_projection(value):
+                if not isinstance(value, dict):
+                    return value
+                return {
+                    name: children[name].project(item) if name in children else item
+                    for name, item in value.items()
+                    if name in children or (allow_extra and name not in _INTERNAL_FIELDS)
+                }
+
+            node.score = structured_score
+            node.apply = structured_copy
+            node.project = structured_projection
+        else:
+            # Open dictionaries (tool arguments/results and JSON Schema) are
+            # atomic application data; protocol filtering never inspects keys.
+            node.apply = _copy_payload
+            node.project = _borrow_payload
+        return node
+
+    return compile(key.schema)
 
 
 def supported(value, schema):
-    """Copy declared fields recursively, without pruning JSON Schema or tool data."""
-    origin = get_origin(schema)
-    arguments = get_args(schema)
-    if origin in (Annotated, Required, NotRequired):
-        return supported(value, arguments[0])
-    if origin in (Union, UnionType):
-        if value is None:
-            return None
-        choices = [choice for choice in arguments if choice is not type(None)]
-        if len(choices) == 1:
-            return supported(value, choices[0])
-        choice = max(choices, key=lambda item: _score(value, item))
-        if _score(value, choice) < 0:
-            raise UnsupportedCapabilityError("target SDK cannot represent this protocol value")
-        return supported(value, choice)
-    if isinstance(value, list) and origin in (list, tuple, Iterable):
-        return [supported(item, arguments[0]) for item in value] if arguments else deepcopy(value)
-    if isinstance(value, dict) and _structured(schema):
-        return {
-            key: supported(item, fields(schema)[key])
-            for key, item in value.items()
-            if key in fields(schema)
-        }
-    # Arbitrary dictionaries (tool arguments/results and JSON Schemas) are atomic
-    # application payloads. Their keys are never interpreted as protocol fields.
-    return deepcopy(value)
+    """Filter with a cached type plan, isolating mutable application payloads."""
+    return _plan(schema).apply(value)
+
+
+def projected(value, schema):
+    """Project SDK fields for read-only validation, borrowing atomic payloads."""
+    return _plan(schema).project(value)
 
 
 def validate_history(messages: list[dict], *, allow_external_calls: bool = False) -> None:
@@ -101,7 +240,7 @@ def validate_history(messages: list[dict], *, allow_external_calls: bool = False
         raise MessageValidationError("messages must be non-empty")
     calls = set()
     used = set()
-    for message in dictionaries(messages):
+    for message in dictionary_views(messages):
         if message.get(OPAQUE):
             continue
         if message.get("role") not in ("system", "developer", "user", "assistant"):

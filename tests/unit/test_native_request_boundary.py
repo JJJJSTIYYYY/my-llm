@@ -1,11 +1,44 @@
 """Native transport boundaries validate and filter every request-bearing structure."""
 
 from copy import deepcopy
+from typing import Literal
 
 import pytest
+from pydantic import BaseModel, ConfigDict
 
-from my_llm import ConfigurationError, MyCodec, UnsupportedCapabilityError
+from my_llm import ConfigurationError, MessageValidationError, MyCodec, UnsupportedCapabilityError
+from my_llm.codec.openai.chat.transport import ChatCompletionsTransport
 from my_llm.codec.shared.conversion import REPLAY
+
+
+def test_open_model_extensions_survive_validation_and_repeated_requests(profile_factory):
+    class Message(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        role: Literal["user"]
+        content: str
+        __pydantic_extra__: dict[str, int]
+
+    class Transport(ChatCompletionsTransport):
+        __slots__ = ()
+        message_type = Message
+
+    bound = Transport()
+    profile = profile_factory("openai_chat")
+    for message in (
+        {"role": "user", "content": "first"},
+        {"role": "user", "content": "second", "vendor_count": 2},
+    ):
+        original = deepcopy(message)
+        bound.validate_input([message])
+        request = bound.request({"messages": [message]}, profile)
+        assert request["messages"] == [original]
+        assert message == original
+
+    invalid = {"role": "user", "content": "third", "vendor_count": {"invalid": True}}
+    with pytest.raises(MessageValidationError):
+        bound.validate_input([invalid])
+    with pytest.raises(MessageValidationError):
+        bound.request({"messages": [invalid]}, profile)
 
 
 @pytest.mark.parametrize("target", ["anthropic", "gemini"])
@@ -94,3 +127,32 @@ def test_direct_native_requests_validate_generation_settings(
     with pytest.raises((ConfigurationError, UnsupportedCapabilityError), match=match):
         MyCodec().transport(protocol).request(request, profile_factory(protocol, max_tokens=2048))
     assert request == original
+
+
+def test_anthropic_tool_json_schema_preserves_open_keywords(profile_factory):
+    schema = {
+        "type": "object",
+        "properties": {"item": {"$ref": "#/$defs/item"}},
+        "required": ["item"],
+        "additionalProperties": False,
+        "$defs": {"item": {"type": "string", "minLength": 1}},
+        "minProperties": 1,
+    }
+    tool = {"name": "analyze", "input_schema": schema, "vendor_field": "filter this"}
+    original = deepcopy(tool)
+    request = (
+        MyCodec()
+        .transport("anthropic")
+        .request(
+            {"messages": [{"role": "user", "content": "hello"}], "tools": [tool]},
+            profile_factory("anthropic", max_tokens=2048, supports_function_calling=True),
+        )
+    )
+    assert request["tools"] == [{"name": "analyze", "input_schema": schema}]
+    assert tool == original
+
+
+@pytest.mark.parametrize("message", [None, "invalid", {"role": "user", "images": [None]}])
+def test_ollama_invalid_messages_still_report_protocol_validation_errors(message):
+    with pytest.raises(MessageValidationError):
+        MyCodec().validate_input("ollama", [message])

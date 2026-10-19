@@ -8,6 +8,7 @@ from my_llm.codec.gemini.decoding.content import decode_part, foreign_block
 from my_llm.codec.shared.conversion import (
     OPAQUE,
     Translations,
+    blocks,
     coalesce_groups,
     decode_functions,
     extras,
@@ -99,27 +100,32 @@ class GeminiDecoder(BaseDecoder):
                 result.extend(original(message, PROTOCOL))
                 continue
             native = original(message, PROTOCOL)
-            foreign = source_protocol(message) != PROTOCOL
-            if foreign:
-                message = project_message(message, foreign_block)
-            parts = []
             for block in message.get("content", []):
                 if block.get("type") == "tool_use":
                     names[block["id"]] = block["name"]
-                if block.get("type") == "tool_result":
-                    if not block.get("name"):
-                        block["name"] = names.get(block["tool_use_id"])
-                parts.append(decode_part(block, foreign=foreign))
             if native is not None:
                 result.extend(native)
+                continue
+            foreign = source_protocol(message) != PROTOCOL
+            if foreign:
+                message = project_message(message, foreign_block)
             else:
-                result.append(
-                    {
-                        **extras(message, "role", "content", "tool_calls"),
-                        "role": "model" if message["role"] == "assistant" else message["role"],
-                        "parts": parts,
-                    }
-                )
+                # Without a native snapshot, these parts become the public
+                # result. Capture their mutable payloads once at that boundary.
+                message = {**message, "content": blocks(message.get("content"))}
+            parts = []
+            for block in message.get("content", []):
+                if block.get("type") == "tool_result":
+                    if not block.get("name"):
+                        block = {**block, "name": names.get(block["tool_use_id"])}
+                parts.append(decode_part(block, foreign=foreign))
+            result.append(
+                {
+                    **extras(message, "role", "content", "tool_calls"),
+                    "role": "model" if message["role"] == "assistant" else message["role"],
+                    "parts": parts,
+                }
+            )
         return result
 
     def _tools(

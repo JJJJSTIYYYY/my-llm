@@ -10,7 +10,12 @@ from my_llm.profile.resolution import ResolvedProfile
 
 
 class BaseEncoder(ABC):
-    """Translate values and recover unchanged converted histories."""
+    """Translate values and recover unchanged converted histories.
+
+    Public translation methods capture the input once in encode_retained().
+    Protocol hooks receive owned, normalized dictionaries and may build their
+    output from those values without repeating boundary copies.
+    """
 
     __slots__ = ()
 

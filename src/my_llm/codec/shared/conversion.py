@@ -8,6 +8,7 @@ branches or SDK request validation. It defines no public application schema.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from copy import deepcopy
 from typing import Any
 
@@ -46,19 +47,37 @@ class Translations(list[dict]):
         self.groups: list[tuple[int, list[dict], dict]] = []
 
     def group(self, sources: list[dict], *, structure: dict | None = None) -> None:
-        self.groups.append((len(self), deepcopy(sources), structure or {}))
+        # Groups are consumed by retain() before this translation returns. They
+        # describe read-only sources, not independently mutable snapshots.
+        self.groups.append((len(self), sources, structure or {}))
+
+
+def dictionary_views(values: Any) -> Iterator[dict[str, Any]]:
+    """Read normalized protocol dictionaries without copying their payloads."""
+    if not isinstance(values, (list, tuple)):
+        raise MessageValidationError("expected a list of protocol dictionaries or SDK objects")
+    for value in values:
+        if hasattr(value, "model_dump"):
+            value = value.model_dump(mode="json", exclude_none=True)
+        if not isinstance(value, dict):
+            raise MessageValidationError("expected protocol dictionaries or SDK objects")
+        # Rebuild only the envelope that needs translated fields applied.
+        if TRANSLATED in value:
+            value = {
+                **{key: child for key, child in value.items() if key != TRANSLATED},
+                **value[TRANSLATED],
+            }
+        yield value
 
 
 def dictionaries(values: Any) -> list[dict[str, Any]]:
-    if not isinstance(values, (list, tuple)):
-        raise MessageValidationError("expected a list of protocol dictionaries or SDK objects")
-    result = [deepcopy(plain(value)) for value in values]
-    if any(not isinstance(value, dict) for value in result):
-        raise MessageValidationError("expected protocol dictionaries or SDK objects")
-    for value in result:
-        # Translated values always have priority over native extensions.
-        value.update(value.pop(TRANSLATED, {}))
-    return result
+    """Capture independent mutable values at a public conversion boundary."""
+    # SDK JSON dumps already produce owned trees; dictionary inputs still need
+    # their one snapshot before hooks or callers can modify the result.
+    return [
+        value if hasattr(values[index], "model_dump") else deepcopy(value)
+        for index, value in enumerate(dictionary_views(values))
+    ]
 
 
 def _overlay(value: Any, extension: Any) -> Any:
@@ -72,13 +91,10 @@ def _overlay(value: Any, extension: Any) -> Any:
             },
         }
     if isinstance(value, list) and isinstance(extension, list):
-        result = deepcopy(value)
-        for index, child in enumerate(extension):
-            if index < len(result):
-                result[index] = _overlay(result[index], child)
-            else:
-                result.append(deepcopy(child))
-        return result
+        return [
+            _overlay(child, extension[index]) if index < len(extension) else deepcopy(child)
+            for index, child in enumerate(value)
+        ] + [deepcopy(child) for child in extension[len(value) :]]
     return deepcopy(extension)
 
 
@@ -172,7 +188,7 @@ def coalesce_groups(messages: list) -> list[tuple[list[dict], dict]]:
     result = []
     # A source may represent one assistant turn as several native items.
     # Its encoder declares whether those fragments may be grouped for rendering.
-    for message in dictionaries(messages):
+    for message in dictionary_views(messages):
         if (
             result
             and message.get(SOURCE, {}).get("coalesce_assistant", False)
@@ -181,10 +197,14 @@ def coalesce_groups(messages: list) -> list[tuple[list[dict], dict]]:
             and not message.get(OPAQUE)
             and not result[-1][1].get(OPAQUE)
         ):
-            result[-1][0].append(deepcopy(message))
-            result[-1][1]["content"].extend(message.get("content", []))
+            sources, previous = result[-1]
+            sources.append(message)
+            result[-1] = (
+                sources,
+                {**previous, "content": [*previous["content"], *message.get("content", [])]},
+            )
         else:
-            result.append(([deepcopy(message)], message))
+            result.append(([message], message))
     return result
 
 
@@ -275,7 +295,7 @@ def mapping_list(value) -> bool:
 
 def match_all(values, predicate) -> bool:
     try:
-        items = dictionaries(values)
+        items = list(dictionary_views(values))
         return bool(items) and all(predicate(item) for item in items)
     except (MessageValidationError, TypeError, AttributeError, KeyError):
         return False
@@ -333,7 +353,8 @@ def text_result(value) -> str:
 
 def encode_functions(tools, protocol, unwrap, *, consumed):
     result = []
-    for tool in dictionaries(tools):
+    # Encoder hooks receive values already captured by replay_inputs().
+    for tool in tools:
         functions = unwrap(tool)
         fields = consumed(tool) if callable(consumed) else consumed
         remaining = residual(tool, fields if functions is not None else {})
@@ -350,7 +371,7 @@ def encode_functions(tools, protocol, unwrap, *, consumed):
 
 def decode_functions(tools, protocol, wrap, *, structure=None) -> Translations:
     result = Translations()
-    for tool in dictionaries(tools):
+    for tool in dictionary_views(tools):
         result.group([tool], structure=structure)
         native = original(tool, protocol)
         if native is not None:
@@ -360,5 +381,7 @@ def decode_functions(tools, protocol, wrap, *, structure=None) -> Translations:
                 "opaque native tools cannot be replayed to another protocol"
             )
         else:
-            result.extend(wrap(tool[FUNCTIONS]))
+            # Only the translated definitions become mutable public output;
+            # their surrounding provenance is consumed read-only by retain().
+            result.extend(wrap(deepcopy(tool[FUNCTIONS])))
     return result

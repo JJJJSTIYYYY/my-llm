@@ -10,7 +10,7 @@ from typing import Any
 from openai import Omit, omit
 
 from my_llm.codec.converter import MyCodec
-from my_llm.codec.shared.conversion import dictionaries
+from my_llm.codec.shared.conversion import dictionary_views
 from my_llm.exceptions import ConfigurationError, MessageValidationError, StreamError
 from my_llm.profile.configuration import Protocol, ReasoningEffort
 from my_llm.profile.model_profile import ModelProfile
@@ -120,8 +120,12 @@ class MyLLM:
         self._check_open()
         if not isinstance(stream, bool):
             raise ConfigurationError("stream must be a bool")
-        history = dictionaries(messages)
-        tool_values = None if tools is None or isinstance(tools, Omit) else dictionaries(tools)
+        # Preparation does not await: inspect borrowed inputs, then let Encoder
+        # capture its one mutable snapshot before any SDK execution can yield.
+        history = list(dictionary_views(messages))
+        tool_values = (
+            None if tools is None or isinstance(tools, Omit) else list(dictionary_views(tools))
+        )
         # Tool declarations can disambiguate otherwise identical text-only histories.
         protocol = self.guess_stdio_protocol([*history, *(tool_values or [])])
         self.codec.validate_input(protocol, history, tool_values)
@@ -172,7 +176,7 @@ class MyLLM:
                     for output in self._render(state.feed(encoded), state, stdio_protocol):
                         yield output
                 final = state.finish()
-                converted = self.codec.result(state.messages(), target_format=stdio_protocol)
+                converted = self.codec.result(final[-1]["messages"], target_format=stdio_protocol)
                 for output in self._render(final, state, stdio_protocol):
                     yield output
             state.result = converted

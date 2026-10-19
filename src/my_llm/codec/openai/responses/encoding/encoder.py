@@ -14,7 +14,7 @@ from my_llm.codec.shared.conversion import (
     OPAQUE,
     SOURCE,
     arguments,
-    dictionaries,
+    dictionary_views,
     encode_functions,
     extras,
     mapping_list,
@@ -76,7 +76,7 @@ class ResponsesEncoder(BaseEncoder):
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for item in dictionaries(messages):
+        for item in messages:
             kind = item.get("type", "message")
             # A role extension on a non-message item cannot change its translated role.
             role = item.get("role", "assistant") if kind == "message" else "assistant"
@@ -154,7 +154,7 @@ class ResponsesEncoder(BaseEncoder):
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for event in dictionaries(chunks):
+        for event in chunks:
             kind = event.get("type")
             if kind in ("response.failed", "response.incomplete", "error") or event.get("error"):
                 error = (
@@ -202,7 +202,8 @@ class ResponsesEncoder(BaseEncoder):
                 kind == "response.output_item.done"
                 and event.get("item", {}).get("type") == "function_call"
             ):
-                block = dictionaries(self._messages([event["item"]]))[0]["content"][0]
+                message = next(dictionary_views(self._messages([event["item"]])))
+                block = message["content"][0]
                 ops.append(
                     {"type": "block_set", "ref": BlockRef("tool_use", index), "block": block}
                 )
@@ -374,7 +375,7 @@ class ResponsesEncoder(BaseEncoder):
         """Address final blocks with the same item/part coordinates as live deltas."""
         encoded = self._messages(output)
         blocks = []
-        for index, (item, message) in enumerate(zip(output, dictionaries(encoded))):
+        for index, (item, message) in enumerate(zip(output, dictionary_views(encoded))):
             if message.get(OPAQUE):
                 continue
             for part, block in enumerate(message.get("content", [])):

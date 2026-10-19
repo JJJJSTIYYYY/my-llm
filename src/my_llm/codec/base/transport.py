@@ -3,14 +3,13 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Hashable
 from contextlib import AbstractAsyncContextManager
-from copy import deepcopy
 from typing import Any, final
 
 from openai import Omit
 from pydantic import ValidationError
 
 from my_llm.codec.shared.options import PreparedOptions, resolve_options
-from my_llm.codec.shared.transport import adapter, supported, validate_history
+from my_llm.codec.shared.transport import adapter, projected, supported, validate_history
 from my_llm.exceptions import ConfigurationError, MessageValidationError, UnsupportedCapabilityError
 from my_llm.profile.resolution import ResolvedProfile
 
@@ -67,7 +66,7 @@ class BaseTransport(ABC):
                 raise TypeError("protocol values must be a list")
             validator = adapter(schema)
             for value in values:
-                parsed = validator.validate_python(value if filtered else supported(value, schema))
+                parsed = validator.validate_python(value if filtered else projected(value, schema))
                 # SDK TypedDicts include lazy Iterable validators. Serializing
                 # forces nested validation rather than accepting an unchecked iterator.
                 validator.dump_json(parsed, warnings="error")
@@ -106,7 +105,7 @@ class BaseTransport(ABC):
         history: list | None = None,
         **parameters: Any,
     ) -> dict:
-        """Filter and validate an isolated native request before SDK execution."""
+        """Filter native payloads and validate their owned request envelopes."""
         if history is not None:
             validate_history(
                 history,
@@ -114,7 +113,9 @@ class BaseTransport(ABC):
                     parameters.get("previous_response_id")
                 ),
             )
-        request = deepcopy(request)
+        # Filtering creates owned message/tool payloads. Rebuild only the
+        # envelopes whose entries this boundary replaces.
+        request = dict(request)
         messages = self._parent(request, self.message_path)
         if messages is None or self.message_path[-1] not in messages:
             raise MessageValidationError("native request requires messages")
@@ -136,9 +137,11 @@ class BaseTransport(ABC):
 
     def _parent(self, request: dict, path: tuple[str, ...]) -> dict | None:
         for key in path[:-1]:
-            request = request.get(key)
-            if not isinstance(request, dict):
+            child = request.get(key)
+            if not isinstance(child, dict):
                 return None
+            request[key] = dict(child)
+            request = request[key]
         return request
 
     def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
@@ -149,7 +152,11 @@ class BaseTransport(ABC):
 
     @abstractmethod
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
-        """Check native options and construct any required public SDK types."""
+        """Check native options and construct any required public SDK types.
+
+        Replace additional nested containers when changing them; unmodified
+        options can remain borrowed from the input request.
+        """
         ...
 
     def allows_external_calls(self, previous_response_id: Any) -> bool:

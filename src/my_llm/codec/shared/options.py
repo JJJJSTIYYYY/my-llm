@@ -63,12 +63,14 @@ def path_value(value: Any, path: str | Omit) -> Any:
 
 
 def expand_value(value: Any, effort: str) -> Any:
-    """Expand effort placeholders, retaining omit until binding layers are merged."""
+    """Expand containers once and capture mutable leaves of the binding."""
     if isinstance(value, dict):
         return {key: expand_value(item, effort) for key, item in value.items()}
     if isinstance(value, list):
         return [expand_value(item, effort) for item in value]
-    return effort if value == "{effort}" else value
+    if type(value) in (str, int, float, bool, bytes, type(None)):
+        return effort if value == "{effort}" else value
+    return deepcopy(value)
 
 
 def _binding_value(value: Any) -> Any:
@@ -138,9 +140,9 @@ def resolve_options(
     effort = None if effort == "none" else effort
     bindings = []
     if effort is not None:
-        bindings.append(deepcopy(profile.get("reasoning_enable_parameter", {})))
+        bindings.append(profile.get("reasoning_enable_parameter", {}))
         if profile.get("supports_reasoning_effort", False):
-            bindings.append(deepcopy(profile.get("reasoning_effort_parameter", {})))
+            bindings.append(profile.get("reasoning_effort_parameter", {}))
     return PreparedOptions(
         tokens,
         deepcopy(headers),
@@ -174,7 +176,7 @@ def validate_max_tokens_path(
     if not target or target[0] in protected:
         raise ConfigurationError("max_tokens_path cannot override protocol parameters")
     if request is not None:
-        set_path(deepcopy(request), path, tokens)
+        set_path(dict(request), path, tokens)
 
 
 def apply_max_tokens(

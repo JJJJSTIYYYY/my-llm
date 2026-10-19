@@ -9,7 +9,7 @@ from my_llm.codec.shared.conversion import (
     REPLAY,
     SOURCE,
     dictionaries,
-    extras,
+    dictionary_views,
     residual,
     source_protocol,
 )
@@ -36,8 +36,11 @@ def _leftovers(value):
             result["source"] = dict.fromkeys(("type", "url", "media_type", "data"), True)
         return result
 
-    value = dictionaries([value])[0]
-    return residual(extras(value, FUNCTIONS, OPAQUE), {"role": True, "content": [consumed]})
+    value = next(dictionary_views([value]))
+    remaining = {
+        key: child for key, child in value.items() if key not in (FUNCTIONS, OPAQUE, SOURCE)
+    }
+    return residual(remaining, {"role": True, "content": [consumed]})
 
 
 def _has_leftovers(values):
@@ -54,15 +57,17 @@ def merge_extensions(extension, converted, structure=None, *, positional=True):
     """Merge declared containers without guessing ambiguous list positions."""
     structure = {} if structure is None else structure
     if isinstance(extension, dict) and isinstance(converted, dict) and isinstance(structure, dict):
-        return {
-            **deepcopy(extension),
-            **{
-                key: merge_extensions(extension[key], value, structure[key], positional=positional)
-                if key in extension and key in structure
-                else deepcopy(value)
-                for key, value in converted.items()
-            },
-        }
+        result = {}
+        for key in dict.fromkeys((*extension, *converted)):
+            if key not in converted:
+                result[key] = deepcopy(extension[key])
+            elif key in extension and key in structure:
+                result[key] = merge_extensions(
+                    extension[key], converted[key], structure[key], positional=positional
+                )
+            else:
+                result[key] = deepcopy(converted[key])
+        return result
     if (
         isinstance(extension, list)
         and isinstance(converted, list)
@@ -99,21 +104,30 @@ def retain(
         return converted
     if not force and not _has_leftovers(values):
         return converted
-    canonical = deepcopy(converted)
-    result = deepcopy(converted)
+    # The decoder just constructed these values. Keep that unmodified version
+    # as the canonical snapshot; only the published copy receives extensions.
+    canonical = converted
+    extensions = {}
     # Only decoders know which source values produced an output group. Never
     # infer that association from matching positions or list lengths.
     for position, (start, sources, structure) in enumerate(groups):
-        end = groups[position + 1][0] if position + 1 < len(groups) else len(result)
+        end = groups[position + 1][0] if position + 1 < len(groups) else len(converted)
         if start == end:
             continue
         for source in sources:
-            result[start] = merge_extensions(
-                _leftovers(source),
-                result[start],
+            remaining = _leftovers(source)
+            if not remaining:
+                continue
+            extensions[start] = merge_extensions(
+                remaining,
+                extensions.get(start, converted[start]),
                 structure,
                 positional=len(sources) == end - start == 1,
             )
+    result = [
+        extensions[index] if index in extensions else deepcopy(value)
+        for index, value in enumerate(converted)
+    ]
     result[0][REPLAY] = {
         "protocol": protocol,
         "kind": kind,
@@ -126,11 +140,10 @@ def retain(
 
 def replay_inputs(values, protocol, kind=None):
     """Return translated input copies and unchanged groups eligible for recovery."""
-    values = dictionaries(values)
-    clean = deepcopy(values)
+    clean = dictionaries(values)
     restored = {}
     index = 0
-    while index < len(values):
+    while index < len(clean):
         record = clean[index].pop(REPLAY, None)
         if (
             not isinstance(record, dict)
@@ -153,10 +166,11 @@ def replay_inputs(values, protocol, kind=None):
             index += 1
             continue
         count = len(output)
-        observed = deepcopy(values[index : index + count])
-        observed[0].pop(REPLAY, None)
+        # REPLAY has already been removed from this captured envelope. The
+        # comparison only reads its payload, so no observation copy is needed.
+        observed = clean[index : index + count]
         if observed == output:
-            clean[index : index + count] = deepcopy(canonical)
+            clean[index : index + count] = canonical
             restored[index] = (count, original)
             index += count
         else:
@@ -169,7 +183,7 @@ def replay_inputs(values, protocol, kind=None):
 def _calls(values):
     return [
         block["id"]
-        for value in dictionaries(values)
+        for value in dictionary_views(values)
         for block in value.get("content", [])
         if isinstance(block, dict) and block.get("type") == "tool_use"
     ]
@@ -191,7 +205,8 @@ def encode_retained(encode, values, protocol, kind, profile=None, **parameters):
             count, original = restored[index]
             if kind == "messages":
                 call_ids.update(zip(_calls(encoded[index : index + count]), _calls(original)))
-            result.extend(deepcopy(original))
+            # Recovery values belong to the record captured by replay_inputs().
+            result.extend(original)
             index += count
         else:
             value = encoded[index]

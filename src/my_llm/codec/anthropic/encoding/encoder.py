@@ -4,8 +4,7 @@ from typing import Any
 
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.shared.conversion import (
-    blocks,
-    dictionaries,
+    dictionary_views,
     encode_functions,
     extras,
     mapping_list,
@@ -78,10 +77,18 @@ class AnthropicEncoder(BaseEncoder):
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for message in dictionaries(messages):
+        for message in messages:
+            content = message.get("content")
+            content = (
+                [{"type": "text", "text": content}]
+                if isinstance(content, str)
+                else list(dictionary_views(content))
+                if content is not None
+                else []
+            )
             result.append(
                 remember(
-                    {**message, "content": blocks(message.get("content"))},
+                    {**message, "content": content},
                     [message],
                     PROTOCOL,
                     preserve=residual(
@@ -129,7 +136,7 @@ class AnthropicEncoder(BaseEncoder):
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for event in dictionaries(chunks):
+        for event in chunks:
             if event.get("type") == "error" or event.get("error"):
                 raise ResponseFailedError(
                     "provider generation failed", details=event.get("error", event)

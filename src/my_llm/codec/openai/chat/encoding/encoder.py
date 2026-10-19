@@ -11,7 +11,6 @@ from my_llm.codec.openai.chat.encoding.content import (
     tool_operations,
 )
 from my_llm.codec.shared.conversion import (
-    dictionaries,
     encode_functions,
     extras,
     mapping_list,
@@ -63,7 +62,7 @@ class ChatCompletionsEncoder(BaseEncoder):
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for message in dictionaries(messages):
+        for message in messages:
             content = encode_content(message.get("content"))
             # Appending preserves the original indices of content-block extensions.
             if message.get("reasoning_content"):
@@ -139,7 +138,7 @@ class ChatCompletionsEncoder(BaseEncoder):
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for event in dictionaries(chunks):
+        for event in chunks:
             if event.get("type") == "error" or event.get("error"):
                 raise ResponseFailedError(
                     "provider generation failed", details=event.get("error", event)

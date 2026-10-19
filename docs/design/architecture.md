@@ -66,7 +66,26 @@ Decoder._messages / _tools 返回 Translations，显式声明每组输出的来�
 
 Transport 从公开 SDK 消息与工具类型取得字段定义。过滤仅作用于请求副本，
 不修改业务保存的消息，也不递归删除工具参数、结果或 JSON Schema 中的应用键。
+Pydantic 模型配置 extra="allow" 时保留额外字段；已声明字段仍按各自类型递归处理，
+库保留的来源与恢复键仍在协议结构层过滤。
 兼容服务的显式 extra_body、extra_headers 与思考回放策略仍由 Profile 配置。
+
+### 数据所有权与缓存
+
+`MyLLM.generate` 的准备阶段不发生异步等待：先只读规范化并验证输入，再由 Encoder
+在公开转换边界捕获一次可变数据，完成后才进入 SDK 执行。协议私有编码 hook 直接使用
+这份已隔离的输入。来源分组、历史关联校验与回放比较只读借用数据；合并内容或覆盖字段时，
+只重建实际改写的容器。公开转换结果、回放快照、请求选项及完成结果仍拥有需要独立修改的内容。
+
+Transport 的 Schema 缓存只保存类型分析结果：字段子计划、Literal 判别信息和 Union 候选顺序。
+只读验证使用 `projected`，重建需要过滤的协议结构并借用应用 payload；生成请求使用 `supported`，
+为可变输出建立必要副本。两者共用预编译计划，不保存历史、Profile 或 SDK 客户端。
+Union 的同分选择遵循声明顺序；缓存键也保留嵌套 Union 的顺序。
+缓存键、闭包中保存的实际规则及完整运行示例，见 [Schema 过滤计划缓存](schema-filter-cache.md)。
+
+块物化缓存属于请求内的 `BlockState`，随内容更新失效。成功结束后，`StreamState` 复用经过验证的
+终态块与消息，调用编排直接把完成事件中的消息交给 Decoder；不重新物化或再次解析工具 JSON。
+这些缓存没有改变 Encoder、Decoder、Transport 的职责，也没有把请求数据放入共享组件。
 
 ## 请求与返回路径
 
@@ -110,6 +129,7 @@ MyCodec / MyLLM 保存创建时的注册快照，后续注册只影响新实例�
 - [独立协议注册](../../tests/integration/test_protocol_registration.py)：第六协议的默认值、注册快照及完整请求路径。
 - [原路径保留](../../tests/contract/test_intermediate_preservation.py)与[协议符合性](../../tests/contract/test_protocol_conformance.py)：字段层级、转换优先级与协议结构。
 - [并发验证](../audits/concurrency.md)：五协议组合、混合请求、失败隔离和资源关闭。
+- [数据所有权](../../tests/unit/test_copy_ownership.py)、[过滤计划](../../tests/unit/test_schema_filter_plans.py)与[终态物化](../../tests/contract/test_stream_materialization.py)：深层隔离、缓存复用及请求间数据独立。
 
 测试使用本地响应，不验证供应商真实密文的密码学有效性。服务端仍校验模型、上下文与签名。
 开发与构建步骤见[文档目录](../README.md)，扩展协议见[接入指南](../guides/adding-protocol.md)。

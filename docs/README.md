@@ -4,6 +4,7 @@
 
 - [API 使用指南](reference/api.md)：调用、流式消费、工具回合和独立格式转换。
 - [配置参考](reference/configuration.md)：ProviderProfile、ModelProfile 与覆盖规则。
+- [SenseNova 接入与端到端测试](guides/sensenova.md)：三种协议九条路径的真实服务验证。
 - [五协议请求与返回模板](reference/schema/README.md)：固定来源的 Schema、请求、返回及流事件。
 
 ## 开发与设计

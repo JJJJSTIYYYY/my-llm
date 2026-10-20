@@ -144,6 +144,25 @@ print(converted["messages"])
 
 同一实例的消息与工具使用同一种输入输出协议。
 
+### 已通过端到端验证的协议组合
+
+2026-10-20，使用 SenseNova 的 `sensenova-6.8-flash-lite` 模型完成三种协议的
+**3×3 九条真实 API 路径验证，27 个场景全部通过，共 36 次上游请求**。
+
+| 输入/输出协议 ↓ / 上游 API → | Chat Completions | Responses | Anthropic Messages |
+| --- | --- | --- | --- |
+| `openai_chat` | 已验证 | 已验证 | 已验证 |
+| `openai_responses` | 已验证 | 已验证 | 已验证 |
+| `anthropic` | 已验证 | 已验证 | 已验证 |
+
+每条路径覆盖文本汇总、流式增量与汇总一致性，以及工具调用、参数组装和工具结果回传。
+汇总模式也通过上游 SSE 执行，本轮未单独验证供应商的 HTTP 非流式响应。
+实测中 Chat、Anthropic 的关闭思考参数未完全阻止返回思考块，部分跨协议输出会将其转为可见文本；
+上述路径分别校验最终答案与完整流式文本一致性。
+
+接入配置、复跑方法及验证边界见 [SenseNova 端到端测试指南](docs/guides/sensenova.md)，
+逐项结果见 [JSON 报告](docs/audits/data/sensenova-e2e-2026-10-20.json)。
+
 ## 安装最新的开发版本 (main 分支)
 
 ```sh

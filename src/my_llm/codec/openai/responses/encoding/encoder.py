@@ -3,6 +3,8 @@
 from copy import deepcopy
 from typing import Any
 
+from openai.types.responses import ResponseInputItemParam, ToolParam
+
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.openai.responses.encoding.content import (
     encode_content,
@@ -28,6 +30,8 @@ class ResponsesEncoder(BaseEncoder):
 
     __slots__ = ()
     protocol = PROTOCOL
+    message_type = ResponseInputItemParam
+    tool_type = ToolParam
 
     def match_item(self, item: dict) -> bool:
         kind = item.get("type")

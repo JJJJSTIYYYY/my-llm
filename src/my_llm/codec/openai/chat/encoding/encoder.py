@@ -3,6 +3,8 @@
 from copy import deepcopy
 from typing import Any
 
+from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
+
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.openai.chat.encoding.content import (
     encode_content,
@@ -27,6 +29,8 @@ class ChatCompletionsEncoder(BaseEncoder):
 
     __slots__ = ()
     protocol = PROTOCOL
+    message_type = ChatCompletionMessageParam
+    tool_type = ChatCompletionToolParam
 
     def match_item(self, item: dict) -> bool:
         if item.get("type") == "function":

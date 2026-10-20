@@ -15,7 +15,7 @@ from tests.helpers.requests import encode_request
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_request_resolves_shared_options_once(profile_factory, protocol):
     profile = profile_factory(protocol, max_tokens=parameter("max_tokens", 4096, protocol=protocol))
-    with patch("my_llm.codec.base.transport.resolve_options", wraps=resolve_options) as resolve:
+    with patch("my_llm.codec.base.decoder.resolve_options", wraps=resolve_options) as resolve:
         request = encode_request(profile, reasoning=True)
     assert request["model"] == profile.model
     resolve.assert_called_once_with(profile, reasoning=True)
@@ -30,7 +30,7 @@ def test_request_resolves_shared_options_once(profile_factory, protocol):
         ({"extra_body": {"model": "override"}}, "cannot override protocol parameters"),
     ],
 )
-def test_invalid_options_fail_before_decoder(
+def test_invalid_options_fail_before_translation(
     monkeypatch, profile_factory, protocol, parameters, match
 ):
     codec = MyCodec()
@@ -39,7 +39,7 @@ def test_invalid_options_fail_before_decoder(
     def must_not_translate(*args, **kwargs):
         pytest.fail("invalid generation options reached the Decoder")
 
-    monkeypatch.setattr(type(codec.decoder(protocol)), "request", must_not_translate)
+    monkeypatch.setattr(type(codec.decoder(protocol)), "_messages", must_not_translate)
     with pytest.raises(ConfigurationError, match=match):
         codec.request(
             intermediate,
@@ -49,7 +49,7 @@ def test_invalid_options_fail_before_decoder(
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
-def test_protected_binding_fails_before_decoder(monkeypatch, profile_factory, protocol):
+def test_protected_binding_fails_before_translation(monkeypatch, profile_factory, protocol):
     codec = MyCodec()
     intermediate = codec.encode([{"role": "user", "content": "hello"}], input_format="openai_chat")
     profile = profile_factory(
@@ -63,7 +63,7 @@ def test_protected_binding_fails_before_decoder(monkeypatch, profile_factory, pr
     def must_not_translate(*args, **kwargs):
         pytest.fail("a protected reasoning binding reached the Decoder")
 
-    monkeypatch.setattr(type(codec.decoder(protocol)), "request", must_not_translate)
+    monkeypatch.setattr(type(codec.decoder(protocol)), "_messages", must_not_translate)
     with pytest.raises(ConfigurationError, match="cannot override protocol parameters"):
         codec.request(intermediate, profile, reasoning=True)
 
@@ -109,7 +109,7 @@ def test_prepared_options_and_requests_own_their_nested_values(
         ),
     )
     profile_before = deepcopy(profile.values)
-    options = codec.transport(protocol).validate_parameters(
+    options = codec.decoder(protocol).validate_parameters(
         profile, reasoning=True, extra_body=caller_body, extra_headers=caller_headers
     )
     options_before = deepcopy(options)

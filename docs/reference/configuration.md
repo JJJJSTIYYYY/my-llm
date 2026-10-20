@@ -130,7 +130,7 @@ Chat 的 reasoning_content 是兼容服务扩展；Responses、Gemini 仍按标�
 | `api_key` | Provider decode Parameter；配置连接密钥的传递位置，default_value 默认为 omit，不出现在 repr |
 | `timeout` / `max_retries` | Provider Config；正秒数 / 非负整数，默认使用 SDK 配置 |
 | `supports_stream` | Provider Config；默认 True，False/omit 不支持，因为两种返回模式均使用上游流 |
-| `usage_mode` | Provider Config；默认 none；可选值由协议 Transport.usage_modes 声明 |
+| `usage_mode` | Provider Config；默认 none；可选值由协议 Decoder.usage_modes 声明 |
 | `models` | Provider；可选 ModelProfile 列表，生成仍须显式选择模型 |
 | `model` | Model；必填非空模型 ID |
 | `max_context_window` | Model；默认 256000，仅描述性整数元数据，不截断输入或限制输出 |
@@ -147,7 +147,7 @@ Provider 的 `add_models(ModelProfile | list[ModelProfile])` 按 ID 更新并保
 Ollama SDK 没有原生 max_retries 选项，仅接受默认值 None / omit / 0，正数在构造时拒绝。
 
 `api_key` 在创建 SDK 客户端时应用，其路径指向连接参数组：`$.api_key` 使用 SDK 密钥参数，
-`$.extra_headers.<头名>` 使用指定认证头。Transport 将请求头映射到 SDK 的 default_headers、
+`$.extra_headers.<头名>` 使用指定认证头。Decoder 将请求头映射到 SDK 的 default_headers、
 Gemini 的 HttpOptions.headers 或 Ollama 的 headers；密钥不会作为生成参数写入请求体。
 配置值是完整字符串，Authorization 的 Bearer 前缀也由配置显式提供：
 
@@ -273,21 +273,45 @@ BaseDecoder 的统一请求流程应用所有 decode 参数，以上 vendor_budg
 encode 参数由 BaseEncoder.parameter_value() 统一读取，再由协议钩子完成对应消息语义。
 Config 的含义由需要它的 Encoder / Decoder / Transport 实现，不会自动产生业务功能。
 Model 不必重复声明 Provider 的扩展字段即可继承其解析结果；ProtocolDefaults 子类的新字段也自动加入解析。
+
+连接 Parameter 通过 dataclass 字段 metadata 声明 scope="client"；内置 `api_key` 已设置。
+其余 decode Parameter 默认属于 request，解析器一次完成分类，不根据字段名称在过滤器中排除认证参数。
+例如给认证字段使用不同名称：
+
+```python
+from dataclasses import dataclass, field
+from my_llm import Parameter, ProviderProfile
+
+
+@dataclass(frozen=True, kw_only=True)
+class HeaderProvider(ProviderProfile):
+    authentication: Parameter[str] = field(
+        default=Parameter(
+            name="认证头", path="$.extra_headers.x-auth", default_value="offline-token", phase="decode"
+        ),
+        metadata={"scope": "client"},
+    )
+```
+
+该声明进入客户端认证参数，不进入 SDK 请求参数；连接路径沿用 `$.api_key` 或 `$.extra_headers.<头名>`。
+连接配置及 SDK 映射在 MyLLM 构造时准备，请求 body、headers、生成控制在每次调用时准备。
+`ResolvedProfile.request_parameters` 保存请求声明，`connection` 保存已验证连接快照；均按实例只读使用。
+
 独立自定义协议沿用同一流程，见[接入指南](../guides/adding-protocol.md)。
 
 ## SDK 参数与协议字段
 
-所有原生请求在翻译后保持字典，经 Transport 统一过滤，再通过 `**parameters` 传给官方 SDK。
+所有原生请求在翻译后保持字典，经 Decoder 统一过滤，再通过 `**parameters` 传给官方 SDK。
 `$` 根参数必须符合 SDK 方法签名；兼容字段使用 SDK 已提供的 extra_body 等正式扩展入口，
 声明一个路径不会为 SDK 增加新的调用参数。
-路径声明也不会新增原生 Codec / Transport 的结构变体。例如将 Anthropic 的 thinking.type 改为 vendor，
-仍会受到本项目原生 Transport 的标准结构校验；需要扩展对应 Codec / Transport 实现该变体。
+路径声明也不会新增原生 Codec / Decoder 的结构变体。例如将 Anthropic 的 thinking.type 改为 vendor，
+仍会受到本项目原生 Decoder 的标准结构校验；需要扩展对应 Codec / Decoder 实现该变体。
 这属于本项目的协议语义约束，SDK 的类型注解本身不代表运行时必然拒绝该值。
 SDK 正式 extra_body 等开放字典可以承载自定义数据。
 Profile.extra_body 在 Chat / Responses 中对应 SDK extra_body；Anthropic / Ollama 使用原生请求参数，
 Gemini 使用 config 参数。SDK 不提供的扩展入口不能通过虚构根参数补出。
 
-Transport 按声明的消息、工具路径及官方 SDK 类型处理结构：
+Decoder 按声明的消息、工具路径及官方 SDK 类型处理结构：
 
 | 协议 | 消息路径 | 工具路径 |
 | --- | --- | --- |

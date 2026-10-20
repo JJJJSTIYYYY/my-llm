@@ -70,13 +70,37 @@ def assert_no_protocol_dispatch(tree, path):
 
 
 def assert_no_sdk_clients(tree, path):
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+
+    def signature_reference(alias):
+        name = alias.asname or alias.name
+        references = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Load)
+        ]
+        for reference in references:
+            attribute = parents.get(reference)
+            call = parents.get(attribute)
+            if not (
+                isinstance(attribute, ast.Attribute)
+                and isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == "parameter_types"
+                and call.args == [attribute]
+            ):
+                return False
+        return bool(references)
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             assert not any(
                 module.split(".")[0] in SDK_PACKAGES for module in imported_modules(node)
             ), path
         elif isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] in SDK_PACKAGES:
-            assert not any(alias.name in SDK_CLIENTS for alias in node.names), path
+            assert not any(
+                alias.name in SDK_CLIENTS and not signature_reference(alias) for alias in node.names
+            ), path
 
 
 def native_owner(path):

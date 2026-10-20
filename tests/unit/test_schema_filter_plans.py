@@ -429,7 +429,7 @@ def test_cached_plan_does_not_keep_request_payload_alive(operation):
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_official_sdk_plans_preserve_native_fields_and_prune_protocol_extensions(protocol):
-    bound = MyCodec().transport(protocol)
+    bound = MyCodec().decoder(protocol)
     for values, schema in [
         (history(protocol), bound.message_type),
         (tools(protocol), bound.tool_type),
@@ -443,7 +443,7 @@ def test_official_sdk_plans_preserve_native_fields_and_prune_protocol_extensions
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_official_sdk_validation_and_serialization_do_not_mutate_projected_inputs(protocol):
-    bound = MyCodec().transport(protocol)
+    bound = MyCodec().decoder(protocol)
     declarations = tools(protocol)
     if protocol in {"openai_chat", "ollama"}:
         parameters = declarations[0]["function"]["parameters"]

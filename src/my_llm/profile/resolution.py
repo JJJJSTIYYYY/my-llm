@@ -22,7 +22,7 @@ class ResolvedProfile:
     """Construction-time snapshot, with values and parameter bindings separated.
 
     Applications normally pass ProviderProfile/ModelProfile to MyLLM instead.
-    Transport validates protocol-specific constraints. Treat values, parameters
+    Decoder validates protocol-specific constraints. Treat values, parameters
     and their nested payloads as read-only.
     """
 
@@ -30,6 +30,9 @@ class ResolvedProfile:
     model: str
     values: dict[str, Any]
     parameters: dict[str, Parameter[Any] | Omit] = field(default_factory=dict)
+
+    request_parameters: tuple[tuple[str, Parameter[Any]], ...] = ()
+    connection: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def get(self, key: str, default: Any = None) -> Any:
         """Read a resolved default or code setting, falling back for omit."""
@@ -63,8 +66,10 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
     declarations: dict[str, str] = {}
     values: dict[str, Any] = {}
     parameters: dict[str, Parameter[Any] | Omit] = {}
+    scopes = {}
     for profile in (defaults, provider, model):
-        for name, kind, annotation in _declarations(type(profile)):
+        for name, kind, annotation, scope in _declarations(type(profile)):
+            scopes.setdefault(name, scope)
             previous_kind = declarations.setdefault(name, kind)
             if previous_kind != kind:
                 raise ConfigurationError(f"{name} must use the same profile marker in every layer")
@@ -106,12 +111,28 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
         raise ConfigurationError("usage_mode must be a non-empty string, None or omit")
     if resolved.parameter("max_tokens", "decode") is not None:
         validate_max_tokens(resolved.get("max_tokens"))
-    client_parameters(resolved)
+    object.__setattr__(
+        resolved,
+        "request_parameters",
+        tuple(
+            (name, parameter)
+            for name, parameter in parameters.items()
+            if isinstance(parameter, Parameter)
+            and parameter.phase == "decode"
+            and scopes[name] == "request"
+        ),
+    )
+    connection_bindings = tuple(
+        (name, parameter)
+        for name, parameter in parameters.items()
+        if isinstance(parameter, Parameter) and scopes[name] == "client"
+    )
+    resolved.connection.update(_connection_parameters(resolved, connection_bindings))
     return resolved
 
 
 @lru_cache(maxsize=128)
-def _declarations(profile_type: type) -> tuple[tuple[str, str, Any], ...]:
+def _declarations(profile_type: type) -> tuple[tuple[str, str, Any, str], ...]:
     """Cache type analysis, bounded for applications constructing dynamic types."""
     annotations = get_type_hints(profile_type, include_extras=True)
     result = []
@@ -123,7 +144,10 @@ def _declarations(profile_type: type) -> tuple[tuple[str, str, Any], ...]:
         kinds = _kinds(annotation)
         if len(kinds) != 1:
             raise ConfigurationError(f"{item.name} must declare exactly one of Parameter or Config")
-        result.append((item.name, kinds.pop(), annotation))
+        scope = item.metadata.get("scope", "request")
+        if scope not in ("client", "request"):
+            raise ConfigurationError("parameter scope must be client or request")
+        result.append((item.name, kinds.pop(), annotation, scope))
     return tuple(result)
 
 
@@ -179,13 +203,11 @@ def validate_max_tokens(value: Any) -> None:
         raise ConfigurationError("max_tokens must be a positive integer, None or omit")
 
 
-def client_parameters(
-    profile: ResolvedProfile, *, headers_field: str = "default_headers"
-) -> dict[str, Any]:
+def _connection_parameters(profile: ResolvedProfile, bindings: tuple) -> dict[str, Any]:
     """Validate SDK connection fields from the construction-time profile.
 
-    api_key binds either the SDK argument or one extra_headers entry. Transports
-    select their SDK's header keyword. Unset/omitted values are excluded.
+    Client-scoped bindings target SDK authentication or extra_headers entries.
+    Decoder selects the SDK header keyword. Unset/omitted values are excluded.
     """
     result = {}
     for key in ("base_url", "timeout", "max_retries"):
@@ -203,21 +225,31 @@ def client_parameters(
         ):
             raise ConfigurationError("max_retries must be a non-negative integer")
         result[key] = value
-    parameter = profile.parameter("api_key")
-    if parameter is not None:
+    for name, parameter in bindings:
         keys = path_keys(parameter.path)
         if parameter.phase != "decode":
-            raise ConfigurationError("api_key must use the decode phase")
+            raise ConfigurationError(f"{name} must use the decode phase")
         if keys != ("api_key",) and not (
             len(keys) == 2 and keys[0] == "extra_headers" and isinstance(keys[1], str)
         ):
-            raise ConfigurationError("api_key path must be $.api_key or $.extra_headers.<name>")
-        value = profile.get("api_key")
+            raise ConfigurationError(f"{name} path must be $.api_key or $.extra_headers.<name>")
+        value = profile.get(name)
         if value is not None:
             if not isinstance(value, str) or not value.strip():
-                raise ConfigurationError("api_key must be a non-empty string")
+                raise ConfigurationError(f"{name} must be a non-empty string")
             if keys == ("api_key",):
-                result["api_key"] = value
+                result[keys[0]] = value
             else:
-                result[headers_field] = {keys[1]: value}
+                result.setdefault("default_headers", {})[keys[1]] = value
+    return result
+
+
+def client_parameters(
+    profile: ResolvedProfile, *, headers_field: str = "default_headers"
+) -> dict[str, Any]:
+    """Read construction-time connection settings without parsing them again."""
+    result = dict(profile.connection)
+    headers = result.pop("default_headers", None)
+    if headers is not None:
+        result[headers_field] = dict(headers)
     return result

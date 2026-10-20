@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from typing_extensions import TypedDict
 
 from my_llm import ConfigurationError, MessageValidationError, MyCodec, UnsupportedCapabilityError
-from my_llm.codec.openai.chat.transport import ChatCompletionsTransport
+from my_llm.codec.openai.chat.decoding.decoder import ChatCompletionsDecoder
 from my_llm.profile import ModelProfile, ProviderProfile, resolve_profiles
 from my_llm.profile.types import Parameter
 from tests.helpers.profiles import config, parameter
@@ -26,32 +26,32 @@ def test_open_model_unknown_fields_are_filtered_before_validation_and_repeated_r
         content: str
         __pydantic_extra__: dict[str, int]
 
-    class Transport(ChatCompletionsTransport):
+    class Decoder(ChatCompletionsDecoder):
         __slots__ = ()
         message_type = Message
 
-    bound = Transport()
+    bound = Decoder()
     profile = profile_factory("openai_chat")
     for message in (
         {"role": "user", "content": "first"},
         {"role": "user", "content": "second", "vendor_count": 2},
     ):
         original = deepcopy(message)
-        bound.validate_input([message])
-        request = bound.request({"messages": [message]}, profile)
+        bound.validate_values([message], bound.message_type)
+        request = bound.native_request({"messages": [message]}, profile)
         assert request["messages"] == [{"role": "user", "content": message["content"]}]
         assert message == original
 
     extra = {"role": "user", "content": "third", "vendor_count": {"invalid": True}}
-    bound.validate_input([extra])
-    assert bound.request({"messages": [extra]}, profile)["messages"] == [
+    bound.validate_values([extra], bound.message_type)
+    assert bound.native_request({"messages": [extra]}, profile)["messages"] == [
         {"role": "user", "content": "third"}
     ]
     invalid = {"role": "user", "content": ["invalid"], "vendor_count": 1}
     with pytest.raises(MessageValidationError):
-        bound.validate_input([invalid])
+        bound.validate_values([invalid], bound.message_type)
     with pytest.raises(MessageValidationError):
-        bound.request({"messages": [invalid]}, profile)
+        bound.native_request({"messages": [invalid]}, profile)
 
 
 @pytest.mark.parametrize("target", ["anthropic", "gemini"])
@@ -144,7 +144,7 @@ def test_direct_native_requests_validate_generation_settings(
         request.setdefault("max_tokens", 2048)
     original = deepcopy(request)
     with pytest.raises((ConfigurationError, UnsupportedCapabilityError), match=match):
-        MyCodec().transport(protocol).request(
+        MyCodec().decoder(protocol).native_request(
             request,
             profile_factory(protocol, max_tokens=parameter("max_tokens", 2048, protocol=protocol)),
         )
@@ -164,8 +164,8 @@ def test_anthropic_tool_json_schema_preserves_open_keywords(profile_factory):
     original = deepcopy(tool)
     request = (
         MyCodec()
-        .transport("anthropic")
-        .request(
+        .decoder("anthropic")
+        .native_request(
             {
                 "messages": [{"role": "user", "content": "hello"}],
                 "tools": [tool],
@@ -194,19 +194,19 @@ def test_request_projection_addresses_sdk_fields_without_reading_extensions(
 ):
     class AddressedDict(dict):
         def __iter__(self):
-            pytest.fail("transport must address declared SDK fields")
+            pytest.fail("decoder must address declared SDK fields")
 
         def items(self):
-            pytest.fail("transport must not enumerate unknown request fields")
+            pytest.fail("decoder must not enumerate unknown request fields")
 
         def keys(self):
-            pytest.fail("transport must not enumerate unknown request fields")
+            pytest.fail("decoder must not enumerate unknown request fields")
 
     class Unreadable:
         def __deepcopy__(self, memo):
             pytest.fail("unknown fields must not be read or copied")
 
-    bound = MyCodec().transport(protocol)
+    bound = MyCodec().decoder(protocol)
     messages = [AddressedDict(message, vendor=Unreadable()) for message in history(protocol)]
     request = AddressedDict(model="demo", stream=True, vendor=Unreadable())
     request[bound.message_path[0]] = messages
@@ -219,7 +219,7 @@ def test_request_projection_addresses_sdk_fields_without_reading_extensions(
     else:
         request["temperature"] = None
 
-    filtered = bound.request(
+    filtered = bound.native_request(
         request,
         profile_factory(protocol, max_tokens=parameter("max_tokens", 2048, protocol=protocol)),
     )
@@ -245,8 +245,8 @@ def test_profile_extension_restores_only_its_declared_unknown_sdk_leaf():
     )
     request = (
         MyCodec()
-        .transport("openai_responses")
-        .request(
+        .decoder("openai_responses")
+        .native_request(
             {
                 "model": "demo",
                 "input": [{"role": "user", "content": "hello"}],
@@ -284,10 +284,10 @@ def test_ollama_sdk_message_images_survive_input_validation_and_request_projecti
     image = Image(value=b"image-data")
     message = Message(role="user", content="hello", images=[image])
     profile = resolve_profiles(ProviderProfile(protocol="ollama"), ModelProfile(model="demo"))
-    bound = MyCodec().transport("ollama")
+    bound = MyCodec().decoder("ollama")
 
-    bound.validate_input([message])
-    request = bound.request({"model": "demo", "messages": [message]}, profile)
+    bound.validate_values([message], bound.message_type)
+    request = bound.native_request({"model": "demo", "messages": [message]}, profile)
 
     assert request["messages"] == [
         {"role": "user", "content": "hello", "images": ["aW1hZ2UtZGF0YQ=="]}
@@ -300,11 +300,11 @@ def test_nested_request_history_and_tools_own_their_parent_containers(profile_fa
         messages: list[dict]
         tools: list[dict]
 
-    class Transport(ChatCompletionsTransport):
+    class Decoder(ChatCompletionsDecoder):
         __slots__ = ()
         message_path = ("extra_body", "messages")
         tool_path = ("extra_body", "tools")
-        request_schema = {**ChatCompletionsTransport.request_schema, "extra_body": Envelope}
+        request_schema = {**ChatCompletionsDecoder.request_schema, "extra_body": Envelope}
 
     request = {
         "extra_body": {
@@ -314,7 +314,7 @@ def test_nested_request_history_and_tools_own_their_parent_containers(profile_fa
     }
     original = deepcopy(request)
 
-    result = Transport().request(request, profile_factory("openai_chat"))
+    result = Decoder().native_request(request, profile_factory("openai_chat"))
     result["extra_body"]["messages"][0]["content"] = "changed"
     result["extra_body"]["tools"].append({"changed": True})
 
@@ -337,11 +337,11 @@ def test_nested_request_paths_delegate_to_override_hooks_once_and_capture_payloa
             captures.append(self)
             return deepcopy(dict(self), memo)
 
-    class Transport(ChatCompletionsTransport):
+    class Decoder(ChatCompletionsDecoder):
         __slots__ = ()
         message_path = ("extra_body", "messages")
         tool_path = ("extra_body", "tools")
-        request_schema = {**ChatCompletionsTransport.request_schema, "extra_body": Envelope}
+        request_schema = {**ChatCompletionsDecoder.request_schema, "extra_body": Envelope}
 
         def filter_messages(self, messages, profile, **parameters):
             hooks.append(("messages", messages))
@@ -357,7 +357,7 @@ def test_nested_request_paths_delegate_to_override_hooks_once_and_capture_payloa
     tools = [{"type": "function", "function": {"name": "lookup", "parameters": schema}}]
     request = {"extra_body": {"messages": messages, "tools": tools, "metadata": metadata}}
 
-    result = Transport().request(
+    result = Decoder().native_request(
         request,
         profile_factory(
             "openai_chat", supports_function_calling=config("supports_function_calling", True)
@@ -411,8 +411,8 @@ def test_gemini_nested_tool_schemas_and_other_open_config_are_captured_once(
 
     result = (
         MyCodec()
-        .transport("gemini")
-        .request(
+        .decoder("gemini")
+        .native_request(
             request,
             profile_factory(
                 "gemini", supports_function_calling=config("supports_function_calling", True)
@@ -439,7 +439,7 @@ def test_gemini_checks_known_config_values_beyond_thinking(profile_factory):
         "config": {"temperature": "invalid"},
     }
     with pytest.raises(ValidationError, match="temperature"):
-        MyCodec().transport("gemini").request(request, profile_factory("gemini"))
+        MyCodec().decoder("gemini").native_request(request, profile_factory("gemini"))
 
 
 def test_direct_ollama_request_preserves_sdk_options_explicit_none(profile_factory):
@@ -448,8 +448,8 @@ def test_direct_ollama_request_preserves_sdk_options_explicit_none(profile_facto
     options = Options(temperature=None, num_predict=7)
     request = (
         MyCodec()
-        .transport("ollama")
-        .request(
+        .decoder("ollama")
+        .native_request(
             {"messages": [{"role": "user", "content": "hello"}], "options": options},
             profile_factory("ollama"),
         )
@@ -470,8 +470,8 @@ def test_direct_gemini_request_projects_sdk_config_and_owns_nested_values(profil
     )
     request = (
         MyCodec()
-        .transport("gemini")
-        .request(
+        .decoder("gemini")
+        .native_request(
             {"contents": [{"role": "user", "parts": [{"text": "hello"}]}], "config": config},
             profile_factory("gemini"),
         )
@@ -489,8 +489,8 @@ def test_direct_gemini_request_projects_sdk_config_and_owns_nested_values(profil
 def test_direct_chat_request_preserves_explicit_none_extra_body(profile_factory):
     request = (
         MyCodec()
-        .transport("openai_chat")
-        .request(
+        .decoder("openai_chat")
+        .native_request(
             {"messages": [{"role": "user", "content": "hello"}], "extra_body": None},
             profile_factory("openai_chat"),
         )
@@ -508,8 +508,8 @@ def test_declared_unknown_sdk_root_reports_configuration_error():
         )
 
     profile = resolve_profiles(ProviderProfile(), ExtendedModel(model="demo"))
-    bound = MyCodec().transport("openai_chat")
+    bound = MyCodec().decoder("openai_chat")
 
-    for validate in (bound.validate_profile, bound.validate_parameters):
+    for validate in (bound.validate_profile,):
         with pytest.raises(ConfigurationError, match="vendor.*SDK parameter 'vendor'"):
             validate(profile)

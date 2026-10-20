@@ -210,7 +210,7 @@ Encoder 和 Decoder 只翻译明确识别的协议字段。未知字段不进入
 显式处理；跨协议转换不附加隐藏快照或恢复记录，也不保证转换回原协议后恢复原始对象。
 流式多轮对话应保存 stream.result，完整文本不能替代工具调用及原生内容块。
 
-实际请求由 Transport 再过滤并校验目标 SDK 支持的结构，不修改业务历史。
+实际请求由 Decoder 过滤并校验目标 SDK 支持的结构，不修改业务历史。
 详见[翻译字段边界](../design/translation-boundaries.md)与[兼容边界](configuration.md#跨协议请求的处理边界)。
 
 ## 异常边界
@@ -225,40 +225,36 @@ Encoder 和 Decoder 只翻译明确识别的协议字段。未知字段不进入
 整个流；跨协议的完整 batch 在本次调用内组装，不保存到转换器。
 实时消费使用 MyLLM，由每次请求持有累积状态；BaseEncoder/BaseDecoder 仍只转换单次传入的块。
 
-Encoder / Decoder 负责已识别字段的翻译；Decoder 还翻译生成选项并组织原生请求结构。
-BaseTransport 负责输入与工具关联验证、模型能力、生成参数和原生结构验证、字段过滤，
-同时管理官方 SDK 创建、关闭、复用键及请求执行。MyLLM 只编排每次请求并缓存客户端。
+Encoder 验证并编码输入；Decoder 统一准备选项、映射路径、过滤和验证最终 SDK 请求。
+Transport 只负责 SDK 客户端创建、调用及响应资源管理。MyLLM 构造时准备连接参数，
+每次 generate 将所有输入字段打包后送入 MyCodec.prepare，最终得到三个明确的字典：
 
-自定义实现需提供以下接口；公开 messages / tools / chunks 入口由基类固定实现：
+| 键 | 内容 |
+| --- | --- |
+| client | 已准备的 SDK 构造参数；SDK 将动态参数绑定客户端时使用请求独立变体。 |
+| request | 过滤和验证后的 SDK 调用 kwargs。 |
+| local | stream（业务返回方式）、client_key（实例客户端复用键）。 |
+
+MyCodec.client_parameters(profile) 按实例准备连接字典；
+MyCodec.prepare(inputs, profile, *, input_format, client) 处理完整调用；
+MyCodec.request(intermediate, profile, **parameters) 继续提供离线构造裸 SDK 请求的入口。
+这些接口均不创建 SDK 客户端。可运行示例见[请求准备](../../examples/request_pipeline.py)。
 
 | 实现 | 必须提供 |
 | --- | --- |
-| BaseCodec | protocol_or_api_style、defaults: ProtocolDefaults、encoder / decoder / transport。 |
-| BaseEncoder | protocol、_messages / _tools / _chunks、match_item、usage。 |
-| BaseDecoder | protocol、_messages / _tools / _chunks、usage、assemble_request；result 可覆盖收集结果形状。 |
-| BaseTransport | request_schema、message_type / tool_type、message_path / tool_path、validate_request、create_client、upstream。 |
+| BaseCodec | protocol_or_api_style、defaults、encoder / decoder / transport。 |
+| BaseEncoder | protocol、message_type / tool_type、_messages / _tools / _chunks、match_item、usage。 |
+| BaseDecoder | protocol、request_schema、message_type / tool_type、message_path / tool_path、_messages / _tools / _chunks、usage、assemble_request。 |
+| BaseTransport | create_client(parameters)、upstream(client, request)；close_client 可覆盖。 |
 
-BaseCodec.request 接收中间态，由 Transport.validate_parameters 一次校验、解析生成控制参数，
-再把返回的 PreparedOptions 显式传给 Decoder.request 翻译消息、工具和请求选项，
-最后进入 Transport.request，验证工具关联、模型能力和原生结构，并过滤不支持字段。
-BaseDecoder.request 的 final 流程统一调用 request_parameters(profile, options) 应用 decode 参数，
-再将生成的参数字典传给 assemble_request(messages, tools, profile, *, request: dict, **parameters)。
-自定义 assemble_request 只向已有 request 写入消息和工具，不接收 options，也不重复应用参数。
-协议专属控制可通过 _request_parameters(request, profile, options) 钩子追加，布局由 body_container、
-headers_field、body_overlay、omit_empty_body 类属性声明。参数流程由基类保证执行一次，不重新解析原始生成参数。
-BaseEncoder.parameter_value() 固定读取 encode 参数；协议钩子只负责事件判别与中间态语义映射。
-原始参数继续传给消息翻译，以保留显式思考开关和兼容服务的回放语义。
-PreparedOptions 和 ProtocolDefaults 均从 my_llm 公开导出。
-Decoder._messages / _tools 与公开 messages / tools 均返回普通 list。
-ProtocolDefaults 使用 `Parameter` 声明路径、默认值和 encode / decode 阶段，使用 `Config` 声明行为开关；
-不用的参数通过 omit 禁用。`name` / `comment` 只用于展示，功能由 Profile 字段标识决定。
-字段 None 继承，wrapper 的 default_value=None 保留为实际值；声明及嵌套内容按只读借用。
-Profile 默认值来自已注册 Codec.defaults 的副本，解析负责分层合并、通用字段校验和快照，
-不创建 Codec 或 SDK 客户端；协议特有限制与 SDK 约束由 Transport 补充验证。
-直接使用 resolve_profiles / MyCodec 的集成应调用 codec.validate_profile(resolved)；MyLLM 已在构造时完成此步骤。
-完整实现约定见[接入协议指南](../guides/adding-protocol.md)。
+Decoder 的 validate_parameters 每次解析一次 PreparedOptions，request_parameters 应用 decode 声明，
+assemble_request 仅向已有字典写入消息和工具；native_request 负责历史、能力、Schema 过滤和验证。
+client_parameters、request_client 和 client_key 处理实例连接映射及请求级客户端变体，不操作 SDK 客户端。
+BaseEncoder.parameter_value 固定读取 encode 参数；标准响应翻译仍通过公开独立出口返回副本。
 
-Transport.create_client 创建官方 SDK 客户端，由 MyLLM 保存并复用；close_client 默认调用异步 close。
-client_key 默认 None，SDK 将请求选项绑定到客户端时可覆盖。
-Transport.upstream 借用客户端，只关闭本次响应流与响应体。
-validate_profile 与 allows_external_calls 可按协议覆盖；Decoder 不再提供这些方法。
+Profile 从注册的 Codec.defaults 解析配置、校验通用字段并建立快照，不创建 SDK 客户端。
+字段 None 继承，wrapper.default_value=None 为实际值；name / comment 仅用于展示。
+连接 Parameter 通过 dataclass 字段 metadata 的 scope="client" 声明；内置 api_key 已设置。
+其余 decode Parameter 默认属于请求，Config 由协议实现解释。
+MyLLM 已在构造时调用 codec.validate_profile；直接使用 resolve_profiles / MyCodec 的集成也应先调用。
+完整实现和覆盖钩子见[接入协议指南](../guides/adding-protocol.md)。

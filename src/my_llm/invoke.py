@@ -8,13 +8,13 @@ from copy import deepcopy
 from typing import Any
 
 from my_llm.codec.converter import MyCodec
-from my_llm.codec.shared.conversion import _MISSING, dictionary_views
-from my_llm.exceptions import ConfigurationError, MessageValidationError, StreamError
+from my_llm.codec.shared.conversion import _MISSING
+from my_llm.exceptions import ConfigurationError, StreamError
 from my_llm.profile.configuration import Protocol, ReasoningEffort
 from my_llm.profile.model_profile import ModelProfile
 from my_llm.profile.provider_profile import ProviderProfile
 from my_llm.profile.resolution import resolve_profiles
-from my_llm.profile.types import Omit, omit
+from my_llm.profile.types import omit
 from my_llm.stream._state import StreamState
 from my_llm.stream.message_stream import MessageStream
 
@@ -45,6 +45,7 @@ class MyLLM:
             raise ConfigurationError(f"unsupported stdio_protocol: {stdio_protocol!r}")
         self.resolved_profile = resolve_profiles(provider, model)
         self.codec.validate_profile(self.resolved_profile)
+        self.client_parameters = self.codec.client_parameters(self.resolved_profile)
         self.provider = deepcopy(provider)
         self.model = deepcopy(model)
         self.stdio_protocol = stdio_protocol
@@ -56,15 +57,15 @@ class MyLLM:
         if self._closed:
             raise RuntimeError("MyLLM is closed")
 
-    def _get_client(self, options: dict) -> Any:
+    def _get_client(self, prepared: dict) -> Any:
         self._check_open()
         profile = self.resolved_profile
         transport = self.codec.transport(profile.protocol)
-        key = transport.client_key(profile, **options)
+        key = prepared["local"]["client_key"]
         if key not in self._clients:
             # SDK construction is synchronous: no task can interleave between
             # lookup and registration, including concurrent first requests.
-            client = transport.create_client(profile, **options)
+            client = transport.create_client(prepared["client"])
             self._client_resources.push_async_callback(transport.close_client, client)
             self._clients[key] = client
         return self._clients[key]
@@ -86,13 +87,9 @@ class MyLLM:
     def guess_stdio_protocol(self, messages_or_tools: list[Any]) -> Protocol:
         """Bind a uniquely inferred I/O format once; otherwise require explicit selection."""
         if self.stdio_protocol is None:
-            guessed = self.codec.match_protocol(messages_or_tools)
-            if guessed is None:
-                raise MessageValidationError(
-                    "stdio_protocol is not specified and cannot be inferred uniquely "
-                    "from the input; set stdio_protocol explicitly"
-                )
-            self.stdio_protocol = guessed
+            self.stdio_protocol = self.codec.bind_input(
+                {"messages": messages_or_tools, "tools": omit}, None
+            )
         return self.stdio_protocol
 
     async def generate(
@@ -117,36 +114,26 @@ class MyLLM:
         mutable request options are isolated when this method is awaited.
         """
         self._check_open()
-        if not isinstance(stream, bool):
-            raise ConfigurationError("stream must be a bool")
-        # Preparation does not await: inspect borrowed inputs, then let Encoder
-        # copy recognized values before any SDK execution can yield.
-        history = list(dictionary_views(messages))
-        tool_values = (
-            None if tools is None or isinstance(tools, Omit) else list(dictionary_views(tools))
+        inputs = dict(
+            messages=messages,
+            stream=stream,
+            tools=tools,
+            max_tokens=max_tokens,
+            reasoning=reasoning,
+            reasoning_effort=reasoning_effort,
+            extra_headers=extra_headers,
+            extra_body=extra_body,
+            previous_response_id=previous_response_id,
         )
-        # Tool declarations can disambiguate otherwise identical text-only histories.
-        protocol = self.stdio_protocol
-        if protocol is None:
-            protocol = self.guess_stdio_protocol([*history, *(tool_values or [])])
-        self.codec.validate_input(protocol, history, tool_values)
-        intermediate = self.codec.encode(history, tool_values, input_format=protocol)
+        protocol = self.codec.bind_input(inputs, self.stdio_protocol)
+        self.stdio_protocol = protocol
         profile = self.resolved_profile
-        options = deepcopy(
-            dict(
-                reasoning=reasoning,
-                reasoning_effort=reasoning_effort,
-                extra_headers=extra_headers,
-                extra_body=extra_body,
-                previous_response_id=previous_response_id,
-            )
+        prepared = self.codec.prepare(
+            inputs, profile, input_format=protocol, client=self.client_parameters
         )
-        if max_tokens is not _MISSING:
-            options["max_tokens"] = max_tokens
-        request = self.codec.request(intermediate, profile, **options)
         state = StreamState(profile.model)
-        result = MessageStream(self._stream(request, options, state, protocol), state)
-        if stream:
+        result = MessageStream(self._stream(prepared, state, protocol), state)
+        if prepared["local"]["stream"]:
             return result
         # Collected and streaming results share one execution and cleanup path.
         async with aclosing(result):
@@ -165,12 +152,12 @@ class MyLLM:
         return output
 
     async def _stream(
-        self, request: dict, options: dict, state: StreamState, stdio_protocol: Protocol
+        self, prepared: dict, state: StreamState, stdio_protocol: Protocol
     ) -> AsyncGenerator[dict, None]:
         profile = self.resolved_profile
         try:
-            client = self._get_client(options)
-            async with self.codec.upstream(client, request, profile, **options) as upstream:
+            client = self._get_client(prepared)
+            async with self.codec.upstream(client, prepared["request"], profile) as upstream:
                 async for event in upstream:
                     encoded = self.codec.encode(
                         chunks=[event], input_format=profile.protocol, profile=profile

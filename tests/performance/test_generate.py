@@ -8,6 +8,7 @@ import pytest
 
 from my_llm import MyLLM
 from tests.helpers.protocols import PROTOCOLS
+from tests.performance.request_chain import probe
 from tests.performance.runner import benchmark, measure
 from tests.performance.transport import LocalSDK, wire_frames
 from tests.performance.validation import validate_exchange, validate_workload
@@ -72,3 +73,20 @@ async def test_ollama_base64_images_survive_input_and_request_validation(stream)
         images = [image for message in request["messages"] for image in message.get("images", [])]
         expected = [image for message in workload.messages for image in message.get("images", [])]
         assert images == expected
+
+
+@pytest.mark.parametrize("upstream", PROTOCOLS)
+async def test_chain_probe_measures_memory_cache_and_actual_overlap(monkeypatch, upstream):
+    def network_forbidden(*args, **kwargs):
+        pytest.fail("the request-chain benchmark attempted a socket connection")
+
+    monkeypatch.setattr(socket.socket, "connect", network_forbidden)
+    result = await probe(build(upstream, "openai_chat", SMALL, native=False), True, 4, 1)
+    assert result["memory"]["peak_bytes"] > 0
+    assert result["concurrent"]["peak_bytes"] > 0
+    assert result["concurrent"]["peak_active"] == 4
+    assert len(result["concurrent"]["samples_ms"]) == 1
+    for name, before in result["cache_before"].items():
+        after = result["cache_after"][name]
+        assert after["currsize"] == before["currsize"]
+        assert after["misses"] == before["misses"]

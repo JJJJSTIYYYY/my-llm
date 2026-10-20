@@ -11,12 +11,11 @@
 
 - codec/base 的 codec.py、encoder.py、decoder.py、transport.py 定义抽象契约，模块名与五种原生实现一致。
 - 五种协议各自维护 encoding 和 decoding；转换方法直接落在 encoder.py / decoder.py。
-  内容、字段及工具翻译辅助放在本方向的 content.py，双向共用的辅助放在本协议的 utils/；生成参数映射和请求结构放在 Decoder；请求验证、过滤及官方 SDK 执行放在协议根目录的 transport.py。
+  内容、字段及工具翻译辅助放在本方向的 content.py，双向共用的辅助放在本协议的 utils/；生成参数映射、请求结构、验证与过滤放在 Decoder；官方 SDK 执行及资源关闭放在协议根目录的 transport.py。
   BaseCodec 声明 ProtocolDefaults 并组合 encoder / decoder / transport，转换与执行组件互不导入。
   仅在存在对应职责时保留辅助模块，不为每个转换方法或短小函数建立分组包。
 - codec/shared 保存不选择厂商的公共机制；conversion.py 负责 SDK 值读取及媒体 URI 转换，
-  options.py 负责配置路径、选项准备与校验。Transport 返回请求独立的 PreparedOptions，
-  Decoder 必须显式接收并复用，不重复解析或添加内部兜底路径。
+  options.py 负责配置路径、选项准备与校验。Decoder 每次解析一次 PreparedOptions，并输出 client / request / local 字典；连接参数在构造时准备。
 - profile/configuration.py 保存配置类型、覆盖字段与字典合并；resolution.py 负责解析、快照及校验。
   协议默认值保存在各 Codec.defaults；profile/defaults.py 只从 registry.py 复制已注册声明。
 - stream 保存消息流生命周期与每次请求的状态；invoke.py 负责生成调用编排与 SDK 客户端复用。

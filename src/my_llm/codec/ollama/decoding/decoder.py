@@ -3,25 +3,65 @@
 from copy import deepcopy
 from typing import Any
 
+from ollama import Image, Message, Options, Tool
+from pydantic import ValidationError
+
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.ollama.decoding.content import (
     chat_call,
     foreign_block,
     function_tool,
 )
+from my_llm.codec.ollama.utils.schema import REQUEST_SCHEMA, validate_ollama_values
 from my_llm.codec.shared.conversion import (
     blocks,
     coalesce_messages,
     decode_functions,
     project_message,
+    read,
     source_protocol,
     text,
     text_result,
 )
+from my_llm.codec.shared.options import PreparedOptions, validate_request_options
 from my_llm.codec.shared.stream import counts, events
-from my_llm.exceptions import MessageValidationError
+from my_llm.exceptions import ConfigurationError, MessageValidationError, UnsupportedCapabilityError
 from my_llm.profile.configuration import merge_dicts
-from my_llm.profile.resolution import ResolvedProfile
+from my_llm.profile.resolution import ResolvedProfile, client_parameters
+
+PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response_id"}
+
+
+def validate_schema(parameters: dict) -> dict:
+    """Do not let the official SDK silently discard JSON Schema constraints."""
+    try:
+        parsed = Tool(function={"name": "schema_check", "parameters": parameters}).model_dump(
+            exclude_none=True
+        )["function"]["parameters"]
+    except (ValidationError, KeyError) as exc:
+        raise UnsupportedCapabilityError(
+            "installed Ollama SDK cannot represent the tool parameter schema"
+        ) from exc
+
+    def preserves(expected, actual):
+        if isinstance(expected, dict):
+            return isinstance(actual, dict) and all(
+                key in actual and preserves(value, actual[key]) for key, value in expected.items()
+            )
+        if isinstance(expected, list):
+            return (
+                isinstance(actual, list)
+                and len(expected) == len(actual)
+                and all(preserves(left, right) for left, right in zip(expected, actual))
+            )
+        return expected == actual
+
+    if not preserves(parameters, parsed):
+        raise UnsupportedCapabilityError(
+            "installed Ollama SDK would discard tool parameter schema constraints"
+        )
+    return parameters
+
 
 PROTOCOL = "ollama"
 
@@ -39,7 +79,85 @@ class OllamaDecoder(BaseDecoder):
     __slots__ = ()
     protocol = PROTOCOL
 
+    tool_type = Tool
+    message_type = Message
+    message_path = ("messages",)
+    tool_path = ("tools",)
+
+    request_schema = REQUEST_SCHEMA
+
+    def validate_values(self, values: list, schema: Any, *, filtered: bool = False) -> None:
+        validate_ollama_values(values, schema, filtered=filtered)
+
+    def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
+        options = super().validate_parameters(profile, **parameters)
+        return validate_request_options(profile, options, protected=PROTECTED, containers=())
+
+    def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
+        thinking = request.get("think")
+        if thinking is not None and not isinstance(thinking, (str, bool)):
+            raise ConfigurationError("Ollama think must be a boolean or model-defined string")
+        if (
+            (binding := profile.parameter("reasoning_enable", "decode")) is not None
+            and binding.path == "$.think"
+            and (
+                parameters.get("reasoning") is True
+                or parameters.get("reasoning_effort", "none") != "none"
+            )
+            and thinking is False
+        ):
+            raise ConfigurationError("reasoning conflicts with think=False")
+        if request.get("options") is not None:
+            try:
+                Options(**request["options"])
+            except (ValidationError, TypeError, ValueError) as exc:
+                raise ConfigurationError("invalid Ollama options") from exc
+        return request
+
+    def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
+        for tool in tools:
+            if "parameters" in tool.get("function", {}):
+                validate_schema(tool["function"]["parameters"])
+        return super().filter_tools(tools, profile)
+
+    def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
+        result = super().filter_messages(messages, profile, **parameters)
+        for original, value in zip(messages, result):
+            images = read(original, "images")
+            if images:
+                value["images"] = [
+                    image.model_dump(mode="json") if isinstance(image, Image) else image
+                    for image in images
+                ]
+            if not profile.get("supports_message_name", True):
+                value.pop("name", None)
+            if not profile.get("replay_reasoning_content_when_tool_calls", False):
+                value.pop("thinking", None)
+        return result
+
+    def validate_profile(self, profile: ResolvedProfile) -> None:
+        super().validate_profile(profile)
+        api_key = profile.parameter("api_key")
+        if api_key is not None and api_key.path == "$.api_key":
+            raise ConfigurationError("Ollama api_key must use $.extra_headers.<name>")
+        retries = profile.get("max_retries")
+        if isinstance(retries, int) and not isinstance(retries, bool) and retries > 0:
+            raise UnsupportedCapabilityError("Ollama SDK does not support a positive max_retries")
+
     headers_field = None
+
+    def client_parameters(self, profile: ResolvedProfile) -> dict:
+        values = client_parameters(profile, headers_field="headers")
+        result = {key: value for key, value in values.items() if key == "timeout"}
+        result["host"] = values.get("base_url")
+        result["headers"] = merge_dicts(values.get("headers"), profile.get("extra_headers", {}))
+        return result
+
+    def request_client(self, client: dict, options: PreparedOptions) -> dict:
+        return {**client, "headers": merge_dicts(client.get("headers"), options.headers)}
+
+    def client_key(self, client: dict) -> tuple:
+        return tuple(sorted(client["headers"].items()))
 
     def assemble_request(
         self,

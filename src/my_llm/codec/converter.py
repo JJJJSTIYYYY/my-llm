@@ -11,10 +11,12 @@ from my_llm.codec.gemini.codec import GeminiCodec
 from my_llm.codec.ollama.codec import OllamaCodec
 from my_llm.codec.openai.chat.codec import ChatCompletionsCodec
 from my_llm.codec.openai.responses.codec import ResponsesCodec
+from my_llm.codec.shared.conversion import dictionary_views
 from my_llm.codec.shared.stream import is_batch
-from my_llm.exceptions import ConfigurationError, UnsupportedProviderError
+from my_llm.exceptions import ConfigurationError, MessageValidationError, UnsupportedProviderError
 from my_llm.profile.configuration import Protocol, ProtocolDefaults
 from my_llm.profile.resolution import ResolvedProfile
+from my_llm.profile.types import Omit
 from my_llm.registry import register_codec, registered_codecs
 
 
@@ -93,8 +95,34 @@ class MyCodec:
         """Validate declared input through its codec's transport."""
         self._codec(protocol).validate_input(messages, tools)
 
-    def upstream(self, client: Any, request: dict, profile: ResolvedProfile, **parameters: Any):
-        return self.transport(profile.protocol).upstream(client, request, profile, **parameters)
+    def client_parameters(self, profile: ResolvedProfile) -> dict:
+        return self.decoder(profile.protocol).client_parameters(profile)
+
+    def bind_input(self, inputs: dict, protocol: Protocol | None) -> Protocol:
+        if protocol is not None:
+            return protocol
+        history = list(dictionary_views(inputs["messages"]))
+        tools = inputs["tools"]
+        values = None if tools is None or isinstance(tools, Omit) else list(dictionary_views(tools))
+        protocol = self.match_protocol([*history, *(values or [])])
+        if protocol is None:
+            raise MessageValidationError(
+                "stdio_protocol is not specified and cannot be inferred uniquely "
+                "from the input; set stdio_protocol explicitly"
+            )
+        # Retain the inspected views; a one-shot sequence must not be read again.
+        inputs.update(messages=history, tools=values)
+        return protocol
+
+    def prepare(
+        self, inputs: dict, profile: ResolvedProfile, *, input_format: Protocol, client: dict
+    ) -> dict:
+        source = self._codec(input_format)
+        intermediate = source.encoder.request(inputs, profile)
+        return self.decoder(profile.protocol).prepare(intermediate, client)
+
+    def upstream(self, client: Any, request: dict, profile: ResolvedProfile):
+        return self.transport(profile.protocol).upstream(client, request)
 
     def result(self, messages: list, *, target_format: Protocol):
         converted = self.decode(messages=messages, target_format=target_format)["messages"]

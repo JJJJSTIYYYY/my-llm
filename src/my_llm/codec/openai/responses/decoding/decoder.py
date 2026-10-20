@@ -3,6 +3,9 @@
 from copy import deepcopy
 from typing import Any
 
+from openai.resources.responses import AsyncResponses
+from openai.types.responses import ResponseInputItemParam, ToolParam
+
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.openai.responses.decoding.content import foreign_block, render_content
 from my_llm.codec.openai.responses.utils.metadata import response_parameters
@@ -16,10 +19,14 @@ from my_llm.codec.shared.conversion import (
     source_protocol,
     tool_output,
 )
+from my_llm.codec.shared.options import PreparedOptions, validate_request_options
 from my_llm.codec.shared.stream import counts, events
-from my_llm.exceptions import ResponseFailedError, UnsupportedCapabilityError
-from my_llm.profile.resolution import ResolvedProfile
+from my_llm.codec.shared.transport import parameter_types
+from my_llm.exceptions import ConfigurationError, ResponseFailedError, UnsupportedCapabilityError
+from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
 from my_llm.profile.types import Omit
+
+PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response_id"}
 
 PROTOCOL = "openai_responses"
 
@@ -29,6 +36,36 @@ class ResponsesDecoder(BaseDecoder):
 
     __slots__ = ()
     protocol = PROTOCOL
+
+    tool_type = ToolParam
+    message_type = ResponseInputItemParam
+    message_path = ("input",)
+    tool_path = ("tools",)
+
+    supports_previous_response_id = True
+
+    request_schema = parameter_types(AsyncResponses.create)
+
+    def allows_external_calls(self, previous_response_id) -> bool:
+        return previous_response_id is not None and not isinstance(previous_response_id, Omit)
+
+    def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
+        options = super().validate_parameters(profile, **parameters)
+        return validate_request_options(
+            profile, options, protected=PROTECTED, containers=("extra_body",)
+        )
+
+    def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
+        if "max_output_tokens" in request:
+            validate_max_tokens(request["max_output_tokens"])
+        reasoning = request.get("reasoning")
+        if reasoning is not None:
+            if not isinstance(reasoning, dict):
+                raise ConfigurationError("reasoning must be a dictionary")
+            for field in ("effort", "summary", "generate_summary"):
+                if reasoning.get(field) is not None and not isinstance(reasoning[field], str):
+                    raise ConfigurationError(f"reasoning.{field} must be a string")
+        return request
 
     body_container = "extra_body"
     body_overlay = "extra_body"

@@ -116,6 +116,7 @@ def resolve_options(
     max_tokens: Any = _MISSING,
     reasoning: bool | None = None,
     reasoning_effort: str = "none",
+    **local: Any,
 ) -> PreparedOptions:
     """Validate controls once, independently of their native parameter paths."""
     if reasoning_effort not in EFFORTS:
@@ -168,9 +169,7 @@ def validate_parameter_paths(
     containers: tuple[str, ...] = (),
 ) -> None:
     """Check declared output routes without traversing native input fields."""
-    for name, parameter in profile.parameters.items():
-        if name == "api_key" or isinstance(parameter, Omit) or parameter.phase != "decode":
-            continue
+    for name, parameter in profile.request_parameters:
         path = parameter.path
         if name in ("reasoning_enable", "reasoning_effort") and options.effort is None:
             continue
@@ -237,12 +236,8 @@ def request_parameters(
     enable = profile.parameter("reasoning_enable", "decode")
     if options.effort is not None and enable is not None:
         _apply_parameter(request, enable, overlay=overlay)
-    for name, parameter in profile.parameters.items():
-        if (
-            name in ("api_key", "reasoning_enable", "reasoning_effort")
-            or isinstance(parameter, Omit)
-            or parameter.phase != "decode"
-        ):
+    for name, parameter in profile.request_parameters:
+        if name in ("reasoning_enable", "reasoning_effort"):
             continue
         generated = options.tokens if name == "max_tokens" and options.explicit_tokens else _MISSING
         _apply_parameter(request, parameter, generated=generated, overlay=overlay)

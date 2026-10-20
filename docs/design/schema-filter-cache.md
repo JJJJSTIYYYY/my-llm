@@ -62,7 +62,7 @@ def _plan(schema, delegated_paths=()):
 | `_hashable` | 布尔值 | 区分按类型比较和按对象身份比较的情况。 |
 
 完整缓存键还包含 `delegated_paths`，例如 `(("tools",),)`。它是元组组成的不可变元组，
-由 Transport 的 `message_path` / `tool_path` 声明生成，表示哪些叶节点交给后续过滤钩子处理。
+由 Decoder 的 `message_path` / `tool_path` 声明生成，表示哪些叶节点交给后续过滤钩子处理。
 同一类型在普通过滤和委派过滤中分别编译、缓存；同一类型位于不同嵌套位置时也按剩余路径区分，
 因此委派规则不会污染普通 `supported` / `projected` 调用。
 
@@ -299,12 +299,14 @@ plan.project(second)
 过滤器的分支评分证明。TypeAdapter 仍逐次运行，`dump_json` 用来触发惰性元素验证。
 缓存命中不会把这条请求直接判定为合法。
 
-### Transport 内部的叶节点委派
+### Decoder 内部的叶节点委派
 
 根请求过滤需要检查 SDK 参数、复制容器和普通配置，但消息、工具仍须经过可覆盖的
 `filter_messages` / `filter_tools`。`delegated_paths` 让根计划在指定消息或工具叶节点处借用原值，
-把投影和独立副本的建立交给后续钩子一次完成。委派只用于 Transport 的请求组装过程；
+把投影和独立副本的建立交给后续钩子一次完成。委派只用于 Decoder 的请求组装过程；
 普通 `supported(value, schema)` 没有委派路径，继续返回隔离结果。
+
+Anthropic 的开放 `input_schema` 同样委派后一次捕获，避免先按 SDK TypedDict 复制再覆盖完整 JSON Schema。
 
 例如 Gemini 的 `config` 信封仍按 `GenerateContentConfig` 过滤、复制，
 `config.tools` 暂时借用，随后 `filter_tools` 再按工具 Schema 投影一次。
@@ -317,20 +319,21 @@ plan.project(second)
 
 | 顺序 | 本次运行的操作 | Schema 计划缓存参与情况 |
 | --- | --- | --- |
-| 1 | generate 只读规范化消息与工具。 | 不在这里查询计划。 |
-| 2 | 输入 Transport 调用 projected，随后通过 TypeAdapter 验证。 | 首次遇到对应 SDK 类型时编译；后续复用。 |
+| 1 | generate 打包完整输入，Encoder 只读规范化消息与工具。 | 不在这里查询计划。 |
+| 2 | 输入 Encoder 调用 projected，随后通过 TypeAdapter 验证。 | 首次遇到对应 SDK 类型时编译；后续复用。 |
 | 3 | Encoder 编码当前消息与工具，生成本次中间态。 | 不跳过 Encoder。 |
 | 4 | 校验生成选项，Decoder 构造当前原生请求。 | 不跳过 Decoder。 |
-| 5 | 上游 Transport 过滤根信封，委派消息/工具叶给 filter_messages / filter_tools 投影并验证。 | 普通消息/工具计划可与步骤2复用；含委派路径的信封计划单独缓存。输入输出协议不同时分别使用对应类型计划。 |
+| 5 | 上游 Decoder 过滤根信封，委派消息/工具叶给 filter_messages / filter_tools 投影并验证。 | 普通消息/工具计划可与步骤2复用；含委派路径的信封计划单独缓存。输入输出协议不同时分别使用对应类型计划。 |
 | 6 | 官方 SDK 执行请求、解析返回事件。 | 仍执行 SDK 自己的处理。 |
 | 7 | 每个事件经过 Encoder、StreamState、Decoder，再转换完整结果。 | 本计划缓存不替代返回路径，也不缓存响应结果。 |
 
 第一次请求也可能在步骤2编译、步骤5就命中缓存；“冷请求”不代表它内部所有计划查询都未命中。
-BaseTransport 对每批消息和工具只解析一次计划并复用其 apply / project 函数，
+Encoder / Decoder 对每批消息和工具只解析一次计划并复用其 apply / project 函数，
 不会为同一批中的每条数据重复创建缓存键。每条消息仍独立过滤、验证和执行必要的所有权复制。
 
 源码入口见 [generate](../../src/my_llm/invoke.py)、
-[输入验证与请求边界](../../src/my_llm/codec/base/transport.py)和
+[输入验证](../../src/my_llm/codec/base/encoder.py)、
+[请求边界](../../src/my_llm/codec/base/decoder.py)和
 [Codec 固定编排](../../src/my_llm/codec/base/codec.py)。
 
 ## 9. 生命周期、兼容变体与限制
@@ -343,7 +346,7 @@ BaseTransport 对每批消息和工具只解析一次计划并复用其 apply / 
 限制的是根入口数，不是所有子节点数或总字节数；一个根计划仍可能引用较大的递归类型图。
 缓存增长取决于类型声明及其计划，而不是处理过多少条消息。
 
-新增协议不按协议名加入缓存白名单。其 Transport 声明受支持的 TypedDict / Pydantic 类型及
+新增协议不按协议名加入缓存白名单。其 Encoder / Decoder 声明受支持的 TypedDict / Pydantic 类型及
 标准容器、Union 等注解后，会自动复用同一套缓存；同名而不同对象的类型不会串用规则。
 新协议仍须提供自己的 Encoder / Decoder / Transport，不会从首条请求推断协议。
 建议稳定复用声明对象，避免每次请求动态构造新类或新的不可哈希 Annotated 对象。
@@ -356,7 +359,7 @@ BaseTransport 对每批消息和工具只解析一次计划并复用其 apply / 
 
 - 可选字段增减、字符串与列表切换、不同合法内容块：按当前值执行已有计划。
 - 开放应用字典中的任意业务键：按该字段声明整体处理，不按首条数据裁剪。
-- SDK 未声明的新协议字段或新块类型：可能被过滤或拒绝，需要在协议所属 Transport / Codec 明确支持。
+- SDK 未声明的新协议字段或新块类型：可能被过滤或拒绝，需要在协议所属 Decoder / Codec 明确支持。
 - 同一个类型对象在运行中被修改：当前没有自动失效机制，字段缓存、适配器缓存及计划缓存都需要重新建立。
 
 此缓存不根据某次请求自动“学习”新字段。新增字段是否支持，仍由 SDK 类型、协议实现与

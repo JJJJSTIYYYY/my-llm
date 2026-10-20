@@ -60,7 +60,7 @@ def test_a01_gemini_native_schema_constraints_survive_explicit_normalization(
     encoded = codec.encode(tools=[incoming], input_format="gemini")
     if target == "ollama":
         with pytest.raises(UnsupportedCapabilityError, match="discard tool parameter schema"):
-            codec.transport(target).filter_tools(
+            codec.decoder(target).filter_tools(
                 codec.decode(**encoded, target_format=target)["tools"], profile_factory(target)
             )
         return
@@ -422,7 +422,7 @@ def test_foreign_message_extensions_cannot_become_native_request_fields(
     before = deepcopy(incoming)
     converted = MyCodec().convert(incoming, input_format=source, target_format=target)["messages"]
     assert all("vendor_metadata" not in message for message in converted)
-    filtered = MyCodec().transport(target).filter_messages(converted, profile_factory(target))
+    filtered = MyCodec().decoder(target).filter_messages(converted, profile_factory(target))
     assert all("vendor_metadata" not in message for message in filtered)
     for message in filtered:
         assert_native(message, MESSAGE_TYPES[target])
@@ -443,7 +443,7 @@ def test_foreign_tool_extensions_cannot_become_native_request_fields(
         "tools"
     ]
     assert all("vendor_metadata" not in tool for tool in converted)
-    filtered = MyCodec().transport(target).filter_tools(converted, profile_factory(target))
+    filtered = MyCodec().decoder(target).filter_tools(converted, profile_factory(target))
     assert all("vendor_metadata" not in tool for tool in filtered)
     for tool in filtered:
         assert_native(tool, TOOL_TYPES[target])

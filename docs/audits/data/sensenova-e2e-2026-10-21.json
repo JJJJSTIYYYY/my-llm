@@ -1,0 +1,349 @@
+{
+  "timestamp": "2026-10-20T17:40:33.651548+00:00",
+  "model": "sensenova-6.8-flash-lite",
+  "endpoint": "https://token.sensenova.cn",
+  "results": [
+    {
+      "upstream": "openai_chat",
+      "stdio": "openai_chat",
+      "case": "text_collected",
+      "text": "SENSENOVA_OK",
+      "rendered_prefix_chars": 0,
+      "events": 0,
+      "requests": 1,
+      "status": "passed",
+      "seconds": 3.518
+    },
+    {
+      "upstream": "openai_chat",
+      "stdio": "openai_chat",
+      "case": "text_stream",
+      "text": "SENSENOVA_OK",
+      "rendered_prefix_chars": 0,
+      "events": 7,
+      "requests": 1,
+      "status": "passed",
+      "seconds": 1.03
+    },
+    {
+      "upstream": "openai_chat",
+      "stdio": "openai_chat",
+      "case": "tool_roundtrip",
+      "tool": "add",
+      "arguments": {
+        "a": 19,
+        "b": 23
+      },
+      "text": "42",
+      "rendered_prefix_chars": 0,
+      "events": 16,
+      "requests": 2,
+      "status": "passed",
+      "seconds": 15.226
+    },
+    {
+      "upstream": "openai_chat",
+      "stdio": "openai_responses",
+      "case": "text_collected",
+      "text": "SENSENOVA_OK",
+      "rendered_prefix_chars": 227,
+      "events": 0,
+      "requests": 1,
+      "status": "passed",
+      "seconds": 3.046
+    },
+    {
+      "upstream": "openai_chat",
+      "stdio": "openai_responses",
+      "case": "text_stream",
+      "text": "SENSENOVA_OK",
+      "rendered_prefix_chars": 924,
+      "events": 48,
+      "requests": 1,
+      "status": "passed",
+      "seconds": 16.162
+    },
+    {
+      "upstream": "openai_chat",
+      "stdio": "openai_responses",
+      "case": "tool_roundtrip",
+      "tool": "add",
+      "arguments": {
+        "a": 19,
+        "b": 23
+      },
+      "text": "42",
+      "rendered_prefix_chars": 69,
+      "events": 39,
+      "requests": 2,
+      "status": "passed",
+      "seconds": 3.357
+    },
+    {
+      "upstream": "openai_chat",
+      "stdio": "anthropic",
+      "case": "text_collected",
+      "text": "SENSENOVA_OK",
+      "rendered_prefix_chars": 1362,
+      "events": 0,
+      "requests": 1,
+      "status": "passed",
+      "seconds": 5.094
+    },
+    {
+      "upstream": "openai_chat",
+      "stdio": "anthropic",
+      "case": "text_stream",
+      "text": "SENSENOVA_OK",
+      "rendered_prefix_chars": 110,
+      "events": 13,
+      "requests": 1,
+      "status": "passed",
+      "seconds": 1.658
+    },
+    {
+      "upstream": "openai_chat",
+      "stdio": "anthropic",
+      "case": "tool_roundtrip",
+      "tool": "add",
+      "arguments": {
+        "a": 19,
+        "b": 23
+      },
+      "text": "42",
+      "rendered_prefix_chars": 120,
+      "events": 31,
+      "requests": 2,
+      "status": "passed",
+      "seconds": 2.8
+    },
+    {
+      "upstream": "openai_responses",
+      "stdio": "openai_chat",
+      "case": "text_collected",
+      "text": "SENSENOVA_OK",
+      "rendered_prefix_chars": 0,
+      "events": 0,
+      "requests": 1,
+      "status": "passed",
+      "seconds": 2.701
+    },
+    {
+      "upstream": "openai_responses",
+      "stdio": "openai_chat",
+      "case": "text_stream",
+      "text": "SENSENOVA_OK",
+      "rendered_prefix_chars": 0,
+      "events": 4,
+      "requests": 1,
+      "status": "passed",
+      "seconds": 0.781
+    },
+    {
+      "upstream": "openai_responses",
+      "stdio": "openai_chat",
+      "case": "tool_roundtrip",
+      "tool": "add",
+      "arguments": {
+        "a": 19,
+        "b": 23
+      },
+      "text": "42",
+      "rendered_prefix_chars": 0,
+      "events": 7,
+      "requests": 2,
+      "status": "passed",
+      "seconds": 1.426
+    },
+    {
+      "upstream": "openai_responses",
+      "stdio": "openai_responses",
+      "case": "text_collected",
+      "text": "SENSENOVA_OK",
+      "rendered_prefix_chars": 0,
+      "events": 0,
+      "requests": 1,
+      "status": "passed",
+      "seconds": 2.563
+    },
+    {
+      "upstream": "openai_responses",
+      "stdio": "openai_responses",
+      "case": "text_stream",
+      "text": "SENSENOVA_OK",
+      "rendered_prefix_chars": 0,
+      "events": 9,
+      "requests": 1,
+      "status": "passed",
+      "seconds": 1.089
+    },
+    {
+      "upstream": "openai_responses",
+      "stdio": "openai_responses",
+      "case": "tool_roundtrip",
+      "tool": "add",
+      "arguments": {
+        "a": 19,
+        "b": 23
+      },
+      "text": "42",
+      "rendered_prefix_chars": 0,
+      "events": 15,
+      "requests": 2,
+      "status": "passed",
+      "seconds": 1.297
+    },
+    {
+      "upstream": "openai_responses",
+      "stdio": "anthropic",
+      "case": "text_collected",
+      "text": "SENSENOVA_OK",
+      "rendered_prefix_chars": 0,
+      "events": 0,
+      "requests": 1,
+      "status": "passed",
+      "seconds": 0.767
+    },
+    {
+      "upstream": "openai_responses",
+      "stdio": "anthropic",
+      "case": "text_stream",
+      "text": "SENSENOVA_OK",
+      "rendered_prefix_chars": 0,
+      "events": 7,
+      "requests": 1,
+      "status": "passed",
+      "seconds": 0.742
+    },
+    {
+      "upstream": "openai_responses",
+      "stdio": "anthropic",
+      "case": "tool_roundtrip",
+      "tool": "add",
+      "arguments": {
+        "a": 19,
+        "b": 23
+      },
+      "text": "42",
+      "rendered_prefix_chars": 0,
+      "events": 13,
+      "requests": 2,
+      "status": "passed",
+      "seconds": 1.675
+    },
+    {
+      "upstream": "anthropic",
+      "stdio": "openai_chat",
+      "case": "text_collected",
+      "text": "SENSENOVA_OK",
+      "rendered_prefix_chars": 75,
+      "events": 0,
+      "requests": 1,
+      "status": "passed",
+      "seconds": 0.934
+    },
+    {
+      "upstream": "anthropic",
+      "stdio": "openai_chat",
+      "case": "text_stream",
+      "text": "SENSENOVA_OK",
+      "rendered_prefix_chars": 793,
+      "events": 27,
+      "requests": 1,
+      "status": "passed",
+      "seconds": 12.168
+    },
+    {
+      "upstream": "anthropic",
+      "stdio": "openai_chat",
+      "case": "tool_roundtrip",
+      "tool": "add",
+      "arguments": {
+        "a": 19,
+        "b": 23
+      },
+      "text": "42",
+      "rendered_prefix_chars": 100,
+      "events": 17,
+      "requests": 2,
+      "status": "passed",
+      "seconds": 4.126
+    },
+    {
+      "upstream": "anthropic",
+      "stdio": "openai_responses",
+      "case": "text_collected",
+      "text": "SENSENOVA_OK",
+      "rendered_prefix_chars": 212,
+      "events": 0,
+      "requests": 1,
+      "status": "passed",
+      "seconds": 8.919
+    },
+    {
+      "upstream": "anthropic",
+      "stdio": "openai_responses",
+      "case": "text_stream",
+      "text": "SENSENOVA_OK",
+      "rendered_prefix_chars": 722,
+      "events": 40,
+      "requests": 1,
+      "status": "passed",
+      "seconds": 12.976
+    },
+    {
+      "upstream": "anthropic",
+      "stdio": "openai_responses",
+      "case": "tool_roundtrip",
+      "tool": "add",
+      "arguments": {
+        "a": 19,
+        "b": 23
+      },
+      "text": "42",
+      "rendered_prefix_chars": 165,
+      "events": 40,
+      "requests": 2,
+      "status": "passed",
+      "seconds": 21.874
+    },
+    {
+      "upstream": "anthropic",
+      "stdio": "anthropic",
+      "case": "text_collected",
+      "text": "SENSENOVA_OK",
+      "rendered_prefix_chars": 0,
+      "events": 0,
+      "requests": 1,
+      "status": "passed",
+      "seconds": 9.134
+    },
+    {
+      "upstream": "anthropic",
+      "stdio": "anthropic",
+      "case": "text_stream",
+      "text": "SENSENOVA_OK",
+      "rendered_prefix_chars": 0,
+      "events": 28,
+      "requests": 1,
+      "status": "passed",
+      "seconds": 2.31
+    },
+    {
+      "upstream": "anthropic",
+      "stdio": "anthropic",
+      "case": "tool_roundtrip",
+      "tool": "add",
+      "arguments": {
+        "a": 19,
+        "b": 23
+      },
+      "text": "42",
+      "rendered_prefix_chars": 0,
+      "events": 33,
+      "requests": 2,
+      "status": "passed",
+      "seconds": 7.613
+    }
+  ]
+}

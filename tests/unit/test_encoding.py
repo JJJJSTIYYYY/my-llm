@@ -245,7 +245,7 @@ def test_reasoning_replay_only_pads_tool_calls_when_thinking(
         profile=profile,
         reasoning=thinking,
     )["messages"][0]
-    result = MyCodec().transport(protocol).filter_messages([result], profile, reasoning=thinking)[0]
+    result = MyCodec().decoder(protocol).filter_messages([result], profile, reasoning=thinking)[0]
     assert (key in result) is (replay and (bool(visible) or (has_calls and thinking)))
     if key in result:
         assert result[key] == (visible or "")

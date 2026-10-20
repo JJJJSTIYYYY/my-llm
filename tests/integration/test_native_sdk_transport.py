@@ -222,7 +222,9 @@ async def test_header_authentication_without_sdk_api_key(
     assert all("api_key" not in options for options in client_options)
     expected = "provider-override" if provider_override else "Bearer local-header-test"
     assert [request.headers[header] for request in requests] == [
-        expected, "request-override", expected
+        expected,
+        "request-override",
+        expected,
     ]
     assert len(client_options) == (2 if protocol == "ollama" else 1)
     assert all("local-header-test" not in request.content.decode() for request in requests)

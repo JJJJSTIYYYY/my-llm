@@ -166,25 +166,26 @@ def test_unknown_intermediate_blocks_are_rejected_instead_of_becoming_opaque_con
     assert values == before
 
 
-def test_translation_and_sdk_validation_have_separate_interfaces():
+def test_preparation_and_sdk_execution_have_separate_interfaces():
     for codec in MyCodec().codecs.values():
         for direction in (codec.encoder, codec.decoder):
-            for name in (
-                "validate_profile",
-                "validate_parameters",
-                "validate_request",
-                "validate_input",
-                "filter_messages",
-                "filter_tools",
-                "create_client",
-                "upstream",
-            ):
+            for name in ("create_client", "close_client", "upstream"):
                 assert not hasattr(direction, name)
+        for name in (
+            "validate_profile",
+            "validate_parameters",
+            "validate_request",
+            "filter_messages",
+            "filter_tools",
+            "native_request",
+            "prepare",
+        ):
+            assert callable(getattr(codec.decoder, name))
+            assert not hasattr(codec.transport, name)
+        assert callable(codec.encoder.request)
+        assert callable(codec.encoder.validate_input)
         assert callable(codec.decoder.request_parameters)
         assert callable(codec.decoder.assemble_request)
-        assert callable(codec.transport.request)
-        assert callable(codec.transport.validate_profile)
-        assert callable(codec.transport.validate_request)
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)

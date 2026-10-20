@@ -1,125 +1,91 @@
 # 接入新的协议
 
-每个协议实现 BaseEncoder、BaseDecoder、BaseTransport，由 BaseCodec 组合并声明默认值。
-Encoder / Decoder 只翻译已识别字段；请求验证、SDK 结构过滤与 SDK 调用归 Transport。
-四个基类及 PreparedOptions、ProtocolDefaults、Parameter、Config 均可从 `my_llm` 导入。
-独立协议直接实现这些基类；不需要继承内置五种协议，也不需要修改公共调用入口。
+每个协议实现 BaseEncoder、BaseDecoder、BaseTransport，由 BaseCodec 组合并声明 ProtocolDefaults。
+Encoder 接收完整调用字典，验证和编码输入；Decoder 准备客户端参数、请求参数和本地控制项；
+Transport 只构造／调用 SDK、关闭客户端及本次响应。四个基类、PreparedOptions、Parameter 和 Config 均从 my_llm 导入。
 
-## 原生实现目录
+## 目录与无状态约束
 
-```text
-<protocol>/
-├── __init__.py                 # 仅导出
-├── codec.py                    # 协议身份、默认值与三个组件
-├── transport.py                # 参数验证、过滤、SDK 生命周期
-├── utils/                      # 按需提供的双向共用辅助
-│   └── __init__.py
-├── encoding/
-│   ├── __init__.py
-│   ├── encoder.py              # 原生 → 中间态
-│   └── content.py              # 按需提供的翻译辅助
-└── decoding/
-    ├── __init__.py
-    ├── decoder.py              # 中间态与生成选项 → 原生请求
-    └── content.py
-```
+协议包包含 codec.py、transport.py、encoding/encoder.py、decoding/decoder.py；内容辅助放在各方向 content.py，
+双向共用规则按需放在 utils/。例如 Ollama 的公开 base64 Image 验证和 SDK 方法类型分析放在 utils/schema.py。
+四个组件声明空 __slots__，不持有 Profile、客户端、历史或流片段；初始化文件只导出接口。
+不导入其他协议实现，也不让 Encoder / Decoder 相互导入或依赖 Transport。
+官方 SDK 类型和方法签名可用于静态 Schema 分析；SDK 客户端创建和调用只能出现在 Transport。
 
-实现保持无状态，使用空 `__slots__`。Profile 按调用传入，不保存流片段、客户端或请求历史。
-包初始化文件只导出接口；原生实现不导入其他协议、相反翻译方向或 Transport 的实现。
-
-## Encoder 与 Decoder
-
-两个基类均要求提供 `protocol` 属性，可用类属性实现。
-messages / tools / chunks 是固定公开入口；原生实现提供对应的下划线钩子，
-签名为 `(values: list, profile: ResolvedProfile | None = None, **parameters)`。
+## Encoder 与 Decoder 契约
 
 | 实现 | 必需接口 |
 | --- | --- |
-| BaseEncoder | `_messages`、`_tools`、`_chunks`、`usage`、`match_item`、`protocol`。 |
-| BaseDecoder | `_messages`、`_tools`、`_chunks`、`usage`、`protocol`、`assemble_request`。 |
+| BaseEncoder | protocol、message_type / tool_type、match_item、_messages / _tools / _chunks、usage。 |
+| BaseDecoder | protocol、request_schema、message_type / tool_type、message_path / tool_path、_messages / _tools / _chunks、usage、assemble_request。 |
+| BaseTransport | create_client(parameters: dict)、upstream(client, request: dict)。 |
 
-Encoder.matches 统一整批识别。Encoder 与 Decoder 的 `_messages` / `_tools` 返回普通 list，
-每个实现显式读取与构造受支持的字段，不透传未知协议键，也不附加原生恢复记录。
-工具参数、工具结果和 JSON Schema 等已识别开放字典整体按应用数据处理。
-原生钩子内部复用本方向方法时调用 `_messages` 等钩子，避免重复包装。
-Decoder.result 默认返回首条消息，Responses 等协议可覆盖为 items 列表。
+属性可用类属性实现。messages / tools / chunks 是固定公开入口，私有钩子的签名为
+(values: list, profile: ResolvedProfile | None = None, **parameters)。
+Encoder.matches 负责整批识别，validate_input 使用公开 SDK 类型只读验证；validate_values 可覆盖 SDK 特有的输入规范化。
+Encoder.request(inputs, profile) 接收完整 generate 输入并输出包含 profile 和已转换 messages / tools 的中间字典。
 
-Encoder 的固定入口借用输入字典或 SDK 字段视图，私有钩子只读取已识别字段并构造中间态。
-Decoder 同样只读借用中间态；两个方向的 messages / tools 公开出口复制本次已翻译结果。
-两个方向的 `_chunks` 必须直接返回独立事件：新建协议容器，只对借入的可变字段建立副本；
-公开 chunks 入口直接转交结果，避免每个文本增量再次复制完整新建外壳。
-例如工具参数对象、开放元数据、logprobs 的 bytes 列表仍须捕获；不可变字符串可以直接使用。
-共享 metadata(values, path=()) 已捕获 values；直接构造其他操作或原生帧时由钩子保证所有权。
-内部 select 仅选择字段，不复制嵌套 payload。
-各公开边界均承担自己的隔离责任，不能理解为整条 generate 路径仅复制一次。
-同协议转换也必须显式翻译字段，不能直接返回原生对象快照。
-私有钩子不能原位修改调用方的输入块来补齐字段，应重建实际变化的字典或列表。
-新增协议必须验证 chunks 的两个方向：修改输入不得影响已返回事件，修改事件不得影响输入，
-并覆盖通过 parameters 传入的可变元数据。
+两个方向的私有转换钩子只读借用输入，只处理已识别字段，不保留未知字段或原始快照。
+公开 messages / tools 捕获独立结果；内部 Decoder.request 直接调用私有钩子，
+由最终 native_request 捕获 SDK 需要的可变内容，避免先复制公开转换结果再复制请求。
+工具参数、结果和 JSON Schema 的开放字典应完整保留内部应用键。
+两个方向的 _chunks 直接构造独立事件，只复制借入的可变叶；不可变文本不需要再次复制。
+修改调用方输入不能改变返回结果，修改结果也不能改变调用方输入。
+Decoder.result 默认返回首条消息；Responses 等协议可覆盖为列表。
 
-Transport 的 `filter_messages` / `filter_tools` 接收只读借用的原生叶节点，必须返回拥有独立可变数据的结果。
-根请求过滤会将 `message_path` / `tool_path` 对应叶交给这些钩子处理一次；覆盖钩子同样遵循该约束。
+## Decoder 的固定请求流程
 
-BaseDecoder.request 显式接收已验证的 options；final 基类流程统一调用 request_parameters(profile, options)
-生成参数字典，再调用 assemble_request(messages, tools, profile, *, request: dict, **parameters)。
-协议的 assemble_request 只将原生消息和工具写入已有 request 字典，不接收 options，也不重复调用 request_parameters。
-参数应用的顺序和仅执行一次由基类保证，不提供缺失选项后重新解析的兼容路径。
-PreparedOptions 是公开的请求独立选项类型，捕获本次调用的 token、headers、原生参数及思考控制。
-原生请求始终使用普通字典。BaseDecoder.request_parameters 固定处理所有 phase="decode" 的 Parameter，
-协议复用该流程，不再各自实现参数默认值遍历。通过类属性声明请求布局：
-body_container 默认 None、headers_field 默认 "$.extra_headers"、body_overlay 默认 None、omit_empty_body 默认 False。
-例如 Gemini 将 body_container 设为 "config"；SDK 具有额外请求体覆盖机制时用 body_overlay 声明对应容器。
-协议专有的请求控制通过可选 `_request_parameters(request, profile, options)` 钩子补充，
-该钩子返回请求字典，不重新应用路径或解析共同选项。Config 转换结果优先于缺失时默认值。
-已存在参数即使为 None 也保留；default_value=omit 不补缺失值，整个字段=omit 禁用自动处理。
-显式 generate(max_tokens=omit) 删除该请求的目标键。推理启用值仅在本次请求开启推理时应用。
+Decoder.prepare(intermediate, client) 返回 {client, request, local} 三部分字典：
+client 是 SDK 构造参数，request 是 SDK 调用参数，local 包含 stream 和 client_key。
+完整准备路径每次只调用一次 validate_parameters 返回 PreparedOptions，再交给 request。
+离线 Decoder.request 可自行准备一次 options；已提供 options 时直接复用。
+
+request 依次翻译消息／工具、request_parameters、assemble_request、native_request。
+assemble_request(messages, tools, profile, *, request: dict, **parameters) 只写入消息和工具，
+不重新调用 request_parameters；协议控制通过 _request_parameters(request, profile, options) 补充。
+布局通过 body_container、headers_field、body_overlay、omit_empty_body 声明。
+默认值只填补缺失参数，已有 None、False、0 保留，显式生成控制覆盖已有值；omit 语义见配置指南。
+
+| Decoder 接口 | 职责 |
+| --- | --- |
+| request_schema | SDK 根参数及类型；通常用 parameter_types(SDK方法) 读取一次。 |
+| message_type / tool_type | SDK 结构 Schema，与 Encoder 的输入 Schema 分别声明。 |
+| message_path / tool_path | 原生请求中消息与工具的路径，支持嵌套 config.tools。 |
+| validate_parameters | 共同选项每次准备一次，协议检查能力、保护字段和路径。 |
+| native_request | 固定流程：历史关联 → 根过滤并委派消息／工具 → 叶过滤与验证 → validate_request → 显式兼容叶。 |
+| filter_messages / filter_tools | 只读借入原生叶，返回可独立修改的 SDK 值；根计划不会重复过滤同一叶。 |
+| validate_request | 可覆盖的原生选项和组合约束检查，返回字典。 |
+| validate_profile / usage_modes | 构造期检查 SDK 路径、用量模式及协议连接限制。 |
+| client_parameters(profile) | 构造期把已解析连接配置映射到 SDK 构造 kwargs，不创建 SDK 客户端。 |
+| request_client(client, options) / client_key(client) | 默认复用实例字典及 None 键；SDK 把请求选项绑定客户端时生成请求独立变体。 |
+| allows_external_calls | 默认 False；服务端历史协议按需覆盖。 |
+
+不覆盖 final 的 request / prepare / native_request。tools=None 省略，tools=[] 显式发送空列表。
+BaseCodec.validate_profile 委托 Decoder；MyLLM 在构造时调用，并准备连接字典。
+MyCodec.request 是离线原生请求入口，共用 Decoder 请求流程；完整调用使用 MyCodec.prepare。
+usage_mode 是开放字符串，接受的具体值由 Decoder.usage_modes 声明。
 
 BaseEncoder.parameter_value(value, profile, field_id, default_path, default=None, *, use_default=True)
-统一读取 phase="encode" 的参数路径及缺失默认值。协议钩子在确定事件语义后调用它，
-再构造对应中间态字段；不遍历所有返回字段，也不根据 Parameter.name 生成中间态键。
-use_default=False 可用于事件判别后的分支读取，避免在不对应的事件中制造缺失默认值。
-例如独立协议确认当前事件是文本增量后，读取 content；已有 None 保留，只有缺失时应用默认值：
+统一读取 encode 参数。协议钩子先识别事件语义，再读取指定字段；不枚举未知返回字段。
+例如：
 
 ```python
 def read_text_delta(encoder, event, profile):
     return encoder.parameter_value(event, profile, "content", "$.text")
 ```
 
-Decoder 输出标准事件时使用其原生字段，不使用 encode 参数重排输出。
-这两个方向不实现请求参数校验、模型能力验证、SDK 字段过滤或请求执行。
-工具 JSON、媒体及原生 Schema 的解析仍属于翻译；上游失败事件仍需转换为相应流错误。
+Schema 类型计划继续复用 shared/transport.py 的有界 LRU，只保存类型及编译规则。
+输入验证用只读 projected，最终需要独立可变数据的过滤用 supported；每份请求仍单独验证。
+JSON Schema 的应用键不能作为协议字段删除。若先委派开放叶，协议钩子必须随后建立独立副本。
 
-## Transport
+## Transport 契约
 
-[BaseTransport](../../src/my_llm/codec/base/transport.py) 提供固定的 request 流程：
-检查工具关联与能力 → filter_messages / filter_tools → SDK 消息与工具类型校验 → validate_request。
-过滤读取公开 SDK 类型，不把任意工具参数、结果字典或 JSON Schema 当作协议字段清理。
-Schema 结构预编译为共享的类型计划；只读输入校验使用 `projected`，需要独立可变结果的过滤使用
-`supported`。缓存不保存请求值。固定流程只重建会被替换的请求容器，消息和工具由过滤器隔离；
-`validate_request` 若需修改其他嵌套选项，也应只重建其实际改写的容器。
-
-| 接口 | 职责 |
-| --- | --- |
-| message_type / tool_type | 必需。公开 SDK 的消息与工具类型，用于结构字段过滤。 |
-| message_path / tool_path | 必需。声明原生请求中消息与工具的字段路径。 |
-| request_schema | 必需。声明官方 SDK 方法的根关键字及相应类型；使用 parameter_types(SDK方法) 获取。 |
-| validate_parameters(profile, **parameters) | 验证并返回 PreparedOptions；协议在父类结果上检查参数路径、控制值和能力限制。 |
-| validate_request(request, profile, **parameters) | 必需。验证原生选项并返回参数字典，不能将整份请求替换为 SDK 模型。 |
-| create_client(profile, **parameters) | 必需。同步创建官方 SDK 客户端。 |
-| upstream(client, request, profile, **parameters) | 必需。将过滤后的字典通过 **request 解包给 SDK，返回清理本次响应资源的异步上下文管理器。 |
-| validate_input | 默认按公开 SDK 类型验证声明的输入协议，保留原始输入。 |
-| validate_profile / usage_modes | 默认检查用量模式，可增加连接和协议限制；新增模式只需在本 Transport 的 usage_modes 中声明。 |
-| filter_messages / filter_tools | 默认按 SDK 类型过滤；可按 Profile 放行兼容字段或检查 Schema 表达能力，不改写消息内容。 |
-| allows_external_calls(previous_response_id) | 默认 False；服务端历史协议可覆盖。 |
-| close_client / client_key | 默认关闭 SDK 客户端、使用单个复用键；按 SDK 生命周期与请求头绑定规则覆盖。 |
-
-不覆盖 BaseTransport.request；tools=None 表示省略，tools=[] 表示显式空列表。
-BaseCodec.request 接收中间态，由 Transport 一次校验、解析统一生成控制参数，
-再将返回的 options 显式传给 Decoder.request 翻译，
-最后将原生请求交给 Transport.request 过滤和校验。MyCodec.request 只路由。
-BaseCodec.validate_profile 委托 Transport。Profile 从注册的 Codec.defaults 复制默认值，
-负责合并配置、校验通用字段并建立快照，不创建 Codec 或 SDK 对象。
-usage_mode 是开放字符串；Profile 检查非空字符串格式，Transport.usage_modes 决定接受哪些具体值。
+create_client(parameters: dict) 同步用已准备 kwargs 构造 SDK；默认 close_client 为 await client.close()。
+upstream(client, request: dict) 返回异步上下文管理器，把 **request 交给官方 SDK，
+完整消费、提前关闭、异常和取消时都释放本次响应，但不关闭借用的客户端。
+Transport 不接收 Profile、生成控制参数，也不解析路径、过滤或校验请求。
+MyLLM 根据 Decoder 生成的 client_key 管理实例缓存和最终关闭。
+具体资源规则见[生命周期设计](../design/client-lifecycle.md)。
 
 ## Codec 组合
 
@@ -135,7 +101,7 @@ Profile 字段 None 表示继承，wrapper.default_value=None 为实际值，仅
 ProtocolDefaults、ProviderProfile、ModelProfile 可继承扩展：新增参数声明
 Parameter[T] | Omit | None，分支配置声明 Config[T] | Omit | None。
 解析器自动发现继承字段并检查声明，不需要路径与默认值配对，也不需要中央参数表。
-自定义 Config 的含义由协议组件实现；所有 decode 参数的路径和默认值由 BaseDecoder 自动应用。
+自定义 Config 的含义由协议组件实现；所有请求 scope 的 decode 参数路径和默认值由 BaseDecoder 自动应用。
 自定义 encode 参数由协议钩子调用 BaseEncoder.parameter_value 后映射为明确的中间态语义。
 SDK 根参数必须符合 SDK 调用签名，非标准字段使用 SDK 正式提供的 extra_body 等扩展入口。
 
@@ -204,7 +170,7 @@ MyCodec / MyLLM 实例保留创建时的注册快照；注册新协议后需创�
 - 响应元数据通过 shared.stream.metadata(values, path=()) 声明：Encoder 显式投影已识别字段并归一化，
   StreamState 仅沿 path 浅合并 values，不维护任何协议专属字段清单。嵌套更新与完整替换由 Encoder 选择位置。
 - options 提供参数路径操作与生成选项；BaseEncoder / BaseDecoder 固定参数读取和请求应用流程，
-  transport 提供 SDK 字段过滤、工具关联验证及响应资源关闭。
+  shared/transport 提供 Codec 共用的 Schema 规则和历史验证，以及 Transport 使用的响应关闭辅助。
 跨协议来回翻译不保证无损。不能把其他协议的密文解释为本协议的签名，也不通过隐藏记录恢复跨协议无法表达的信息。
 标准签名与密文必须在对应协议实现中明确处理。详见[翻译字段边界](../design/translation-boundaries.md)。
 

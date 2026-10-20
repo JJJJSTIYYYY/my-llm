@@ -15,7 +15,7 @@ def test_profile_and_request_snapshots_are_independent():
     assert llm.provider.extra_body.default_value["nested"]["value"] == "original"
     assert llm.resolved_profile.get("extra_body")["nested"]["value"] == "original"
     decoder = llm.codec.decoder(llm.resolved_profile.protocol)
-    options = llm.codec.transport(llm.resolved_profile.protocol).validate_parameters(
+    options = llm.codec.decoder(llm.resolved_profile.protocol).validate_parameters(
         llm.resolved_profile
     )
     request = decoder.request_parameters(llm.resolved_profile, options)

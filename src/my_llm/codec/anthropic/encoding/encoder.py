@@ -3,6 +3,8 @@
 from copy import deepcopy
 from typing import Any
 
+from anthropic.types import MessageParam, ToolParam
+
 from my_llm.codec.anthropic.utils.content import CITATION_FIELDS, native_block
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.shared.conversion import (
@@ -31,6 +33,8 @@ class AnthropicEncoder(BaseEncoder):
 
     __slots__ = ()
     protocol = PROTOCOL
+    message_type = MessageParam
+    tool_type = ToolParam
 
     def match_item(self, item: dict) -> bool:
         if "input_schema" in item:

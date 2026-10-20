@@ -67,8 +67,8 @@ def test_codec_requires_conversion_directions_and_transport(missing):
         (BaseEncoder, ChatCompletionsEncoder, "match_item"),
         (BaseEncoder, ChatCompletionsEncoder, "_chunks"),
         (BaseDecoder, ChatCompletionsDecoder, "assemble_request"),
-        (BaseTransport, ChatCompletionsTransport, "validate_request"),
-        (BaseTransport, ChatCompletionsTransport, "request_schema"),
+        (BaseDecoder, ChatCompletionsDecoder, "message_type"),
+        (BaseDecoder, ChatCompletionsDecoder, "request_schema"),
         (BaseTransport, ChatCompletionsTransport, "upstream"),
         (BaseTransport, ChatCompletionsTransport, "create_client"),
     ],
@@ -88,12 +88,12 @@ def test_decoder_has_no_sdk_lifecycle_interface(protocol):
     decoder = converter.decoder(protocol)
     transport = converter.transport(protocol)
     assert transport is converter.codecs[protocol].transport
-    for name in ("create_client", "close_client", "client_key", "upstream"):
+    for name in ("create_client", "close_client", "upstream"):
         assert not hasattr(decoder, name)
         assert callable(getattr(transport, name))
 
 
-def test_codec_coordinates_conversion_and_transport_validation(profile_factory):
+def test_codec_delegates_configuration_validation_to_decoder(profile_factory):
     profile = profile_factory()
     calls = []
 
@@ -115,11 +115,11 @@ def test_codec_coordinates_conversion_and_transport_validation(profile_factory):
         transport = Transport()
 
     Codec().validate_profile(profile)
-    assert calls == [("transport", profile)]
+    assert calls == [("decoder", profile)]
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
-def test_codec_request_translates_before_transport_assembly(profile_factory, protocol):
+def test_codec_request_translates_before_native_assembly(profile_factory, protocol):
     converter = MyCodec()
     profile = profile_factory(
         protocol,
@@ -149,7 +149,7 @@ def test_codec_request_translates_before_transport_assembly(profile_factory, pro
         if protocol == "openai_responses":
             expected_message["type"] = "message"
         assert request[history_key] == [expected_message]
-        assert request["tools"] == converter.transport(protocol).filter_tools(
+        assert request["tools"] == converter.decoder(protocol).filter_tools(
             converter.decoder(protocol).tools(intermediate["tools"], profile), profile
         )
     assert intermediate == before
@@ -168,13 +168,13 @@ def test_request_pipeline_decodes_once_before_native_assembly(profile_factory, t
     class RecordingDecoder(ChatCompletionsDecoder):
         __slots__ = ()
 
-        def messages(self, messages, profile=None, **parameters):
+        def _messages(self, messages, profile=None, **parameters):
             calls.append(("messages", profile, parameters))
-            return super().messages(messages, profile, **parameters)
+            return super()._messages(messages, profile, **parameters)
 
-        def tools(self, tools, profile=None, **parameters):
+        def _tools(self, tools, profile=None, **parameters):
             calls.append(("tools", profile, parameters))
-            return super().tools(tools, profile, **parameters)
+            return super()._tools(tools, profile, **parameters)
 
         def _request_parameters(self, request, profile, options):
             calls.append(("bindings", profile, {"max_tokens": options.tokens}))
@@ -187,9 +187,6 @@ def test_request_pipeline_decodes_once_before_native_assembly(profile_factory, t
             assert request["max_completion_tokens"] == 42
             return super().assemble_request(messages, tools, profile, request=request, **parameters)
 
-    class RecordingTransport(ChatCompletionsTransport):
-        __slots__ = ()
-
         def validate_parameters(self, profile, **parameters):
             calls.append(("parameters", profile, parameters))
             return super().validate_parameters(profile, **parameters)
@@ -201,7 +198,6 @@ def test_request_pipeline_decodes_once_before_native_assembly(profile_factory, t
     class RecordingCodec(ChatCompletionsCodec):
         __slots__ = ()
         decoder = RecordingDecoder()
-        transport = RecordingTransport()
 
     RecordingCodec().request(
         intermediate["messages"], intermediate.get("tools"), profile, max_tokens=42
@@ -214,12 +210,12 @@ def test_request_pipeline_decodes_once_before_native_assembly(profile_factory, t
     assert all(actual is profile and options == {"max_tokens": 42} for _, actual, options in calls)
 
 
-def test_transport_checks_native_tool_capability(profile_factory):
+def test_decoder_checks_native_tool_capability(profile_factory):
     with pytest.raises(UnsupportedCapabilityError, match="function calling"):
-        ChatCompletionsTransport().request({"messages": [], "tools": [{}]}, profile_factory())
+        ChatCompletionsDecoder().native_request({"messages": [], "tools": [{}]}, profile_factory())
 
 
-def test_transport_validates_filtered_native_message_structure(profile_factory):
+def test_decoder_validates_filtered_native_message_structure(profile_factory):
     request = {
         "messages": [
             {
@@ -234,7 +230,7 @@ def test_transport_validates_filtered_native_message_structure(profile_factory):
     }
     before = deepcopy(request)
     with pytest.raises(MessageValidationError):
-        ChatCompletionsTransport().request(request, profile_factory())
+        ChatCompletionsDecoder().native_request(request, profile_factory())
     assert request == before
 
 

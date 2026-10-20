@@ -28,15 +28,12 @@ SDK 客户端按实例及其事件循环使用，不跨事件循环共享。
 
 ## 协议边界
 
-MyLLM 调度 Transport 的客户端接口并管理缓存；客户端实现类、请求执行和关闭方式由 Transport 决定。
-BaseCodec 组合 Encoder、Decoder 和 BaseTransport 三个独立组件。
-Encoder / Decoder 负责已识别字段翻译；Decoder 映射生成选项并组织原生请求结构。
-参数验证、SDK 字段过滤及原生结构校验统一由 Transport 处理。
-Transport.create_client 创建客户端，upstream 显式借用 client 执行原生请求；
-close_client 默认 await client.close()，client_key 默认 None。
-SDK 的连接约束和协议配置由 Transport.validate_profile 校验；BaseCodec.validate_profile 委托 Transport。
-Codec 和 Transport 均保持无状态，实际客户端仍由 MyLLM 缓存，
-消息翻译仍经过 Encoder → 中间态 → Decoder。
+MyLLM 在构造时完成 Profile 解析、Decoder.validate_profile 和 Decoder.client_parameters，
+只保存已准备的连接字典，不创建客户端。每次调用的 Decoder.prepare 输出 client / request / local。
+MyLLM 根据 local.client_key 缓存客户端，Transport.create_client(client参数字典) 只负责 SDK 构造。
+Transport.upstream(client, request) 执行最终请求；close_client 默认 await client.close()。
+Encoder 验证输入，Decoder 负责请求参数、Schema 过滤和原生验证；Transport 不接收 Profile 或原始控制项。
+所有组件无状态，配置与客户端属于 MyLLM，消息仍经过 Encoder → 中间态 → Decoder。
 
 | 协议 | SDK 客户端 | 实例关闭 | 单次请求关闭 |
 | --- | --- | --- | --- |
@@ -67,7 +64,7 @@ hook 通过 ContextVar 取得当前 SDK 读取对应的请求栈，登记本次�
 [客户端生命周期测试](../../tests/unit/test_client_lifecycle.py)覆盖延迟创建、重复使用、实例隔离、
 幂等关闭、构造失败重试、请求失败后复用、关闭后拒绝请求，以及独立流的资源所有权。
 [组件契约测试](../../tests/unit/test_native_codecs.py)检查 BaseCodec 必须组合 Transport、
-Decoder 不再提供 SDK 方法，以及配置校验的统一协调；
+Decoder 仅准备 SDK 参数而不创建客户端，以及配置校验的统一协调；
 [依赖边界测试](../../tests/contract/test_codec_boundaries.py)防止转换实现与 Transport 相互导入。
 [并发测试](../../tests/integration/test_concurrency.py)用真实 SDK 和本地 HTTP transport 验证：
 

@@ -51,6 +51,8 @@ class NativeTool(TypedDict):
 
 class Encoder(BaseEncoder):
     __slots__ = ()
+    message_type = NativeMessage
+    tool_type = NativeTool
     protocol = PROTOCOL
 
     def match_item(self, item):
@@ -109,6 +111,24 @@ class Encoder(BaseEncoder):
 
 class Decoder(BaseDecoder):
     __slots__ = ()
+    message_path = ("dialog",)
+
+    tool_path = ("functions",)
+
+    message_type = NativeMessage
+
+    tool_type = NativeTool
+
+    usage_modes = ("independent_counter_mode",)
+
+    request_schema = {
+        "model": str,
+        "dialog": list[NativeMessage],
+        "functions": list[NativeTool],
+        "hint": dict,
+        "limit": int,
+    }
+
     protocol = PROTOCOL
 
     def _messages(self, values, profile=None, **parameters):
@@ -165,18 +185,6 @@ class Client:
 
 class Transport(BaseTransport):
     __slots__ = ()
-    message_path = ("dialog",)
-    tool_path = ("functions",)
-    message_type = NativeMessage
-    tool_type = NativeTool
-    usage_modes = ("independent_counter_mode",)
-    request_schema = {
-        "model": str,
-        "dialog": list[NativeMessage],
-        "functions": list[NativeTool],
-        "hint": dict,
-        "limit": int,
-    }
 
     def validate_request(self, request, profile, **parameters):
         return request
@@ -185,7 +193,7 @@ class Transport(BaseTransport):
         return Client()
 
     @asynccontextmanager
-    async def upstream(self, client, request, profile, **parameters):
+    async def upstream(self, client, request):
         client.requests.append(request)
 
         async def stream():
@@ -243,11 +251,11 @@ async def test_new_protocol_reuses_caches_with_unhashable_annotations(registered
     class Hint(TypedDict):
         level: int
 
-    class AnnotatedTransport(Transport):
+    class AnnotatedDecoder(Decoder):
         __slots__ = ()
         message_type = Annotated[NativeMessage, {"vendor": "independent"}]
         request_schema = {
-            **Transport.request_schema,
+            **Decoder.request_schema,
             "dialog": Annotated[list[NativeMessage], {"collection": "dialog"}],
             "hint": Annotated[Hint, {"vendor": "hint"}],
         }
@@ -258,7 +266,7 @@ async def test_new_protocol_reuses_caches_with_unhashable_annotations(registered
             name="Vendor hint", path="$.hint.vendor", default_value="extra", phase="decode"
         )
 
-    monkeypatch.setattr(Codec, "transport", AnnotatedTransport())
+    monkeypatch.setattr(Codec, "decoder", AnnotatedDecoder())
     provider, _ = profiles()
     async with MyLLM(
         provider=provider, model=ExtendedModel(model="independent"), stdio_protocol=PROTOCOL
@@ -295,7 +303,7 @@ def test_new_protocol_queries_filter_plans_once_per_batch(registered, monkeypatc
     profile = resolve_profiles(provider, model)
     messages = [{"speaker": "user", "body": str(index), "vendor": True} for index in range(100)]
     tools = [{"fn": "fn", "schema": {"properties": {}}, "vendor": True} for _ in range(100)]
-    native = Transport()
+    native = Decoder()
     assert native.filter_messages(messages, profile) == [
         {"speaker": "user", "body": str(index)} for index in range(100)
     ]
@@ -480,7 +488,7 @@ async def test_builtin_upstreams_render_registered_protocol_without_shared_chang
     transport = MyCodec().transport(upstream)
 
     @asynccontextmanager
-    async def upstream_events(self, client, request, profile, **parameters):
+    async def upstream_events(self, client, request):
         client.requests.append(request)
 
         async def stream():

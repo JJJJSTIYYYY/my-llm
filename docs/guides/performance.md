@@ -93,3 +93,41 @@ uv run --no-sync pytest -q tests/performance
 [优化记录](../audits/performance-optimization-2026-10-19.md)。
 历史 extra="allow" 实现阶段的完整矩阵及同进程随机交替对照，见
 [性能复测](../audits/performance-retest-2026-10-19.md)。该记录不代表当前支持未声明协议字段透传。
+
+
+## 请求链路的时间、内存、缓存与并发对照
+
+```sh
+python -m tests.performance.request_chain --iterations 9 --concurrency 4 --json /tmp/request-chain.json
+```
+
+该入口沿用上述 60 个场景、默认复杂负载、1024 字节 HTTP 分块和 benchmark/measure 的计时边界。
+每个场景包含串行 cold、2 次预热和 9 次采样，以及四路并发的 2 批预热和 9 批采样。
+每份响应体在首个字节前经过 asyncio.Barrier，断言 peak_active=4，证明请求实际重叠。
+四路请求携带不同 x-request 头，并验证无串扰、结果完整及每个响应体关闭。
+Ollama 根据不同 headers 保留四个客户端，其余协议共享一个；两版遵循相同规则。
+
+tracemalloc 只在独立的串行与并发内存探针启用，启用前 gc.collect，不与计时采样混合。
+内存指标包含生成结果和测试收集的 HTTP 观察值，排除预制负载与已创建客户端；它是 Python 分配峰值，
+不是进程 RSS 或连接池大小。两版使用完全相同的探针。
+缓存快照记录五类 LRU 的 hits、misses、maxsize、currsize，可检查暖请求是否只命中规则而不随请求增长。
+与串行 cold 一样，内存和并发测量前已预热；不把它们解释为冷进程启动或网络吞吐。
+
+要比较两个版本，在修改运行时源码前保存 src 快照，再用同一环境和相同测试脚本依次运行：
+
+```sh
+PYTHONPATH=/tmp/before/src python -m tests.performance.request_chain --iterations 9 --json /tmp/before.json
+python -m tests.performance.request_chain --iterations 9 --json /tmp/after.json
+```
+
+脚本记录运行时源码和基准脚本 SHA256、Git revision、Python / 平台 / SDK 版本及原始样本。
+运行两版时保持负载、解释器和依赖相同，避免并行运行测试或其他 CPU 密集任务。
+比较时先核对请求字节数、响应字节数、输出事件和 HTTP 分块一致，再检查 P50/P95、准备耗时、
+并发批次耗时、内存及缓存；少量噪声场景需要交替复测确认。
+可运行的无网络准备示例见 [request_pipeline.py](../../examples/request_pipeline.py)。
+
+本轮改造的完整数据、原生交替复测和尾部诊断见
+[2026-10-21 请求链路重构对照](../audits/request-chain-refactor-2026-10-21.md)。
+实例构造可单独用 `python -m tests.performance.construction --json /tmp/construction.json` 测量；
+Responses 收集尾部定位使用 `python -m tests.performance.gc_diagnostic /tmp/responses-gc.json`，
+保留 GC、单独登记回收停顿，诊断数据不替换无回调计时。

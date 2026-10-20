@@ -3,6 +3,8 @@
 from copy import deepcopy
 from typing import Any
 
+from google.genai import types
+
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.gemini.encoding.content import encode_part, json_schema
 from my_llm.codec.shared.conversion import (
@@ -27,6 +29,8 @@ class GeminiEncoder(BaseEncoder):
 
     __slots__ = ()
     protocol = PROTOCOL
+    message_type = types.Content
+    tool_type = types.Tool
 
     def match_item(self, item: dict) -> bool:
         if "function_declarations" in item:

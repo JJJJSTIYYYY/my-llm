@@ -21,11 +21,13 @@
 
 ## 审计与验证记录
 
+- [完整请求链路重构与同负载对照](audits/request-chain-refactor-2026-10-21.md)：Codec 完整输入、三个目的地、60 场景时间／内存／缓存与并发、原生 ABBA 和 GC 长测。
+
 - [新协议缓存通用性与策略审计](audits/cache-audit-2026-10-20.md)：独立协议验证、统一缓存键、有界 LRU、批量计划复用与前后基准。
 - [Parameter / Config 重构性能复测](audits/parameter-config-performance-2026-10-20.md)：同源码基线重测、完整矩阵、原生交替确认、实例构造和 GC 诊断。
 - [当前性能回退定位与修复](audits/performance-regression-2026-10-20.md)：删除前提交、本轮修复前后对照、实际冗余原因与原始样本。
 - [Profile 重构后的性能复测](audits/performance-retest-2026-10-20.md)：此前清理的完整矩阵与原始样本；两份源码均已删除未知字段保留。
-- [当前执行路径与抽象契约审计](audits/request-path-audit-2026-10-20.md)：共同调用链、必要差异、冗余清理和新增协议约束。
+- [2026-10-20 执行路径与抽象契约审计](audits/request-path-audit-2026-10-20.md)：共同调用链、必要差异、冗余清理和新增协议约束。
 
 - [历史性能复测](audits/performance-retest-2026-10-19.md)：当时的五协议矩阵、同进程对照及 GC 耗时观察。
 - [历史仓库清理与架构复核](audits/architecture-audit-2026-10-18.md)：当时的约束、清理范围和验证依据。

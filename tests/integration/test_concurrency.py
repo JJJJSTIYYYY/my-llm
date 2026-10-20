@@ -198,7 +198,9 @@ def make_llm(protocol, stdio):
             protocol=protocol,
             api_key=parameter(
                 "api_key",
-                "Bearer local-concurrency-test" if protocol == "ollama" else "local-concurrency-test",
+                "Bearer local-concurrency-test"
+                if protocol == "ollama"
+                else "local-concurrency-test",
                 protocol=protocol,
             ),
             base_url=config("base_url", "https://local.test"),

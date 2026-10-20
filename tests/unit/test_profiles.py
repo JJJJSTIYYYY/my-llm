@@ -183,7 +183,7 @@ def test_api_key_header_path_uses_the_official_sdk_header_option(monkeypatch, pr
         ),
         model=ModelProfile(model="demo"),
     )
-    assert llm.codec.transport(protocol).create_client(llm.resolved_profile) is client
+    assert llm.codec.transport(protocol).create_client(llm.client_parameters) is client
     options = captured[0]
     assert "api_key" not in options
     if protocol == "gemini":

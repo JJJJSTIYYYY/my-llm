@@ -44,6 +44,9 @@ Profile 用 `Parameter` 集中声明字段路径、缺失默认值和翻译阶�
 新增协议通过 `MyCodec.register(codec)` 在启动时注册，协议默认值随 Codec 声明；
 无需修改公共入口或协议枚举，详见[接入指南](docs/guides/adding-protocol.md)。
 参数路径统一使用 $. 前缀，例如 $.reasoning.effort；非标准请求参数通过 SDK 的 extra_body 等正式扩展入口配置。
+完整生成输入和已解析配置统一经过 Codec，Decoder 区分客户端参数、请求参数与本地控制项；
+连接配置按实例准备，请求配置按调用准备，Transport 负责官方 SDK 调用和响应关闭。
+详细职责见[架构文档](docs/design/architecture.md)。
 
 ## 安装
 

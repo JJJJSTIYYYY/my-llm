@@ -3,8 +3,11 @@
 from copy import deepcopy
 from typing import Any
 
+from ollama import Message, Tool
+
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.ollama.encoding.content import image_data, media_type, tool_block
+from my_llm.codec.ollama.utils.schema import validate_ollama_values
 from my_llm.codec.shared.conversion import (
     allocate_call_id,
     associate_tool_result,
@@ -25,6 +28,11 @@ class OllamaEncoder(BaseEncoder):
 
     __slots__ = ()
     protocol = PROTOCOL
+    message_type = Message
+    tool_type = Tool
+
+    def validate_values(self, values: list, schema: Any, *, filtered: bool = False) -> None:
+        validate_ollama_values(values, schema, filtered=filtered)
 
     def match_item(self, item: dict) -> bool:
         if item.get("type") == "function":

@@ -22,7 +22,9 @@ class ProviderProfile(OverridableProfile):
 
     protocol: Protocol = "openai_chat"
     base_url: Config[str] | Omit | None = None
-    api_key: Parameter[str] | Omit | None = field(default=None, repr=False)
+    api_key: Parameter[str] | Omit | None = field(
+        default=None, repr=False, metadata={"scope": "client"}
+    )
     timeout: Config[float] | Omit | None = None
     max_retries: Config[int] | Omit | None = None
     supports_stream: Config[bool] | Omit | None = None

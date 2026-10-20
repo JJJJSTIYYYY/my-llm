@@ -1,4 +1,8 @@
-"""SDK schema filtering, request-history validation and response ownership."""
+"""Codec schema plans/history validation and Transport response ownership.
+
+Only type analysis and compiled rules are shared in bounded process caches.
+Encoder validates borrowed inputs; Decoder filters owned SDK request leaves.
+"""
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -18,7 +22,7 @@ from typing import (
     get_type_hints,
 )
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from my_llm.codec.shared.conversion import dictionary_views
 from my_llm.exceptions import MessageValidationError, UnsupportedCapabilityError
@@ -434,3 +438,20 @@ async def owned_stream(
         upstream = await create()
         resources.push_async_callback(getattr(upstream, close_stream))
         yield upstream
+
+
+def validate_values(values: list, schema: Any, *, filtered: bool = False) -> None:
+    try:
+        if not isinstance(values, list):
+            raise TypeError("protocol values must be a list")
+        validator = adapter(schema)
+        project = _plan(schema).project if values and not filtered else None
+        for value in values:
+            parsed = validator.validate_python(value if filtered else project(value))
+            # SDK TypedDicts include lazy Iterable validators. Serializing
+            # forces nested validation rather than accepting an unchecked iterator.
+            validator.dump_json(parsed, warnings="error")
+    except (ValidationError, TypeError, ValueError) as exc:
+        raise MessageValidationError(
+            "message or tool does not conform to the native protocol"
+        ) from exc

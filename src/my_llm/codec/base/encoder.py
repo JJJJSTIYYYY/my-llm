@@ -3,8 +3,10 @@
 from abc import ABC, abstractmethod
 from typing import Any, final
 
-from my_llm.codec.shared.conversion import capture, dictionaries, match_all
+from my_llm.codec.shared.conversion import capture, dictionaries, dictionary_views, match_all
 from my_llm.codec.shared.options import path_value
+from my_llm.codec.shared.transport import validate_values
+from my_llm.exceptions import MessageValidationError
 from my_llm.profile.resolution import ResolvedProfile
 from my_llm.profile.types import Omit
 
@@ -17,6 +19,41 @@ class BaseEncoder(ABC):
     @property
     @abstractmethod
     def protocol(self) -> str: ...
+
+    @property
+    @abstractmethod
+    def message_type(self) -> Any: ...
+
+    @property
+    @abstractmethod
+    def tool_type(self) -> Any: ...
+
+    def validate_values(self, values: list, schema: Any, *, filtered: bool = False) -> None:
+        validate_values(values, schema, filtered=filtered)
+
+    @final
+    def request(self, inputs: dict, profile: ResolvedProfile) -> dict:
+        """Encode the complete call, borrowing controls until Decoder captures them."""
+        history = list(dictionary_views(inputs["messages"]))
+        tools = inputs["tools"]
+        tools = None if tools is None or isinstance(tools, Omit) else list(dictionary_views(tools))
+        self.validate_input(history, tools)
+        return {
+            **inputs,
+            "profile": profile,
+            "messages": self.messages(history),
+            "tools": self.tools(tools) if tools is not None else None,
+        }
+
+    def validate_input(self, messages: list, tools: list | None = None) -> None:
+        """Validate the bound input schema before projecting recognized values."""
+        try:
+            self.validate_values(messages, self.message_type)
+            self.validate_values(tools or [], self.tool_type)
+        except MessageValidationError as exc:
+            raise MessageValidationError(
+                "message or tool does not use the bound input protocol"
+            ) from exc
 
     @final
     def matches(self, values: list) -> bool:

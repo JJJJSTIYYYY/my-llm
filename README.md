@@ -146,14 +146,15 @@ print(converted["messages"])
 
 ### 已通过端到端验证的协议组合
 
-2026-10-20，使用 SenseNova 的 `sensenova-6.8-flash-lite` 模型完成三种协议的
-**3×3 九条真实 API 路径验证，27 个场景全部通过，共 36 次上游请求**。
+**3×3 九条真实 API 路径验证 (2026-10-20)**。
 
-| 输入/输出协议 ↓ / 上游 API → | Chat Completions | Responses | Anthropic Messages |
-| --- | --- | --- | --- |
-| `openai_chat` | 已验证 | 已验证 | 已验证 |
-| `openai_responses` | 已验证 | 已验证 | 已验证 |
-| `anthropic` | 已验证 | 已验证 | 已验证 |
+| 输入/输出协议 ↓ \ 上游 API → | Chat Completions | Responses | Anthropic Messages | Gemini Content | Ollama |
+| --- | --- | --- | --- | --- | --- |
+| `openai_chat` | ✅ 已验证 | ✅ 已验证 | ✅ 已验证 | ➖ 离线验证 | ➖ 离线验证 |
+| `openai_responses` | ✅ 已验证 | ✅ 已验证 | ✅ 已验证 | ➖ 离线验证 | ➖ 离线验证 |
+| `anthropic` | ✅ 已验证 | ✅ 已验证 | ✅ 已验证 | ➖ 离线验证 | ➖ 离线验证 |
+| `gemini` | ➖ 离线验证 | ➖ 离线验证 | ➖ 离线验证 | ➖ 离线验证 | ➖ 离线验证 |
+| `ollama` | ➖ 离线验证 | ➖ 离线验证 | ➖ 离线验证 | ➖ 离线验证 | ➖ 离线验证 |
 
 每条路径覆盖文本汇总、流式增量与汇总一致性，以及工具调用、参数组装和工具结果回传。
 汇总模式也通过上游 SSE 执行，本轮未单独验证供应商的 HTTP 非流式响应。

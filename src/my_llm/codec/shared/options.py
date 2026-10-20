@@ -169,7 +169,7 @@ def validate_parameter_paths(
 ) -> None:
     """Check declared output routes without traversing native input fields."""
     for name, parameter in profile.parameters.items():
-        if isinstance(parameter, Omit) or parameter.phase != "decode":
+        if name == "api_key" or isinstance(parameter, Omit) or parameter.phase != "decode":
             continue
         path = parameter.path
         if name in ("reasoning_enable", "reasoning_effort") and options.effort is None:
@@ -239,7 +239,7 @@ def request_parameters(
         _apply_parameter(request, enable, overlay=overlay)
     for name, parameter in profile.parameters.items():
         if (
-            name in ("reasoning_enable", "reasoning_effort")
+            name in ("api_key", "reasoning_enable", "reasoning_effort")
             or isinstance(parameter, Omit)
             or parameter.phase != "decode"
         ):

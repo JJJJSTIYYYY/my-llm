@@ -36,7 +36,7 @@ async def test_owned_client_configuration_and_cleanup(monkeypatch):
     result = await generate(
         stdio_protocol="openai_chat",
         provider=ProviderProfile(
-            api_key=config("api_key", "profile"),
+            api_key=parameter("api_key", "profile"),
             timeout=config("timeout", 30),
             max_retries=config("max_retries", 0),
         ),

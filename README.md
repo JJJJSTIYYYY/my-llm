@@ -63,14 +63,19 @@ pip install my-llm-py
 import asyncio
 import os
 
-from my_llm import Config, ModelProfile, MyLLM, Parameter, ProviderProfile
+from my_llm import ModelProfile, MyLLM, Parameter, ProviderProfile
 
 
 async def main():
     async with MyLLM(
         provider=ProviderProfile(
             protocol="anthropic",  # 实际请求的 API 协议
-            api_key=Config(name="API 密钥", default_value=os.environ["ANTHROPIC_API_KEY"]),
+            api_key=Parameter(
+                name="API 密钥",
+                path="$.api_key",
+                default_value=os.environ["ANTHROPIC_API_KEY"],
+                phase="decode",
+            ),
         ),
         model=ModelProfile(
             model=os.environ["LLM_MODEL"],

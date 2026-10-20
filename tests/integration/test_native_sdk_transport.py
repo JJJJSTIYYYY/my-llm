@@ -89,7 +89,11 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
     llm = MyLLM(
         provider=ProviderProfile(
             protocol=protocol,
-            api_key=config("api_key", "local-test"),
+            api_key=parameter(
+                "api_key",
+                "Bearer local-test" if protocol == "ollama" else "local-test",
+                protocol=protocol,
+            ),
             base_url=config("base_url", "https://local.test"),
             usage_mode=config("usage_mode", "native"),
         ),
@@ -120,14 +124,17 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
         result = result.result
     assert isinstance(result, list if stdio == "openai_responses" else dict)
     body = json.loads(requests[0].content)
+    assert "api_key" not in body and "default_headers" not in body
     assert "Sunny" in str(body)
     if protocol == "anthropic":
+        assert requests[0].headers["x-api-key"] == "local-test"
         assert body["max_tokens"] == 2048
         assert body["tools"][0]["input_schema"]["type"] == "object"
         assert body["tool_choice"] == options["tool_choice"]
         assert body["metadata"] == options["metadata"]
         assert requests[0].url.path == "/v1/messages"
     elif protocol == "gemini":
+        assert requests[0].headers["x-goog-api-key"] == "local-test"
         assert body["generationConfig"]["maxOutputTokens"] == 2048
         assert "streamGenerateContent" in str(requests[0].url)
         assert body["toolConfig"]["functionCallingConfig"]["mode"] == "AUTO"
@@ -142,8 +149,82 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
         if stdio != "gemini":
             assert calls[0]["thoughtSignature"] == "skip_thought_signature_validator"
     else:
+        assert requests[0].headers["Authorization"] == "Bearer local-test"
         assert body["options"]["num_predict"] == 2048
         assert requests[0].url.path == "/api/chat"
     assert all(not client.is_closed for client in http_clients)
     await llm.aclose()
     assert all(client.is_closed for client in http_clients)
+
+
+@pytest.mark.parametrize("protocol", ["anthropic", "ollama"])
+@pytest.mark.parametrize("header", ["Authorization", "X-Api-Key"])
+@pytest.mark.parametrize("provider_override", [False, True])
+async def test_header_authentication_without_sdk_api_key(
+    monkeypatch, protocol, header, provider_override
+):
+    requests, client_options = [], []
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OLLAMA_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+
+    def handler(request):
+        requests.append(request)
+        events = stream_events(protocol)
+        if protocol == "ollama":
+            return httpx.Response(
+                200,
+                text="\n".join(json.dumps(event) for event in events) + "\n",
+                headers={"Content-Type": "application/x-ndjson"},
+            )
+        return httpx.Response(
+            200,
+            text=sse(events, anthropic=True).replace("data: [DONE]\n\n", ""),
+            headers={"Content-Type": "text/event-stream"},
+        )
+
+    def factory(**kwargs):
+        client_options.append(kwargs)
+        transport = httpx.MockTransport(handler)
+        if protocol == "anthropic":
+            return AsyncAnthropic(**kwargs, http_client=httpx.AsyncClient(transport=transport))
+        return AsyncClient(**kwargs, transport=transport)
+
+    target = (
+        "my_llm.codec.anthropic.transport.AsyncAnthropic"
+        if protocol == "anthropic"
+        else "my_llm.codec.ollama.transport.AsyncOllama"
+    )
+    monkeypatch.setattr(target, factory)
+    async with MyLLM(
+        provider=ProviderProfile(
+            protocol=protocol,
+            base_url=config("base_url", "https://local.test"),
+            api_key=parameter(
+                "api_key", "Bearer local-header-test", path=f"$.extra_headers.{header}"
+            ),
+            extra_headers=config(
+                "extra_headers", {header: "provider-override"} if provider_override else {}
+            ),
+        ),
+        model=ModelProfile(
+            model="demo", max_tokens=parameter("max_tokens", 2048, protocol=protocol)
+        ),
+        stdio_protocol="openai_chat",
+    ) as llm:
+        result = await llm.generate(messages=[{"role": "user", "content": "hello"}])
+        await llm.generate(
+            messages=[{"role": "user", "content": "hello"}],
+            extra_headers={header: "request-override"},
+        )
+        await llm.generate(messages=[{"role": "user", "content": "hello"}])
+
+    assert result["role"] == "assistant"
+    assert all("api_key" not in options for options in client_options)
+    expected = "provider-override" if provider_override else "Bearer local-header-test"
+    assert [request.headers[header] for request in requests] == [
+        expected, "request-override", expected
+    ]
+    assert len(client_options) == (2 if protocol == "ollama" else 1)
+    assert all("local-header-test" not in request.content.decode() for request in requests)
+    if header == "Authorization":
+        assert all("x-api-key" not in request.headers for request in requests)

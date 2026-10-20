@@ -44,7 +44,7 @@ async def test_official_openai_transport_all_stdio_formats(monkeypatch, protocol
     llm = MyLLM(
         provider=ProviderProfile(
             protocol=protocol,
-            api_key=config("api_key", "local-test"),
+            api_key=parameter("api_key", "local-test"),
             base_url=config("base_url", "https://local.test/v1"),
             usage_mode=config(
                 "usage_mode", "native" if protocol == "openai_responses" else "stream_options"
@@ -68,6 +68,7 @@ async def test_official_openai_transport_all_stdio_formats(monkeypatch, protocol
     assert requests[0].url.path.endswith(
         "/responses" if protocol == "openai_responses" else "/chat/completions"
     )
+    assert requests[0].headers["Authorization"] == "Bearer local-test"
     assert not clients[0].is_closed()
     await llm.aclose()
     assert clients[0].is_closed()
@@ -107,7 +108,7 @@ async def test_custom_token_path_is_serialized_by_official_sdk(
     async with MyLLM(
         provider=ProviderProfile(
             protocol=protocol,
-            api_key=config("api_key", "local-test"),
+            api_key=parameter("api_key", "local-test"),
             max_tokens=parameter("max_tokens", 100, protocol=protocol, path=path),
         ),
         model=ModelProfile(model="demo"),
@@ -141,7 +142,7 @@ async def test_sdk_http_errors_retain_their_type_and_preserve_client(monkeypatch
     llm = MyLLM(
         stdio_protocol="openai_chat",
         provider=ProviderProfile(
-            api_key=config("api_key", "local"), max_retries=config("max_retries", 0)
+            api_key=parameter("api_key", "local"), max_retries=config("max_retries", 0)
         ),
         model=ModelProfile(model="demo"),
     )
@@ -183,7 +184,7 @@ async def test_inherited_parameter_defaults_and_vendor_effort_reach_official_sdk
     monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
     monkeypatch.setattr("my_llm.codec.openai.responses.transport.AsyncOpenAI", factory)
     async with MyLLM(
-        provider=ProviderProfile(protocol=protocol, api_key=config("api_key", "local-test")),
+        provider=ProviderProfile(protocol=protocol, api_key=parameter("api_key", "local-test")),
         model=VendorModel(
             model="demo",
             supports_reasoning_effort=config("supports_reasoning_effort", True),

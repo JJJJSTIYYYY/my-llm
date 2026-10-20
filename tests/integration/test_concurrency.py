@@ -196,7 +196,11 @@ def make_llm(protocol, stdio):
     return MyLLM(
         provider=ProviderProfile(
             protocol=protocol,
-            api_key=config("api_key", "local-concurrency-test"),
+            api_key=parameter(
+                "api_key",
+                "Bearer local-concurrency-test" if protocol == "ollama" else "local-concurrency-test",
+                protocol=protocol,
+            ),
             base_url=config("base_url", "https://local.test"),
             max_retries=config("max_retries", 0),
             usage_mode=config(

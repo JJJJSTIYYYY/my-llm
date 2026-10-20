@@ -34,7 +34,7 @@ llm = MyLLM(
 
 | 类型 | 字段 | 职责 |
 | --- | --- | --- |
-| `Parameter[T]` | name、path、default_value、phase、comment=None | 将业务参数的位置、缺失默认值和翻译阶段绑定在一起 |
+| `Parameter[T]` | name、path、default_value、phase、comment=None | 将参数的位置、缺失默认值和翻译阶段绑定在一起 |
 | `Config[T]` | name、default_value、comment=None | 控制 Encoder / Decoder / Transport 的代码行为或 SDK 连接 |
 | `Omit` / `omit` | 显式省略标记 | 不依赖任何 SDK 的 Omit，复制保持标记身份 |
 
@@ -104,10 +104,10 @@ assert resolved.parameter("max_tokens", phase="decode").path == "$.max_completio
 ## 统一参数路径
 
 路径维持 `$.` 前缀、点分键和非负数值索引的语义。
-`$` 表示 `**parameters` 解包字典的根目录；例如 `$.reasoning.effort` 指根参数 reasoning 内的 effort，
+生成参数的 `$` 表示 SDK 方法的 `**parameters` 解包字典根目录；例如 `$.reasoning.effort` 指根参数 reasoning 内的 effort，
 `$.extra_body.vendor_options.enabled` 指 SDK 正式 extra_body 入口内的扩展字段。
 encode 参数从接口返回对象的根部按同样的路径语法读取。
-路径不接受省略 `$.` 的写法，也不使用事件类型字符串充当路径。
+键名支持连字符，例如 `$.extra_headers.x-api-key`。路径不接受省略 `$.` 的写法，也不使用事件类型字符串充当路径。
 事件类型的识别由协议 Encoder / Decoder 负责。
 
 | 协议 | max_tokens（decode） | content（encode） | reasoning_content（encode） |
@@ -126,7 +126,8 @@ Chat 的 reasoning_content 是兼容服务扩展；Responses、Gemini 仍按标�
 | 字段 | 归属 / 说明 |
 | --- | --- |
 | `protocol` | Provider；默认 openai_chat，接受已注册协议名 |
-| `base_url` / `api_key` | Provider Config；继承 SDK 默认值，api_key 不出现在 repr |
+| `base_url` | Provider Config；默认继承 SDK 配置 |
+| `api_key` | Provider decode Parameter；配置连接密钥的传递位置，default_value 默认为 omit，不出现在 repr |
 | `timeout` / `max_retries` | Provider Config；正秒数 / 非负整数，默认使用 SDK 配置 |
 | `supports_stream` | Provider Config；默认 True，False/omit 不支持，因为两种返回模式均使用上游流 |
 | `usage_mode` | Provider Config；默认 none；可选值由协议 Transport.usage_modes 声明 |
@@ -144,6 +145,42 @@ Provider 的 `add_models(ModelProfile | list[ModelProfile])` 按 ID 更新并保
 
 `stdio_protocol` 属于 MyLLM，决定输入输出协议。客户端由 MyLLM 延迟创建、复用和关闭，响应流按请求关闭。
 Ollama SDK 没有原生 max_retries 选项，仅接受默认值 None / omit / 0，正数在构造时拒绝。
+
+`api_key` 在创建 SDK 客户端时应用，其路径指向连接参数组：`$.api_key` 使用 SDK 密钥参数，
+`$.extra_headers.<头名>` 使用指定认证头。Transport 将请求头映射到 SDK 的 default_headers、
+Gemini 的 HttpOptions.headers 或 Ollama 的 headers；密钥不会作为生成参数写入请求体。
+配置值是完整字符串，Authorization 的 Bearer 前缀也由配置显式提供：
+
+```python
+from my_llm import Parameter, ProviderProfile
+
+sdk_key = ProviderProfile(
+    protocol="anthropic",
+    api_key=Parameter(
+        name="API 密钥",
+        path="$.api_key",
+        default_value="your-api-key",
+        phase="decode",
+    ),
+)
+header_key = ProviderProfile(
+    protocol="anthropic",
+    api_key=Parameter(
+        name="API 密钥",
+        path="$.extra_headers.Authorization",
+        default_value="Bearer your-api-key",
+        phase="decode",
+    ),
+)
+```
+
+标准声明的 default_value 为 omit；Provider 的 None 继承协议声明，omit 禁用声明。
+Ollama 默认路径为 `$.extra_headers.Authorization`，其他协议为 `$.api_key`。
+Ollama SDK 没有 api_key 参数，须使用 header 路径。显式 extra_headers 中的同名头优先，
+generate 的 extra_headers 继续按现有规则覆盖；Ollama 的请求头仍参与客户端缓存键。
+省略密钥不会改变 SDK 自身的环境变量读取与认证要求。
+例如 Anthropic SDK 的 header 认证检查使用 `Authorization` 或 `X-Api-Key`，应按该大小写配置。
+原先的 `api_key=Config(...)` 需改为 `Parameter(...)`，并显式提供 path 和 phase。
 
 ## Provider / Model 共享覆盖项
 

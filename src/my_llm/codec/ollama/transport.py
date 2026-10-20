@@ -19,7 +19,11 @@ from my_llm.profile.resolution import ResolvedProfile, client_parameters
 
 
 def client_headers(profile: ResolvedProfile, **parameters: Any) -> dict:
-    return merge_dicts(profile.get("extra_headers", {}), parameters.get("extra_headers"))
+    return merge_dicts(
+        client_parameters(profile, headers_field="headers").get("headers"),
+        profile.get("extra_headers", {}),
+        parameters.get("extra_headers"),
+    )
 
 
 PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response_id"}
@@ -144,8 +148,6 @@ class OllamaTransport(BaseTransport):
         values = client_parameters(profile)
         options = {key: value for key, value in values.items() if key == "timeout"}
         headers = client_headers(profile, **parameters)
-        if "api_key" in values:
-            headers = {"Authorization": f"Bearer {values['api_key']}", **headers}
         if headers:
             options["headers"] = headers
         return AsyncOllama(host=values.get("base_url"), **options)
@@ -155,6 +157,9 @@ class OllamaTransport(BaseTransport):
 
     def validate_profile(self, profile: ResolvedProfile) -> None:
         super().validate_profile(profile)
+        api_key = profile.parameter("api_key")
+        if api_key is not None and api_key.path == "$.api_key":
+            raise ConfigurationError("Ollama api_key must use $.extra_headers.<name>")
         retries = profile.get("max_retries")
         if isinstance(retries, int) and not isinstance(retries, bool) and retries > 0:
             raise UnsupportedCapabilityError("Ollama SDK does not support a positive max_retries")

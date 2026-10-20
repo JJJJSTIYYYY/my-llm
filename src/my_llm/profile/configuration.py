@@ -19,12 +19,17 @@ class ProtocolDefaults:
     """Settings declared by a protocol's Codec, extensible with typed wrappers.
 
     Parameter binds its own path, missing-value default and translation phase.
+    api_key targets connection options; other decode parameters target requests.
     Config controls code behavior. Dataclass field names identify each setting;
     wrapper names and comments are presentation metadata.
     """
 
     replay_reasoning_content_when_tool_calls: Config[bool] | Omit
     supports_reasoning_effort: Config[bool] | Omit
+    api_key: Parameter[str] | Omit = field(
+        default=Parameter(name="api_key", path="$.api_key", default_value=omit, phase="decode"),
+        repr=False,
+    )
     max_tokens: Parameter[int] | Omit = omit
     content: Parameter[Any] | Omit = omit
     reasoning_content: Parameter[Any] | Omit = omit

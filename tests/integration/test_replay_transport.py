@@ -85,7 +85,7 @@ async def test_signed_tool_round_trip_uses_only_supported_wire_fields(monkeypatc
 
     monkeypatch.setattr("my_llm.codec.anthropic.transport.AsyncAnthropic", factory)
     async with MyLLM(
-        provider=ProviderProfile(protocol="anthropic", api_key=config("api_key", "local-test")),
+        provider=ProviderProfile(protocol="anthropic", api_key=parameter("api_key", "local-test")),
         model=ModelProfile(
             model="demo",
             max_tokens=parameter("max_tokens", 4096, protocol="anthropic"),

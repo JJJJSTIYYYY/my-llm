@@ -86,8 +86,8 @@ class GeminiTransport(BaseTransport):
         return request
 
     def create_client(self, profile: ResolvedProfile, **parameters: Any) -> genai.Client:
-        values = client_parameters(profile)
-        options = {key: value for key, value in values.items() if key == "base_url"}
+        values = client_parameters(profile, headers_field="headers")
+        options = {key: value for key, value in values.items() if key in ("base_url", "headers")}
         options["async_client_args"] = {"event_hooks": {"response": [_track_response]}}
         if "timeout" in values:
             options["timeout"] = max(1, round(values["timeout"] * 1000))

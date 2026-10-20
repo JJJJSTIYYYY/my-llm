@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from my_llm.exceptions import ConfigurationError
 from my_llm.profile.configuration import OverridableProfile, Protocol
 from my_llm.profile.model_profile import ModelProfile
-from my_llm.profile.types import Config, Omit
+from my_llm.profile.types import Config, Omit, Parameter
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -16,12 +16,13 @@ class ProviderProfile(OverridableProfile):
 
     None inherits; omit disables a setting. Parameter and Config wrappers retain
     explicit default_value=None. Config dictionaries merge by key. Extend with
-    typed Parameter or Config fields. SDK connection values use Config fields.
+    typed Parameter or Config fields. api_key binds a connection parameter;
+    other SDK connection values use Config fields.
     """
 
     protocol: Protocol = "openai_chat"
     base_url: Config[str] | Omit | None = None
-    api_key: Config[str] | Omit | None = field(default=None, repr=False)
+    api_key: Parameter[str] | Omit | None = field(default=None, repr=False)
     timeout: Config[float] | Omit | None = None
     max_retries: Config[int] | Omit | None = None
     supports_stream: Config[bool] | Omit | None = None

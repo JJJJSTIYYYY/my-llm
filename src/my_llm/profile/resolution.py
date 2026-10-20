@@ -11,6 +11,7 @@ from typing import Any, Literal, TypeAliasType, Union, get_args, get_origin, get
 from my_llm.exceptions import ConfigurationError, UnsupportedProviderError
 from my_llm.profile.configuration import Protocol, ProtocolDefaults, merge_dicts
 from my_llm.profile.model_profile import ModelProfile
+from my_llm.profile.paths import path_keys
 from my_llm.profile.provider_profile import ProviderProfile
 from my_llm.profile.types import Config, Omit, Parameter
 from my_llm.registry import codec_for
@@ -178,18 +179,20 @@ def validate_max_tokens(value: Any) -> None:
         raise ConfigurationError("max_tokens must be a positive integer, None or omit")
 
 
-def client_parameters(profile: ResolvedProfile) -> dict[str, Any]:
+def client_parameters(
+    profile: ResolvedProfile, *, headers_field: str = "default_headers"
+) -> dict[str, Any]:
     """Validate SDK connection fields from the construction-time profile.
 
-    Returns base_url/api_key/timeout/max_retries keyword arguments, excluding
-    unset/omitted values. Invalid values raise ConfigurationError.
+    api_key binds either the SDK argument or one extra_headers entry. Transports
+    select their SDK's header keyword. Unset/omitted values are excluded.
     """
     result = {}
-    for key in ("base_url", "api_key", "timeout", "max_retries"):
+    for key in ("base_url", "timeout", "max_retries"):
         value = profile.get(key)
         if value is None:
             continue
-        if key in ("api_key", "base_url") and (not isinstance(value, str) or not value.strip()):
+        if key == "base_url" and (not isinstance(value, str) or not value.strip()):
             raise ConfigurationError(f"{key} must be a non-empty string")
         if key == "timeout" and (
             not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0
@@ -200,4 +203,21 @@ def client_parameters(profile: ResolvedProfile) -> dict[str, Any]:
         ):
             raise ConfigurationError("max_retries must be a non-negative integer")
         result[key] = value
+    parameter = profile.parameter("api_key")
+    if parameter is not None:
+        keys = path_keys(parameter.path)
+        if parameter.phase != "decode":
+            raise ConfigurationError("api_key must use the decode phase")
+        if keys != ("api_key",) and not (
+            len(keys) == 2 and keys[0] == "extra_headers" and isinstance(keys[1], str)
+        ):
+            raise ConfigurationError("api_key path must be $.api_key or $.extra_headers.<name>")
+        value = profile.get("api_key")
+        if value is not None:
+            if not isinstance(value, str) or not value.strip():
+                raise ConfigurationError("api_key must be a non-empty string")
+            if keys == ("api_key",):
+                result["api_key"] = value
+            else:
+                result[headers_field] = {keys[1]: value}
     return result

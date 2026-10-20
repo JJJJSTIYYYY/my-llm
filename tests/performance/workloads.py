@@ -803,7 +803,11 @@ def profiles(protocol: str):
     return (
         ProviderProfile(
             protocol=protocol,
-            api_key=config("api_key", "offline-benchmark"),
+            api_key=parameter(
+                "api_key",
+                "Bearer offline-benchmark" if protocol == "ollama" else "offline-benchmark",
+                protocol=protocol,
+            ),
             base_url=config("base_url", "https://benchmark.invalid"),
             max_retries=config("max_retries", 0),
             usage_mode=config(

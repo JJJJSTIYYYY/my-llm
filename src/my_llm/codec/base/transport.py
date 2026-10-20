@@ -174,7 +174,7 @@ class BaseTransport(ABC):
     def extend_request(self, result: dict, request: dict, profile: ResolvedProfile) -> dict:
         """Restore only explicit profile leaves absent from the SDK declaration."""
         for name, parameter in profile.parameters.items():
-            if isinstance(parameter, Omit) or parameter.phase != "decode":
+            if name == "api_key" or isinstance(parameter, Omit) or parameter.phase != "decode":
                 continue
             path = parameter.path
             keys = path_keys(path)
@@ -193,7 +193,7 @@ class BaseTransport(ABC):
     def validate_parameter_roots(self, profile: ResolvedProfile) -> None:
         """Reject declared request routes that the selected SDK cannot receive."""
         for name, parameter in profile.parameters.items():
-            if isinstance(parameter, Omit) or parameter.phase != "decode":
+            if name == "api_key" or isinstance(parameter, Omit) or parameter.phase != "decode":
                 continue
             root = path_keys(parameter.path)[0]
             if root not in self.request_schema:

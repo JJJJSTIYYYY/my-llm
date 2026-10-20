@@ -16,6 +16,12 @@ class OllamaCodec(BaseCodec):
             name="replay_reasoning_content_when_tool_calls", default_value=True
         ),
         supports_reasoning_effort=Config(name="supports_reasoning_effort", default_value=False),
+        api_key=Parameter(
+            name="api_key",
+            path="$.extra_headers.Authorization",
+            default_value=omit,
+            phase="decode",
+        ),
         max_tokens=Parameter(
             name="max_tokens", path="$.options.num_predict", default_value=omit, phase="decode"
         ),

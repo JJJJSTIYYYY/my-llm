@@ -54,9 +54,13 @@ def provider(protocol, key):
         base_url=config(
             "base_url", "https://token.sensenova.cn" + ("" if protocol == "anthropic" else "/v1")
         ),
-        api_key=config("api_key", key),
         # Anthropic's SDK normally sends x-api-key; this service specifies Bearer.
-        extra_headers=config("extra_headers", {"Authorization": f"Bearer {key}"}),
+        api_key=Parameter(
+            name="api_key",
+            path="$.extra_headers.Authorization" if protocol == "anthropic" else "$.api_key",
+            default_value=f"Bearer {key}" if protocol == "anthropic" else key,
+            phase="decode",
+        ),
         extra_body=config("extra_body", body),
         timeout=config("timeout", 60.0),
         max_retries=config("max_retries", 0),

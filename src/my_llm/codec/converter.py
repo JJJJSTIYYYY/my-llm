@@ -55,8 +55,10 @@ class MyCodec:
                 raise ConfigurationError(f"protocol component must be a {expected.__name__}")
         if codec.encoder.protocol != protocol or codec.decoder.protocol != protocol:
             raise ConfigurationError("codec, encoder and decoder must use the same protocol name")
-        if hasattr(codec, "__dict__") or any(
-            hasattr(component, "__dict__") for component, _ in components
+        if any(
+            hasattr(component, "__dict__")
+            or any(base.__dict__.get("__slots__", ()) for base in type(component).__mro__)
+            for component in (codec, *(component for component, _ in components))
         ):
             raise ConfigurationError("protocol components must declare empty __slots__")
         register_codec(codec)

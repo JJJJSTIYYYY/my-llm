@@ -1,8 +1,9 @@
 """gemini encoding: content, fields and tool helpers."""
 
-from copy import deepcopy
+from base64 import b64encode
 
 from my_llm.codec.shared.conversion import (
+    plain,
     select,
 )
 from my_llm.exceptions import MessageValidationError
@@ -41,6 +42,8 @@ SCALARS = {
 
 def encode_part(part: dict, call_id: str) -> dict | None:
     common = select(part, "thought_signature", "part_metadata")
+    if isinstance(common.get("thought_signature"), bytes):
+        common["thought_signature"] = b64encode(common["thought_signature"]).decode("ascii")
     if "function_call" in part:
         call = part["function_call"]
         return {
@@ -48,7 +51,7 @@ def encode_part(part: dict, call_id: str) -> dict | None:
             "type": "tool_use",
             "id": call.get("id") or call_id,
             "name": call.get("name"),
-            "input": deepcopy(call.get("args", {})),
+            "input": call.get("args", {}),
         }
     if "function_response" in part:
         call = part["function_response"]
@@ -57,7 +60,7 @@ def encode_part(part: dict, call_id: str) -> dict | None:
             "type": "tool_result",
             "name": call.get("name"),
             "tool_use_id": call.get("id"),
-            "content": deepcopy(call.get("response", {})),
+            "content": call.get("response", {}),
         }
     if "text" in part:
         return (
@@ -94,13 +97,28 @@ def encode_part(part: dict, call_id: str) -> dict | None:
 
 def json_schema(schema: dict) -> dict:
     """Normalize only schema keywords; application property names remain untouched."""
+    schema = schema if isinstance(schema, dict) else plain(schema)
     if not isinstance(schema, dict):
         raise MessageValidationError("Gemini parameters must be a Schema object")
     result = {}
-    for source_key, value in schema.items():
-        key = ALIASES.get(source_key, source_key)
-        if key in ("nullable", "property_ordering", "propertyOrdering"):
+    # Enumerate recognized keywords, never unrecognized provider extensions.
+    for source_key in (
+        "type",
+        "properties",
+        "items",
+        "example",
+        *sorted(SCALARS),
+        *sorted(COUNTS),
+        "$defs",
+        "$ref",
+        "anyOf",
+        "additionalProperties",
+        *ALIASES,
+    ):
+        if source_key not in schema:
             continue
+        value = schema[source_key]
+        key = ALIASES.get(source_key, source_key)
         if key == "type":
             if value == "TYPE_UNSPECIFIED":
                 continue
@@ -120,11 +138,9 @@ def json_schema(schema: dict) -> dict:
         elif key == "$ref":
             result[key] = value.replace("#/defs/", "#/$defs/", 1)
         elif key == "example":
-            result["examples"] = [deepcopy(value)]
+            result["examples"] = [value]
         elif key in SCALARS or (key == "additionalProperties" and isinstance(value, bool)):
-            result[key] = deepcopy(value)
-        else:
-            raise MessageValidationError(f"unsupported Gemini Schema keyword: {source_key}")
+            result[key] = value
     if schema.get("nullable"):
         # A separate null alternative also handles enum/ref/anyOf constraints.
         return {"anyOf": [result, {"type": "null"}]}

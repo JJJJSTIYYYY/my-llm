@@ -3,6 +3,7 @@
 import pytest
 
 from my_llm import MessageValidationError, ModelProfile, MyCodec, MyLLM, ProviderProfile, generate
+from tests.helpers.profiles import parameter
 from tests.helpers.protocols import PROTOCOLS, history, tools
 
 
@@ -35,7 +36,9 @@ def test_non_unique_protocol_has_no_registration_order_fallback(values):
 async def test_ambiguous_input_fails_before_request_without_binding(monkeypatch, upstream, stream):
     llm = MyLLM(
         provider=ProviderProfile(protocol=upstream),
-        model=ModelProfile(model="demo", max_tokens=4096),
+        model=ModelProfile(
+            model="demo", max_tokens=parameter("max_tokens", 4096, protocol=upstream)
+        ),
     )
 
     def must_not_request(*args, **kwargs):

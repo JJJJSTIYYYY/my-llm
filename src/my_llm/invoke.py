@@ -7,15 +7,14 @@ from contextlib import AsyncExitStack, aclosing
 from copy import deepcopy
 from typing import Any
 
-from openai import Omit, omit
-
 from my_llm.codec.converter import MyCodec
-from my_llm.codec.shared.conversion import dictionary_views
+from my_llm.codec.shared.conversion import _MISSING, dictionary_views
 from my_llm.exceptions import ConfigurationError, MessageValidationError, StreamError
 from my_llm.profile.configuration import Protocol, ReasoningEffort
 from my_llm.profile.model_profile import ModelProfile
 from my_llm.profile.provider_profile import ProviderProfile
 from my_llm.profile.resolution import resolve_profiles
+from my_llm.profile.types import Omit, omit
 from my_llm.stream._state import StreamState
 from my_llm.stream.message_stream import MessageStream
 
@@ -102,7 +101,7 @@ class MyLLM:
         messages: Sequence[Any],
         stream: bool = False,
         tools: Any = omit,
-        max_tokens: Any = None,
+        max_tokens: Any = _MISSING,
         reasoning: bool | None = None,
         reasoning_effort: ReasoningEffort = "none",
         extra_headers: Any = None,
@@ -121,19 +120,20 @@ class MyLLM:
         if not isinstance(stream, bool):
             raise ConfigurationError("stream must be a bool")
         # Preparation does not await: inspect borrowed inputs, then let Encoder
-        # capture its one mutable snapshot before any SDK execution can yield.
+        # copy recognized values before any SDK execution can yield.
         history = list(dictionary_views(messages))
         tool_values = (
             None if tools is None or isinstance(tools, Omit) else list(dictionary_views(tools))
         )
         # Tool declarations can disambiguate otherwise identical text-only histories.
-        protocol = self.guess_stdio_protocol([*history, *(tool_values or [])])
+        protocol = self.stdio_protocol
+        if protocol is None:
+            protocol = self.guess_stdio_protocol([*history, *(tool_values or [])])
         self.codec.validate_input(protocol, history, tool_values)
         intermediate = self.codec.encode(history, tool_values, input_format=protocol)
         profile = self.resolved_profile
         options = deepcopy(
             dict(
-                max_tokens=max_tokens,
                 reasoning=reasoning,
                 reasoning_effort=reasoning_effort,
                 extra_headers=extra_headers,
@@ -141,6 +141,8 @@ class MyLLM:
                 previous_response_id=previous_response_id,
             )
         )
+        if max_tokens is not _MISSING:
+            options["max_tokens"] = max_tokens
         request = self.codec.request(intermediate, profile, **options)
         state = StreamState(profile.model)
         result = MessageStream(self._stream(request, options, state, protocol), state)

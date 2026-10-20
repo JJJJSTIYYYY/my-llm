@@ -34,7 +34,6 @@ def render_content(content: list[dict], *, role: str = "user") -> Any:
             )
         if kind in ("thinking", "redacted_thinking", "tool_use", "tool_result"):
             continue
-        value = select(block, "type", "text", "refusal", "annotations", "logprobs")
         if kind == "text":
             value = {"type": "text", "text": block.get("text", "")}
         elif kind == "input_audio":

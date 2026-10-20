@@ -138,34 +138,12 @@ class StreamState:
         return result
 
     def _metadata(self, event: dict) -> list[dict]:
-        for key in (
-            "id",
-            "response_id",
-            "model",
-            "created",
-            "created_at",
-            "native_stop_reason",
-            "native_stop_sequence",
-        ):
-            if isinstance(event.get(key), (str, int, float)):
-                self.metadata["response_id" if key == "id" else key] = event[key]
-        if "response_items" in event:
-            headers = dict(self.metadata.get("response_items", {}))
-            for index, item in event["response_items"].items():
-                header = {
-                    key: item[key]
-                    for key in ("id", "type", "status", "name", "call_id")
-                    if key in item and isinstance(item[key], str)
-                }
-                headers[str(index)] = {**headers.get(str(index), {}), **header}
-            self.metadata["response_items"] = headers
-        if "response_parameters" in event:
-            # Protocol encoders project these standard settings; decoders
-            # project them again at the public output boundary.
-            self.metadata["response_parameters"] = {
-                **self.metadata.get("response_parameters", {}),
-                **deepcopy(event["response_parameters"]),
-            }
+        target = self.metadata
+        for key in event["path"]:
+            child = dict(target.get(key, {}))
+            target[key] = child
+            target = child
+        target.update(deepcopy(event["values"]))
         return []
 
     def _usage(self, event: dict) -> list[dict]:

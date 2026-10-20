@@ -2,7 +2,7 @@
 
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 import pytest
 from typing_extensions import TypedDict
@@ -16,20 +16,23 @@ from my_llm import (
     ModelProfile,
     MyCodec,
     MyLLM,
-    PreparedOptions,
+    Parameter,
     ProtocolDefaults,
     ProviderProfile,
     UnsupportedProviderError,
+    omit,
     registry,
     resolve_profiles,
 )
 from my_llm.codec.shared.conversion import (
     decode_functions,
     encode_functions,
+    select,
     text,
 )
-from my_llm.codec.shared.options import apply_max_tokens
-from my_llm.codec.shared.stream import BlockRef, batch, events
+from my_llm.codec.shared.stream import BlockRef, batch, events, metadata
+from my_llm.stream._state import StreamState
+from tests.helpers.profiles import config
 from tests.helpers.protocols import PROTOCOLS, stream_events
 
 PROTOCOL = "independent_test_protocol"
@@ -56,7 +59,12 @@ class Encoder(BaseEncoder):
         return [
             {
                 "role": value["speaker"],
-                "content": [{"type": "text", "text": value["body"]}],
+                "content": [
+                    {
+                        "type": "text",
+                        "text": self.parameter_value(value, profile, "content", "$.body"),
+                    }
+                ],
                 "protocol": self.protocol,
             }
             for value in values
@@ -69,8 +77,9 @@ class Encoder(BaseEncoder):
         )
 
     def _chunks(self, values, profile=None, **parameters):
-        return [
-            batch(
+        result = []
+        for value in values:
+            operations = (
                 [{"type": "finish", "reason": "stop"}]
                 if value["done"]
                 else [
@@ -79,13 +88,19 @@ class Encoder(BaseEncoder):
                         "ref": BlockRef("body"),
                         "kind": "text",
                         "field": "text",
-                        "value": value["body"],
+                        "value": deepcopy(
+                            self.parameter_value(value, profile, "content", "$.body")
+                        ),
                     }
-                ],
-                self.protocol,
+                ]
             )
-            for value in values
-        ]
+            if "trace" in value:
+                operations.insert(
+                    0,
+                    metadata(select(value["trace"], "token", "phase"), path=("trace",)),
+                )
+            result.append(batch(operations, self.protocol))
+        return result
 
     def usage(self, value):
         return value
@@ -110,24 +125,27 @@ class Decoder(BaseDecoder):
         result = []
         for event in events(values):
             if event["type"] == "delta":
-                result.append({"body": event["value"], "done": False})
+                result.append({"body": deepcopy(event["value"]), "done": False})
             elif event["type"] == "finish":
-                result.append({"body": "", "done": True})
+                result.append(
+                    {
+                        "body": "",
+                        "done": True,
+                        **(
+                            {"trace": deepcopy(select(parameters["trace"], "token", "phase"))}
+                            if "trace" in parameters
+                            else {}
+                        ),
+                    }
+                )
         return result
 
     def usage(self, value):
         return value
 
-    def request_parameters(self, profile, options: PreparedOptions):
-        result = deepcopy(options.body)
-        for binding in options.bindings:
-            result.update(deepcopy(binding))
-        apply_max_tokens(result, profile, options.tokens)
-        return result
-
-    def assemble_request(self, messages, tools, profile, *, options, **parameters):
+    def assemble_request(self, messages, tools, profile, *, request, **parameters):
         return {
-            **self.request_parameters(profile, options),
+            **request,
             "model": profile.model,
             "dialog": messages,
             "functions": tools,
@@ -151,6 +169,13 @@ class Transport(BaseTransport):
     message_type = NativeMessage
     tool_type = NativeTool
     usage_modes = ("independent_counter_mode",)
+    request_schema = {
+        "model": str,
+        "dialog": list[NativeMessage],
+        "functions": list[NativeTool],
+        "hint": dict,
+        "limit": int,
+    }
 
     def validate_request(self, request, profile, **parameters):
         return request
@@ -177,13 +202,19 @@ class Codec(BaseCodec):
     __slots__ = ()
     protocol_or_api_style = PROTOCOL
     defaults = ProtocolDefaults(
-        replay_reasoning_content_when_tool_calls=False,
-        supports_reasoning_effort=False,
-        max_tokens_path="$.limit",
-        content_path="$.body",
-        reasoning_content_path="$.thinking",
-        reasoning_enable_parameter={"hint": {"level": 1}},
-        reasoning_effort_parameter={},
+        replay_reasoning_content_when_tool_calls=config("Replay", False),
+        supports_reasoning_effort=config("Effort", False),
+        max_tokens=Parameter(name="Limit", path="$.limit", default_value=omit, phase="decode"),
+        content=Parameter(name="Body", path="$.body", default_value=omit, phase="encode"),
+        reasoning_content=Parameter(
+            name="Thought", path="$.thinking", default_value=omit, phase="encode"
+        ),
+        reasoning_enable=Parameter(
+            name="Hint", path="$.hint", default_value={"level": 1}, phase="decode"
+        ),
+        reasoning_effort=Parameter(
+            name="Level", path="$.hint.level", default_value=omit, phase="decode"
+        ),
     )
     encoder = Encoder()
     decoder = Decoder()
@@ -198,8 +229,12 @@ def registered(monkeypatch):
 
 def profiles():
     return (
-        ProviderProfile(protocol=PROTOCOL, usage_mode="independent_counter_mode"),
-        ModelProfile(model="independent", supports_function_calling=True),
+        ProviderProfile(
+            protocol=PROTOCOL, usage_mode=config("usage_mode", "independent_counter_mode")
+        ),
+        ModelProfile(
+            model="independent", supports_function_calling=config("supports_function_calling", True)
+        ),
     )
 
 
@@ -215,8 +250,8 @@ def test_registration_adds_defaults_and_preserves_existing_converter_snapshot(mo
     assert isinstance(MyCodec().codecs[PROTOCOL], Codec)
     provider, model = profiles()
     resolved = resolve_profiles(provider, model)
-    assert resolved.get("max_tokens_path") == "$.limit"
-    assert resolved.get("content_path") == "$.body"
+    assert resolved.parameter("max_tokens", "decode").path == "$.limit"
+    assert resolved.parameter("content", "encode").path == "$.body"
     assert resolved.get("usage_mode") == "independent_counter_mode"
     with pytest.raises(ConfigurationError, match="registered|duplicate|already"):
         MyCodec.register(Codec())
@@ -258,6 +293,25 @@ def test_registration_rejects_non_codecs_and_stateful_components():
     for invalid in (StatefulCodec(), StatefulFacade()):
         with pytest.raises(ConfigurationError, match="__slots__"):
             MyCodec.register(invalid)
+
+
+@pytest.mark.parametrize("component", ["codec", "encoder", "decoder", "transport"])
+@pytest.mark.parametrize("inherited", [False, True])
+def test_registration_rejects_instance_state_declared_in_slots(component, inherited):
+    concrete = Codec if component == "codec" else type(getattr(Codec, component))
+    stateful = type("StatefulImplementation", (concrete,), {"__slots__": ("pending",)})
+    if inherited:
+        stateful = type("InheritedImplementation", (stateful,), {"__slots__": ()})
+    implementation = stateful()
+    implementation.pending = []
+    assert not hasattr(implementation, "__dict__")
+    invalid = (
+        implementation
+        if component == "codec"
+        else type("StatefulCodec", (Codec,), {"__slots__": (), component: implementation})()
+    )
+    with pytest.raises(ConfigurationError, match="empty __slots__"):
+        MyCodec.register(invalid)
 
 
 def collected_text(protocol, result):
@@ -415,10 +469,8 @@ async def test_builtin_upstreams_render_registered_protocol_without_shared_chang
 async def test_protocol_default_bindings_are_isolated_between_profiles_and_requests(registered):
     provider, model = profiles()
     resolved = resolve_profiles(provider, model)
-    resolved.get("reasoning_enable_parameter")["hint"]["level"] = 99
-    assert resolve_profiles(provider, model).get("reasoning_enable_parameter") == {
-        "hint": {"level": 1}
-    }
+    resolved.get("reasoning_enable")["level"] = 99
+    assert resolve_profiles(provider, model).get("reasoning_enable") == {"level": 1}
     async with MyLLM(provider=provider, model=model, stdio_protocol=PROTOCOL) as llm:
         messages = [{"speaker": "user", "body": "hi"}]
         await llm.generate(messages=messages, reasoning=True)
@@ -427,8 +479,8 @@ async def test_protocol_default_bindings_are_isolated_between_profiles_and_reque
         client.requests[0]["hint"]["level"] = 99
         await llm.generate(messages=messages, reasoning=True)
         assert client.requests[1]["hint"] == {"level": 1}
-        assert llm.resolved_profile.get("reasoning_enable_parameter") == {"hint": {"level": 1}}
-    assert Codec.defaults.reasoning_enable_parameter == {"hint": {"level": 1}}
+        assert llm.resolved_profile.get("reasoning_enable") == {"level": 1}
+    assert Codec.defaults.reasoning_enable.default_value == {"level": 1}
     assert client.streams_closed == 2
     assert client.closed
 
@@ -436,4 +488,111 @@ async def test_protocol_default_bindings_are_isolated_between_profiles_and_reque
 def test_custom_usage_mode_is_owned_by_transport(registered):
     provider, model = profiles()
     with pytest.raises(ConfigurationError, match="usage_mode"):
-        MyLLM(provider=replace(provider, usage_mode="native"), model=model)
+        MyLLM(provider=replace(provider, usage_mode=config("usage_mode", "native")), model=model)
+
+
+def test_registered_protocol_owns_its_metadata_projection_and_merge_paths(registered):
+    class UnreadableExtension:
+        def __deepcopy__(self, memo):
+            raise AssertionError("copied an unconfigured native metadata field")
+
+    codec, state = MyCodec(), StreamState("independent")
+    incoming = [
+        {
+            "body": "hello",
+            "done": False,
+            "trace": {"token": "trace-1", "vendor_unconfigured": UnreadableExtension()},
+        },
+        {"body": "", "done": True, "trace": {"phase": "complete"}},
+    ]
+    encoded = codec.encode(chunks=incoming, input_format=PROTOCOL)["chunks"]
+    assert "vendor_unconfigured" not in str(encoded)
+    operations = state.feed(encoded)
+    operations.extend(state.finish())
+    assert state.metadata["trace"] == {"token": "trace-1", "phase": "complete"}
+    output = codec.decode(chunks=operations, target_format=PROTOCOL, **state.metadata)["chunks"]
+    assert output[-1] == {
+        "body": "",
+        "done": True,
+        "trace": {"token": "trace-1", "phase": "complete"},
+    }
+
+
+def test_independent_stream_hooks_capture_their_mutable_metadata(registered):
+    codec = MyCodec().codecs[PROTOCOL]
+    trace = {"token": {"parts": ["original"]}}
+    incoming = [{"body": "hello", "done": False, "trace": trace}]
+    encoded = codec.encoder.chunks(incoming)
+    expected = deepcopy(encoded)
+
+    trace["token"]["parts"].append("caller edit")
+    assert encoded == expected
+    encoded[0]["events"][0]["values"]["token"]["parts"].append("output edit")
+    assert trace["token"]["parts"] == ["original", "caller edit"]
+
+    output = codec.decoder.chunks([{"type": "finish", "reason": "stop"}], trace=trace)
+    expected_output = deepcopy(output)
+    trace["token"]["parts"].append("later edit")
+    assert output == expected_output
+    output[0]["trace"]["token"]["parts"].append("output edit")
+    assert trace["token"]["parts"] == ["original", "caller edit", "later edit"]
+
+
+@pytest.mark.parametrize(
+    "payload,expected", [({}, "fallback"), ({"body": None}, None), ({"body": "actual"}, "actual")]
+)
+def test_external_encoder_inherits_phase_routes_and_missing_value_semantics(
+    registered, payload, expected
+):
+    provider, model = profiles()
+    declaration = Parameter(
+        name="Anything the UI needs",
+        comment="Presentation only",
+        path="$.vendor.body",
+        default_value="fallback",
+        phase="encode",
+    )
+    profile = resolve_profiles(provider, replace(model, content=declaration))
+    codec = MyCodec()
+    intermediate = codec.codecs[PROTOCOL].encoder.chunks(
+        [{"body": "native", "done": False, "vendor": payload}], profile
+    )
+    assert intermediate[0]["events"][0]["value"] == expected
+    request = codec.request(
+        {"messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]}, profile
+    )
+    assert "vendor" not in request
+    assert request["dialog"] == [{"speaker": "user", "body": "hello"}]
+
+
+def test_external_protocol_inherits_generic_decode_parameters_and_phase_isolation(registered):
+    @dataclass(frozen=True, kw_only=True)
+    class ExtensionModel(ModelProfile):
+        vendor_limit: Parameter[int] = Parameter(
+            name="No field-name convention", path="$.hint.vendor", default_value=7, phase="decode"
+        )
+        encoder_only: Parameter[str] = Parameter(
+            name="This is not a request",
+            path="$.hint.leak",
+            default_value="must not leak",
+            phase="encode",
+        )
+
+    provider, _ = profiles()
+    model = ExtensionModel(
+        model="independent",
+        content=Parameter(
+            name="Decorative", path="$.hint.body", default_value="fallback", phase="decode"
+        ),
+    )
+    profile = resolve_profiles(provider, model)
+    codec = MyCodec()
+    intermediate = codec.codecs[PROTOCOL].encoder.messages(
+        [{"speaker": "user", "body": "native"}], profile
+    )
+    assert intermediate[0]["content"][0]["text"] == "native"
+    request = codec.request({"messages": intermediate}, profile)
+    assert request["hint"] == {"vendor": 7, "body": "fallback"}
+    assert "encoder_only" not in request
+    assert "body" not in request
+    assert "request_parameters" not in Decoder.__dict__

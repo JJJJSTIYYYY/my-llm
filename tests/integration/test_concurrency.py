@@ -15,6 +15,7 @@ from openai import AsyncOpenAI
 
 from my_llm import ModelProfile, MyCodec, MyLLM, ProviderProfile
 from my_llm.stream._state import StreamState
+from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import PROTOCOLS, history, stream_events, tools
 from tests.helpers.transport import sse
 
@@ -195,12 +196,18 @@ def make_llm(protocol, stdio):
     return MyLLM(
         provider=ProviderProfile(
             protocol=protocol,
-            api_key="local-concurrency-test",
-            base_url="https://local.test",
-            max_retries=0,
-            usage_mode="stream_options" if protocol == "openai_chat" else "native",
+            api_key=config("api_key", "local-concurrency-test"),
+            base_url=config("base_url", "https://local.test"),
+            max_retries=config("max_retries", 0),
+            usage_mode=config(
+                "usage_mode", "stream_options" if protocol == "openai_chat" else "native"
+            ),
         ),
-        model=ModelProfile(model="demo", max_tokens=2048, supports_function_calling=True),
+        model=ModelProfile(
+            model="demo",
+            max_tokens=parameter("max_tokens", 2048, protocol=protocol),
+            supports_function_calling=config("supports_function_calling", True),
+        ),
         # Exercise unique format binding while other requests are in flight.
         stdio_protocol=None if stdio == "gemini" else stdio,
     )

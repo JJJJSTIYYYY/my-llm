@@ -5,13 +5,22 @@ from collections.abc import AsyncIterator, Hashable
 from contextlib import AbstractAsyncContextManager
 from typing import Any, final
 
-from openai import Omit
 from pydantic import ValidationError
 
-from my_llm.codec.shared.options import PreparedOptions, resolve_options
-from my_llm.codec.shared.transport import adapter, projected, supported, validate_history
+from my_llm.codec.shared.options import PreparedOptions, resolve_options, set_path
+from my_llm.codec.shared.transport import (
+    _MISSING,
+    adapter,
+    declared_path,
+    path_item,
+    projected,
+    supported,
+    validate_history,
+)
 from my_llm.exceptions import ConfigurationError, MessageValidationError, UnsupportedCapabilityError
+from my_llm.profile.paths import path_keys
 from my_llm.profile.resolution import ResolvedProfile
+from my_llm.profile.types import Omit
 
 
 class BaseTransport(ABC):
@@ -25,6 +34,12 @@ class BaseTransport(ABC):
     __slots__ = ()
     usage_modes = ("none", "native")
     supports_previous_response_id = False
+
+    @property
+    @abstractmethod
+    def request_schema(self) -> dict[str, Any]:
+        """The official SDK's root keyword parameters and nested protocol schemas."""
+        ...
 
     @property
     @abstractmethod
@@ -83,6 +98,7 @@ class BaseTransport(ABC):
         **parameters: Any,
     ) -> PreparedOptions:
         """Validate and prepare generation settings for the request's Decoder."""
+        self.validate_parameter_roots(profile)
         options = resolve_options(profile, **parameters)
         previous = previous_response_id
         if previous is not None and not isinstance(previous, Omit):
@@ -113,9 +129,8 @@ class BaseTransport(ABC):
                     parameters.get("previous_response_id")
                 ),
             )
-        # Filtering creates owned message/tool payloads. Rebuild only the
-        # envelopes whose entries this boundary replaces.
-        request = dict(request)
+        original = request
+        request = self.filter_request(request, profile)
         messages = self._parent(request, self.message_path)
         if messages is None or self.message_path[-1] not in messages:
             raise MessageValidationError("native request requires messages")
@@ -133,14 +148,63 @@ class BaseTransport(ABC):
                 raise UnsupportedCapabilityError("model does not support function calling")
             tools[key] = self.filter_tools(tools[key], profile)
             self._validate_values(tools[key], self.tool_type, filtered=True)
-        return self.validate_request(request, profile, **parameters)
+        request = self.validate_request(request, profile, **parameters)
+        return self.extend_request(request, original, profile)
+
+    def filter_request(self, request: dict, profile: ResolvedProfile) -> dict:
+        """Select SDK fields and explicit profile extensions by declared location."""
+        # Message/tool hooks own these leaves, including nested SDK locations.
+        # Copy their envelopes here and filter the delegated payloads once below.
+        delegated = (self.message_path, self.tool_path)
+        result = {}
+        for name, schema in self.request_schema.items():
+            if name not in request or isinstance(request[name], Omit):
+                continue
+            try:
+                result[name] = supported(
+                    request[name],
+                    schema,
+                    delegated_paths=tuple(path[1:] for path in delegated if path[0] == name),
+                )
+            except UnsupportedCapabilityError as exc:
+                raise ConfigurationError(f"invalid {name}: {exc}") from exc
+        return result
+
+    def extend_request(self, result: dict, request: dict, profile: ResolvedProfile) -> dict:
+        """Restore only explicit profile leaves absent from the SDK declaration."""
+        for name, parameter in profile.parameters.items():
+            if isinstance(parameter, Omit) or parameter.phase != "decode":
+                continue
+            path = parameter.path
+            keys = path_keys(path)
+            if keys[0] not in self.request_schema:
+                raise ConfigurationError(
+                    f"{name} parameter path points to unsupported SDK parameter {keys[0]!r}"
+                )
+            schema = self.request_schema[keys[0]]
+            if declared_path(schema, tuple(keys[1:])):
+                continue
+            item = path_item(request, keys)
+            if item is not _MISSING and not isinstance(item, Omit):
+                set_path(result, path, supported(item, Any))
+        return result
+
+    def validate_parameter_roots(self, profile: ResolvedProfile) -> None:
+        """Reject declared request routes that the selected SDK cannot receive."""
+        for name, parameter in profile.parameters.items():
+            if isinstance(parameter, Omit) or parameter.phase != "decode":
+                continue
+            root = path_keys(parameter.path)[0]
+            if root not in self.request_schema:
+                raise ConfigurationError(
+                    f"{name} parameter path points to unsupported SDK parameter {root!r}"
+                )
 
     def _parent(self, request: dict, path: tuple[str, ...]) -> dict | None:
         for key in path[:-1]:
             child = request.get(key)
             if not isinstance(child, dict):
                 return None
-            request[key] = dict(child)
             request = request[key]
         return request
 
@@ -152,7 +216,7 @@ class BaseTransport(ABC):
 
     @abstractmethod
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
-        """Check native options and construct any required public SDK types.
+        """Validate native options while keeping SDK request values as dictionaries.
 
         Replace additional nested containers when changing them; unmodified
         options can remain borrowed from the input request.
@@ -177,6 +241,7 @@ class BaseTransport(ABC):
 
     def validate_profile(self, profile: ResolvedProfile) -> None:
         """Validate SDK connection settings before creating any client."""
+        self.validate_parameter_roots(profile)
         if profile.get("usage_mode", "none") not in self.usage_modes:
             raise ConfigurationError("usage_mode is incompatible with the selected API")
 

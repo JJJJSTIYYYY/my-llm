@@ -98,8 +98,7 @@ def test_a01_schema_refs_counts_and_property_names_are_not_confused_with_keyword
         "properties": {"type": {"$ref": "#/$defs/OBJECT"}},
         "maxProperties": 3,
     }
-    with pytest.raises(MessageValidationError, match="unsupported Gemini Schema keyword"):
-        json_schema({"unrepresentable_constraint": True})
+    assert json_schema({"unrepresentable_constraint": True}) == {}
 
 
 def refusal_events(source):

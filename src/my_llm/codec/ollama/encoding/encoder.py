@@ -1,9 +1,10 @@
 """ollama: native input to intermediate."""
 
+from copy import deepcopy
 from typing import Any
 
 from my_llm.codec.base.encoder import BaseEncoder
-from my_llm.codec.ollama.encoding.content import media_type, tool_block
+from my_llm.codec.ollama.encoding.content import image_data, media_type, tool_block
 from my_llm.codec.shared.conversion import (
     allocate_call_id,
     associate_tool_result,
@@ -12,7 +13,7 @@ from my_llm.codec.shared.conversion import (
     mapping_list,
     select,
 )
-from my_llm.codec.shared.stream import BlockRef, encode_batch, record
+from my_llm.codec.shared.stream import BlockRef, encode_batch, metadata, record
 from my_llm.exceptions import ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
 
@@ -30,7 +31,7 @@ class OllamaEncoder(BaseEncoder):
             return isinstance(item.get("function"), dict)
         if item.get("role") not in ("user", "assistant", "system", "tool"):
             return False
-        if set(item) & {"parts", "type", "reasoning_content"}:
+        if any(key in item for key in {"parts", "type", "reasoning_content"}):
             return False
         calls = item.get("tool_calls") or []
         if not mapping_list(calls) or any(
@@ -63,7 +64,8 @@ class OllamaEncoder(BaseEncoder):
                     "type": "image",
                     "source": {"type": "base64", "media_type": media_type(image), "data": image},
                 }
-                for image in (message.get("images") or [])
+                for native_image in (message.get("images") or [])
+                for image in [image_data(native_image)]
             )
             if message.get("thinking"):
                 content.append({"type": "thinking", "thinking": message["thinking"]})
@@ -111,21 +113,35 @@ class OllamaEncoder(BaseEncoder):
                 )
             if not any(key in event for key in ("message", "done")):
                 continue
-            ops = [{"type": "metadata", "model": event.get("model")}]
+            ops = [
+                metadata(
+                    {"model": event["model"]}
+                    if isinstance(event.get("model"), (str, int, float))
+                    else {}
+                )
+            ]
             message = event.get("message", {})
-            for field, kind in (("content", "text"), ("thinking", "thinking")):
-                if message.get(field):
+            for name, kind, default in (
+                ("content", "text", "$.message.content"),
+                ("reasoning_content", "thinking", "$.message.thinking"),
+            ):
+                value = self.parameter_value(
+                    event, profile, name, default, use_default=not event.get("done")
+                )
+                if value:
                     ops.append(
                         {
                             "type": "block_delta",
                             "ref": BlockRef(kind),
                             "field": kind,
                             "kind": kind,
-                            "value": message[field],
+                            "value": deepcopy(value),
                         }
                     )
             for call in message.get("tool_calls") or []:
-                ops.append({"type": "block_append", "block": tool_block(call)})
+                block = tool_block(call)
+                block["input"] = deepcopy(block["input"])
+                ops.append({"type": "block_append", "block": block})
             if event.get("done"):
                 if profile is None or profile.get("usage_mode") != "none":
                     ops.append(

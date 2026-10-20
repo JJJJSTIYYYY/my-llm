@@ -7,15 +7,14 @@ from typing import Any
 
 from google import genai
 from google.genai import types
+from google.genai.models import AsyncModels
 
 from my_llm.codec.base.transport import BaseTransport
-from my_llm.codec.shared.conversion import plain
 from my_llm.codec.shared.options import (
     PreparedOptions,
-    validate_max_tokens_path,
-    validate_native_options,
+    validate_request_options,
 )
-from my_llm.codec.shared.transport import supported
+from my_llm.codec.shared.transport import parameter_types
 from my_llm.exceptions import ConfigurationError, UnsupportedCapabilityError
 from my_llm.profile.resolution import ResolvedProfile, client_parameters, validate_max_tokens
 
@@ -50,7 +49,6 @@ PROTECTED = {
     "automatic_function_calling",
     "http_options",
 }
-REQUEST_FIELDS = set(types.GenerateContentConfig.model_fields) - PROTECTED
 
 
 class GeminiTransport(BaseTransport):
@@ -61,46 +59,28 @@ class GeminiTransport(BaseTransport):
     message_type = types.Content
     message_path = ("contents",)
     tool_path = ("config", "tools")
+    request_schema = {
+        **parameter_types(AsyncModels.generate_content_stream),
+        "contents": list[types.Content],
+        "config": types.GenerateContentConfig,
+    }
 
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
         options = super().validate_parameters(profile, **parameters)
-        options = validate_native_options(
-            options, request_fields=REQUEST_FIELDS, protected=PROTECTED
+        return validate_request_options(
+            profile, options, protected=PROTECTED, containers=("config",)
         )
-        tokens, body, effort = options.tokens, options.body, options.effort
-        validate_max_tokens_path(
-            profile,
-            tokens,
-            protected=PROTECTED,
-            containers=("config",),
-            request={"config": body},
-        )
-        if effort:
-            thinking = plain(body.get("thinking_config") or {})
-            if not isinstance(thinking, dict):
-                raise ConfigurationError(
-                    "Gemini thinking_config must be a dictionary or SDK config"
-                )
-            if profile.get("supports_reasoning_effort", False):
-                if effort not in ("minimal", "low", "medium", "high"):
-                    raise UnsupportedCapabilityError(
-                        "map reasoning effort to a Gemini-supported level"
-                    )
-            elif thinking.get("thinking_budget") == 0:
-                raise ConfigurationError("reasoning conflicts with a zero Gemini thinking budget")
-        return options
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
         if not request["contents"]:
             raise ConfigurationError("a non-system message is required")
-        config = request["config"]
+        config = request.get("config")
+        if config is None:
+            return request
         validate_max_tokens(config.get("max_output_tokens"))
         if config.get("candidate_count") not in (None, 1):
             raise UnsupportedCapabilityError("only one generated candidate is supported")
-        if "system_instruction" in config and not isinstance(config["system_instruction"], str):
-            config["system_instruction"] = supported(config["system_instruction"], types.Content)
-        request["config"] = types.GenerateContentConfig(**config)
-        thinking = request["config"].thinking_config
+        thinking = types.GenerateContentConfig(**config).thinking_config
         if thinking is not None and thinking.thinking_budget == 0 and thinking.include_thoughts:
             raise ConfigurationError("reasoning conflicts with a zero Gemini thinking budget")
         return request

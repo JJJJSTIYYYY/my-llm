@@ -1,7 +1,5 @@
 """Select recognized Anthropic content; application objects remain open."""
 
-from copy import deepcopy
-
 from my_llm.codec.shared.conversion import select
 
 FIELDS = {
@@ -88,7 +86,7 @@ def native_block(block: dict) -> dict | None:
             value["source"]["content"] = _content(source.get("content"))
     if "content" in block and kind not in ("text_editor_code_execution_view_result",):
         value["content"] = (
-            deepcopy(block["content"])
+            block["content"]
             if kind == "tool_result" and isinstance(block["content"], dict)
             else _content(block["content"])
         )

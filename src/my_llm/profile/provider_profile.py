@@ -4,68 +4,28 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from openai import Omit
-
 from my_llm.exceptions import ConfigurationError
 from my_llm.profile.configuration import OverridableProfile, Protocol
 from my_llm.profile.model_profile import ModelProfile
+from my_llm.profile.types import Config, Omit
 
 
 @dataclass(frozen=True, kw_only=True)
 class ProviderProfile(OverridableProfile):
-    """Provider connection, API selection and inherited model defaults.
+    """Provider connection, API selection and explicit model catalogue.
 
-    All arguments are keyword-only. None inherits a protocol default; omit
-    disables a setting. Dictionary settings override keys rather than replacing
-    the whole dictionary. Profiles are frozen; use dataclasses.replace() to
-    build a changed configuration. The model catalogue has explicit mutators.
-
-    Args:
-        protocol: Registered protocol name. Built-ins include openai_chat (default),
-            openai_responses, anthropic, gemini and ollama.
-        base_url: Optional service URL passed to the selected official SDK.
-        api_key: Optional SDK credential; excluded from repr.
-        timeout: Positive SDK timeout in seconds, or None for the SDK default.
-        max_retries: Non-negative SDK retry count, or None for the SDK default.
-        supports_stream: Whether upstream streaming is available; defaults True
-            when resolved. False/omit is unsupported in both public modes.
-        usage_mode: A mode declared by the selected Transport; built-ins use
-            "none" (default), "native" or "stream_options".
-        models: Optional list of ModelProfile configurations. Model IDs are
-            unique; later entries replace earlier entries with the same ID.
-            Generations still require explicit model selection.
-        extra_headers: Default request headers, merged by key.
-        extra_body: Default extra request-body fields, merged by key.
-        reasoning_enable_parameter: SDK keyword dictionary used to enable
-            reasoning when effort levels are unsupported.
-        reasoning_effort_parameter: SDK keyword dictionary used when effort
-            levels are supported. "{effort}" expands to the mapped value.
-        reasoning_effort_mapping: Map none/low/medium/high/xhigh/max to provider
-            strings; None or omit values disable individual levels.
-        supports_reasoning_effort: Defaults True for Responses, False for Chat.
-        max_tokens_path: SDK request path for the output-token limit, such as
-            "$.max_completion_tokens" or "$.extra_body.max_tokens". Supports
-            dotted keys and numeric indexes, with an optional "$." prefix.
-            None inherits the protocol default; omit disables automatic insertion.
-        content_path: Text delta selector; defaults to the API's standard field.
-        reasoning_content_path: Reasoning delta selector; defaults to the API's
-            standard reasoning-summary/reasoning-content field.
-        replay_reasoning_content_when_tool_calls: Replay existing visible reasoning; add an empty
-            value only on assistant tool calls when thinking is enabled. Defaults False
-            for Chat (compatible-service opt-in), True for Ollama native thinking.
-
-    Raises:
-        ConfigurationError: The model catalogue contains invalid entries.
-            Other settings are validated when constructing MyLLM or generating.
+    None inherits; omit disables a setting. Parameter and Config wrappers retain
+    explicit default_value=None. Config dictionaries merge by key. Extend with
+    typed Parameter or Config fields. SDK connection values use Config fields.
     """
 
     protocol: Protocol = "openai_chat"
-    base_url: str | Omit | None = None
-    api_key: str | Omit | None = field(default=None, repr=False)
-    timeout: float | Omit | None = None
-    max_retries: int | Omit | None = None
-    supports_stream: bool | Omit | None = None
-    usage_mode: str | Omit | None = None
+    base_url: Config[str] | Omit | None = None
+    api_key: Config[str] | Omit | None = field(default=None, repr=False)
+    timeout: Config[float] | Omit | None = None
+    max_retries: Config[int] | Omit | None = None
+    supports_stream: Config[bool] | Omit | None = None
+    usage_mode: Config[str] | Omit | None = None
     models: list[ModelProfile] | None = None
 
     def __post_init__(self) -> None:

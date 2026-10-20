@@ -1,0 +1,15 @@
+{
+  "experiment": "same per-conversion view, same SDK list field containing 32 child models, read three times",
+  "before": {
+    "contains": 6,
+    "view": 99,
+    "list_rebuild": 3,
+    "model_wrap": 96
+  },
+  "after": {
+    "contains": 0,
+    "view": 33,
+    "list_rebuild": 1,
+    "model_wrap": 32
+  }
+}

@@ -2,9 +2,27 @@
 
 import base64
 import binascii
+from pathlib import Path
 
 from my_llm.codec.shared.conversion import arguments, select
 from my_llm.exceptions import MessageValidationError
+
+
+def image_data(value) -> str:
+    """Read an SDK Image's declared value without serializing its other fields."""
+    if not isinstance(value, dict):
+        return value
+    value = value["value"]
+    if isinstance(value, Path):
+        value = value.read_bytes()
+    elif isinstance(value, str):
+        try:
+            path = Path(value)
+            if path.is_file():
+                value = path.read_bytes()
+        except OSError:
+            pass
+    return base64.b64encode(value).decode("ascii") if isinstance(value, bytes) else value
 
 
 def media_type(value: str) -> str:

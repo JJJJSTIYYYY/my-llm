@@ -1,7 +1,5 @@
 """Explicit Responses response settings, separate from generated content."""
 
-from copy import deepcopy
-
 from my_llm.codec.shared.conversion import select
 
 
@@ -13,7 +11,7 @@ def response_parameters(value: dict) -> dict:
         result["instructions"] = (
             [projected for item in instructions if (projected := _instruction(item)) is not None]
             if isinstance(instructions, list)
-            else deepcopy(instructions)
+            else instructions
         )
     if "tools" in value:
         result["tools"] = [
@@ -48,7 +46,7 @@ def _tool(value: dict) -> dict | None:
 
 def _choice(value):
     if not isinstance(value, dict):
-        return deepcopy(value)
+        return value
     result = select(value, "type", "name", "mode", "server_label")
     if "tools" in value:
         result["tools"] = [select(tool, "type", "name", "server_label") for tool in value["tools"]]
@@ -82,7 +80,7 @@ def _instruction(value: dict) -> dict | None:
 
 def _instruction_content(value):
     if not isinstance(value, list):
-        return deepcopy(value)
+        return value
     fields = {
         "input_text": ("text",),
         "output_text": ("text",),

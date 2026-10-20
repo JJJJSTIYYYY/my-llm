@@ -2,6 +2,7 @@ import pytest
 
 from my_llm import ConfigurationError, ModelProfile, ProviderProfile, generate
 from my_llm.profile.resolution import resolve_profiles
+from tests.helpers.profiles import parameter
 from tests.helpers.protocols import chat_event, response_completed
 from tests.helpers.transport import FakeClient
 
@@ -133,8 +134,17 @@ def test_catalogue_and_context_metadata_are_excluded_from_resolution_and_deepcop
 @pytest.mark.parametrize("protocol", ["openai_responses", "openai_chat"])
 @pytest.mark.parametrize("window", [-1, 0, 1, 256000])
 async def test_metadata_does_not_change_request_or_limit_content(protocol, window, monkeypatch):
-    provider = ProviderProfile(protocol=protocol, models=[ModelProfile(model="demo", max_tokens=1)])
-    model = ModelProfile(model="demo", max_tokens=64, max_context_window=window)
+    provider = ProviderProfile(
+        protocol=protocol,
+        models=[
+            ModelProfile(model="demo", max_tokens=parameter("max_tokens", 1, protocol=protocol))
+        ],
+    )
+    model = ModelProfile(
+        model="demo",
+        max_tokens=parameter("max_tokens", 64, protocol=protocol),
+        max_context_window=window,
+    )
     events = (
         [response_completed()] if protocol == "openai_responses" else [chat_event(finish="stop")]
     )

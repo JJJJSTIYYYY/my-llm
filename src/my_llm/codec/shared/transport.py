@@ -1,9 +1,10 @@
 """SDK schema filtering, request-history validation and response ownership."""
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from copy import deepcopy
 from functools import cache
+from inspect import Parameter, signature
 from types import UnionType
 from typing import (
     Annotated,
@@ -35,6 +36,18 @@ def adapter(schema):
     return TypeAdapter(schema)
 
 
+@cache
+def parameter_types(method):
+    """Read the public SDK's keyword contract once, independently of payload data."""
+    annotations = get_type_hints(method, include_extras=True)
+    return {
+        name: annotations.get(name, Any)
+        for name, parameter in signature(method).parameters.items()
+        if name != "self"
+        and parameter.kind not in (Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD)
+    }
+
+
 def _unwrap(schema):
     while get_origin(schema) in (Annotated, Required, NotRequired):
         schema = get_args(schema)[0]
@@ -57,10 +70,53 @@ def _borrow_payload(value):
     return value
 
 
+_MISSING = object()
+
+
+def _field_value(value, name):
+    """Read a declared field without serializing or inspecting SDK extensions."""
+    if isinstance(value, dict):
+        return value[name] if name in value else _MISSING
+    if isinstance(value, BaseModel):
+        item = getattr(value, name, _MISSING)
+        # SDK models expose unset optional fields as None. Explicit None is
+        # nevertheless a supplied protocol value and must survive projection.
+        if item is None and name not in value.model_fields_set:
+            return _MISSING
+        return item
+    return _MISSING
+
+
 class _FilterPlan:
     """Type-only graph node; compiled before it is published in the plan cache."""
 
-    __slots__ = ("apply", "project", "score")
+    __slots__ = ("apply", "project", "score", "literals")
+
+
+def _literal_routes(choices):
+    """Compile admissible union branches for each declared literal field."""
+    names = dict.fromkeys(name for choice in choices for name in choice.literals)
+    routes = []
+    for name in names:
+        unrestricted = 0
+        matches = {}
+        for index, choice in enumerate(choices):
+            mask = 1 << index
+            if name not in choice.literals:
+                unrestricted |= mask
+                continue
+            for literal in choice.literals[name]:
+                try:
+                    matches[literal] = matches.get(literal, 0) | mask
+                except TypeError:
+                    # Non-hashable Literal declarations retain ordinary scoring.
+                    break
+            else:
+                continue
+            break
+        else:
+            routes.append((name, unrestricted, matches))
+    return routes
 
 
 def _same_schema(left, right):
@@ -99,32 +155,36 @@ class _SchemaKey:
         )
 
 
-def _plan(schema):
-    return _compiled_plan(_SchemaKey(schema))
+def _plan(schema, delegated_paths=()):
+    return _compiled_plan(_SchemaKey(schema), delegated_paths)
 
 
 @cache
-def _compiled_plan(key):
+def _compiled_plan(key, delegated_paths):
     # SDK models can be recursive. Register each node before its children so
     # recursive annotations refer to the same plan without storing request data.
     plans = {}
 
-    def compile(annotation):
+    def compile(annotation, delegated_paths=()):
         annotation = _unwrap(annotation)
-        key = id(annotation)
+        key = (id(annotation), delegated_paths)
         if key in plans:
             return plans[key]
         node = plans[key] = _FilterPlan()
+        node.literals = {}
         origin = get_origin(annotation)
         arguments = get_args(annotation)
 
         if annotation in (Any, object):
             node.score = lambda value: 0
         elif origin is Literal:
-            node.score = lambda value: 1 if value in arguments else -1
-        elif origin in (list, tuple, Iterable):
+            literal_types = tuple({type(item) for item in arguments})
+            node.score = lambda value: (
+                1 if value in arguments else 0 if isinstance(value, literal_types) else -1
+            )
+        elif origin in (list, tuple, Iterable, Sequence):
             node.score = lambda value: 1 if isinstance(value, list) else -1
-        elif origin is dict:
+        elif origin in (dict, Mapping):
             node.score = lambda value: 0 if isinstance(value, dict) else -1
         elif isinstance(annotation, type):
             node.score = lambda value: 1 if isinstance(value, annotation) else -1
@@ -132,16 +192,46 @@ def _compiled_plan(key):
             node.score = lambda value: -1
 
         if origin in (Union, UnionType):
-            choices = tuple(compile(item) for item in arguments if item is not type(None))
+            choices = tuple(
+                compile(item, delegated_paths) for item in arguments if item is not type(None)
+            )
+            routes = _literal_routes(choices)
 
             def select(value):
                 if len(choices) == 1:
                     return choices[0]
+                if routes:
+                    eligible = (1 << len(choices)) - 1
+                    for name, unrestricted, matches in routes:
+                        item = (
+                            value.get(name, _MISSING)
+                            if isinstance(value, dict)
+                            else _field_value(value, name)
+                        )
+                        if item is _MISSING:
+                            continue
+                        try:
+                            eligible &= unrestricted | matches.get(item, 0)
+                        except TypeError:
+                            # Invalid unhashable values are handled by the same
+                            # score/validation path as before indexing.
+                            continue
+                    candidates = []
+                    while eligible:
+                        bit = eligible & -eligible
+                        candidates.append(choices[bit.bit_length() - 1])
+                        eligible ^= bit
+                else:
+                    candidates = choices
+                if not candidates:
+                    raise UnsupportedCapabilityError(
+                        "target SDK cannot represent this protocol value"
+                    )
                 # Strictly greater retains the first candidate when scores tie,
                 # matching max(..., key=...) without rescoring the winner.
-                choice = choices[0]
+                choice = candidates[0]
                 score = choice.score(value)
-                for candidate in choices[1:]:
+                for candidate in candidates[1:]:
                     candidate_score = candidate.score(value)
                     if candidate_score > score:
                         choice, score = candidate, candidate_score
@@ -153,7 +243,7 @@ def _compiled_plan(key):
 
             node.apply = lambda value: None if value is None else select(value).apply(value)
             node.project = lambda value: None if value is None else select(value).project(value)
-        elif origin in (list, tuple, Iterable) and arguments:
+        elif origin in (list, tuple, Iterable, Sequence) and arguments:
             item_plan = compile(arguments[0])
             node.apply = lambda value: (
                 [item_plan.apply(item) for item in value]
@@ -165,46 +255,62 @@ def _compiled_plan(key):
             )
         elif _structured(annotation):
             declared = fields(annotation)
-            children = {name: compile(item) for name, item in declared.items()}
-            declared_keys = children.keys()
-            literal_fields = []
             for name, item in declared.items():
                 unwrapped = _unwrap(item)
                 if get_origin(unwrapped) is Literal:
-                    literal_fields.append((name, get_args(unwrapped)))
+                    node.literals[name] = get_args(unwrapped)
+            literal_fields = tuple(node.literals.items())
+            children = {
+                name: compile(
+                    item,
+                    tuple(path[1:] for path in delegated_paths if path and path[0] == name),
+                )
+                for name, item in declared.items()
+            }
 
             def structured_score(value):
-                if not isinstance(value, dict):
-                    return 1 if isinstance(value, annotation) else -1
+                if isinstance(value, dict):
+                    for name, literals in literal_fields:
+                        item = value.get(name, _MISSING)
+                        if item is not _MISSING and item not in literals:
+                            return -1
+                    return sum(name in value for name in children) + 1
+                if not isinstance(value, BaseModel):
+                    return -1
                 for name, literals in literal_fields:
-                    if name in value and value[name] not in literals:
+                    item = _field_value(value, name)
+                    if item is not _MISSING and item not in literals:
                         return -1
-                return len(value.keys() & declared_keys) + 1
+                return sum(_field_value(value, name) is not _MISSING for name in children) + 1
 
             def structured_copy(value):
-                if isinstance(value, BaseModel):
-                    serialized = value.model_dump(mode="json", exclude_none=True)
-                    if isinstance(serialized, dict):
-                        value = serialized
-                if not isinstance(value, dict):
+                if isinstance(value, dict):
+                    return {
+                        name: child.apply(item)
+                        for name, child in children.items()
+                        if (item := value.get(name, _MISSING)) is not _MISSING
+                    }
+                if not isinstance(value, BaseModel):
                     return _copy_payload(value)
                 return {
                     name: children[name].apply(item)
-                    for name, item in value.items()
-                    if name in children
+                    for name in children
+                    if (item := _field_value(value, name)) is not _MISSING
                 }
 
             def structured_projection(value):
-                if isinstance(value, BaseModel):
-                    serialized = value.model_dump(mode="json", exclude_none=True)
-                    if isinstance(serialized, dict):
-                        value = serialized
-                if not isinstance(value, dict):
+                if isinstance(value, dict):
+                    return {
+                        name: child.project(item)
+                        for name, child in children.items()
+                        if (item := value.get(name, _MISSING)) is not _MISSING
+                    }
+                if not isinstance(value, BaseModel):
                     return value
                 return {
                     name: children[name].project(item)
-                    for name, item in value.items()
-                    if name in children
+                    for name in children
+                    if (item := _field_value(value, name)) is not _MISSING
                 }
 
             node.score = structured_score
@@ -215,19 +321,65 @@ def _compiled_plan(key):
             # atomic application data; protocol filtering never inspects keys.
             node.apply = _copy_payload
             node.project = _borrow_payload
+        if () in delegated_paths:
+            # Only Transport delegates message/tool leaves to its own hooks.
+            # Enclosing structures and unrelated application data remain owned.
+            node.apply = _borrow_payload
         return node
 
-    return compile(key.schema)
+    return compile(key.schema, delegated_paths)
 
 
-def supported(value, schema):
-    """Filter with a cached type plan, isolating mutable application payloads."""
-    return _plan(schema).apply(value)
+def supported(value, schema, *, delegated_paths=()):
+    """Filter owned values; Transport alone delegates leaves to its later hooks.
+
+    Delegated leaves remain borrowed until filter_messages/filter_tools returns.
+    Ordinary callers omit delegated_paths and always receive isolated payloads.
+    """
+    if () in delegated_paths:
+        return value
+    return _plan(schema, delegated_paths).apply(value)
 
 
 def projected(value, schema):
     """Project SDK fields for read-only validation, borrowing atomic payloads."""
     return _plan(schema).project(value)
+
+
+@cache
+def declared_path(schema, keys):
+    """Whether an SDK schema already declares a path, including open JSON leaves."""
+    schema = _unwrap(schema)
+    if not keys or schema in (Any, object):
+        return True
+    origin = get_origin(schema)
+    arguments = get_args(schema)
+    if origin in (Union, UnionType):
+        return any(declared_path(item, keys) for item in arguments if item is not type(None))
+    if origin in (dict, Mapping):
+        return True
+    if origin in (list, tuple, Iterable, Sequence):
+        return (
+            isinstance(keys[0], int) and bool(arguments) and declared_path(arguments[0], keys[1:])
+        )
+    if _structured(schema):
+        declared = fields(schema)
+        return keys[0] in declared and declared_path(declared[keys[0]], keys[1:])
+    return False
+
+
+def path_item(value, keys):
+    """Read one declared profile path without walking neighboring fields."""
+    for key in keys:
+        if isinstance(key, int):
+            if not isinstance(value, list) or key >= len(value):
+                return _MISSING
+            value = value[key]
+        else:
+            value = _field_value(value, key)
+            if value is _MISSING:
+                return _MISSING
+    return value
 
 
 def validate_history(messages: list[dict], *, allow_external_calls: bool = False) -> None:

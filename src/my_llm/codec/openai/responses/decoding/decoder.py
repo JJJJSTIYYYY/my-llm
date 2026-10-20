@@ -3,8 +3,6 @@
 from copy import deepcopy
 from typing import Any
 
-from openai import Omit
-
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.openai.responses.decoding.content import foreign_block, render_content
 from my_llm.codec.openai.responses.utils.metadata import response_parameters
@@ -18,14 +16,10 @@ from my_llm.codec.shared.conversion import (
     source_protocol,
     tool_output,
 )
-from my_llm.codec.shared.options import (
-    PreparedOptions,
-    merge_bindings,
-    overlay_request_parameters,
-)
 from my_llm.codec.shared.stream import counts, events
 from my_llm.exceptions import ResponseFailedError, UnsupportedCapabilityError
 from my_llm.profile.resolution import ResolvedProfile
+from my_llm.profile.types import Omit
 
 PROTOCOL = "openai_responses"
 
@@ -36,19 +30,9 @@ class ResponsesDecoder(BaseDecoder):
     __slots__ = ()
     protocol = PROTOCOL
 
-    def request_parameters(self, profile: ResolvedProfile, options: PreparedOptions) -> dict:
-        effort = options.effort
-        layers = []
-        for index, binding in enumerate(options.bindings):
-            if "reasoning" in binding:
-                value = binding["reasoning"]
-                if index == 1 and not isinstance(value, Omit) and "effort" not in value:
-                    value = {"effort": effort, **value}
-                layers.append({"reasoning": value})
-        request = merge_bindings({"reasoning": {"summary": "detailed"}}, *layers) if layers else {}
-        return overlay_request_parameters(
-            request, profile, options, overlay="extra_body", headers_field="extra_headers"
-        )
+    body_container = "extra_body"
+    body_overlay = "extra_body"
+    omit_empty_body = True
 
     def assemble_request(
         self,
@@ -56,12 +40,12 @@ class ResponsesDecoder(BaseDecoder):
         tools: list | None,
         profile: ResolvedProfile,
         *,
-        options: PreparedOptions,
+        request: dict,
         **parameters: Any,
     ) -> dict:
         previous = parameters.pop("previous_response_id", None)
         has_previous = previous is not None and not isinstance(previous, Omit)
-        result = self.request_parameters(profile, options)
+        result = request
         result.update(model=profile.model, stream=True, input=messages)
         if tools is not None:
             result["tools"] = tools
@@ -270,20 +254,19 @@ class ResponsesDecoder(BaseDecoder):
                     event["field"] == "thinking" and parameters.get("source_protocol") == PROTOCOL
                 )
                 refusal = event["field"] == "refusal"
-                result.append(
-                    {
-                        "type": "response.reasoning_summary_text.delta"
-                        if thinking
-                        else "response.refusal.delta"
-                        if refusal
-                        else "response.output_text.delta",
-                        "item_id": item_id,
-                        "output_index": index,
-                        "summary_index" if thinking else "content_index": part_index,
-                        "delta": event["value"],
-                        **({"logprobs": []} if not thinking and not refusal else {}),
-                    }
-                )
+                value = {
+                    "type": "response.reasoning_summary_text.delta"
+                    if thinking
+                    else "response.refusal.delta"
+                    if refusal
+                    else "response.output_text.delta",
+                    "item_id": item_id,
+                    "output_index": index,
+                    "summary_index" if thinking else "content_index": part_index,
+                    "delta": deepcopy(event["value"]),
+                    **({"logprobs": []} if not thinking and not refusal else {}),
+                }
+                result.append(value)
             elif kind == "block_stop":
                 block = event["block"]
                 thinking = (
@@ -292,14 +275,16 @@ class ResponsesDecoder(BaseDecoder):
                 )
                 refusal = block.get("type") == "refusal"
                 rendered_text = (
-                    render_content(
-                        [
-                            {"type": "text", "text": block.get("thinking", "")}
-                            if block.get("type") == "thinking"
-                            else block
-                        ],
-                        role="assistant",
-                    )[0]
+                    deepcopy(
+                        render_content(
+                            [
+                                {"type": "text", "text": block.get("thinking", "")}
+                                if block.get("type") == "thinking"
+                                else block
+                            ],
+                            role="assistant",
+                        )[0]
+                    )
                     if not thinking and not refusal
                     else {}
                 )
@@ -521,7 +506,7 @@ class ResponsesDecoder(BaseDecoder):
             item["id"] = f"item_{index}"
         item.setdefault("id", f"item_{index}")
         item.setdefault("status", "completed")
-        return item
+        return deepcopy(item)
 
     def _completed_output(self, event: dict, origin: str | None, parameters: dict) -> list[dict]:
         entries = event.get("output_blocks", [])
@@ -567,7 +552,7 @@ class ResponsesDecoder(BaseDecoder):
                 continue
             item.update(select(header, "id", "status", "name", "call_id"))
             result.append(item)
-        return result
+        return deepcopy(result)
 
     def _native_items(self, parameters: dict) -> bool:
         return parameters.get("source_protocol") == PROTOCOL and bool(
@@ -584,7 +569,7 @@ class ResponsesDecoder(BaseDecoder):
         return index, part, f"item_{index}", False
 
     def _added_item(self, item: dict) -> dict:
-        result = deepcopy(item)
+        result = select(item, "type", "id", "role", "status", "call_id", "name")
         result["status"] = "in_progress"
         if item["type"] == "message":
             result.setdefault("role", "assistant")

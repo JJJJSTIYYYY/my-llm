@@ -2,16 +2,17 @@ from copy import deepcopy
 
 from my_llm import ModelProfile, MyCodec, MyLLM, ProviderProfile
 from my_llm.profile import resolve_profiles
+from tests.helpers.profiles import config
 from tests.helpers.protocols import chat_event
 from tests.helpers.transport import FakeClient
 
 
 def test_profile_and_request_snapshots_are_independent():
     body = {"nested": {"value": "original"}}
-    provider = ProviderProfile(extra_body=body)
+    provider = ProviderProfile(extra_body=config("extra_body", body))
     llm = MyLLM(stdio_protocol="openai_chat", provider=provider, model=ModelProfile(model="demo"))
     body["nested"]["value"] = "changed"
-    assert llm.provider.extra_body["nested"]["value"] == "original"
+    assert llm.provider.extra_body.default_value["nested"]["value"] == "original"
     assert llm.resolved_profile.get("extra_body")["nested"]["value"] == "original"
     decoder = llm.codec.decoder(llm.resolved_profile.protocol)
     options = llm.codec.transport(llm.resolved_profile.protocol).validate_parameters(

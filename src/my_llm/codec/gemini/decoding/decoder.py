@@ -9,13 +9,12 @@ from my_llm.codec.shared.conversion import (
     blocks,
     coalesce_messages,
     decode_functions,
-    plain,
     project_message,
     select,
     select_present,
     source_protocol,
 )
-from my_llm.codec.shared.options import PreparedOptions, apply_max_tokens
+from my_llm.codec.shared.options import PreparedOptions
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile
 
@@ -28,19 +27,18 @@ class GeminiDecoder(BaseDecoder):
     __slots__ = ()
     protocol = PROTOCOL
 
-    def request_parameters(
-        self, profile: ResolvedProfile, options: PreparedOptions
-    ) -> dict[str, Any]:
-        tokens, headers, effort = options.tokens, options.headers, options.effort
-        config = deepcopy(options.body)
-        # Admit native generation settings only, never native cloud tools or AFC overrides.
+    body_container = "config"
+    headers_field = "$.config.http_options.headers"
+
+    def _request_parameters(
+        self, request: dict, profile: ResolvedProfile, options: PreparedOptions
+    ) -> dict:
+        config = request["config"]
         config["automatic_function_calling"] = {"disable": True}
-        if headers:
-            config["http_options"] = {"headers": deepcopy(headers)}
-        if effort:
-            self._apply_reasoning(config, profile, effort)
-        request = {"config": config}
-        apply_max_tokens(request, profile, tokens)
+        if options.effort and profile.get("supports_reasoning_effort", False):
+            thinking = config.get("thinking_config")
+            if isinstance(thinking, dict) and thinking.get("thinking_level") is not None:
+                thinking.pop("thinking_budget", None)
         return request
 
     def assemble_request(
@@ -49,10 +47,10 @@ class GeminiDecoder(BaseDecoder):
         tools: list | None,
         profile: ResolvedProfile,
         *,
-        options: PreparedOptions,
+        request: dict,
         **parameters: Any,
     ) -> dict:
-        result = self.request_parameters(profile, options)
+        result = request
         config = result["config"]
         system = [m for m in messages if m.get("role") in ("system", "developer")]
         history = [m for m in messages if m.get("role") not in ("system", "developer")]
@@ -62,17 +60,6 @@ class GeminiDecoder(BaseDecoder):
             config["tools"] = tools
         result.update(model=profile.model, contents=history, config=config)
         return result
-
-    def _apply_reasoning(
-        self, config: dict[str, Any], profile: ResolvedProfile, effort: str
-    ) -> None:
-        thinking = {"include_thoughts": True, **plain(config.get("thinking_config") or {})}
-        if profile.get("supports_reasoning_effort", False):
-            thinking["thinking_level"] = effort
-            thinking.pop("thinking_budget", None)
-        elif not any(key in thinking for key in ("thinking_level", "thinking_budget")):
-            thinking["thinking_budget"] = -1
-        config["thinking_config"] = thinking
 
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
@@ -86,14 +73,21 @@ class GeminiDecoder(BaseDecoder):
             foreign = source_protocol(message) != PROTOCOL
             if foreign:
                 message = project_message(message, foreign_block)
-            else:
-                # Public output owns independently mutable application data.
-                message = {**message, "content": blocks(message.get("content"))}
             parts = []
-            for block in message.get("content", []):
+            for block in blocks(message.get("content")):
                 if block.get("type") == "tool_result":
                     if not block.get("name"):
-                        block = {**block, "name": names.get(block["tool_use_id"])}
+                        block = {
+                            **select(
+                                block,
+                                "type",
+                                "tool_use_id",
+                                "content",
+                                "thought_signature",
+                                "part_metadata",
+                            ),
+                            "name": names.get(block["tool_use_id"]),
+                        }
                 parts.append(decode_part(block, foreign=foreign))
             result.append(
                 {
@@ -134,7 +128,7 @@ class GeminiDecoder(BaseDecoder):
             if kind == "delta" and event.get("field") in ("text", "thinking", "refusal"):
                 parts = [
                     {
-                        "text": event["value"],
+                        "text": deepcopy(event["value"]),
                         **(
                             {"thought": True}
                             if event["field"] == "thinking"
@@ -150,10 +144,20 @@ class GeminiDecoder(BaseDecoder):
                     block = foreign_block(block)
                     if block is None:
                         continue
-                parts = [decode_part(block, foreign=foreign)]
+                part = decode_part(block, foreign=foreign)
+                if "function_call" in part:
+                    part["function_call"]["args"] = deepcopy(part["function_call"]["args"])
+                elif "function_response" in part:
+                    response = part["function_response"]
+                    response["response"] = deepcopy(response["response"])
+                if "part_metadata" in part:
+                    part["part_metadata"] = deepcopy(part["part_metadata"])
+                parts = [part]
             elif kind == "block_stop":
                 metadata = select(event["block"], "thought_signature", "part_metadata")
                 if metadata and parameters.get("source_protocol") == PROTOCOL:
+                    if "part_metadata" in metadata:
+                        metadata["part_metadata"] = deepcopy(metadata["part_metadata"])
                     parts = [
                         {
                             "text": "",

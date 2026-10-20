@@ -1,5 +1,6 @@
 """openai/chat: native input to intermediate."""
 
+from copy import deepcopy
 from typing import Any
 
 from my_llm.codec.base.encoder import BaseEncoder
@@ -14,8 +15,7 @@ from my_llm.codec.shared.conversion import (
     mapping_list,
     select,
 )
-from my_llm.codec.shared.options import path_value
-from my_llm.codec.shared.stream import BlockRef, encode_batch, record
+from my_llm.codec.shared.stream import BlockRef, encode_batch, metadata, record
 from my_llm.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
 
@@ -33,7 +33,7 @@ class ChatCompletionsEncoder(BaseEncoder):
             return isinstance(item.get("function"), dict)
         if item.get("role") not in ("user", "assistant", "system", "developer", "tool"):
             return False
-        if set(item) & {"parts", "type", "thinking", "images", "tool_name"}:
+        if any(key in item for key in {"parts", "type", "thinking", "images", "tool_name"}):
             return False
         calls = item.get("tool_calls") or []
         if not mapping_list(calls) or any(
@@ -118,7 +118,7 @@ class ChatCompletionsEncoder(BaseEncoder):
                 )
             if not any(key in event for key in ("choices", "usage")):
                 continue
-            ops = [{"type": "metadata", **self._metadata(event)}]
+            ops = [metadata(self._metadata(event))]
             if event.get("usage") is not None and (
                 profile is None or profile.get("usage_mode") != "none"
             ):
@@ -137,18 +137,24 @@ class ChatCompletionsEncoder(BaseEncoder):
                             "value": delta["refusal"],
                         }
                     )
-                for field, kind, default in (
-                    ("content_path", "text", "$.choices[0].delta.content"),
-                    ("reasoning_content_path", "thinking", "$.choices[0].delta.reasoning_content"),
+                for name, kind, default in (
+                    ("content", "text", "$.choices[0].delta.content"),
+                    ("reasoning_content", "thinking", "$.choices[0].delta.reasoning_content"),
                 ):
-                    value = path_value(event, profile.values[field] if profile else default)
+                    value = self.parameter_value(
+                        event,
+                        profile,
+                        name,
+                        default,
+                        use_default=choice.get("finish_reason") is None,
+                    )
                     if value:
                         ops.append(
                             {
                                 "type": "block_delta",
                                 "ref": BlockRef(kind),
                                 "field": "text" if kind == "text" else "thinking",
-                                "value": value,
+                                "value": deepcopy(value),
                                 "kind": kind,
                             }
                         )
@@ -177,4 +183,8 @@ class ChatCompletionsEncoder(BaseEncoder):
         )
 
     def _metadata(self, event: dict) -> dict:
-        return {key: event[key] for key in ("id", "model", "created") if key in event}
+        return {
+            "response_id" if key == "id" else key: event[key]
+            for key in ("id", "model", "created")
+            if isinstance(event.get(key), (str, int, float))
+        }

@@ -21,7 +21,7 @@ Protocol 是 str 别名；内置协议之外，也可使用启动时通过 MyCod
 结果只包含目标协议已识别的字段，不附加未知字段或跨协议恢复记录。
 Responses 使用 `history.extend(result)`，其他协议使用 `history.append(result)`。
 完成原因和用量出现在各协议标准流事件的位置，不增加自定义消息字段。
-所有输入可使用普通字典或可转为字典的官方 SDK 模型。
+所有输入可使用普通字典或官方 SDK 模型；只按已支持的字段读取模型属性。
 
 `stdio_protocol` 与 `ProviderProfile.protocol` 独立。前者未指定时，
 `guess_stdio_protocol(messages_or_tools)` 从整个列表识别，仅在唯一匹配一种协议时绑定；
@@ -31,15 +31,25 @@ Responses 使用 `history.extend(result)`，其他协议使用 `history.append(r
 messages 和 tools 都遵循这个协议，历史不混用不同协议格式。
 
 ```python
-from my_llm import ModelProfile, MyLLM, ProviderProfile
+from my_llm import ModelProfile, MyLLM, Parameter, ProviderProfile
+
 
 async def ask(llm, prompt):
     return await llm.generate(messages=[{"role": "user", "content": prompt}])
 
+
 async def session():
     async with MyLLM(
         provider=ProviderProfile(protocol="openai_responses"),
-        model=ModelProfile(model="your-model", max_tokens=2048),
+        model=ModelProfile(
+            model="your-model",
+            max_tokens=Parameter(
+                name="输出上限",
+                path="$.max_output_tokens",
+                default_value=2048,
+                phase="decode",
+            ),
+        ),
         stdio_protocol="openai_chat",
     ) as llm:
         return await ask(llm, "Hello")
@@ -54,7 +64,7 @@ async def session():
 | `messages` | 必填 | 非空、同协议的消息或 items 列表 |
 | `tools` | `omit` | 同协议的工具声明列表；None/omit 不发送，[] 发送空列表 |
 | `stream` | False | True 返回需异步消费的 MessageStream |
-| `max_tokens` | None | 继承模型；按 profile 的 max_tokens_path 写入 SDK 请求；omit 禁用自动写入 |
+| `max_tokens` | 未设置 | 未传时继承 Profile 默认值；显式 None 保留，omit 删除目标参数；按 `max_tokens` 的 decode 参数路径写入 SDK 请求 |
 | `reasoning` | None | True 在 effort=none 时使用 medium；False 与非 none effort 冲突 |
 | `reasoning_effort` | `none` | none/low/medium/high/xhigh/max，经 profile 映射 |
 | `extra_headers` | None | 按键覆盖 profile headers |
@@ -115,20 +125,34 @@ Gemini/Ollama 中没有 ID 的调用按历史顺序建立局部 ID；无 ID 的�
 ```python
 import json
 
+
 async def add_round_trip(provider, model_id):
-    from my_llm import ModelProfile, MyLLM
+    from my_llm import Config, ModelProfile, MyLLM
+
     async with MyLLM(
         provider=provider,
-        model=ModelProfile(model=model_id, supports_function_calling=True),
+        model=ModelProfile(
+            model=model_id,
+            supports_function_calling=Config(name="工具调用", default_value=True),
+        ),
         stdio_protocol="openai_chat",
     ) as llm:
-        tools = [{"type": "function", "function": {
-            "name": "add", "parameters": {
-                "type": "object", "properties": {
-                    "a": {"type": "integer"}, "b": {"type": "integer"},
-                }, "required": ["a", "b"],
-            },
-        }}]
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "add",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "a": {"type": "integer"},
+                            "b": {"type": "integer"},
+                        },
+                        "required": ["a", "b"],
+                    },
+                },
+            }
+        ]
         history = [{"role": "user", "content": "What is 2 + 3?"}]
         response = await llm.generate(messages=history, tools=tools)
         history.append(response)
@@ -211,18 +235,24 @@ BaseTransport 负责输入与工具关联验证、模型能力、生成参数和
 | --- | --- |
 | BaseCodec | protocol_or_api_style、defaults: ProtocolDefaults、encoder / decoder / transport。 |
 | BaseEncoder | protocol、_messages / _tools / _chunks、match_item、usage。 |
-| BaseDecoder | protocol、_messages / _tools / _chunks、usage、request_parameters、assemble_request；result 可覆盖收集结果形状。 |
-| BaseTransport | message_type / tool_type、message_path / tool_path、validate_request、create_client、upstream。 |
+| BaseDecoder | protocol、_messages / _tools / _chunks、usage、assemble_request；result 可覆盖收集结果形状。 |
+| BaseTransport | request_schema、message_type / tool_type、message_path / tool_path、validate_request、create_client、upstream。 |
 
 BaseCodec.request 接收中间态，由 Transport.validate_parameters 一次校验、解析生成控制参数，
 再把返回的 PreparedOptions 显式传给 Decoder.request 翻译消息、工具和请求选项，
 最后进入 Transport.request，验证工具关联、模型能力和原生结构，并过滤不支持字段。
-自定义 Decoder 的 request_parameters(profile, options) 与 assemble_request(..., options=options)
-必须复用已准备的选项；直接调用这些方法也必须提供 options，不重新解析原始生成参数。
+BaseDecoder.request 的 final 流程统一调用 request_parameters(profile, options) 应用 decode 参数，
+再将生成的参数字典传给 assemble_request(messages, tools, profile, *, request: dict, **parameters)。
+自定义 assemble_request 只向已有 request 写入消息和工具，不接收 options，也不重复应用参数。
+协议专属控制可通过 _request_parameters(request, profile, options) 钩子追加，布局由 body_container、
+headers_field、body_overlay、omit_empty_body 类属性声明。参数流程由基类保证执行一次，不重新解析原始生成参数。
+BaseEncoder.parameter_value() 固定读取 encode 参数；协议钩子只负责事件判别与中间态语义映射。
 原始参数继续传给消息翻译，以保留显式思考开关和兼容服务的回放语义。
 PreparedOptions 和 ProtocolDefaults 均从 my_llm 公开导出。
 Decoder._messages / _tools 与公开 messages / tools 均返回普通 list。
-ProtocolDefaults 的七个配置字段均为必填，不用的字段路径或推理绑定通过 omit 禁用；声明及嵌套内容按只读借用。
+ProtocolDefaults 使用 `Parameter` 声明路径、默认值和 encode / decode 阶段，使用 `Config` 声明行为开关；
+不用的参数通过 omit 禁用。`name` / `comment` 只用于展示，功能由 Profile 字段标识决定。
+字段 None 继承，wrapper 的 default_value=None 保留为实际值；声明及嵌套内容按只读借用。
 Profile 默认值来自已注册 Codec.defaults 的副本，解析负责分层合并、通用字段校验和快照，
 不创建 Codec 或 SDK 客户端；协议特有限制与 SDK 约束由 Transport 补充验证。
 直接使用 resolve_profiles / MyCodec 的集成应调用 codec.validate_profile(resolved)；MyLLM 已在构造时完成此步骤。

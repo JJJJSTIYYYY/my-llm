@@ -1,8 +1,7 @@
 """openai/responses: native input to intermediate."""
 
+from copy import deepcopy
 from typing import Any
-
-from openai import Omit
 
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.openai.responses.encoding.content import (
@@ -17,8 +16,7 @@ from my_llm.codec.shared.conversion import (
     mapping_list,
     select,
 )
-from my_llm.codec.shared.options import path_value
-from my_llm.codec.shared.stream import BlockRef, encode_batch, record
+from my_llm.codec.shared.stream import BlockRef, encode_batch, metadata, record
 from my_llm.exceptions import ResponseFailedError, ResponseIncompleteError
 from my_llm.profile.resolution import ResolvedProfile
 
@@ -44,15 +42,18 @@ class ResponsesEncoder(BaseEncoder):
             "developer",
         ):
             return False
-        if set(item) & {
-            "parts",
-            "tool_calls",
-            "tool_call_id",
-            "reasoning_content",
-            "thinking",
-            "images",
-            "tool_name",
-        }:
+        if any(
+            key in item
+            for key in {
+                "parts",
+                "tool_calls",
+                "tool_call_id",
+                "reasoning_content",
+                "thinking",
+                "images",
+                "tool_name",
+            }
+        ):
             return False
         content = item.get("content")
         return (
@@ -167,9 +168,7 @@ class ResponsesEncoder(BaseEncoder):
             index = event.get("output_index", 0)
             ops = []
             if kind in ("response.created", "response.in_progress"):
-                ops.append(
-                    {"type": "metadata", **self._response_metadata(event.get("response", {}))}
-                )
+                ops.extend(self._response_metadata(event.get("response", {})))
                 if kind == "response.created":
                     ops.append({"type": "start"})
             elif (
@@ -199,7 +198,11 @@ class ResponsesEncoder(BaseEncoder):
                 message = next(dictionary_views(self._messages([event["item"]])))
                 block = message["content"][0]
                 ops.append(
-                    {"type": "block_set", "ref": BlockRef("tool_use", index), "block": block}
+                    {
+                        "type": "block_set",
+                        "ref": BlockRef("tool_use", index),
+                        "block": deepcopy(block),
+                    }
                 )
             elif kind in ("response.content_part.added", "response.content_part.done"):
                 part = event.get("part", {})
@@ -212,7 +215,7 @@ class ResponsesEncoder(BaseEncoder):
                                 index,
                                 event.get("content_index", 0),
                             ),
-                            "block": encode_content([part])[0],
+                            "block": deepcopy(encode_content([part])[0]),
                         }
                     )
             elif kind == "response.refusal.delta":
@@ -246,15 +249,16 @@ class ResponsesEncoder(BaseEncoder):
                 output = response.get("output", [])
                 ops.extend(
                     [
-                        {"type": "metadata", **self._response_metadata(response)},
-                        {
-                            "type": "metadata",
-                            "response_items": {
-                                str(i): select(item, "id", "type", "status", "name", "call_id")
-                                for i, item in enumerate(output)
-                                if item.get("type") in ("message", "reasoning", "function_call")
-                            },
-                        },
+                        *self._response_metadata(response),
+                        metadata(
+                            {
+                                "response_items": {
+                                    str(i): self._item_metadata(item)
+                                    for i, item in enumerate(output)
+                                    if item.get("type") in ("message", "reasoning", "function_call")
+                                }
+                            }
+                        ),
                         self._snapshot(output),
                         {
                             "type": "finish",
@@ -269,21 +273,13 @@ class ResponsesEncoder(BaseEncoder):
                     profile is None or profile.get("usage_mode") != "none"
                 ):
                     ops.append({"type": "usage", "usage": response["usage"]})
-            for field, default, block_kind in (
-                ("content_path", "response.output_text.delta", "text"),
-                ("reasoning_content_path", "response.reasoning_summary_text.delta", "thinking"),
+            for name, event_type, block_kind in (
+                ("content", "response.output_text.delta", "text"),
+                ("reasoning_content", "response.reasoning_summary_text.delta", "thinking"),
             ):
-                selector = profile.values[field] if profile else default
-                if isinstance(selector, Omit):
+                if kind != event_type:
                     continue
-                # Profiles may select either a JSON path or a native delta event type.
-                value = (
-                    path_value(event, selector)
-                    if selector.startswith("$")
-                    else event.get("delta")
-                    if kind == selector
-                    else None
-                )
+                value = self.parameter_value(event, profile, name, "$.delta")
                 if value is not None:
                     ops.append(
                         {
@@ -300,16 +296,14 @@ class ResponsesEncoder(BaseEncoder):
                             ),
                             "kind": block_kind,
                             "field": "text" if block_kind == "text" else "thinking",
-                            "value": value,
+                            "value": deepcopy(value),
                         }
                     )
             if "output_index" in event:
                 item = event.get("item") or {}
                 item_id = item.get("id") or event.get("item_id")
                 if item_id:
-                    header = select(item, "id", "type", "status", "name", "call_id") or {
-                        "id": item_id
-                    }
+                    header = self._item_metadata(item) or {"id": item_id}
                     if not item:
                         if "reasoning_summary" in kind:
                             header["type"] = "reasoning"
@@ -321,11 +315,7 @@ class ResponsesEncoder(BaseEncoder):
                             header["type"] = "message"
                     ops.insert(
                         0,
-                        {
-                            "type": "metadata",
-                            "merge": ["response_items"],
-                            "response_items": {str(index): header},
-                        },
+                        metadata(header, path=("response_items", str(index))),
                     )
             result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
         return result
@@ -343,7 +333,18 @@ class ResponsesEncoder(BaseEncoder):
         )
 
     def _metadata(self, event: dict) -> dict:
-        return {key: event[key] for key in ("id", "model", "created_at") if key in event}
+        return {
+            "response_id" if key == "id" else key: event[key]
+            for key in ("id", "model", "created_at")
+            if isinstance(event.get(key), (str, int, float))
+        }
+
+    def _item_metadata(self, item: dict) -> dict:
+        return {
+            key: item[key]
+            for key in ("id", "type", "status", "name", "call_id")
+            if isinstance(item.get(key), str)
+        }
 
     def _snapshot(self, output: list) -> dict:
         """Address recognized final blocks with their live item/part coordinates."""
@@ -354,6 +355,7 @@ class ResponsesEncoder(BaseEncoder):
                 continue
             message = encoded[0]
             for part, block in enumerate(message.get("content", [])):
+                block = deepcopy(block)
                 kind = block["type"]
                 if kind == "thinking":
                     for summary_index, summary in enumerate(block.get("summary") or [{}]):
@@ -371,5 +373,8 @@ class ResponsesEncoder(BaseEncoder):
                     blocks.append({"ref": BlockRef(kind, index, part), "block": block})
         return {"type": "snapshot", "blocks": blocks}
 
-    def _response_metadata(self, response: dict) -> dict:
-        return {**self._metadata(response), "response_parameters": response_parameters(response)}
+    def _response_metadata(self, response: dict) -> list[dict]:
+        return [
+            metadata(self._metadata(response)),
+            metadata(response_parameters(response), path=("response_parameters",)),
+        ]

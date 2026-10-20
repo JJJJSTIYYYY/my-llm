@@ -1,6 +1,7 @@
 """Stateless stream operations, source block identities and token accounting."""
 
 from collections.abc import Callable
+from copy import deepcopy
 from typing import NamedTuple
 
 from my_llm.codec.shared.conversion import dictionaries
@@ -12,6 +13,11 @@ class BlockRef(NamedTuple):
     scope: str
     index: int = 0
     part: int = 0
+
+
+def metadata(values: dict, *, path: tuple[str, ...] = ()) -> dict:
+    """Update one metadata dictionary with fields projected by the native encoder."""
+    return {"type": "metadata", "values": deepcopy(values), "path": path}
 
 
 def batch(operations: list[dict], protocol: str) -> dict:

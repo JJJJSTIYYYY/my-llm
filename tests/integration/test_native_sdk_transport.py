@@ -9,6 +9,7 @@ from google import genai
 from ollama import AsyncClient
 
 from my_llm import ModelProfile, MyLLM, ProviderProfile
+from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import history, stream_events, tools
 from tests.helpers.schema import validate_request
 from tests.helpers.transport import sse
@@ -88,11 +89,15 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
     llm = MyLLM(
         provider=ProviderProfile(
             protocol=protocol,
-            api_key="local-test",
-            base_url="https://local.test",
-            usage_mode="native",
+            api_key=config("api_key", "local-test"),
+            base_url=config("base_url", "https://local.test"),
+            usage_mode=config("usage_mode", "native"),
         ),
-        model=ModelProfile(model="demo", max_tokens=2048, supports_function_calling=True),
+        model=ModelProfile(
+            model="demo",
+            max_tokens=parameter("max_tokens", 2048, protocol=protocol),
+            supports_function_calling=config("supports_function_calling", True),
+        ),
         stdio_protocol=stdio,
     )
     options = {

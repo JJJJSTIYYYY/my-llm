@@ -1,16 +1,18 @@
 """anthropic: native input to intermediate."""
 
+from copy import deepcopy
 from typing import Any
 
 from my_llm.codec.anthropic.utils.content import CITATION_FIELDS, native_block
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.shared.conversion import (
+    _MISSING,
     dictionary_views,
     encode_functions,
     mapping_list,
     select,
 )
-from my_llm.codec.shared.stream import BlockRef, encode_batch, record
+from my_llm.codec.shared.stream import BlockRef, encode_batch, metadata, record
 from my_llm.exceptions import ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
 
@@ -35,16 +37,19 @@ class AnthropicEncoder(BaseEncoder):
             return isinstance(item["input_schema"], dict) and isinstance(item.get("name"), str)
         if item.get("role") not in ("user", "assistant", "system") or "content" not in item:
             return False
-        if set(item) & {
-            "parts",
-            "type",
-            "tool_calls",
-            "tool_call_id",
-            "reasoning_content",
-            "thinking",
-            "images",
-            "tool_name",
-        }:
+        if any(
+            key in item
+            for key in {
+                "parts",
+                "type",
+                "tool_calls",
+                "tool_call_id",
+                "reasoning_content",
+                "thinking",
+                "images",
+                "tool_name",
+            }
+        ):
             return False
         content = item["content"]
         return (
@@ -100,8 +105,12 @@ class AnthropicEncoder(BaseEncoder):
                     {
                         **select(tool, "name", "description", "strict"),
                         **(
-                            {"cache_control": select(tool["cache_control"], "type", "ttl")}
-                            if tool.get("cache_control") is not None
+                            {
+                                "cache_control": None
+                                if tool["cache_control"] is None
+                                else select(tool["cache_control"], "type", "ttl")
+                            }
+                            if "cache_control" in tool
                             else {}
                         ),
                         "parameters": tool.get("input_schema", {}),
@@ -126,7 +135,7 @@ class AnthropicEncoder(BaseEncoder):
             ops = []
             if kind == "message_start":
                 message = event["message"]
-                ops.append({"type": "metadata", **self._metadata(message)})
+                ops.append(metadata(self._metadata(message)))
                 if message.get("usage") and (
                     profile is None or profile.get("usage_mode") != "none"
                 ):
@@ -135,7 +144,13 @@ class AnthropicEncoder(BaseEncoder):
                 block = native_block(event["content_block"])
                 if block is None:
                     continue
-                ops.append({"type": "block_set", "ref": BlockRef("content", index), "block": block})
+                ops.append(
+                    {
+                        "type": "block_set",
+                        "ref": BlockRef("content", index),
+                        "block": deepcopy(block),
+                    }
+                )
             elif kind == "content_block_delta":
                 delta = event["delta"]
                 if delta.get("type") == "citations_delta":
@@ -144,7 +159,7 @@ class AnthropicEncoder(BaseEncoder):
                             "type": "block_annotation",
                             "ref": BlockRef("content", index),
                             "field": "citations",
-                            "value": select(delta["citation"], *CITATION_FIELDS),
+                            "value": deepcopy(select(delta["citation"], *CITATION_FIELDS)),
                         }
                     )
                 field = {
@@ -154,19 +169,29 @@ class AnthropicEncoder(BaseEncoder):
                     "input_json_delta": "arguments",
                 }.get(delta.get("type"))
                 if field:
-                    ops.append(
-                        {
-                            "type": "block_delta",
-                            "ref": BlockRef("content", index),
-                            "field": field,
-                            "kind": {"arguments": "tool_use", "signature": "thinking"}.get(
-                                field, field
-                            ),
-                            "value": delta.get(
-                                "partial_json" if field == "arguments" else field, ""
-                            ),
-                        }
+                    value = (
+                        self.parameter_value(
+                            event,
+                            profile,
+                            "content" if field == "text" else "reasoning_content",
+                            "$.delta.text" if field == "text" else "$.delta.thinking",
+                            _MISSING,
+                        )
+                        if field in ("text", "thinking")
+                        else delta.get("partial_json" if field == "arguments" else field, "")
                     )
+                    if value is not None and value is not _MISSING:
+                        ops.append(
+                            {
+                                "type": "block_delta",
+                                "ref": BlockRef("content", index),
+                                "field": field,
+                                "kind": {"arguments": "tool_use", "signature": "thinking"}.get(
+                                    field, field
+                                ),
+                                "value": deepcopy(value),
+                            }
+                        )
             elif kind == "content_block_stop":
                 ops.append({"type": "block_stop", "ref": BlockRef("content", index)})
             elif kind == "message_delta":
@@ -175,11 +200,13 @@ class AnthropicEncoder(BaseEncoder):
                     reason = delta["stop_reason"]
                     ops.append({"type": "reason", "reason": REASONS.get(reason, reason)})
                     ops.append(
-                        {
-                            "type": "metadata",
-                            "native_stop_reason": reason,
-                            "native_stop_sequence": delta.get("stop_sequence"),
-                        }
+                        metadata(
+                            {
+                                f"native_{key}": delta[key]
+                                for key in ("stop_reason", "stop_sequence")
+                                if isinstance(delta.get(key), (str, int, float))
+                            }
+                        )
                     )
                 if event.get("usage") and (profile is None or profile.get("usage_mode") != "none"):
                     ops.append({"type": "usage", "usage": event["usage"]})
@@ -204,4 +231,8 @@ class AnthropicEncoder(BaseEncoder):
         )
 
     def _metadata(self, event: dict) -> dict:
-        return {key: event[key] for key in ("id", "model") if key in event}
+        return {
+            "response_id" if key == "id" else key: event[key]
+            for key in ("id", "model")
+            if isinstance(event.get(key), (str, int, float))
+        }

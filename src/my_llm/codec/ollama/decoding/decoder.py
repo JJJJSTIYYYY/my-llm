@@ -18,7 +18,6 @@ from my_llm.codec.shared.conversion import (
     text,
     text_result,
 )
-from my_llm.codec.shared.options import PreparedOptions, apply_max_tokens
 from my_llm.codec.shared.stream import counts, events
 from my_llm.exceptions import MessageValidationError
 from my_llm.profile.configuration import merge_dicts
@@ -40,15 +39,7 @@ class OllamaDecoder(BaseDecoder):
     __slots__ = ()
     protocol = PROTOCOL
 
-    def request_parameters(
-        self, profile: ResolvedProfile, options: PreparedOptions
-    ) -> dict[str, Any]:
-        tokens, effort = options.tokens, options.effort
-        request = deepcopy(options.body)
-        if effort:
-            request["think"] = self._thinking_value(request, profile, effort)
-        apply_max_tokens(request, profile, tokens)
-        return request
+    headers_field = None
 
     def assemble_request(
         self,
@@ -56,24 +47,14 @@ class OllamaDecoder(BaseDecoder):
         tools: list | None,
         profile: ResolvedProfile,
         *,
-        options: PreparedOptions,
+        request: dict,
         **parameters: Any,
     ) -> dict:
-        result = self.request_parameters(profile, options)
+        result = request
         result.update(model=profile.model, stream=True, messages=messages)
         if tools is not None:
             result["tools"] = tools
         return result
-
-    def _thinking_value(
-        self, request: dict[str, Any], profile: ResolvedProfile, effort: str
-    ) -> str | bool:
-        if profile.get("supports_reasoning_effort", False):
-            # Ollama's protocol permits model-defined strings. The profile owns
-            # the model's supported mapping; there is no universal level enum.
-            return effort
-        thinking = request.get("think")
-        return True if thinking is None else thinking
 
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
@@ -157,12 +138,13 @@ class OllamaDecoder(BaseDecoder):
                 )
                 if field is None:
                     continue
-                message[field] = event["value"]
+                message[field] = deepcopy(event["value"])
             elif kind == "tool":
                 block = event["block"]
                 if parameters.get("source_protocol") != PROTOCOL:
                     block = foreign_block(block)
                 call = chat_call(block)
+                call["function"]["arguments"] = deepcopy(call["function"]["arguments"])
                 message["tool_calls"] = [{"function": call["function"]}]
             elif kind != "finish":
                 continue

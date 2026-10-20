@@ -6,6 +6,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 
 from my_llm import ModelProfile, ProviderProfile
+from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import chat_event, response_completed
 
 PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="
@@ -802,19 +803,21 @@ def profiles(protocol: str):
     return (
         ProviderProfile(
             protocol=protocol,
-            api_key="offline-benchmark",
-            base_url="https://benchmark.invalid",
-            max_retries=0,
-            usage_mode="stream_options" if protocol == "openai_chat" else "native",
-            extra_headers={"x-benchmark": "provider"},
+            api_key=config("api_key", "offline-benchmark"),
+            base_url=config("base_url", "https://benchmark.invalid"),
+            max_retries=config("max_retries", 0),
+            usage_mode=config(
+                "usage_mode", "stream_options" if protocol == "openai_chat" else "native"
+            ),
+            extra_headers=config("extra_headers", {"x-benchmark": "provider"}),
         ),
         ModelProfile(
             model="benchmark",
-            max_tokens=32768,
-            supports_function_calling=True,
-            supports_reasoning=True,
-            supports_reasoning_effort=True,
-            extra_headers={"x-benchmark-model": "model"},
+            max_tokens=parameter("max_tokens", 32768, protocol=protocol),
+            supports_function_calling=config("supports_function_calling", True),
+            supports_reasoning=config("supports_reasoning", True),
+            supports_reasoning_effort=config("supports_reasoning_effort", True),
+            extra_headers=config("extra_headers", {"x-benchmark-model": "model"}),
         ),
     )
 

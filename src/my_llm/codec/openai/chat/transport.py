@@ -1,19 +1,17 @@
 """Reusable OpenAI SDK client and request-owned Chat streams."""
 
-from copy import deepcopy
 from typing import Any
 
 from openai import AsyncOpenAI
+from openai.resources.chat.completions import AsyncCompletions
 from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
 
 from my_llm.codec.base.transport import BaseTransport
 from my_llm.codec.shared.options import (
     PreparedOptions,
-    check_protected,
-    prepare_overlay_options,
-    validate_bindings,
+    validate_request_options,
 )
-from my_llm.codec.shared.transport import owned_stream
+from my_llm.codec.shared.transport import owned_stream, parameter_types
 from my_llm.exceptions import ConfigurationError, MessageValidationError, UnsupportedCapabilityError
 from my_llm.profile.resolution import ResolvedProfile, client_parameters, validate_max_tokens
 
@@ -29,6 +27,7 @@ class ChatCompletionsTransport(BaseTransport):
     message_type = ChatCompletionMessageParam
     message_path = ("messages",)
     tool_path = ("tools",)
+    request_schema = parameter_types(AsyncCompletions.create)
 
     def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
         result = super().filter_messages(messages, profile, **parameters)
@@ -42,7 +41,7 @@ class ChatCompletionsTransport(BaseTransport):
             ):
                 if not isinstance(original["reasoning_content"], str):
                     raise MessageValidationError("reasoning_content must be a string")
-                value["reasoning_content"] = deepcopy(original["reasoning_content"])
+                value["reasoning_content"] = original["reasoning_content"]
         return result
 
     def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
@@ -56,14 +55,9 @@ class ChatCompletionsTransport(BaseTransport):
 
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
         options = super().validate_parameters(profile, **parameters)
-        check_protected(options.body, PROTECTED)
-        bindings = validate_bindings(
-            options, protected=PROTECTED, allowed={"reasoning_effort", "extra_body"}
+        return validate_request_options(
+            profile, options, protected=PROTECTED, containers=("extra_body",)
         )
-        for binding in bindings:
-            if "reasoning_effort" in binding and not isinstance(binding["reasoning_effort"], str):
-                raise ConfigurationError("reasoning_effort must be a string")
-        return prepare_overlay_options(profile, options, protected=PROTECTED, overlay="extra_body")
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
         for field in ("max_tokens", "max_completion_tokens"):
@@ -72,7 +66,8 @@ class ChatCompletionsTransport(BaseTransport):
         effort = request.get("reasoning_effort")
         if effort is not None and not isinstance(effort, str):
             raise ConfigurationError("reasoning_effort must be a string")
-        if request.get("extra_body", {}).get("n") not in (None, 1):
+        body = request.get("extra_body")
+        if body is not None and body.get("n") not in (None, 1):
             raise UnsupportedCapabilityError("only one generated candidate is supported")
         return request
 

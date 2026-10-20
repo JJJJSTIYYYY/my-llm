@@ -1,5 +1,6 @@
 """openai/chat: intermediate to native output."""
 
+from copy import deepcopy
 from typing import Any
 
 from my_llm.codec.base.decoder import BaseDecoder
@@ -22,8 +23,6 @@ from my_llm.codec.shared.conversion import (
 )
 from my_llm.codec.shared.options import (
     PreparedOptions,
-    merge_bindings,
-    overlay_request_parameters,
 )
 from my_llm.codec.shared.stream import counts, events
 from my_llm.exceptions import ResponseFailedError
@@ -49,18 +48,16 @@ class ChatCompletionsDecoder(BaseDecoder):
     __slots__ = ()
     protocol = PROTOCOL
 
-    def request_parameters(self, profile: ResolvedProfile, options: PreparedOptions) -> dict:
-        request = merge_bindings(
-            *(
-                {key: value for key, value in binding.items() if key != "extra_body"}
-                for binding in options.bindings
-            )
-        )
+    body_container = "extra_body"
+    body_overlay = "extra_body"
+    omit_empty_body = True
+
+    def _request_parameters(
+        self, request: dict, profile: ResolvedProfile, options: PreparedOptions
+    ) -> dict:
         if profile.get("usage_mode", "none") == "stream_options":
             request["stream_options"] = {"include_usage": True}
-        return overlay_request_parameters(
-            request, profile, options, overlay="extra_body", headers_field="extra_headers"
-        )
+        return request
 
     def assemble_request(
         self,
@@ -68,10 +65,10 @@ class ChatCompletionsDecoder(BaseDecoder):
         tools: list | None,
         profile: ResolvedProfile,
         *,
-        options: PreparedOptions,
+        request: dict,
         **parameters: Any,
     ) -> dict:
-        result = self.request_parameters(profile, options)
+        result = request
         result.update(model=profile.model, stream=True, messages=messages)
         if tools is not None:
             result["tools"] = tools
@@ -175,7 +172,7 @@ class ChatCompletionsDecoder(BaseDecoder):
                 if event["field"] == "thinking" and parameters.get("source_protocol") != PROTOCOL:
                     field = "content"
                 if field:
-                    delta = {field: event["value"]}
+                    delta = {field: deepcopy(event["value"])}
             elif kind == "tool":
                 block = event["block"]
                 if parameters.get("source_protocol") != PROTOCOL:

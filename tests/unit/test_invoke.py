@@ -11,6 +11,7 @@ from my_llm import (
     ProviderProfile,
     generate,
 )
+from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import chat_event
 from tests.helpers.transport import FakeClient
 
@@ -34,7 +35,11 @@ async def test_owned_client_configuration_and_cleanup(monkeypatch):
     )
     result = await generate(
         stdio_protocol="openai_chat",
-        provider=ProviderProfile(api_key="profile", timeout=30, max_retries=0),
+        provider=ProviderProfile(
+            api_key=config("api_key", "profile"),
+            timeout=config("timeout", 30),
+            max_retries=config("max_retries", 0),
+        ),
         model="demo",
         messages=[{"role": "user", "content": "x"}],
     )
@@ -182,7 +187,10 @@ async def test_provider_paths_apply_before_standard_output_decoding(monkeypatch)
     patch_client(monkeypatch, [event, chat_event(finish="stop")])
     llm = MyLLM(
         provider=ProviderProfile(
-            content_path="$.choices[0].delta.provider_text", reasoning_content_path=omit
+            content=parameter(
+                "content", protocol="openai_chat", path="$.choices[0].delta.provider_text"
+            ),
+            reasoning_content=omit,
         ),
         model=ModelProfile(model="demo"),
         stdio_protocol="gemini",
@@ -201,7 +209,9 @@ async def test_target_finish_failure_does_not_publish_a_completed_result(monkeyp
     monkeypatch.setattr("my_llm.codec.anthropic.transport.AsyncAnthropic", lambda **kwargs: client)
     llm = MyLLM(
         provider=ProviderProfile(protocol="anthropic"),
-        model=ModelProfile(model="demo", max_tokens=2048),
+        model=ModelProfile(
+            model="demo", max_tokens=parameter("max_tokens", 2048, protocol="anthropic")
+        ),
         stdio_protocol="openai_chat",
     )
     stream = await llm.generate(messages=[{"role": "user", "content": "hi"}], stream=True)

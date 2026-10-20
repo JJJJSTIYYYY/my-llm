@@ -1,0 +1,232 @@
+{
+  "scope": "projected and supported once each on all messages/tools of each default native fixture; cProfile timings are diagnostic only",
+  "before": {
+    "openai_chat": {
+      "structured_score": {
+        "calls": 1260,
+        "self_ms": 0.28115700000000005,
+        "cumulative_ms": 0.778534
+      },
+      "structured_projection": {
+        "calls": 224,
+        "self_ms": 0.14979800000000001,
+        "cumulative_ms": 0.5192960000000001
+      },
+      "select": {
+        "calls": 438,
+        "self_ms": 0.21383800000000003,
+        "cumulative_ms": 1.052966
+      },
+      "_field_value": {
+        "calls": 3556,
+        "self_ms": 0.296394,
+        "cumulative_ms": 0.411048
+      },
+      "structured_copy": {
+        "calls": 224,
+        "self_ms": 0.148977,
+        "cumulative_ms": 1.486957
+      }
+    },
+    "openai_responses": {
+      "structured_score": {
+        "calls": 9198,
+        "self_ms": 1.99037,
+        "cumulative_ms": 4.780217
+      },
+      "structured_projection": {
+        "calls": 192,
+        "self_ms": 0.206793,
+        "cumulative_ms": 0.5798679999999999
+      },
+      "select": {
+        "calls": 590,
+        "self_ms": 0.8448860000000001,
+        "cumulative_ms": 5.698251000000001
+      },
+      "_field_value": {
+        "calls": 19260,
+        "self_ms": 1.454096,
+        "cumulative_ms": 2.071922
+      },
+      "structured_copy": {
+        "calls": 192,
+        "self_ms": 0.222272,
+        "cumulative_ms": 1.63174
+      }
+    },
+    "anthropic": {
+      "structured_score": {
+        "calls": 5560,
+        "self_ms": 1.103774,
+        "cumulative_ms": 2.636695
+      },
+      "structured_projection": {
+        "calls": 275,
+        "self_ms": 0.224306,
+        "cumulative_ms": 2.182455
+      },
+      "select": {
+        "calls": 686,
+        "self_ms": 0.669186,
+        "cumulative_ms": 3.413403
+      },
+      "_field_value": {
+        "calls": 10490,
+        "self_ms": 0.8839910000000001,
+        "cumulative_ms": 1.2310050000000001
+      },
+      "structured_copy": {
+        "calls": 275,
+        "self_ms": 0.252788,
+        "cumulative_ms": 11.919831
+      }
+    },
+    "gemini": {
+      "structured_projection": {
+        "calls": 295,
+        "self_ms": 0.266313,
+        "cumulative_ms": 0.797535
+      },
+      "select": {
+        "calls": 1256,
+        "self_ms": 0.11524100000000001,
+        "cumulative_ms": 0.17050800000000002
+      },
+      "_field_value": {
+        "calls": 5392,
+        "self_ms": 0.48122600000000004,
+        "cumulative_ms": 0.6778230000000001
+      },
+      "structured_copy": {
+        "calls": 295,
+        "self_ms": 0.355265,
+        "cumulative_ms": 43.807246
+      }
+    },
+    "ollama": {
+      "structured_projection": {
+        "calls": 210,
+        "self_ms": 0.137082,
+        "cumulative_ms": 0.34586700000000004
+      },
+      "select": {
+        "calls": 492,
+        "self_ms": 0.047545,
+        "cumulative_ms": 0.068698
+      },
+      "_field_value": {
+        "calls": 1416,
+        "self_ms": 0.14042700000000002,
+        "cumulative_ms": 0.19603600000000002
+      },
+      "structured_copy": {
+        "calls": 210,
+        "self_ms": 0.15907400000000002,
+        "cumulative_ms": 9.702455
+      }
+    }
+  },
+  "after": {
+    "openai_chat": {
+      "structured_projection": {
+        "calls": 224,
+        "self_ms": 0.17258700000000002,
+        "cumulative_ms": 0.51758
+      },
+      "structured_copy": {
+        "calls": 224,
+        "self_ms": 0.17241700000000001,
+        "cumulative_ms": 1.490917
+      },
+      "select": {
+        "calls": 438,
+        "self_ms": 0.322878,
+        "cumulative_ms": 0.763656
+      },
+      "structured_score": {
+        "calls": 288,
+        "self_ms": 0.099761,
+        "cumulative_ms": 0.269384
+      }
+    },
+    "openai_responses": {
+      "structured_projection": {
+        "calls": 192,
+        "self_ms": 0.23497500000000002,
+        "cumulative_ms": 0.572081
+      },
+      "structured_copy": {
+        "calls": 192,
+        "self_ms": 0.23125800000000002,
+        "cumulative_ms": 1.58434
+      },
+      "select": {
+        "calls": 590,
+        "self_ms": 0.7778280000000001,
+        "cumulative_ms": 2.008992
+      },
+      "structured_score": {
+        "calls": 794,
+        "self_ms": 0.287347,
+        "cumulative_ms": 0.8453510000000001
+      }
+    },
+    "anthropic": {
+      "structured_projection": {
+        "calls": 275,
+        "self_ms": 0.264216,
+        "cumulative_ms": 1.317796
+      },
+      "structured_copy": {
+        "calls": 275,
+        "self_ms": 0.270472,
+        "cumulative_ms": 10.94462
+      },
+      "select": {
+        "calls": 686,
+        "self_ms": 0.723839,
+        "cumulative_ms": 1.6128000000000002
+      },
+      "structured_score": {
+        "calls": 442,
+        "self_ms": 0.169693,
+        "cumulative_ms": 0.520184
+      }
+    },
+    "gemini": {
+      "structured_projection": {
+        "calls": 295,
+        "self_ms": 0.286595,
+        "cumulative_ms": 0.687162
+      },
+      "structured_copy": {
+        "calls": 295,
+        "self_ms": 0.36204,
+        "cumulative_ms": 44.75649800000001
+      },
+      "select": {
+        "calls": 1256,
+        "self_ms": 0.11814400000000001,
+        "cumulative_ms": 0.17231600000000002
+      }
+    },
+    "ollama": {
+      "structured_projection": {
+        "calls": 210,
+        "self_ms": 0.153391,
+        "cumulative_ms": 0.327164
+      },
+      "structured_copy": {
+        "calls": 210,
+        "self_ms": 0.27288700000000005,
+        "cumulative_ms": 16.593159
+      },
+      "select": {
+        "calls": 492,
+        "self_ms": 0.06616999999999999,
+        "cumulative_ms": 0.094504
+      }
+    }
+  }
+}

@@ -37,10 +37,13 @@ OpenAI Chat 格式输入 → 任意协议 API → OpenAI Chat 格式输出
 | 协议扩展 | 实现四个抽象基类并注册，即可接入现有调用与转换流程。 |
 
 输入接受标准字典或可转为字典的官方 SDK 对象，输出为所选输入协议的标准字典。
-未知协议字段不进入中间态或翻译输出；非标准协议差异由 Profile 中明确支持的配置处理。
+标准协议和 Profile 未声明的字段直接跳过，不读取、不校验；已识别开放字典内部数据保留。
+Profile 用 `Parameter` 集中声明字段路径、缺失默认值和翻译阶段，`Config` 控制代码行为，均支持继承扩展。
+字段 `None` 继承配置；`default_value=None` 是实际值，已有 `None` 不会被默认值覆盖；跨协议来回翻译不保证无损。
 跨协议转换受目标协议的表达能力限制，详见[兼容边界](docs/reference/configuration.md#跨协议请求的处理边界)。
 新增协议通过 `MyCodec.register(codec)` 在启动时注册，协议默认值随 Codec 声明；
 无需修改公共入口或协议枚举，详见[接入指南](docs/guides/adding-protocol.md)。
+参数路径统一使用 $. 前缀，例如 $.reasoning.effort；非标准请求参数通过 SDK 的 extra_body 等正式扩展入口配置。
 
 ## 安装
 
@@ -60,16 +63,24 @@ pip install my-llm-py
 import asyncio
 import os
 
-from my_llm import ModelProfile, MyLLM, ProviderProfile
+from my_llm import Config, ModelProfile, MyLLM, Parameter, ProviderProfile
 
 
 async def main():
     async with MyLLM(
         provider=ProviderProfile(
             protocol="anthropic",  # 实际请求的 API 协议
-            api_key=os.environ["ANTHROPIC_API_KEY"],
+            api_key=Config(name="API 密钥", default_value=os.environ["ANTHROPIC_API_KEY"]),
         ),
-        model=ModelProfile(model=os.environ["LLM_MODEL"], max_tokens=4096),
+        model=ModelProfile(
+            model=os.environ["LLM_MODEL"],
+            max_tokens=Parameter(
+                name="输出上限",
+                path="$.max_tokens",
+                default_value=4096,
+                phase="decode",
+            ),
+        ),
         stdio_protocol="openai_chat",  # 输入和输出均使用 Chat 协议
     ) as llm:
         message = await llm.generate(messages=[{"role": "user", "content": "你好"}])
@@ -100,7 +111,8 @@ async def print_answer(llm):
     return stream.result
 ```
 
-使用 `async with` 管理实例和流。传入工具前，在 `ModelProfile` 中设置 `supports_function_calling=True`。
+使用 `async with` 管理实例和流。传入工具前，在 `ModelProfile` 中设置
+`supports_function_calling=Config(name="工具调用", default_value=True)`。
 
 ### 独立格式转换
 

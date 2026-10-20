@@ -1,61 +1,83 @@
-"""Protocol defaults and shared provider/model configuration.
-
-None inherits a value, while OpenAI's omit disables it. Dictionary layering
-overrides individual keys (not whole dictionaries); omit removes a key.
-Generation bindings retain deletion markers until request preparation merges them.
-"""
+"""Typed declarations for protocol defaults and provider/model overrides."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from openai import Omit
-
 from my_llm.exceptions import ConfigurationError
+from my_llm.profile.types import Config, Omit, Parameter, omit
 
 type Protocol = str
 type ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
-type Parameter = dict[str, Any] | Omit | None
 
 EFFORTS = ("none", "low", "medium", "high", "xhigh", "max")
 
 
 @dataclass(frozen=True, kw_only=True)
 class ProtocolDefaults:
-    """Required standard settings declared by each protocol's Codec.
+    """Settings declared by a protocol's Codec, extensible with typed wrappers.
 
-    Use omit for selectors or parameter bindings that the protocol does not use.
-    Mutable binding values are borrowed read-only and copied during resolution.
+    Parameter binds its own path, missing-value default and translation phase.
+    Config controls code behavior. Dataclass field names identify each setting;
+    wrapper names and comments are presentation metadata.
     """
 
-    replay_reasoning_content_when_tool_calls: bool
-    supports_reasoning_effort: bool
-    max_tokens_path: str | Omit
-    content_path: str | Omit
-    reasoning_content_path: str | Omit
-    reasoning_enable_parameter: dict[str, Any] | Omit
-    reasoning_effort_parameter: dict[str, Any] | Omit
+    replay_reasoning_content_when_tool_calls: Config[bool] | Omit
+    supports_reasoning_effort: Config[bool] | Omit
+    max_tokens: Parameter[int] | Omit = omit
+    content: Parameter[Any] | Omit = omit
+    reasoning_content: Parameter[Any] | Omit = omit
+    reasoning_enable: Parameter[Any] | Omit = omit
+    reasoning_effort: Parameter[Any] | Omit = omit
+    extra_headers: Config[dict[str, Any]] | Omit = field(
+        default_factory=lambda: Config(name="Extra headers", default_value={})
+    )
+    extra_body: Config[dict[str, Any]] | Omit = field(
+        default_factory=lambda: Config(name="Extra body", default_value={})
+    )
+    reasoning_effort_mapping: Config[dict[str, Any]] | Omit = field(
+        default_factory=lambda: Config(
+            name="Reasoning effort mapping",
+            default_value={effort: effort for effort in EFFORTS},
+        )
+    )
+    supports_stream: Config[bool] | Omit = Config(name="Supports streaming", default_value=True)
+    supports_reasoning: Config[bool] | Omit = Config(name="Supports reasoning", default_value=True)
+    supports_function_calling: Config[bool] | Omit = Config(
+        name="Supports function calling", default_value=False
+    )
+    supports_message_name: Config[bool] | Omit = Config(
+        name="Supports message names", default_value=True
+    )
+    usage_mode: Config[str] | Omit = Config(name="Usage mode", default_value="none")
 
 
 @dataclass(frozen=True, kw_only=True)
 class OverridableProfile:
-    """Shared provider/model overrides; None inherits and omit disables a value."""
+    """Shared overrides: None inherits, omit disables, wrappers replace settings.
 
-    extra_headers: Parameter = None
-    extra_body: Parameter = None
-    reasoning_enable_parameter: Parameter = None
-    reasoning_effort_parameter: Parameter = None
-    reasoning_effort_mapping: Parameter = None
-    supports_reasoning_effort: bool | Omit | None = None
-    max_tokens_path: str | Omit | None = None
-    content_path: str | Omit | None = None
-    reasoning_content_path: str | Omit | None = None
-    replay_reasoning_content_when_tool_calls: bool | Omit | None = None
+    Extend profiles with Parameter[T] or Config[T] fields. Parameter overrides
+    replace path, phase and default together. Config dictionaries merge by key.
+    A wrapper's explicit default_value=None is retained.
+    """
+
+    extra_headers: Config[dict[str, Any]] | Omit | None = None
+    extra_body: Config[dict[str, Any]] | Omit | None = None
+    reasoning_effort_mapping: Config[dict[str, Any]] | Omit | None = None
+    supports_reasoning_effort: Config[bool] | Omit | None = None
+    max_tokens: Parameter[int] | Omit | None = None
+    content: Parameter[Any] | Omit | None = None
+    reasoning_content: Parameter[Any] | Omit | None = None
+    reasoning_enable: Parameter[Any] | Omit | None = None
+    reasoning_effort: Parameter[Any] | Omit | None = None
+    replay_reasoning_content_when_tool_calls: Config[bool] | Omit | None = None
 
 
-def merge_dicts(*layers: Parameter, preserve_omit: bool = False) -> dict[str, Any]:
-    """Merge keys, optionally retaining binding deletion markers for later application.
+def merge_dicts(
+    *layers: dict[str, Any] | Omit | None, preserve_omit: bool = False
+) -> dict[str, Any]:
+    """Merge configuration keys, optionally retaining explicit deletion markers.
 
     Layers are not mutated; nested values are borrowed read-only.
     """

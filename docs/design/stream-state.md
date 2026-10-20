@@ -1,6 +1,6 @@
 # 流状态与块身份
 
-协议依据复核日期：2026-10-17；字段边界更新于 2026-10-19。依据官方协议定义，维护
+协议依据复核日期：2026-10-17；字段边界与操作契约更新于 2026-10-20。依据官方协议定义，维护
 [`StreamState`](../../src/my_llm/stream/_state.py) 的块身份、累积和发布规则。
 公开接口继续返回各协议的标准字典；下述操作仅属于内部 Codec 边界。
 
@@ -35,6 +35,15 @@ Encoder 无状态，只翻译本次传入事件中已识别的字段。内部批
 | block_stop | 源协议关闭指定块。 |
 | snapshot | 保存已识别的终态块，并使用与实时操作一致的源引用协调每个块；不附加原始消息。 |
 | metadata / usage / reason / finish | 更新已识别的响应级信息并标记协议终态；未知原生事件不透传。 |
+
+metadata 操作统一使用 `{"type": "metadata", "values": {...}, "path": (...)}`。
+原生 Encoder 只将显式提取的已识别值放入 values，并完成 ID、模型名和停止原因等字段的归一化。
+共享状态机沿 path 找到目标字典，浅合并本次 values；空 path 更新响应根部。
+例如 Responses Encoder 使用 `("response_items", "0")` 更新一个输出项的头字段，
+使用 `("response_parameters",)` 更新已识别响应设置；完整终态可在根部替换 response_items。
+字段名、投影规则和合并位置均由协议实现声明，共享状态机不识别这些原生字段。
+values 在状态入口捕获独立副本，只复制 path 经过的已有容器，未修改子树继续在请求内部共享。
+这不允许保留未知原生字段：未知字段在 Encoder 构造操作前即被跳过。
 
 `BlockRef(scope, index, part)` 使用固定结构表示源地址；所有累积器映射键都归一为此类型。
 NamedTuple 在中间字典中可直接 JSON 序列化，反序列化后的列表在累积器入口还原。
@@ -90,5 +99,8 @@ EOF 本身不代表成功，必须收到源协议的终止操作。重复原生�
 
 [`test_stream_materialization.py`](../../tests/contract/test_stream_materialization.py) 还验证
 物化版本失效、工具参数单次解析，以及明确来源协议的 25 对公开输出不会反向修改缓存。
+metadata 契约测试覆盖嵌套路径更新、完整子树替换、显式 None、JSON 往返和调用方数据隔离；
+独立第六协议在自己的 Encoder 中声明 trace 字段并交给自己的 Decoder 输出，
+无需改共享状态机即可增加已识别的响应元数据，同时跳过未配置的相邻字段。
 
 完整修复及最新 Schema 复核见[五协议验收记录](../audits/protocol-fixes-2026-10-17.md)。

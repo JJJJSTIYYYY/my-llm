@@ -2,12 +2,14 @@ import pytest
 
 from my_llm import ConfigurationError, ModelProfile, ProviderProfile, omit
 from my_llm.profile.resolution import resolve_profiles
+from tests.helpers.profiles import config, parameter
 from tests.helpers.requests import codec
 
 
 def test_custom_chat_effort_named_parameter(profile_factory):
     profile = profile_factory(
-        supports_reasoning_effort=True, reasoning_effort_mapping={"high": "medium"}
+        supports_reasoning_effort=config("supports_reasoning_effort", True),
+        reasoning_effort_mapping=config("reasoning_effort_mapping", {"high": "medium"}),
     )
     request = codec(profile).encode(
         [{"role": "user", "content": "x"}], tools=omit, reasoning_effort="high"
@@ -20,7 +22,11 @@ def test_custom_response_summary_override(profile_factory):
     request = codec(
         profile_factory(
             "openai_responses",
-            reasoning_effort_parameter={"reasoning": {"summary": "auto", "effort": "{effort}"}},
+            reasoning_enable=parameter(
+                "reasoning_enable",
+                {"summary": "auto", "effort": "medium"},
+                protocol="openai_responses",
+            ),
         )
     ).encode([{"role": "user", "content": "x"}], tools=omit, reasoning_effort="low")
     assert request["reasoning"] == {"summary": "auto", "effort": "low"}
@@ -32,15 +38,17 @@ def test_reasoning_boolean_enable_and_mapping_disabled(profile_factory):
     )
     assert request["reasoning"]["effort"] == "medium"
     request = codec(
-        profile_factory(
-            "openai_responses", reasoning_enable_parameter=omit, reasoning_effort_parameter=omit
-        )
+        profile_factory("openai_responses", reasoning_enable=omit, reasoning_effort=omit)
     ).encode([{"role": "user", "content": "x"}], tools=omit, reasoning_effort="high")
     assert "reasoning" not in request
 
 
 def test_malicious_reasoning_binding_cannot_disable_stream(profile_factory):
-    profile = profile_factory(reasoning_enable_parameter={"extra_body": {"stream": False}})
+    profile = profile_factory(
+        reasoning_enable=parameter(
+            "reasoning_enable", False, protocol="openai_chat", path="$.extra_body.stream"
+        )
+    )
     with pytest.raises(ConfigurationError):
         codec(profile).encode(
             [{"role": "user", "content": "x"}], tools=omit, reasoning_effort="high"
@@ -60,22 +68,24 @@ def test_model_string_whitespace_rejected():
         resolve_profiles(ProviderProfile(), ModelProfile(model=" "))
 
 
-def test_default_response_summary_retained_with_partial_binding(profile_factory):
+def test_default_response_object_is_replaced_as_one_parameter(profile_factory):
     request = codec(
         profile_factory(
             "openai_responses",
-            reasoning_enable_parameter={"reasoning": {"effort": "medium"}},
-            reasoning_effort_parameter={"reasoning": {}},
+            reasoning_enable=parameter(
+                "reasoning_enable", {"effort": "medium"}, protocol="openai_responses"
+            ),
         )
     ).encode([{"role": "user", "content": "x"}], tools=omit, reasoning_effort="high")
-    assert request["reasoning"] == {"summary": "detailed", "effort": "high"}
+    assert request["reasoning"] == {"effort": "high"}
 
 
 def test_response_summary_can_be_explicitly_omitted(profile_factory):
     profile = profile_factory(
         "openai_responses",
-        reasoning_enable_parameter={"reasoning": {"summary": omit}},
-        reasoning_effort_parameter={"reasoning": {"summary": omit, "effort": "{effort}"}},
+        reasoning_enable=parameter(
+            "reasoning_enable", {"summary": omit}, protocol="openai_responses"
+        ),
     )
     request = codec(profile).encode(
         [{"role": "user", "content": "x"}], tools=omit, reasoning_effort="high"

@@ -23,12 +23,13 @@
 | 位置 | 保存内容 | 生命周期 |
 | --- | --- | --- |
 | Schema 过滤缓存 | 类型、字段与处理函数 | 当前进程内复用。 |
+| Encoder 的 `_ModelView` 字段缓存 | 本次转换已读取的 SDK 字段值、缺失标记及嵌套包装值 | 当前转换，不跨请求复用。 |
 | MyLLM 客户端缓存 | 官方 SDK 客户端 | 当前 MyLLM 实例。 |
 | StreamState / BlockState 缓存 | 当前响应的物化块和终态消息，包含真实响应内容 | 当前请求。 |
 
 因此，“Schema 缓存不保存实际请求值”不能理解为所有请求状态都不保存实际内容。
 
-## 2. 模块中实际存在三份类型缓存
+## 2. 过滤计划相关的三份缓存
 
 这些缓存都是 [transport.py](../../src/my_llm/codec/shared/transport.py) 中的模块级函数缓存，
 由同一进程内的不同 MyLLM / Codec 实例共享。
@@ -37,18 +38,19 @@
 | --- | --- | --- |
 | `fields(schema)` | Python 类型定义 | 字段名到字段注解的字典。Pydantic 类型读取 `model_fields`；TypedDict 等类型读取 `get_type_hints`。 |
 | `adapter(schema)` | Python 类型定义 | 对应的 Pydantic `TypeAdapter`，用于实际验证和序列化检查。 |
-| `_compiled_plan(key)` | `_SchemaKey` 对象 | 根 `_FilterPlan` 对象，由它引用整个子计划图。 |
+| `_compiled_plan(key, delegated_paths)` | `_SchemaKey` 对象与不可变路径元组 | 根 `_FilterPlan` 对象，由它引用整个子计划图。 |
 
 此次优化的主要新增部分是第三项。仅缓存字段名和 TypeAdapter，仍会让每个请求反复解析
 嵌套注解、列表元素和 Union；完整计划把这些分析结果一起保存下来。
+模块另有 SDK 参数注解、路径声明等缓存；上表只列过滤计划直接依赖的缓存。
 
 ## 3. 缓存键具体保存什么
 
 入口关系是：
 
 ```python
-def _plan(schema):
-    return _compiled_plan(_SchemaKey(schema))
+def _plan(schema, delegated_paths=()):
+    return _compiled_plan(_SchemaKey(schema), delegated_paths)
 ```
 
 `_SchemaKey` 实际只有三个槽位：
@@ -58,6 +60,11 @@ def _plan(schema):
 | `schema` | 原始 Python 类型对象或类型注解对象的引用 | 确定要编译的 SDK 类型。不是类型名字符串。 |
 | `_hash` | 类型的哈希值；不可哈希注解使用对象身份值 | 支持缓存字典查找。 |
 | `_hashable` | 布尔值 | 区分按类型比较和按对象身份比较的情况。 |
+
+完整缓存键还包含 `delegated_paths`，例如 `(("tools",),)`。它是元组组成的不可变元组，
+由 Transport 的 `message_path` / `tool_path` 声明生成，表示哪些叶节点交给后续过滤钩子处理。
+同一类型在普通过滤和委派过滤中分别编译、缓存；同一类型位于不同嵌套位置时也按剩余路径区分，
+因此委派规则不会污染普通 `supported` / `projected` 调用。
 
 键不包含协议请求内容、消息字段集合、model 名称、ProviderProfile 或任何响应值。
 同一类型可以处理许多字段形态不同的请求。
@@ -80,14 +87,15 @@ Right | Left
 
 ## 4. 缓存值具体保存什么
 
-真实的 `_FilterPlan` 没有 `fields`、`messages`、`output` 等属性，只有三个槽位：
+真实的 `_FilterPlan` 没有 `fields`、`messages`、`output` 等属性，只有四个槽位：
 
 ```python
 class _FilterPlan:
-    __slots__ = ("apply", "project", "score")
+    __slots__ = ("apply", "project", "score", "literals")
 ```
 
-每个槽位保存一个可调用对象。字段表、子计划和候选列表由这些函数的闭包引用。
+前三个槽位保存可调用对象，`literals` 保存结构节点已声明的 Literal 判别字段及其常量。
+字段表、子计划和候选列表由函数闭包引用。
 闭包是函数随身保留的外部变量；本实现保留的是编译期间确定的类型规则。
 
 | 槽位 | 调用形式 | 做什么 |
@@ -95,14 +103,15 @@ class _FilterPlan:
 | `apply` | `plan.apply(value)` | 过滤协议字段，为可变应用 payload 建立独立副本，内置不可变标量直接使用。 |
 | `project` | `plan.project(value)` | 过滤协议字段，借用应用 payload，供只读验证。 |
 | `score` | `plan.score(value)` | 根据当前值计算某个 Union 候选的匹配分数。 |
+| `literals` | `plan.literals` | 结构类型的 Literal 字段规则；其他节点为空字典，供编译 Union 候选索引使用。 |
 
 ### 不同节点的闭包中有什么
 
 | 类型节点 | 编译后保留的规则或引用 |
 | --- | --- |
-| TypedDict / Pydantic 结构 | `children`：字段名到子 `_FilterPlan` 的字典；评分函数另保留 `annotation`、`declared_keys` 和 `literal_fields`。 |
+| TypedDict / Pydantic 结构 | `children`：字段名到子 `_FilterPlan` 的字典；评分函数共用 `children` 并保留 `literal_fields`。 |
 | 有元素类型的列表 | `item_plan`：元素类型的子计划。 |
-| Union | `choices`：按声明顺序排列的候选计划元组；`apply` / `project` 通过 `select` 使用它。 |
+| Union | `choices`：按声明顺序排列的候选计划元组；`routes`：Literal 字段名、未限制该字段的候选位图及常量到候选位图的索引。 |
 | Literal | 声明中的常量参数，用于评分。 |
 | 普通类型 | 判断所需的类型对象。 |
 | 开放字典、Any 等应用 payload | `apply` 使用 `_copy_payload`；`project` 使用 `_borrow_payload`。 |
@@ -125,7 +134,7 @@ SDK 模型的 extra 策略不提供未知协议字段的透传能力。项目只
 缓存规则也不会读取首条请求中的额外字段名。新的已声明可选字段可在后续请求出现，开放应用字典
 内部的新键随当前值处理；未知协议结构字段仍会过滤。完整边界见[翻译字段边界](translation-boundaries.md)。
 
-协议结构的输入若为 SDK 的 Pydantic 对象，先按公开的 model_dump 接口取得结构，再执行同一类型计划；
+协议结构的输入若为 SDK 的 Pydantic 对象，按类型计划中的已声明字段逐个读取属性，不调用全对象 model_dump；
 不能通过模型实例绕过字典输入的字段规则。SDK 的标量序列化对象仍按其原生标量接口处理。
 
 ## 5. 用一个缩小类型把缓存展开
@@ -158,7 +167,7 @@ class Message(TypedDict):
 
 ```mermaid
 flowchart TD
-    K["_SchemaKey: schema=Message"] --> M["Message 根计划"]
+    K["缓存键: _SchemaKey(Message), delegated_paths=()"] --> M["Message 根计划"]
     M -->|"children: role"| R["Literal user 计划"]
     M -->|"children: content"| C["Union 计划: str 或 list"]
     M -->|"children: metadata"| D["开放 dict 计划"]
@@ -177,6 +186,7 @@ cache entry:
     schema: Message 类型对象
     _hash: hash(Message)
     _hashable: True
+  delegated_paths: ()
 
   value: Message 的 _FilterPlan
     apply: structured_copy 函数
@@ -189,16 +199,17 @@ cache entry:
       closure.children: 同一份字段子计划字典
 
     score: structured_score 函数
-      closure.annotation: Message 类型对象
-      closure.declared_keys: role / content / metadata 的键视图
+      closure.children: role / content / metadata 的子计划映射
       closure.literal_fields: [("role", ("user",))]
+
+    literals: {"role": ("user",)}
 ```
 
 可以看到，缓存中有 `"role"`、`"content"`、`"metadata"`、`"user"` 这些来自类型声明的规则，
 但没有任何一条请求的完整字典，也没有某次过滤后的结果字典。
 
 一条根缓存项会引用许多子节点。`cache_info().currsize` 统计的是根缓存项，
-不是整张图的节点数。编译期间使用的局部 `plans` 字典按类型身份复用节点，
+不是整张图的节点数。编译期间使用的局部 `plans` 字典按类型身份和剩余委派路径复用节点，
 没有把每个子节点分别注册为全局根缓存项。
 
 ## 6. 两次不同结构的数据如何经过同一计划
@@ -218,7 +229,7 @@ supported(first, Message)
 运行顺序：
 
 1. `_SchemaKey(Message)` 查找失败，开始编译上述完整计划，包括这次尚未使用的列表和图片分支。
-2. 根计划遍历当前字典，保留 `role`、`content`、`metadata`，丢弃当前类型未声明的 `vendor_extra`。
+2. 根计划遍历类型声明中的字段名，定点读取 `role`、`content`、`metadata`，不读取或枚举 `vendor_extra`。
 3. `content` 的 Union 根据当前值选择 `str` 分支，返回本次文本。
 4. `metadata` 是开放应用字典，`apply` 为它建立独立副本。
 5. 返回本次结果；计划缓存仍只有类型规则。
@@ -241,7 +252,8 @@ supported(second, Message)
 
 1. 命中同一个 Message 根计划。
 2. `content` 根据当前值选择列表分支；第一条请求选择过字符串分支，不影响本次选择。
-3. 对列表中的每个元素重新评分：`type="text"` 选 TextPart，`type="image"` 选 ImagePart。
+3. 对列表中的每个元素，先用已编译的 Literal 索引排除不匹配候选，再评分：
+   `type="text"` 选 TextPart，`type="image"` 选 ImagePart。
 4. 开放 `metadata` 的 `request_id`、`new_key`、`items` 都保留；计划不记录这些键和值。
 5. 返回第二条请求自己的结果。
 
@@ -249,14 +261,19 @@ supported(second, Message)
 
 ### Union 运行时具体怎么选
 
-以结构类型候选为例，评分规则是：
+编译时先根据各候选声明的 Literal 字段建立索引。运行时只读取这些已声明的字段，
+排除明确不匹配的候选；没有限制该字段的候选继续保留。多个候选允许同一常量时也全部保留，
+不会把判别值固定映射成单个分支。字段缺失时不按该字段剪枝；不能用于索引的值仍走评分路径。
+
+剩余结构类型候选仍执行原有评分：
 
 1. 检查当前值里已出现的 Literal 判别字段；与该候选声明不一致时，得分为 -1。
 2. 其余候选按“当前字典与声明字段的交集大小 + 1”评分。
 3. 取最高分；同分保留声明在前的候选。全部候选不适配时抛出 UnsupportedCapabilityError。
 
-因此，计划没有保存“上一次选中了哪个候选”。也没有仅凭一个 `type` 字段把所有同类型名的
-变体固定到同一分支。None、单候选等分支按当前实现直接处理，最终合法性仍由 TypeAdapter 验证。
+剪枝保留候选的原声明顺序，最高分和同分取首项的语义不变；获胜候选也不再额外评分一次。
+计划没有保存“上一次选中了哪个候选”。None、单候选等分支按当前实现直接处理，
+最终合法性仍由 TypeAdapter 验证。
 
 ## 7. apply 与 project 为什么共用计划却有不同复制行为
 
@@ -280,6 +297,18 @@ plan.project(second)
 过滤器的分支评分证明。TypeAdapter 仍逐次运行，`dump_json` 用来触发惰性元素验证。
 缓存命中不会把这条请求直接判定为合法。
 
+### Transport 内部的叶节点委派
+
+根请求过滤需要检查 SDK 参数、复制容器和普通配置，但消息、工具仍须经过可覆盖的
+`filter_messages` / `filter_tools`。`delegated_paths` 让根计划在指定消息或工具叶节点处借用原值，
+把投影和独立副本的建立交给后续钩子一次完成。委派只用于 Transport 的请求组装过程；
+普通 `supported(value, schema)` 没有委派路径，继续返回隔离结果。
+
+例如 Gemini 的 `config` 信封仍按 `GenerateContentConfig` 过滤、复制，
+`config.tools` 暂时借用，随后 `filter_tools` 再按工具 Schema 投影一次。
+没有跳过协议覆盖钩子，也没有把整个 config 当作开放字典。其余应用数据仍按各自计划捕获，
+不因工具叶节点的委派变成借用结果。整份叶节点被委派时可直接借入，无需先编译该叶节点计划。
+
 ## 8. 在真实 generate 路径中的位置
 
 以输入输出和上游都为 OpenAI Chat、且显式设置 stdio_protocol 为例：
@@ -290,7 +319,7 @@ plan.project(second)
 | 2 | 输入 Transport 调用 projected，随后通过 TypeAdapter 验证。 | 首次遇到对应 SDK 类型时编译；后续复用。 |
 | 3 | Encoder 编码当前消息与工具，生成本次中间态。 | 不跳过 Encoder。 |
 | 4 | 校验生成选项，Decoder 构造当前原生请求。 | 不跳过 Decoder。 |
-| 5 | 上游 Transport 调用 supported 过滤消息与工具，再验证。 | 同一 SDK 类型的计划可与步骤2复用；输入输出协议不同时分别使用对应类型计划。 |
+| 5 | 上游 Transport 过滤根信封，委派消息/工具叶给 filter_messages / filter_tools 投影并验证。 | 普通消息/工具计划可与步骤2复用；含委派路径的信封计划单独缓存。输入输出协议不同时分别使用对应类型计划。 |
 | 6 | 官方 SDK 执行请求、解析返回事件。 | 仍执行 SDK 自己的处理。 |
 | 7 | 每个事件经过 Encoder、StreamState、Decoder，再转换完整结果。 | 本计划缓存不替代返回路径，也不缓存响应结果。 |
 
@@ -331,6 +360,17 @@ plan.project(second)
 编译过程没有 await，同一事件循环中不会在编译中途切换请求。
 `functools.cache` 保持多线程缓存表的一致性，但并发首次未命中时可能重复执行编译，
 不保证所有线程合计只编译一次。这是 [Python cache 的既有语义](https://docs.python.org/3.12/library/functools.html#functools.cache)。
+
+### `_ModelView` 的转换局部缓存
+
+Encoder 读取 SDK 模型时，`_ModelView` 只按请求的字段名读取属性。
+每个视图记录读取值或缺失标记；存在性检查不创建子视图，首次取值才包装嵌套列表或模型，
+后续读取复用该包装值。未知且未配置字段不会被枚举、读取或序列化，仍不调用整模型 `model_dump()`。
+未设置的 Optional 默认 None 视为缺失，显式 None 仍保留；每次 `get` 的默认实参分别生效。
+
+这是保存本次真实数据的短期视图，与上面的进程级类型计划缓存不同。
+下一次公开转换会重新建立视图，同一个 SDK 对象在两次转换之间被修改后，后一次读取新值。
+最终 Encoder / Decoder 公开出口的深拷贝继续保证结果隔离。
 
 ## 10. 可运行的小例子
 
@@ -417,10 +457,15 @@ root callbacks: structured_copy structured_projection structured_score
 | 缓存键和值的实际字段 | [transport.py](../../src/my_llm/codec/shared/transport.py) 的 `_SchemaKey`、`_FilterPlan`、`_compiled_plan`。 |
 | 命中后不重复分析字段类型 | [计划测试](../../tests/unit/test_schema_filter_plans.py) 把类型分析函数替换为失败函数，继续执行已缓存计划。 |
 | Union 顺序与递归类型保持正确 | 同一测试文件覆盖直接/嵌套 Union 同分顺序、Annotated 与递归模型。 |
+| Literal 索引只剪枝，不改变候选选择 | 同一测试文件覆盖共享判别值、无限制候选、多判别字段、SDK 模型及不合法判别值。 |
+| 委派路径不会污染其他计划 | 同一测试文件覆盖普通/委派计划隔离、相同类型的不同嵌套位置及整叶直接借入。 |
 | 协议结构与开放应用字典 | 同一测试文件覆盖结构字段过滤、递归模型、缓存命中后的可选字段、开放字典新键及复制隔离。 |
 | 请求值不会被计划持有 | 同一测试文件用弱引用验证 supported / projected 调用后 payload 可回收。 |
 | 只读投影不复制应用数据 | 同一测试文件用禁止 deepcopy 的 payload 及引用身份断言检查。 |
 | 编码、解码及结果仍隔离 | [所有权测试](../../tests/unit/test_copy_ownership.py)和[终态物化测试](../../tests/contract/test_stream_materialization.py)。 |
+| SDK 字段只在本次转换中缓存 | 所有权测试覆盖重复取值、缺失与显式 None、存在性检查不包装子树，以及下一次转换读取更新值。 |
+| 消息/工具只投影一次且钩子仍执行 | [原生请求边界测试](../../tests/unit/test_native_request_boundary.py)覆盖嵌套路径、覆盖钩子、未知字段不读取及副本隔离。 |
 
 性能对照见[内部优化记录](../audits/performance-optimization-2026-10-19.md)，
+本轮回退定位和修复验证见[性能回退修复报告](../audits/performance-regression-2026-10-20.md)，
 职责边界见[项目架构](architecture.md#数据所有权与缓存)。

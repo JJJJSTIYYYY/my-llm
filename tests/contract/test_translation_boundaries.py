@@ -10,6 +10,7 @@ from copy import deepcopy
 import pytest
 
 from my_llm import MyCodec, UnsupportedCapabilityError
+from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import PROTOCOLS, history, stream_events, tools
 
 UNKNOWN = "__vendor_unrecognized__"
@@ -203,7 +204,7 @@ def test_sdk_event_objects_are_translated_without_retaining_model_extra_fields(p
             "CompatibleEvent", (model_type,), {"model_config": ConfigDict(extra="allow")}
         )
         sdk_objects.append(compatible_type.model_validate({**value, UNKNOWN: APPLICATION}))
-    original = [value.model_dump(mode="json", exclude_none=True) for value in sdk_objects]
+    original = [value.model_dump(mode="json", exclude_unset=True) for value in sdk_objects]
     codec = MyCodec()
 
     actual = codec.encode(chunks=sdk_objects, input_format=protocol)["chunks"]
@@ -211,7 +212,7 @@ def test_sdk_event_objects_are_translated_without_retaining_model_extra_fields(p
 
     assert actual == codec.encode(chunks=clean, input_format=protocol)["chunks"]
     assert_no_unknown(actual)
-    assert [value.model_dump(mode="json", exclude_none=True) for value in sdk_objects] == original
+    assert [value.model_dump(mode="json", exclude_unset=True) for value in sdk_objects] == original
 
 
 def test_profile_paths_translate_configured_nonstandard_fields_without_sibling_leakage(
@@ -219,9 +220,15 @@ def test_profile_paths_translate_configured_nonstandard_fields_without_sibling_l
 ):
     profile = profile_factory(
         "openai_chat",
-        content_path="$.choices[0].delta.vendor_answer",
-        reasoning_content_path="$.choices[0].delta.vendor_reasoning",
-        replay_reasoning_content_when_tool_calls=True,
+        content=parameter(
+            "content", protocol="openai_chat", path="$.choices[0].delta.vendor_answer"
+        ),
+        reasoning_content=parameter(
+            "reasoning_content", protocol="openai_chat", path="$.choices[0].delta.vendor_reasoning"
+        ),
+        replay_reasoning_content_when_tool_calls=config(
+            "replay_reasoning_content_when_tool_calls", True
+        ),
     )
     incoming = [
         {

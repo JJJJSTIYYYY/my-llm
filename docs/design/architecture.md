@@ -40,6 +40,7 @@ src/my_llm/
 同一协议两个方向共用的标准字段投影器放在该协议的 `utils/` 目录（如 `utils/content.py`、`utils/metadata.py`），
 避免让 Encoder / Decoder 相互导入。
 Codec 统一组合三个无状态组件；实际 SDK 客户端由 MyLLM 实例持有。
+注册时检查实现类及其继承链中的非空 slots，阻止组件通过数据槽保存请求状态。
 
 | 组件 | 职责 |
 | --- | --- |
@@ -55,17 +56,26 @@ Codec 统一组合三个无状态组件；实际 SDK 客户端由 MyLLM 实例�
 
 Encoder / Decoder 不承担请求参数验证、SDK 结构过滤或 SDK 执行；翻译时只读取明确支持的协议字段。
 Decoder 的 request_parameters 与 assemble_request 只映射选项和组织原生请求结构。
-Transport.validate_parameters 只解析一次共同选项与声明式绑定，并返回公开类型 PreparedOptions。
-BaseCodec 显式将其传给 Decoder.request；request_parameters(profile, options) 与
-assemble_request(..., options=options) 直接复用结果，不重新解析或提供隐式兜底。
-绑定模板只保存一份已展开占位符的 bindings，omit 保留到公共 merge_bindings 按层递归合并时消费。
-五协议共用删除语义，Profile 的两个推理绑定字段也会保留顶层删除标记；
-不保留 Responses 专属的 raw binding 路径。普通 Profile 字典仍按既有按键覆盖规则处理。
+Transport.validate_parameters 只解析一次共同选项与控制配置，并返回公开类型 PreparedOptions。
+BaseCodec 显式将其传给 Decoder.request；final 基类流程先调用 request_parameters(profile, options)，
+再将已有参数字典传给 assemble_request(..., request=request)，由协议填入消息和工具。
+assemble_request 不接收 options，也不重复应用参数；统一执行顺序保证参数流程仅执行一次，不重新解析或提供隐式兜底。
+Profile 用 `Parameter[T]` 将路径、缺失默认值和阶段保存在同一声明中，用 `Config[T]` 控制分支。
+encode 参数读取接口返回到中间态，decode 参数将中间态或生成选项写入接口请求；路径统一以 `$.` 开头，
+`$` 表示 `**parameters` 解包字典的根。字段 None 继承，wrapper 的 default_value=None 是实际值。
+默认值仅用于缺失字段，既有字段（包括 None）保持原值；显式生成控制参数可覆盖默认值。
+`name` / `comment` 仅为展示数据，功能由 Profile 字段标识决定。
+继承 Profile 可直接声明新的 Parameter 或 Config，不需要配对字段或维护中央参数表。
+参数应用与阶段判断共用基类流程，五种内置协议及新注册协议复用；协议默认值仍由各自 Codec 声明。
 公开 messages / tools / chunks 入口继承基类固定流程；协议实现 `_messages` / `_tools` / `_chunks`。
 Decoder._messages / _tools 返回原生结果列表，不附加未知字段或恢复记录。
+私有翻译钩子只读借用输入。messages / tools 的公开出口捕获已翻译结果；
+两个方向的 `_chunks` 在借入可变字段处捕获数据，返回独立事件，公开 chunks 入口不再复制新建的完整事件外壳。
+Transport 再为独立 SDK 请求建立所有权，StreamState 捕获流状态，公开结果读取仍返回独立副本。
 翻译中的格式解析错误和上游失败事件仍按[异常边界](../reference/api.md#异常边界)报告。
 
-Transport 从公开 SDK 消息与工具类型取得字段定义。过滤仅作用于请求副本，
+Transport 根据 SDK 请求方法签名取得根参数，再从公开 SDK 消息、工具和选项类型取得内部字段定义。
+翻译层生成普通字典，Transport 定点过滤和校验后仍以字典通过 **request 调用 SDK。过滤仅作用于请求副本，
 不修改业务保存的消息，也不递归删除工具参数、结果或 JSON Schema 中的应用键。
 TypedDict 与 Pydantic 协议结构仅处理声明字段；开放 dict / Any 内部保留应用键值。
 兼容服务的显式 extra_body、extra_headers 与思考回放策略仍由 Profile 配置。
@@ -73,8 +83,8 @@ TypedDict 与 Pydantic 协议结构仅处理声明字段；开放 dict / Any 内
 ### 数据所有权与缓存
 
 `MyLLM.generate` 的准备阶段不发生异步等待：先只读规范化并验证输入，再由 Encoder
-在公开转换边界捕获一次可变数据，完成后才进入 SDK 执行。协议私有编码 hook 直接使用
-这份已隔离的输入。历史关联校验只读借用数据；合并内容或覆盖字段时，
+构造拥有独立可变数据的中间态，完成后才进入 SDK 执行。协议私有钩子只读借用输入，
+消息和工具在公开出口捕获，流事件在实际借入可变字段处捕获。历史关联校验只读借用数据；合并内容或覆盖字段时，
 只重建实际改写的容器。公开转换结果、请求选项及完成结果拥有需要独立修改的内容。
 
 Transport 的 Schema 缓存只保存类型分析结果：字段子计划、Literal 判别信息和 Union 候选顺序。

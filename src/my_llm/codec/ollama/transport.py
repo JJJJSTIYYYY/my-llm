@@ -1,6 +1,5 @@
 """Ollama host, authentication and client-header semantics."""
 
-from inspect import signature
 from typing import Any
 
 from ollama import AsyncClient, Image, Message, Options, Tool
@@ -8,13 +7,12 @@ from ollama import AsyncClient as AsyncOllama
 from pydantic import ValidationError
 
 from my_llm.codec.base.transport import BaseTransport
-from my_llm.codec.shared.conversion import dictionary_views, plain
+from my_llm.codec.shared.conversion import read
 from my_llm.codec.shared.options import (
     PreparedOptions,
-    validate_max_tokens_path,
-    validate_native_options,
+    validate_request_options,
 )
-from my_llm.codec.shared.transport import owned_stream, supported
+from my_llm.codec.shared.transport import owned_stream, parameter_types, projected
 from my_llm.exceptions import ConfigurationError, MessageValidationError, UnsupportedCapabilityError
 from my_llm.profile.configuration import merge_dicts
 from my_llm.profile.resolution import ResolvedProfile, client_parameters
@@ -25,7 +23,7 @@ def client_headers(profile: ResolvedProfile, **parameters: Any) -> dict:
 
 
 PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response_id"}
-REQUEST_FIELDS = set(signature(AsyncClient.chat).parameters) - PROTECTED - {"self"}
+REQUEST_SCHEMA = {**parameter_types(AsyncClient.chat), "options": Options}
 
 
 def validate_schema(parameters: dict) -> dict:
@@ -67,6 +65,7 @@ class OllamaTransport(BaseTransport):
     message_type = Message
     message_path = ("messages",)
     tool_path = ("tools",)
+    request_schema = REQUEST_SCHEMA
 
     def _validate_values(self, values: list, schema: Any, *, filtered: bool = False) -> None:
         if schema is Message and isinstance(values, list):
@@ -74,19 +73,21 @@ class OllamaTransport(BaseTransport):
             # before validating Message. Mirror that SDK boundary without
             # changing the dictionaries used for conversion or serialization.
             try:
-                values = list(dictionary_views(values))
-                values = [
-                    {
-                        **value,
-                        "images": [
-                            image if isinstance(image, Image) else Image(value=image)
-                            for image in value["images"]
-                        ],
-                    }
-                    if isinstance(value, dict) and value.get("images")
-                    else value
-                    for value in values
-                ]
+                normalized = []
+                for value in values:
+                    message = value if filtered else projected(value, Message)
+                    images = read(value, "images")
+                    if images:
+                        message = {
+                            **message,
+                            "images": [
+                                image if isinstance(image, Image) else Image(value=image)
+                                for image in images
+                            ],
+                        }
+                    normalized.append(message)
+                values = normalized
+                filtered = True
             except (ValidationError, TypeError, ValueError) as exc:
                 raise MessageValidationError(
                     "images do not conform to the native protocol"
@@ -95,27 +96,25 @@ class OllamaTransport(BaseTransport):
 
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
         options = super().validate_parameters(profile, **parameters)
-        options = validate_native_options(
-            options, request_fields=REQUEST_FIELDS, protected=PROTECTED
-        )
-        tokens, body, effort = options.tokens, options.body, options.effort
-        validate_max_tokens_path(profile, tokens, protected=PROTECTED, request=body)
-        if (
-            effort
-            and not profile.get("supports_reasoning_effort", False)
-            and body.get("think") is False
-        ):
-            raise ConfigurationError("reasoning conflicts with think=False")
-        return options
+        return validate_request_options(profile, options, protected=PROTECTED, containers=())
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
         thinking = request.get("think")
         if thinking is not None and not isinstance(thinking, (str, bool)):
             raise ConfigurationError("Ollama think must be a boolean or model-defined string")
+        if (
+            (binding := profile.parameter("reasoning_enable", "decode")) is not None
+            and binding.path == "$.think"
+            and (
+                parameters.get("reasoning") is True
+                or parameters.get("reasoning_effort", "none") != "none"
+            )
+            and thinking is False
+        ):
+            raise ConfigurationError("reasoning conflicts with think=False")
         if request.get("options") is not None:
             try:
-                options = supported(plain(request["options"]), Options)
-                request["options"] = Options(**options).model_dump(exclude_none=True)
+                Options(**request["options"])
             except (ValidationError, TypeError, ValueError) as exc:
                 raise ConfigurationError("invalid Ollama options") from exc
         return request
@@ -128,7 +127,13 @@ class OllamaTransport(BaseTransport):
 
     def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
         result = super().filter_messages(messages, profile, **parameters)
-        for value in result:
+        for original, value in zip(messages, result):
+            images = read(original, "images")
+            if images:
+                value["images"] = [
+                    image.model_dump(mode="json") if isinstance(image, Image) else image
+                    for image in images
+                ]
             if not profile.get("supports_message_name", True):
                 value.pop("name", None)
             if not profile.get("replay_reasoning_content_when_tool_calls", False):

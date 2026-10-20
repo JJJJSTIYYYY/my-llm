@@ -5,11 +5,112 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from copy import deepcopy
+from enum import Enum
 from typing import Any
+
+from pydantic import BaseModel
 
 from my_llm.exceptions import MessageValidationError, UnsupportedCapabilityError
 
 FUNCTIONS = "functions"
+_MISSING = object()
+_UNREAD = object()
+_IMMUTABLE = frozenset((str, int, float, bool, bytes, type(None)))
+
+
+def capture(value: Any, memo: dict | None = None) -> Any:
+    """Own translated JSON, retaining deepcopy semantics for non-JSON objects.
+
+    Protocol structures have already been projected. Immutable JSON leaves
+    need no memo lookup or generic copy dispatch; custom objects still use
+    their deepcopy implementation with the same memo.
+    """
+    kind = type(value)
+    if kind in _IMMUTABLE:
+        return value
+    if kind not in (dict, list):
+        return deepcopy(value, memo)
+    if memo is None:
+        memo = {}
+    previous = memo.get(id(value), _MISSING)
+    if previous is not _MISSING:
+        return previous
+    if kind is dict:
+        result = {}
+        memo[id(value)] = result
+        for key, child in value.items():
+            result[capture(key, memo)] = capture(child, memo)
+    else:
+        result = []
+        memo[id(value)] = result
+        result.extend(capture(child, memo) for child in value)
+    return result
+
+
+class _ModelView(dict):
+    """Read SDK fields on demand, without serializing an entire response."""
+
+    __slots__ = ("model", "_raw", "_values")
+
+    def __init__(self, model: BaseModel):
+        self.model = model
+        self._raw = {}
+        self._values = {}
+
+    def _field(self, key):
+        value = self._raw.get(key, _UNREAD)
+        if value is _UNREAD:
+            value = getattr(self.model, key, _MISSING)
+            # Explicit None is present; an unset Optional default is absent.
+            if value is None and key not in self.model.model_fields_set:
+                value = _MISSING
+            self._raw[key] = value
+        return value
+
+    def __contains__(self, key):
+        return self._field(key) is not _MISSING
+
+    def __getitem__(self, key):
+        value = self.get(key, _MISSING)
+        if value is _MISSING:
+            raise KeyError(key)
+        return value
+
+    def get(self, key, default=None):
+        value = self._values.get(key, _UNREAD)
+        if value is _UNREAD:
+            raw = self._field(key)
+            value = _MISSING if raw is _MISSING else _view(raw)
+            self._values[key] = value
+        return default if value is _MISSING else value
+
+    def __iter__(self):
+        return (key for key in type(self.model).model_fields if key in self)
+
+    def __len__(self):
+        return sum(1 for _ in self)
+
+    def keys(self):
+        return dict.fromkeys(self).keys()
+
+    def items(self):
+        return ((key, self[key]) for key in self)
+
+    def copy(self):
+        return dict(self)
+
+    def __deepcopy__(self, memo):
+        return {key: deepcopy(self[key], memo) for key in self}
+
+
+def _view(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        return _ModelView(value)
+    if isinstance(value, list):
+        return [_view(item) for item in value]
+    if isinstance(value, Enum):
+        return value.value
+    return value
 
 
 def read(value: Any, key: str, default: Any = None) -> Any:
@@ -17,29 +118,25 @@ def read(value: Any, key: str, default: Any = None) -> Any:
 
 
 def plain(value: Any) -> Any:
-    if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json", exclude_none=True)
+    if isinstance(value, BaseModel):
+        return dict(_ModelView(value))
     return value.copy() if isinstance(value, (dict, list)) else value
 
 
 def dictionary_views(values: Any) -> Iterator[dict[str, Any]]:
-    """Read protocol dictionaries or public SDK models without retaining them."""
+    """Borrow dictionaries or lazily read only requested public SDK fields."""
     if not isinstance(values, (list, tuple)):
         raise MessageValidationError("expected a list of protocol dictionaries or SDK objects")
     for value in values:
-        if hasattr(value, "model_dump"):
-            value = value.model_dump(mode="json", exclude_none=True)
+        value = _view(value)
         if not isinstance(value, dict):
             raise MessageValidationError("expected protocol dictionaries or SDK objects")
         yield value
 
 
 def dictionaries(values: Any) -> list[dict[str, Any]]:
-    """Capture owned input values at a public conversion boundary."""
-    return [
-        value if hasattr(values[index], "model_dump") else deepcopy(value)
-        for index, value in enumerate(dictionary_views(values))
-    ]
+    """Borrow protocol structures; their recognized output owns copied payloads."""
+    return list(dictionary_views(values))
 
 
 def coalesce_messages(messages: list) -> list[dict]:
@@ -54,7 +151,20 @@ def coalesce_messages(messages: list) -> list[dict]:
             and source_protocol(message) == source_protocol(result[-1])
         ):
             result[-1] = {
-                **result[-1],
+                **{
+                    key: result[-1][key]
+                    for key in (
+                        "protocol",
+                        "coalesce",
+                        "role",
+                        "name",
+                        "id",
+                        "status",
+                        "annotations",
+                        "audio",
+                    )
+                    if key in result[-1]
+                },
                 "content": [*result[-1]["content"], *message.get("content", [])],
             }
         else:
@@ -67,7 +177,7 @@ def blocks(content: Any) -> list[dict]:
         return []
     if isinstance(content, str):
         return [{"type": "text", "text": content}]
-    return dictionaries(content)
+    return list(dictionary_views(content))
 
 
 def uri_source(uri: str) -> dict:
@@ -87,8 +197,9 @@ def text(content: list[dict]) -> str:
 
 
 def arguments(value: Any) -> dict:
+    """Read an argument object; the public translation boundary captures it."""
     if isinstance(value, dict):
-        return deepcopy(value)
+        return value
     try:
         parsed = json.loads(value)
     except (ValueError, TypeError) as exc:
@@ -156,7 +267,12 @@ def match_all(values, predicate) -> bool:
 
 
 def select(value: dict, *fields: str) -> dict:
-    return {key: deepcopy(value[key]) for key in fields if key in value}
+    """Borrow recognized values while building a fresh protocol structure.
+
+    Message/tool exits capture the translated result. Stream hooks capture
+    borrowed mutable leaves when constructing their independent events.
+    """
+    return {key: child for key in fields if (child := value.get(key, _MISSING)) is not _MISSING}
 
 
 def select_present(value: dict, *fields: str) -> dict:
@@ -189,9 +305,9 @@ def project_block(
         return {"type": "text", "text": block.get(text_fields[kind], "")}
     if kind not in fields:
         return unsupported(block)
-    value = select(block, *fields[kind])
-    if "source" in value:
-        value["source"] = select(value["source"], "type", "url", "media_type", "data", "file_id")
+    value = select(block, *(key for key in fields[kind] if key != "source"))
+    if "source" in fields[kind] and "source" in block:
+        value["source"] = select(block["source"], "type", "url", "media_type", "data", "file_id")
     return value
 
 
@@ -226,5 +342,5 @@ def decode_functions(tools, wrap) -> list[dict]:
             raise UnsupportedCapabilityError(
                 "intermediate tool requires recognized function definitions"
             )
-        result.extend(wrap(deepcopy(functions)))
+        result.extend(wrap(functions))
     return result

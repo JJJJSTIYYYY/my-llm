@@ -16,7 +16,6 @@ from my_llm.codec.shared.conversion import (
     select_present,
     source_protocol,
 )
-from my_llm.codec.shared.options import PreparedOptions, apply_max_tokens
 from my_llm.codec.shared.stream import counts, events
 from my_llm.exceptions import ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
@@ -36,18 +35,7 @@ class AnthropicDecoder(BaseDecoder):
     __slots__ = ()
     protocol = PROTOCOL
 
-    def request_parameters(
-        self, profile: ResolvedProfile, options: PreparedOptions
-    ) -> dict[str, Any]:
-        tokens, headers, effort = options.tokens, options.headers, options.effort
-        body = deepcopy(options.body)
-        request = dict(body)
-        if headers:
-            request["extra_headers"] = deepcopy(headers)
-        if effort:
-            self._apply_reasoning(request, body, profile, effort)
-        apply_max_tokens(request, profile, tokens)
-        return request
+    body_overlay = "extra_body"
 
     def assemble_request(
         self,
@@ -55,10 +43,10 @@ class AnthropicDecoder(BaseDecoder):
         tools: list | None,
         profile: ResolvedProfile,
         *,
-        options: PreparedOptions,
+        request: dict,
         **parameters: Any,
     ) -> dict:
-        result = self.request_parameters(profile, options)
+        result = request
         system = [m for m in messages if m.get("role") in ("system", "developer")]
         history = [m for m in messages if m.get("role") not in ("system", "developer")]
         result.update(model=profile.model, stream=True, messages=history)
@@ -75,20 +63,6 @@ class AnthropicDecoder(BaseDecoder):
         if tools is not None:
             result["tools"] = tools
         return result
-
-    def _apply_reasoning(
-        self,
-        request: dict[str, Any],
-        body: dict[str, Any],
-        profile: ResolvedProfile,
-        effort: str,
-    ) -> None:
-        thinking = body.get("thinking", {"type": "enabled", "budget_tokens": 1024})
-        if thinking.get("type") == "enabled" and "budget_tokens" not in thinking:
-            thinking = {**thinking, "budget_tokens": 1024}
-        request["thinking"] = thinking
-        if profile.get("supports_reasoning_effort", False):
-            request["output_config"] = {**body.get("output_config", {}), "effort": effort}
 
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
@@ -113,6 +87,15 @@ class AnthropicDecoder(BaseDecoder):
             lambda functions: [
                 {
                     **select_present(f, "name", "description", "strict"),
+                    **(
+                        {
+                            "cache_control": None
+                            if f["cache_control"] is None
+                            else select(f["cache_control"], "type", "ttl")
+                        }
+                        if "cache_control" in f
+                        else {}
+                    ),
                     "input_schema": f.get("parameters") or {"type": "object"},
                 }
                 for f in functions
@@ -163,13 +146,12 @@ class AnthropicDecoder(BaseDecoder):
                     continue
                 if field == "thinking" and parameters.get("source_protocol") != PROTOCOL:
                     field = "text"
-                result.append(
-                    {
-                        "type": "content_block_delta",
-                        "index": index,
-                        "delta": {"type": f"{field}_delta", field: event["value"]},
-                    }
-                )
+                value = {
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": {"type": f"{field}_delta", field: deepcopy(event["value"])},
+                }
+                result.append(value)
             elif kind == "block_annotation":
                 if event["field"] == "citations" and parameters.get("source_protocol") == PROTOCOL:
                     result.append(
@@ -226,7 +208,7 @@ class AnthropicDecoder(BaseDecoder):
                         {
                             "type": "content_block_start",
                             "index": index,
-                            "content_block": native_block(block),
+                            "content_block": deepcopy(native_block(block)),
                         },
                         {"type": "content_block_stop", "index": index},
                     ]

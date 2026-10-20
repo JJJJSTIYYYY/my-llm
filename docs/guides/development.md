@@ -23,7 +23,7 @@
   实例通过异步上下文或 aclose 关闭客户端；响应流按请求清理，见[生命周期设计](../design/client-lifecycle.md)。
 - __init__.py 只保留说明、导入与 __all__，不放业务代码。
 
-新增模块应以职责命名；避免重新引入 common.py 或 utils 作为未分类代码的容器。
+新增模块应以职责命名；同协议双向共用辅助放在其 utils/ 中并按内容职责命名。
 新增协议依据[接入协议指南](adding-protocol.md)实现四个基类的契约并调用 MyCodec.register(codec)。
 Protocol 使用 str，新增协议不修改公共入口、枚举、默认值表或公共编排。
 Decoder._messages / _tools 与公开 messages / tools 均返回普通 list，不添加恢复分组。

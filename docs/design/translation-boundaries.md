@@ -32,15 +32,16 @@ SDK 模型的 `extra="allow"` 也不构成未知字段的通用透传入口。
 
 ## 兼容配置
 
-Profile 提供明确的兼容入口：请求参数绑定、extra_body、extra_headers、内容与思考增量路径、
+Profile 提供明确的兼容入口：参数路径和缺失默认值、extra_body、extra_headers、内容与思考增量路径、
 思考内容回放及 token 参数路径等。配置每次按当前请求生效，不由首条输入的形状决定。
 
-这些入口各有作用范围。例如 content_path / reasoning_content_path 读取配置的返回字段，
+这些入口各有作用范围。例如 `content` / `reasoning_content` 的 encode 参数读取配置的返回字段，
 不会把任意历史消息字段加入放行范围；Chat / Responses 的 extra_body 通过 SDK 的扩展请求体
 机制发送，内部键不套用消息字段过滤。其他协议仍遵循各自 SDK 支持的参数接口。
-现有 Profile 不能表达的新兼容能力，应在明确的配置和协议实现中添加，不能依靠未知字段透传。
+新的兼容参数通过继承 Profile 声明 `Parameter[T]`，将路径、缺失默认值和阶段保存在一起；
+新的控制能力通过 `Config[T]` 声明并由协议实现消费，不能依靠未知字段透传。
 
-具体字段和落点见[配置指南](../reference/configuration.md#sdk-参数与参数内部的协议字段)。
+具体字段和落点见[配置指南](../reference/configuration.md#sdk-参数与协议字段)。
 
 ## 签名、密文与工具身份
 

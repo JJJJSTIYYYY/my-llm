@@ -20,6 +20,10 @@
 
 ## 审计与验证记录
 
+- [当前性能回退定位与修复](audits/performance-regression-2026-10-20.md)：删除前提交、本轮修复前后对照、实际冗余原因与原始样本。
+- [Profile 重构后的性能复测](audits/performance-retest-2026-10-20.md)：此前清理的完整矩阵与原始样本；两份源码均已删除未知字段保留。
+- [当前执行路径与抽象契约审计](audits/request-path-audit-2026-10-20.md)：共同调用链、必要差异、冗余清理和新增协议约束。
+
 - [历史性能复测](audits/performance-retest-2026-10-19.md)：当时的五协议矩阵、同进程对照及 GC 耗时观察。
 - [历史仓库清理与架构复核](audits/architecture-audit-2026-10-18.md)：当时的约束、清理范围和验证依据。
 - [最初重构需求对照](audits/refactor-requirements-2026-10-17.md)：历史逐项核对与后续设计调整。

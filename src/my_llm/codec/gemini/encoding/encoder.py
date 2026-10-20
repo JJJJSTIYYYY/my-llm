@@ -1,21 +1,25 @@
 """gemini: native input to intermediate."""
 
+from copy import deepcopy
 from typing import Any
 
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.gemini.encoding.content import encode_part, json_schema
 from my_llm.codec.shared.conversion import (
+    _MISSING,
     allocate_call_id,
     associate_tool_result,
     encode_functions,
     mapping_list,
     select,
 )
-from my_llm.codec.shared.stream import encode_batch, record
+from my_llm.codec.shared.stream import encode_batch, metadata, record
 from my_llm.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
+from my_llm.profile.types import Omit
 
 PROTOCOL = "gemini"
+TEXT_PATH = "$.candidates[0].content.parts[0].text"
 
 
 class GeminiEncoder(BaseEncoder):
@@ -124,24 +128,47 @@ class GeminiEncoder(BaseEncoder):
                     "Gemini blocked the prompt", details=event["prompt_feedback"]
                 )
             ops = [
-                {
-                    "type": "metadata",
-                    "id": event.get("response_id"),
-                    "model": event.get("model_version"),
-                }
+                metadata(
+                    {
+                        target: event[native]
+                        for native, target in (
+                            ("response_id", "response_id"),
+                            ("model_version", "model"),
+                        )
+                        if isinstance(event.get(native), (str, int, float))
+                    }
+                )
             ]
             if event.get("usage_metadata") is not None and (
                 profile is None or profile.get("usage_mode") != "none"
             ):
                 ops.append({"type": "usage", "usage": event["usage_metadata"]})
+            seen_text = set()
+            has_parts = False
             for candidate in event.get("candidates", []):
                 if candidate.get("index", 0) not in (None, 0):
                     raise ConfigurationError("only one generated candidate is supported")
                 # GenerateContent Parts have no stable cross-chunk block address.
                 # Append each part explicitly, including empty signed text parts.
-                for part in candidate.get("content", {}).get("parts", []):
+                native_parts = candidate.get("content", {}).get("parts", [])
+                has_parts = has_parts or bool(native_parts)
+                for part in native_parts:
                     block = encode_part(part, "")
                     if block is not None:
+                        # A standard text path uses each native part's thought flag.
+                        # An overridden path addresses one exact SDK-root parameter.
+                        if block["type"] in ("text", "thinking"):
+                            name = "reasoning_content" if block["type"] == "thinking" else "content"
+                            seen_text.add(name)
+                            if profile is not None:
+                                parameter = profile.parameter(name, "encode")
+                                if isinstance(profile.parameters.get(name), Omit) or (
+                                    parameter is not None and parameter.path != TEXT_PATH
+                                ):
+                                    continue
+                        for key in ("input", "content", "part_metadata"):
+                            if key in block:
+                                block[key] = deepcopy(block[key])
                         ops.append({"type": "block_append", "block": block})
                 reason = candidate.get("finish_reason")
                 if reason not in (None, "FINISH_REASON_UNSPECIFIED"):
@@ -154,6 +181,35 @@ class GeminiEncoder(BaseEncoder):
                             "allow_tail": ["metadata", "usage"],
                         }
                     )
+            if profile is not None:
+                for name, kind, field in (
+                    ("content", "text", "text"),
+                    ("reasoning_content", "thinking", "thinking"),
+                ):
+                    parameter = profile.parameter(name, "encode")
+                    if parameter is None:
+                        continue
+                    if parameter.path != TEXT_PATH:
+                        value = self.parameter_value(
+                            event, profile, name, TEXT_PATH, _MISSING, use_default=has_parts
+                        )
+                    elif name not in seen_text and has_parts:
+                        value = parameter.default_value
+                    else:
+                        continue
+                    if value is not _MISSING and not isinstance(value, Omit):
+                        # Put configured text before a terminal finish operation.
+                        position = next(
+                            (index for index, op in enumerate(ops) if op["type"] == "finish"),
+                            len(ops),
+                        )
+                        ops.insert(
+                            position,
+                            {
+                                "type": "block_append",
+                                "block": {"type": kind, field: deepcopy(value)},
+                            },
+                        )
             result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
         return result
 

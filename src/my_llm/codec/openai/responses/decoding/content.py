@@ -20,7 +20,6 @@ def render_content(content: list[dict], *, role: str = "user") -> Any:
         kind = block.get("type")
         if kind in ("thinking", "redacted_thinking", "tool_use", "tool_result"):
             continue
-        value = select(block, "type", "text", "refusal", "annotations", "logprobs")
         if kind == "text":
             value = {
                 "type": "output_text" if role == "assistant" else "input_text",

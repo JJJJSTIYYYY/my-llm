@@ -84,7 +84,12 @@ uv run --no-sync pytest -q tests/performance
 [transport.py](../../tests/performance/transport.py)、[runner.py](../../tests/performance/runner.py)
 和[测试](../../tests/performance/test_generate.py)。
 
-内部复制、Schema 计划与终态复用的实现及同负载对照结果，见
+删除未知字段保留前的提交、本轮修复前后对照及原始样本，见
+[2026-10-20 性能回退定位](../audits/performance-regression-2026-10-20.md)。
+此前 Profile 重构后的测量单独保留在[同日早先复测](../audits/performance-retest-2026-10-20.md)。
+五协议调用链、必要差异和抽象契约复核见[当前执行路径审计](../audits/request-path-audit-2026-10-20.md)。
+
+内部复制、Schema 计划与终态复用的历史实现及同负载对照结果，见
 [优化记录](../audits/performance-optimization-2026-10-19.md)。
 历史 extra="allow" 实现阶段的完整矩阵及同进程随机交替对照，见
 [性能复测](../audits/performance-retest-2026-10-19.md)。该记录不代表当前支持未声明协议字段透传。

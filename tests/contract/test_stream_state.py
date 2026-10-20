@@ -10,10 +10,43 @@ from copy import deepcopy
 import pytest
 
 from my_llm import IncompleteStreamError, MessageValidationError, MyCodec
+from my_llm.codec.shared.stream import metadata
 from my_llm.stream._state import StreamState
 from tests.helpers.protocols import PROTOCOLS, chat_event, response_completed, stream_events
 from tests.helpers.sdk import EVENT_TYPES, assert_native
 from tests.helpers.streaming import render
+
+
+def test_metadata_paths_merge_projected_values_without_protocol_field_knowledge():
+    state = StreamState("demo")
+    payload = {"label": None, "application": {"values": [1]}}
+    state.feed([metadata(payload, path=("session", "first"))])
+    original_session = state.metadata["session"]
+    original_first = original_session["first"]
+    original_application = original_first["application"]
+    payload["application"]["values"].append(2)
+    assert original_first == {"label": None, "application": {"values": [1]}}
+
+    state.feed([metadata({"phase": "complete"}, path=("session", "first"))])
+    current = state.metadata["session"]["first"]
+    assert state.metadata["session"] is not original_session
+    assert current is not original_first
+    assert current == {**original_first, "phase": "complete"}
+    assert current["application"] is original_application
+    assert "phase" not in original_first
+
+    # An explicitly supplied complete value replaces the previous subtree.
+    state.feed([metadata({"session": {"replacement": None}})])
+    assert state.metadata["session"] == {"replacement": None}
+    assert state.metadata["model"] == "demo"
+
+
+def test_metadata_operation_survives_json_round_trip_and_captures_each_update():
+    state = StreamState("demo")
+    operation = json.loads(json.dumps(metadata({"items": [{"value": 1}]}, path=("session",))))
+    state.feed([operation])
+    operation["values"]["items"][0]["value"] = 2
+    assert state.metadata["session"] == {"items": [{"value": 1}]}
 
 
 def validate_events(protocol, events):

@@ -1,6 +1,7 @@
 import pytest
 
 from my_llm import MessageValidationError, ModelProfile, MyLLM, ProviderProfile
+from tests.helpers.profiles import config
 from tests.helpers.protocols import chat_event
 from tests.helpers.transport import FakeClient
 
@@ -53,7 +54,10 @@ async def test_stdio_protocol_matches_tools_before_ambiguous_messages(monkeypatc
         lambda **kwargs: client,
     )
     llm = MyLLM(
-        provider=ProviderProfile(), model=ModelProfile(model="demo", supports_function_calling=True)
+        provider=ProviderProfile(),
+        model=ModelProfile(
+            model="demo", supports_function_calling=config("supports_function_calling", True)
+        ),
     )
     result = await llm.generate(
         messages=[{"role": "user", "content": "hi"}],

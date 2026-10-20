@@ -81,13 +81,15 @@ def assert_no_sdk_clients(tree, path):
 
 def native_owner(path):
     for package, owner in OWNERS.items():
-        if (
-            path.is_relative_to(package / "encoding")
-            or path.is_relative_to(package / "decoding")
-            or path == package / "transport.py"
-        ):
+        if path.is_relative_to(package):
             return owner
     return None
+
+
+def test_native_owner_includes_protocol_helpers_and_facade():
+    for package, owner in OWNERS.items():
+        for relative in ("codec.py", "transport.py", "utils/content.py", "utils/nested/fields.py"):
+            assert native_owner(package / relative) == owner
 
 
 def test_native_owners_follow_registered_codec_modules():
@@ -152,7 +154,7 @@ def test_native_implementations_do_not_depend_on_other_native_implementations():
 def test_encoders_and_decoders_do_not_depend_on_the_opposite_direction():
     for path in (ROOT / "codec").rglob("*.py"):
         owner = native_owner(path)
-        if owner is None or path.name == "transport.py":
+        if owner is None or not {"encoding", "decoding"}.intersection(path.parts):
             continue
         direction = "encoding" if "encoding" in path.parts else "decoding"
         opposite = "decoding" if direction == "encoding" else "encoding"

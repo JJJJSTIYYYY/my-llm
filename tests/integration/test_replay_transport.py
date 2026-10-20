@@ -7,6 +7,7 @@ import pytest
 from anthropic import AsyncAnthropic
 
 from my_llm import ModelProfile, MyLLM, ProviderProfile
+from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import stream_events
 from tests.helpers.schema import validate_request
 from tests.helpers.transport import sse
@@ -84,8 +85,12 @@ async def test_signed_tool_round_trip_uses_only_supported_wire_fields(monkeypatc
 
     monkeypatch.setattr("my_llm.codec.anthropic.transport.AsyncAnthropic", factory)
     async with MyLLM(
-        provider=ProviderProfile(protocol="anthropic", api_key="local-test"),
-        model=ModelProfile(model="demo", max_tokens=4096, supports_function_calling=True),
+        provider=ProviderProfile(protocol="anthropic", api_key=config("api_key", "local-test")),
+        model=ModelProfile(
+            model="demo",
+            max_tokens=parameter("max_tokens", 4096, protocol="anthropic"),
+            supports_function_calling=config("supports_function_calling", True),
+        ),
         stdio_protocol="anthropic",
     ) as llm:
         history = [{"role": "user", "content": "weather?"}]

@@ -79,6 +79,113 @@ def test_union_uses_highest_declared_field_score_and_first_candidate_on_ties():
     assert transport.supported(value, Right | Left) == {"common": "a", "right": "c"}
 
 
+@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+def test_literal_pruning_keeps_overlapping_and_unrestricted_union_candidates(operation):
+    class Broad(TypedDict):
+        type: Literal["text", "image"]
+        common: str
+
+    class Narrow(TypedDict):
+        type: Literal["text"]
+        text: str
+
+    value = {"type": "text", "common": "shared", "text": "answer"}
+    assert operation(value, Broad | Narrow) == {"type": "text", "common": "shared"}
+    assert operation(value, Narrow | Broad) == {"type": "text", "text": "answer"}
+    # Matching a literal cannot bypass a stronger branch without that field.
+    value = {"type": "text", "common": "a", "left": "b"}
+    assert operation(value, Narrow | Left) == {"common": "a", "left": "b"}
+    assert operation({"type": "vendor", "common": "a", "left": "b"}, Narrow | Left) == {
+        "common": "a",
+        "left": "b",
+    }
+    # Missing optional discriminators keep the ordinary field-score behavior.
+    assert operation({"text": "answer"}, Broad | Narrow) == {"text": "answer"}
+
+
+@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+def test_literal_pruning_combines_declared_discriminators_without_reading_unknowns(operation):
+    class User(TypedDict):
+        type: Literal["message"]
+        role: Literal["user"]
+        text: str
+
+    class Assistant(TypedDict):
+        type: Literal["message"]
+        role: Literal["assistant"]
+        text: str
+
+    class AddressedDict(dict):
+        def __iter__(self):
+            pytest.fail("union routing must not enumerate input fields")
+
+        def get(self, key, default=None):
+            assert key in ("type", "role", "text")
+            return super().get(key, default)
+
+    value = AddressedDict(type="message", role="assistant", text="answer", vendor=object())
+    assert operation(value, User | Assistant) == {
+        "type": "message",
+        "role": "assistant",
+        "text": "answer",
+    }
+    with pytest.raises(UnsupportedCapabilityError, match="target SDK"):
+        operation({"type": "message", "role": "vendor", "text": "answer"}, User | Assistant)
+
+
+@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+def test_explicit_union_discriminator_does_not_score_every_sdk_variant(operation):
+    variants = [
+        TypedDict(f"Variant{index}", {"type": Literal[f"variant_{index}"], "text": str})
+        for index in range(32)
+    ]
+    schema = variants[0]
+    for variant in variants[1:]:
+        schema |= variant
+
+    class CountedDict(dict):
+        reads = 0
+
+        def get(self, key, default=None):
+            if key == "type":
+                self.reads += 1
+            return super().get(key, default)
+
+    value = CountedDict(type="variant_31", text="answer")
+    assert operation(value, schema) == value
+    assert value.reads <= 3, "an explicit discriminator must prune unrelated variants"
+
+
+@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+def test_literal_routing_keeps_sdk_model_defaults_none_and_recursive_content(operation):
+    class Leaf(BaseModel):
+        type: Literal["leaf"] = "leaf"
+        text: str | None = None
+
+    class Branch(BaseModel):
+        type: Literal["branch"] = "branch"
+        children: list["Leaf | Branch"] = []
+
+    model = Branch(children=[Leaf(text=None), Branch(children=[Leaf()])])
+    assert operation(model, Leaf | Branch) == {
+        "type": "branch",
+        "children": [
+            {"type": "leaf", "text": None},
+            {"type": "branch", "children": [{"type": "leaf"}]},
+        ],
+    }
+    assert operation(
+        {"type": "branch", "children": [{"type": "leaf", "text": None, "vendor": True}]},
+        Leaf | Branch,
+    ) == {"type": "branch", "children": [{"type": "leaf", "text": None}]}
+
+
+@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+def test_unhashable_discriminator_values_keep_union_rejection(operation):
+    with pytest.raises(UnsupportedCapabilityError, match="target SDK"):
+        operation({"type": [], "text": "answer"}, Text | Image)
+
+
 def test_cache_distinguishes_nested_union_order_and_reuses_equivalent_generics():
     value = [{"common": "a", "left": "b", "right": "c"}]
     assert transport.supported(value, list[Left | Right]) == [{"common": "a", "left": "b"}]
@@ -358,3 +465,104 @@ def test_sdk_model_instances_cannot_bypass_nested_structure_filtering(operation)
 
     assert actual == {"content": [{"text": "known", "payload": application}]}
     assert model.model_dump(mode="json", exclude_none=True) == before
+
+
+@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+def test_protocol_projection_never_enumerates_unknown_dictionary_fields(operation):
+    class AddressedDict(dict):
+        def __iter__(self):
+            pytest.fail("protocol filtering must address declared fields")
+
+        def items(self):
+            pytest.fail("protocol filtering must not enumerate input fields")
+
+        def keys(self):
+            pytest.fail("union selection must not enumerate input fields")
+
+    class Unreadable:
+        def __deepcopy__(self, memo):
+            pytest.fail("unknown values must not be read or copied")
+
+    value = AddressedDict(
+        content=[AddressedDict(type="image", url="image.png", vendor=Unreadable())],
+        vendor=Unreadable(),
+    )
+    assert operation(value, Envelope) == {"content": [{"type": "image", "url": "image.png"}]}
+
+
+@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+def test_sdk_models_are_addressed_without_dumping_extensions_and_keep_explicit_none(operation):
+    class Message(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        content: str | None = None
+        metadata: dict[str, Any] | None = None
+
+        def model_dump(self, *args, **kwargs):
+            pytest.fail("protocol projection must not serialize unknown SDK fields")
+
+    message = Message(content=None, vendor=object())
+    assert operation(message, Message) == {"content": None}
+
+
+def test_delegated_paths_isolate_plan_caches_and_same_type_at_different_positions():
+    class Payload(TypedDict):
+        application: dict[str, Any]
+
+    class Pair(TypedDict):
+        first: Payload
+        second: Payload
+
+    first_path = (("first", "application"),)
+    second_path = (("second", "application"),)
+    plan = transport._plan(Pair, first_path)
+    assert transport._plan(Pair, first_path) is plan
+    assert transport._plan(Pair, second_path) is not plan
+    assert transport._plan(Pair) is not plan
+    value = {
+        "first": {"application": {"nested": [1]}},
+        "second": {"application": {"nested": [2]}},
+    }
+
+    first = transport.supported(value, Pair, delegated_paths=first_path)
+    assert first["first"] is not value["first"]
+    assert first["first"]["application"] is value["first"]["application"]
+    assert first["second"]["application"] is not value["second"]["application"]
+    second = transport.supported(value, Pair, delegated_paths=second_path)
+    assert second["first"]["application"] is not value["first"]["application"]
+    assert second["second"]["application"] is value["second"]["application"]
+    ordinary = transport.supported(value, Pair)
+    ordinary["first"]["application"]["nested"].append(3)
+    ordinary["second"]["application"]["nested"].append(4)
+    assert value["first"]["application"]["nested"] == [1]
+    assert value["second"]["application"]["nested"] == [2]
+
+
+def test_delegated_paths_are_consumed_at_the_correct_recursive_position():
+    class Node(BaseModel):
+        application: dict[str, Any]
+        child: "Node | None" = None
+
+    value = {
+        "application": {"nested": [1]},
+        "child": {
+            "application": {"nested": [2]},
+            "child": {"application": {"nested": [3]}},
+        },
+    }
+    actual = transport.supported(value, Node, delegated_paths=(("child", "application"),))
+
+    assert actual["application"] is not value["application"]
+    assert actual["child"] is not value["child"]
+    assert actual["child"]["application"] is value["child"]["application"]
+    assert actual["child"]["child"]["application"] is not value["child"]["child"]["application"]
+    ordinary = transport.supported(value, Node)
+    assert ordinary["child"]["application"] is not value["child"]["application"]
+
+
+def test_whole_delegated_transport_leaf_needs_no_filter_plan(monkeypatch):
+    def unexpected(*args, **kwargs):
+        pytest.fail("a whole delegated leaf must reach its owner without a second plan")
+
+    monkeypatch.setattr(transport, "_plan", unexpected)
+    value = [{"type": "text", "text": "answer"}]
+    assert transport.supported(value, list[Text], delegated_paths=((),)) is value

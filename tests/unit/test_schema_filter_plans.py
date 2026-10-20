@@ -214,6 +214,51 @@ def test_annotations_with_unhashable_metadata_remain_supported():
     assert transport._plan(schema) is transport._plan(schema)
 
 
+def test_unhashable_annotations_share_validation_and_path_cache_rules():
+    schema = Annotated[Text, {"description": ["independent protocol block"]}]
+    value = {"type": "text", "text": "hello"}
+    validator = transport.adapter(schema)
+    assert validator is transport.adapter(schema)
+    assert validator.validate_python(value) == value
+    assert transport.declared_path(schema, ("text",))
+    assert not transport.declared_path(schema, ("vendor",))
+
+
+def test_validator_cache_keeps_union_declaration_order():
+    first = transport.adapter(Left | Right)
+    second = transport.adapter(Right | Left)
+    assert first is not second
+    assert transport.adapter(Left | Right) is first
+
+
+def test_distinct_protocol_types_with_identical_names_do_not_share_rules():
+    first = TypedDict("NativeMessage", {"actor": str, "utterance": str})
+    second = TypedDict("NativeMessage", {"sender": str, "payload": str})
+    value = {"actor": "human", "utterance": "first", "sender": "bot", "payload": "second"}
+    assert transport.supported(value, first) == {"actor": "human", "utterance": "first"}
+    assert transport.supported(value, second) == {"sender": "bot", "payload": "second"}
+    assert transport._plan(first) is not transport._plan(second)
+    assert transport.adapter(first) is not transport.adapter(second)
+
+
+def test_dynamic_protocol_types_evict_cached_rules_without_changing_results():
+    caches = (transport.fields, transport._cached_adapter, transport._compiled_plan)
+    assert all(cache.cache_info().maxsize == 512 for cache in caches)
+    first = TypedDict("FirstDynamicProtocol", {"body": str})
+    original_plan = transport._plan(first)
+    original_adapter = transport.adapter(first)
+    for index in range(513):
+        schema = TypedDict(f"DynamicProtocol{index}", {"body": str})
+        assert transport.supported({"body": "hello", "vendor": True}, schema) == {"body": "hello"}
+        transport.adapter(schema)
+    assert all(cache.cache_info().currsize <= 512 for cache in caches)
+    assert transport._plan(first) is not original_plan
+    assert transport.adapter(first) is not original_adapter
+    assert transport.supported({"body": "new request", "vendor": True}, first) == {
+        "body": "new request"
+    }
+
+
 @pytest.mark.parametrize("schema", [list[Text], tuple[Text, ...], Iterable[Text]])
 def test_collection_plans_filter_list_items(schema):
     value = [{"type": "text", "text": "hello", "vendor": True}]

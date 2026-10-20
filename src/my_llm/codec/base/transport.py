@@ -10,10 +10,10 @@ from pydantic import ValidationError
 from my_llm.codec.shared.options import PreparedOptions, resolve_options, set_path
 from my_llm.codec.shared.transport import (
     _MISSING,
+    _plan,
     adapter,
     declared_path,
     path_item,
-    projected,
     supported,
     validate_history,
 )
@@ -80,8 +80,9 @@ class BaseTransport(ABC):
             if not isinstance(values, list):
                 raise TypeError("protocol values must be a list")
             validator = adapter(schema)
+            project = _plan(schema).project if values and not filtered else None
             for value in values:
-                parsed = validator.validate_python(value if filtered else projected(value, schema))
+                parsed = validator.validate_python(value if filtered else project(value))
                 # SDK TypedDicts include lazy Iterable validators. Serializing
                 # forces nested validation rather than accepting an unchecked iterator.
                 validator.dump_json(parsed, warnings="error")
@@ -209,10 +210,12 @@ class BaseTransport(ABC):
         return request
 
     def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
-        return [supported(message, self.message_type) for message in messages]
+        apply = _plan(self.message_type).apply
+        return [apply(message) for message in messages]
 
     def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
-        return [supported(tool, self.tool_type) for tool in tools]
+        apply = _plan(self.tool_type).apply
+        return [apply(tool) for tool in tools]
 
     @abstractmethod
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:

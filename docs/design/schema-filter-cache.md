@@ -37,7 +37,7 @@
 | 缓存函数 | 键 | 返回并保留的值 |
 | --- | --- | --- |
 | `fields(schema)` | Python 类型定义 | 字段名到字段注解的字典。Pydantic 类型读取 `model_fields`；TypedDict 等类型读取 `get_type_hints`。 |
-| `adapter(schema)` | Python 类型定义 | 对应的 Pydantic `TypeAdapter`，用于实际验证和序列化检查。 |
+| `_cached_adapter(key)`，由 `adapter(schema)` 调用 | `_SchemaKey` 对象 | 对应的 Pydantic `TypeAdapter`，用于实际验证和序列化检查。 |
 | `_compiled_plan(key, delegated_paths)` | `_SchemaKey` 对象与不可变路径元组 | 根 `_FilterPlan` 对象，由它引用整个子计划图。 |
 
 此次优化的主要新增部分是第三项。仅缓存字段名和 TypeAdapter，仍会让每个请求反复解析
@@ -69,7 +69,7 @@ def _plan(schema, delegated_paths=()):
 键不包含协议请求内容、消息字段集合、model 名称、ProviderProfile 或任何响应值。
 同一类型可以处理许多字段形态不同的请求。
 
-### 为什么没有直接使用 `@cache(schema)`
+### 为什么不直接以 schema 的普通相等比较作为缓存键
 
 过滤器处理 Union 时，同分候选按声明顺序选择。Python 的 Union 相等比较可能忽略候选顺序：
 
@@ -84,6 +84,8 @@ Right | Left
 
 等价的泛型注解仍可复用计划。`Annotated` 若携带不可哈希的 metadata，则按注解对象身份缓存。
 该 metadata 属于类型声明，不是传入 `supported` / `projected` 的请求值。
+验证器和路径声明缓存同样使用 `_SchemaKey`，合法的不可哈希 metadata 不再只在过滤入口可用、
+却在实际输入验证时失败。验证器也保留 Union 的声明顺序，避免不同顺序共用错误的验证器。
 
 ## 4. 缓存值具体保存什么
 
@@ -324,6 +326,8 @@ plan.project(second)
 | 7 | 每个事件经过 Encoder、StreamState、Decoder，再转换完整结果。 | 本计划缓存不替代返回路径，也不缓存响应结果。 |
 
 第一次请求也可能在步骤2编译、步骤5就命中缓存；“冷请求”不代表它内部所有计划查询都未命中。
+BaseTransport 对每批消息和工具只解析一次计划并复用其 apply / project 函数，
+不会为同一批中的每条数据重复创建缓存键。每条消息仍独立过滤、验证和执行必要的所有权复制。
 
 源码入口见 [generate](../../src/my_llm/invoke.py)、
 [输入验证与请求边界](../../src/my_llm/codec/base/transport.py)和
@@ -333,12 +337,20 @@ plan.project(second)
 
 ### 进程内共享和内存代价
 
-缓存使用 `functools.cache`，没有容量上限、TTL 或自动淘汰，退出进程后释放。
-同一进程内已编译的规则由不同实例共享；不同进程各有自己的缓存。
-内存增长取决于不同类型声明及其计划数量，而不是处理过多少条消息。
+字段、验证器、SDK 参数注解、根过滤计划、路径声明这五类进程级缓存均使用
+`functools.lru_cache(maxsize=512)`。每类最多保留 512 个最近使用的入口，超出时淘汰最久未使用项；
+被淘汰的规则下次使用时重新编译，不改变输出。没有 TTL，同一进程内不同实例共享，不同进程各自缓存。
+限制的是根入口数，不是所有子节点数或总字节数；一个根计划仍可能引用较大的递归类型图。
+缓存增长取决于类型声明及其计划，而不是处理过多少条消息。
+
+新增协议不按协议名加入缓存白名单。其 Transport 声明受支持的 TypedDict / Pydantic 类型及
+标准容器、Union 等注解后，会自动复用同一套缓存；同名而不同对象的类型不会串用规则。
+新协议仍须提供自己的 Encoder / Decoder / Transport，不会从首条请求推断协议。
+建议稳定复用声明对象，避免每次请求动态构造新类或新的不可哈希 Annotated 对象。
 
 缓存强引用键与计划，计划又引用类型和子计划。因此，若运行中持续创建新的动态类型，
-这些类型也可能随缓存保留。常规五协议使用稳定的 SDK 类型。
+这些类型在其入口被淘汰前也可能随缓存保留。注册的协议和其他外部对象仍可持有类型引用，
+因此 LRU 淘汰不承诺立即释放整个类型。普通新协议与五个内置协议使用相同策略。
 
 ### 兼容服务的输入结构变化
 
@@ -358,8 +370,8 @@ plan.project(second)
 过滤计划执行时只读类型规则，请求值保存在每次函数调用的局部变量中。
 
 编译过程没有 await，同一事件循环中不会在编译中途切换请求。
-`functools.cache` 保持多线程缓存表的一致性，但并发首次未命中时可能重复执行编译，
-不保证所有线程合计只编译一次。这是 [Python cache 的既有语义](https://docs.python.org/3.12/library/functools.html#functools.cache)。
+`functools.lru_cache` 保持多线程缓存表的一致性，但并发首次未命中时可能重复执行编译，
+不保证所有线程合计只编译一次。这是 [Python LRU 缓存的既有语义](https://docs.python.org/3.12/library/functools.html#functools.lru_cache)。
 
 ### `_ModelView` 的转换局部缓存
 
@@ -442,8 +454,8 @@ print("root callbacks:", plan.apply.__name__, plan.project.__name__, plan.score.
 在单独的 Python 进程中运行时，关键输出如下：
 
 ```text
-after first: CacheInfo(hits=0, misses=1, maxsize=None, currsize=1)
-after second: CacheInfo(hits=1, misses=1, maxsize=None, currsize=1)
+after first: CacheInfo(hits=0, misses=1, maxsize=512, currsize=1)
+after second: CacheInfo(hits=1, misses=1, maxsize=512, currsize=1)
 same plan: True
 root callbacks: structured_copy structured_projection structured_score
 ```

@@ -3,7 +3,7 @@
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from copy import deepcopy
-from functools import cache
+from functools import lru_cache
 from inspect import Parameter, signature
 from types import UnionType
 from typing import (
@@ -24,19 +24,23 @@ from my_llm.codec.shared.conversion import dictionary_views
 from my_llm.exceptions import MessageValidationError, UnsupportedCapabilityError
 
 
-@cache
+@lru_cache(maxsize=512)
 def fields(schema):
     if isinstance(schema, type) and issubclass(schema, BaseModel):
         return {name: field.annotation for name, field in schema.model_fields.items()}
     return get_type_hints(schema, include_extras=True)
 
 
-@cache
 def adapter(schema):
-    return TypeAdapter(schema)
+    return _cached_adapter(_SchemaKey(schema))
 
 
-@cache
+@lru_cache(maxsize=512)
+def _cached_adapter(key):
+    return TypeAdapter(key.schema)
+
+
+@lru_cache(maxsize=512)
 def parameter_types(method):
     """Read the public SDK's keyword contract once, independently of payload data."""
     annotations = get_type_hints(method, include_extras=True)
@@ -159,7 +163,7 @@ def _plan(schema, delegated_paths=()):
     return _compiled_plan(_SchemaKey(schema), delegated_paths)
 
 
-@cache
+@lru_cache(maxsize=512)
 def _compiled_plan(key, delegated_paths):
     # SDK models can be recursive. Register each node before its children so
     # recursive annotations refer to the same plan without storing request data.
@@ -346,10 +350,14 @@ def projected(value, schema):
     return _plan(schema).project(value)
 
 
-@cache
 def declared_path(schema, keys):
     """Whether an SDK schema already declares a path, including open JSON leaves."""
-    schema = _unwrap(schema)
+    return _declared_path(_SchemaKey(schema), keys)
+
+
+@lru_cache(maxsize=512)
+def _declared_path(key, keys):
+    schema = _unwrap(key.schema)
     if not keys or schema in (Any, object):
         return True
     origin = get_origin(schema)

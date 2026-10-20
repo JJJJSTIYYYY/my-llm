@@ -3,6 +3,7 @@
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, replace
+from typing import Annotated
 
 import pytest
 from typing_extensions import TypedDict
@@ -236,6 +237,73 @@ def profiles():
             model="independent", supports_function_calling=config("supports_function_calling", True)
         ),
     )
+
+
+async def test_new_protocol_reuses_caches_with_unhashable_annotations(registered, monkeypatch):
+    class Hint(TypedDict):
+        level: int
+
+    class AnnotatedTransport(Transport):
+        __slots__ = ()
+        message_type = Annotated[NativeMessage, {"vendor": "independent"}]
+        request_schema = {
+            **Transport.request_schema,
+            "dialog": Annotated[list[NativeMessage], {"collection": "dialog"}],
+            "hint": Annotated[Hint, {"vendor": "hint"}],
+        }
+
+    @dataclass(frozen=True, kw_only=True)
+    class ExtendedModel(ModelProfile):
+        vendor: Parameter[str] = Parameter(
+            name="Vendor hint", path="$.hint.vendor", default_value="extra", phase="decode"
+        )
+
+    monkeypatch.setattr(Codec, "transport", AnnotatedTransport())
+    provider, _ = profiles()
+    async with MyLLM(
+        provider=provider, model=ExtendedModel(model="independent"), stdio_protocol=PROTOCOL
+    ) as llm:
+        for body in ("first request", "second request"):
+            result = await llm.generate(
+                messages=[{"speaker": "user", "body": body}], reasoning=True
+            )
+            assert result == {"speaker": "assistant", "body": "hello extension"}
+        client = next(iter(llm._clients.values()))
+        assert [request["dialog"][0]["body"] for request in client.requests] == [
+            "first request",
+            "second request",
+        ]
+        assert all(
+            request["hint"] == {"level": 1, "vendor": "extra"} for request in client.requests
+        )
+        assert client.streams_closed == 2
+    assert client.closed
+
+
+def test_new_protocol_queries_filter_plans_once_per_batch(registered, monkeypatch):
+    from my_llm.codec.shared import transport
+
+    calls = []
+    original = transport._SchemaKey.__init__
+
+    def counted(self, schema):
+        calls.append(schema)
+        original(self, schema)
+
+    monkeypatch.setattr(transport._SchemaKey, "__init__", counted)
+    provider, model = profiles()
+    profile = resolve_profiles(provider, model)
+    messages = [{"speaker": "user", "body": str(index), "vendor": True} for index in range(100)]
+    tools = [{"fn": "fn", "schema": {"properties": {}}, "vendor": True} for _ in range(100)]
+    native = Transport()
+    assert native.filter_messages(messages, profile) == [
+        {"speaker": "user", "body": str(index)} for index in range(100)
+    ]
+    filtered_tools = native.filter_tools(tools, profile)
+    assert len(calls) == 2
+    assert len(filtered_tools) == 100
+    filtered_tools[0]["schema"]["changed"] = True
+    assert "changed" not in tools[0]["schema"]
 
 
 def test_builtin_fixture_protocols_cover_all_registered_protocols():

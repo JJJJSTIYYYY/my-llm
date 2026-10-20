@@ -1,0 +1,275 @@
+{
+  "native": [
+    {
+      "protocol": "openai_chat",
+      "stream": false,
+      "before": {
+        "p50_ms": 23.523229,
+        "p95_ms": 37.271542,
+        "samples": 40
+      },
+      "after": {
+        "p50_ms": 23.303312499999997,
+        "p95_ms": 28.553625,
+        "samples": 40
+      },
+      "delta_percent": -0.9348907839140774
+    },
+    {
+      "protocol": "openai_chat",
+      "stream": true,
+      "before": {
+        "p50_ms": 23.8696245,
+        "p95_ms": 28.296,
+        "samples": 40
+      },
+      "after": {
+        "p50_ms": 23.268228999999998,
+        "p95_ms": 26.0525,
+        "samples": 40
+      },
+      "delta_percent": -2.5195013017485945
+    },
+    {
+      "protocol": "openai_responses",
+      "stream": false,
+      "before": {
+        "p50_ms": 60.4589785,
+        "p95_ms": 61.134667,
+        "samples": 40
+      },
+      "after": {
+        "p50_ms": 60.3127085,
+        "p95_ms": 72.648709,
+        "samples": 40
+      },
+      "delta_percent": -0.24193263536531617
+    },
+    {
+      "protocol": "openai_responses",
+      "stream": true,
+      "before": {
+        "p50_ms": 60.217374500000005,
+        "p95_ms": 63.026834,
+        "samples": 40
+      },
+      "after": {
+        "p50_ms": 60.457854499999996,
+        "p95_ms": 70.897291,
+        "samples": 40
+      },
+      "delta_percent": 0.39935318003609943
+    },
+    {
+      "protocol": "anthropic",
+      "stream": false,
+      "before": {
+        "p50_ms": 43.252542000000005,
+        "p95_ms": 50.309666,
+        "samples": 40
+      },
+      "after": {
+        "p50_ms": 43.0900625,
+        "p95_ms": 58.239125,
+        "samples": 40
+      },
+      "delta_percent": -0.3756530656625956
+    },
+    {
+      "protocol": "anthropic",
+      "stream": true,
+      "before": {
+        "p50_ms": 43.4888545,
+        "p95_ms": 46.363375,
+        "samples": 40
+      },
+      "after": {
+        "p50_ms": 43.015583,
+        "p95_ms": 47.268416,
+        "samples": 40
+      },
+      "delta_percent": -1.0882592918146528
+    },
+    {
+      "protocol": "gemini",
+      "stream": false,
+      "before": {
+        "p50_ms": 47.191604,
+        "p95_ms": 86.283208,
+        "samples": 40
+      },
+      "after": {
+        "p50_ms": 47.5838335,
+        "p95_ms": 85.281667,
+        "samples": 40
+      },
+      "delta_percent": 0.831142548153263
+    },
+    {
+      "protocol": "gemini",
+      "stream": true,
+      "before": {
+        "p50_ms": 47.140209,
+        "p95_ms": 86.928375,
+        "samples": 40
+      },
+      "after": {
+        "p50_ms": 48.5264795,
+        "p95_ms": 85.798333,
+        "samples": 40
+      },
+      "delta_percent": 2.9407389772073467
+    },
+    {
+      "protocol": "ollama",
+      "stream": false,
+      "before": {
+        "p50_ms": 16.6372295,
+        "p95_ms": 53.670583,
+        "samples": 40
+      },
+      "after": {
+        "p50_ms": 16.7035625,
+        "p95_ms": 53.597125,
+        "samples": 40
+      },
+      "delta_percent": 0.39870219978632715
+    },
+    {
+      "protocol": "ollama",
+      "stream": true,
+      "before": {
+        "p50_ms": 16.5810835,
+        "p95_ms": 51.406917,
+        "samples": 40
+      },
+      "after": {
+        "p50_ms": 16.666249999999998,
+        "p95_ms": 52.0305,
+        "samples": 40
+      },
+      "delta_percent": 0.5136365183855407
+    }
+  ],
+  "native_median_delta_percent": 0.07838478221050549,
+  "micro": [
+    {
+      "operation": "validate_100_messages",
+      "before_us": 152.7895825,
+      "after_us": 131.894895,
+      "delta_percent": -13.675466061306896,
+      "batch_size": 100,
+      "batch_means_per_source": 18,
+      "calls_per_batch_mean": 200
+    },
+    {
+      "operation": "filter_100_messages",
+      "before_us": 42.3729175,
+      "after_us": 23.2677075,
+      "delta_percent": -45.08825713971666,
+      "batch_size": 100,
+      "batch_means_per_source": 18,
+      "calls_per_batch_mean": 200
+    },
+    {
+      "operation": "filter_100_tools",
+      "before_us": 100.1244775,
+      "after_us": 84.92625000000001,
+      "delta_percent": -15.179332646205312,
+      "batch_size": 100,
+      "batch_means_per_source": 18,
+      "calls_per_batch_mean": 200
+    }
+  ],
+  "before_fingerprint": "150e716252853fcf67244f8d3609bd3189cbf772699e8cf2a1f40940cdad82db",
+  "after_fingerprint": "bbe0aa580d51990f34797055df2093f5c78c170ebb6c0e390763b2f1f8796cf8",
+  "schema_caches_before": {
+    "fields": {
+      "hits": 107,
+      "misses": 380,
+      "maxsize": null,
+      "currsize": 380
+    },
+    "adapter": {
+      "hits": 1044,
+      "misses": 12,
+      "maxsize": null,
+      "currsize": 12
+    },
+    "parameter_types": {
+      "hits": 0,
+      "misses": 5,
+      "maxsize": null,
+      "currsize": 5
+    },
+    "_compiled_plan": {
+      "hits": 40383,
+      "misses": 33,
+      "maxsize": null,
+      "currsize": 33
+    },
+    "declared_path": {
+      "hits": 709,
+      "misses": 21,
+      "maxsize": null,
+      "currsize": 21
+    }
+  },
+  "schema_caches_after": {
+    "fields": {
+      "hits": 107,
+      "misses": 380,
+      "maxsize": 512,
+      "currsize": 380
+    },
+    "_cached_adapter": {
+      "hits": 1044,
+      "misses": 12,
+      "maxsize": 512,
+      "currsize": 12
+    },
+    "parameter_types": {
+      "hits": 0,
+      "misses": 5,
+      "maxsize": 512,
+      "currsize": 5
+    },
+    "_compiled_plan": {
+      "hits": 5775,
+      "misses": 33,
+      "maxsize": 512,
+      "currsize": 33
+    },
+    "_declared_path": {
+      "hits": 709,
+      "misses": 21,
+      "maxsize": 512,
+      "currsize": 21
+    }
+  },
+  "formal_warm_samples": 800,
+  "validation": {
+    "metadata_match": [
+      "python",
+      "platform",
+      "machine",
+      "versions",
+      "size",
+      "warmup",
+      "wire_chunk_bytes",
+      "timing",
+      "cold_definition"
+    ],
+    "shape_match": [
+      "request_bytes",
+      "response_bytes",
+      "upstream_events",
+      "http_chunks",
+      "input_messages",
+      "tool_definitions",
+      "parallel_calls",
+      "output_events"
+    ],
+    "passed": true
+  }
+}

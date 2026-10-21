@@ -3,6 +3,8 @@
 import pytest
 
 from my_llm import (
+    Attribute,
+    Config,
     ConfigurationError,
     ModelProfile,
     MyLLM,
@@ -17,13 +19,13 @@ from tests.helpers.protocols import PROTOCOLS
 
 def test_client_parameters_use_the_resolved_profile_and_omit_unset_values():
     provider = ProviderProfile(
-        protocol="openai_chat",
+        protocol=Config(default_value="openai_chat"),
         api_key=parameter("api_key", "secret"),
         base_url=config("https://example.test/v1"),
         timeout=config(30),
         max_retries=config(2),
     )
-    resolved = resolve_profiles(provider, ModelProfile(model="demo"))
+    resolved = resolve_profiles(provider, ModelProfile(model=Attribute(default_value="demo")))
     assert client_parameters(resolved) == {
         "api_key": "secret",
         "base_url": "https://example.test/v1",
@@ -31,7 +33,8 @@ def test_client_parameters_use_the_resolved_profile_and_omit_unset_values():
         "max_retries": 2,
     }
     without_timeout = resolve_profiles(
-        ProviderProfile(protocol="openai_chat", timeout=omit), ModelProfile(model="demo")
+        ProviderProfile(protocol=Config(default_value="openai_chat"), timeout=omit),
+        ModelProfile(model=Attribute(default_value="demo")),
     )
     assert "timeout" not in client_parameters(without_timeout)
     assert "secret" not in repr(provider)
@@ -43,11 +46,11 @@ def test_omitted_api_key_preserves_header_configuration(protocol, api_key):
     headers = {"Authorization": "Bearer local-test"}
     profile = resolve_profiles(
         ProviderProfile(
-            protocol=protocol,
+            protocol=Config(default_value=protocol),
             api_key=api_key,
             extra_headers=config(headers),
         ),
-        ModelProfile(model="demo"),
+        ModelProfile(model=Attribute(default_value="demo")),
     )
     assert "api_key" not in client_parameters(profile)
     assert profile.get("extra_headers") == headers
@@ -55,7 +58,10 @@ def test_omitted_api_key_preserves_header_configuration(protocol, api_key):
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_api_key_default_value_is_omit(protocol):
-    profile = resolve_profiles(ProviderProfile(protocol=protocol), ModelProfile(model="demo"))
+    profile = resolve_profiles(
+        ProviderProfile(protocol=Config(default_value=protocol)),
+        ModelProfile(model=Attribute(default_value="demo")),
+    )
     assert profile.parameter("api_key").default_value is omit
     assert "api_key" not in client_parameters(profile)
 
@@ -80,10 +86,10 @@ def test_api_key_header_path_uses_the_official_sdk_header_option(monkeypatch, pr
     monkeypatch.setattr(target, factory)
     llm = MyLLM(
         provider=ProviderProfile(
-            protocol=protocol,
+            protocol=Config(default_value=protocol),
             api_key=parameter("api_key", "local-header-key", path=f"$.extra_headers.{header}"),
         ),
-        model=ModelProfile(model="demo"),
+        model=ModelProfile(model=Attribute(default_value="demo")),
     )
     assert llm.codec.transport(protocol).create_client(llm.client_parameters) is client
     options = captured[0]
@@ -103,9 +109,10 @@ def test_api_key_rejects_unsupported_connection_paths(path):
     with pytest.raises(ConfigurationError, match="api_key path"):
         MyLLM(
             provider=ProviderProfile(
-                protocol="openai_chat", api_key=parameter("api_key", "local", path=path)
+                protocol=Config(default_value="openai_chat"),
+                api_key=parameter("api_key", "local", path=path),
             ),
-            model=ModelProfile(model="demo"),
+            model=ModelProfile(model=Attribute(default_value="demo")),
         )
 
 
@@ -114,15 +121,19 @@ def test_api_key_source_is_fixed_in_profile():
 
     with pytest.raises(TypeError, match="source"):
         Parameter(path="$.api_key", default_value="local", source="output")
-    provider = ProviderProfile(protocol="openai_chat", api_key=parameter("api_key", "local"))
+    provider = ProviderProfile(
+        protocol=Config(default_value="openai_chat"), api_key=parameter("api_key", "local")
+    )
     assert provider.api_key.source == "input"
 
 
 def test_ollama_rejects_an_sdk_api_key_argument():
     with pytest.raises(ConfigurationError, match="Ollama api_key"):
         MyLLM(
-            provider=ProviderProfile(protocol="ollama", api_key=parameter("api_key", "local")),
-            model=ModelProfile(model="demo"),
+            provider=ProviderProfile(
+                protocol=Config(default_value="ollama"), api_key=parameter("api_key", "local")
+            ),
+            model=ModelProfile(model=Attribute(default_value="demo")),
         )
 
 
@@ -130,8 +141,10 @@ def test_ollama_rejects_an_sdk_api_key_argument():
 def test_upstream_stream_is_required(disabled):
     with pytest.raises(UnsupportedProviderError):
         resolve_profiles(
-            ProviderProfile(protocol="openai_chat", supports_stream=config(disabled)),
-            ModelProfile(model="demo"),
+            ProviderProfile(
+                protocol=Config(default_value="openai_chat"), supports_stream=config(disabled)
+            ),
+            ModelProfile(model=Attribute(default_value="demo")),
         )
 
 
@@ -150,10 +163,10 @@ def test_bad_provider_configuration(field, value):
     with pytest.raises(ConfigurationError):
         resolve_profiles(
             ProviderProfile(
-                protocol="openai_chat",
+                protocol=Config(default_value="openai_chat"),
                 **{field: parameter(field, value) if field == "api_key" else config(value)},
             ),
-            ModelProfile(model="demo"),
+            ModelProfile(model=Attribute(default_value="demo")),
         )
 
 
@@ -163,14 +176,18 @@ def test_bad_provider_configuration(field, value):
 def test_incompatible_usage_modes(protocol, usage):
     with pytest.raises(ConfigurationError):
         MyLLM(
-            provider=ProviderProfile(protocol=protocol, usage_mode=config(usage)),
-            model=ModelProfile(model="demo"),
+            provider=ProviderProfile(
+                protocol=Config(default_value=protocol), usage_mode=config(usage)
+            ),
+            model=ModelProfile(model=Attribute(default_value="demo")),
         )
 
 
 def test_unrecognized_usage_mode_is_rejected_by_selected_transport():
     with pytest.raises(ConfigurationError, match="usage_mode"):
         MyLLM(
-            provider=ProviderProfile(protocol="openai_chat", usage_mode=config("invalid")),
-            model=ModelProfile(model="demo"),
+            provider=ProviderProfile(
+                protocol=Config(default_value="openai_chat"), usage_mode=config("invalid")
+            ),
+            model=ModelProfile(model=Attribute(default_value="demo")),
         )

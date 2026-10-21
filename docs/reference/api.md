@@ -31,7 +31,7 @@ Responses 使用 `history.extend(result)`，其他协议使用 `history.append(r
 messages 和 tools 都遵循这个协议，历史不混用不同协议格式。
 
 ```python
-from my_llm import ModelProfile, MyLLM, Parameter, ProviderProfile
+from my_llm import Attribute, Config, ModelProfile, MyLLM, Parameter, ProviderProfile
 
 
 async def ask(llm, prompt):
@@ -40,9 +40,9 @@ async def ask(llm, prompt):
 
 async def session():
     async with MyLLM(
-        provider=ProviderProfile(protocol="openai_responses"),
+        provider=ProviderProfile(protocol=Config(default_value="openai_responses")),
         model=ModelProfile(
-            model="your-model",
+            model=Attribute(default_value="your-model"),
             max_tokens=Parameter(
                 path="$.max_output_tokens",
                 default_value=2048,
@@ -125,12 +125,12 @@ import json
 
 
 async def add_round_trip(provider, model_id):
-    from my_llm import Config, ModelProfile, MyLLM
+    from my_llm import Attribute, Config, ModelProfile, MyLLM
 
     async with MyLLM(
         provider=provider,
         model=ModelProfile(
-            model=model_id,
+            model=Attribute(default_value=model_id),
             supports_function_calling=Config(default_value=True),
         ),
         stdio_protocol="openai_chat",

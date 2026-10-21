@@ -9,7 +9,14 @@ from ollama import Image, Message
 from pydantic import BaseModel, ConfigDict
 from typing_extensions import TypedDict
 
-from my_llm import ConfigurationError, MessageValidationError, MyCodec, UnsupportedCapabilityError
+from my_llm import (
+    Attribute,
+    Config,
+    ConfigurationError,
+    MessageValidationError,
+    MyCodec,
+    UnsupportedCapabilityError,
+)
 from my_llm.codec.openai.chat.decoding.decoder import ChatCompletionsDecoder
 from my_llm.profile import ModelProfile, ProviderProfile, resolve_profiles
 from my_llm.profile.types import Parameter
@@ -242,7 +249,8 @@ def test_profile_extension_restores_only_its_declared_unknown_sdk_leaf():
         )
 
     profile = resolve_profiles(
-        ProviderProfile(protocol="openai_responses"), ExtendedModel(model="demo")
+        ProviderProfile(protocol=Config(default_value="openai_responses")),
+        ExtendedModel(model=Attribute(default_value="demo")),
     )
     request = (
         MyCodec()
@@ -264,12 +272,15 @@ def test_profile_extension_restores_only_its_declared_unknown_sdk_leaf():
 def test_anthropic_adaptive_profile_uses_actual_translated_thinking(path):
     profile = resolve_profiles(
         ProviderProfile(
-            protocol="anthropic",
+            protocol=Config(default_value="anthropic"),
             reasoning_enable=parameter(
                 "reasoning_enable", {"type": "adaptive"}, protocol="anthropic", path=path
             ),
         ),
-        ModelProfile(model="demo", max_tokens=parameter("max_tokens", 512, protocol="anthropic")),
+        ModelProfile(
+            model=Attribute(default_value="demo"),
+            max_tokens=parameter("max_tokens", 512, protocol="anthropic"),
+        ),
     )
     codec = MyCodec()
     intermediate = codec.encode([{"role": "user", "content": "hello"}], input_format="openai_chat")
@@ -284,7 +295,10 @@ def test_anthropic_adaptive_profile_uses_actual_translated_thinking(path):
 def test_ollama_sdk_message_images_survive_input_validation_and_request_projection():
     image = Image(value=b"image-data")
     message = Message(role="user", content="hello", images=[image])
-    profile = resolve_profiles(ProviderProfile(protocol="ollama"), ModelProfile(model="demo"))
+    profile = resolve_profiles(
+        ProviderProfile(protocol=Config(default_value="ollama")),
+        ModelProfile(model=Attribute(default_value="demo")),
+    )
     bound = MyCodec().decoder("ollama")
 
     bound.validate_values([message], bound.message_type)
@@ -504,7 +518,10 @@ def test_declared_unknown_sdk_root_reports_configuration_error():
             default=Parameter(path="$.vendor", default_value=1), metadata={"source": "input"}
         )
 
-    profile = resolve_profiles(ProviderProfile(protocol="openai_chat"), ExtendedModel(model="demo"))
+    profile = resolve_profiles(
+        ProviderProfile(protocol=Config(default_value="openai_chat")),
+        ExtendedModel(model=Attribute(default_value="demo")),
+    )
     bound = MyCodec().decoder("openai_chat")
 
     for validate in (bound.validate_profile,):

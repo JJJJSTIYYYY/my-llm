@@ -2,7 +2,16 @@
 
 import pytest
 
-from my_llm import MessageValidationError, ModelProfile, MyCodec, MyLLM, ProviderProfile, generate
+from my_llm import (
+    Attribute,
+    Config,
+    MessageValidationError,
+    ModelProfile,
+    MyCodec,
+    MyLLM,
+    ProviderProfile,
+    generate,
+)
 from tests.helpers.profiles import parameter
 from tests.helpers.protocols import PROTOCOLS, history, tools
 
@@ -35,9 +44,10 @@ def test_non_unique_protocol_has_no_registration_order_fallback(values):
 @pytest.mark.parametrize("stream", [False, True])
 async def test_ambiguous_input_fails_before_request_without_binding(monkeypatch, upstream, stream):
     llm = MyLLM(
-        provider=ProviderProfile(protocol=upstream),
+        provider=ProviderProfile(protocol=Config(default_value=upstream)),
         model=ModelProfile(
-            model="demo", max_tokens=parameter("max_tokens", 4096, protocol=upstream)
+            model=Attribute(default_value="demo"),
+            max_tokens=parameter("max_tokens", 4096, protocol=upstream),
         ),
     )
 
@@ -55,7 +65,10 @@ async def test_ambiguous_input_fails_before_request_without_binding(monkeypatch,
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_failed_inference_leaves_a_later_unique_binding_available(protocol):
-    llm = MyLLM(provider=ProviderProfile(protocol="openai_chat"), model=ModelProfile(model="demo"))
+    llm = MyLLM(
+        provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
+        model=ModelProfile(model=Attribute(default_value="demo")),
+    )
     for values in ([], [{"unknown": "value"}], [{"role": "user", "content": "hello"}]):
         with pytest.raises(MessageValidationError, match="stdio_protocol"):
             llm.guess_stdio_protocol(values)
@@ -67,7 +80,7 @@ def test_failed_inference_leaves_a_later_unique_binding_available(protocol):
 async def test_one_shot_generation_also_requires_a_unique_or_explicit_protocol():
     with pytest.raises(MessageValidationError, match="stdio_protocol"):
         await generate(
-            provider=ProviderProfile(protocol="openai_chat"),
+            provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
             model="demo",
             messages=[{"role": "user", "content": "hello"}],
         )

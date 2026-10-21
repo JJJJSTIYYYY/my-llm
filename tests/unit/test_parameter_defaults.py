@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from my_llm import (
+    Attribute,
     Config,
     ModelProfile,
     Parameter,
@@ -38,10 +39,13 @@ CASES = [
 def profile(protocol, path, value=0.4):
     return resolve_profiles(
         TemperatureProvider(
-            protocol=protocol,
+            protocol=Config(default_value=protocol),
             temperature=Parameter(path=path, default_value=value),
         ),
-        ModelProfile(model="demo", max_tokens=parameter("max_tokens", 4096, protocol=protocol)),
+        ModelProfile(
+            model=Attribute(default_value="demo"),
+            max_tokens=parameter("max_tokens", 4096, protocol=protocol),
+        ),
     )
 
 

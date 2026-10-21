@@ -13,7 +13,7 @@ from google.genai import types
 from ollama import AsyncClient
 from openai import AsyncOpenAI
 
-from my_llm import ModelProfile, MyCodec, MyLLM, ProviderProfile
+from my_llm import Attribute, Config, ModelProfile, MyCodec, MyLLM, ProviderProfile
 from my_llm.stream._state import StreamState
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import PROTOCOLS, history, stream_events, tools
@@ -195,7 +195,7 @@ class ConcurrentTransport:
 def make_llm(protocol, stdio):
     return MyLLM(
         provider=ProviderProfile(
-            protocol=protocol,
+            protocol=Config(default_value=protocol),
             api_key=parameter(
                 "api_key",
                 "Bearer local-concurrency-test"
@@ -208,7 +208,7 @@ def make_llm(protocol, stdio):
             usage_mode=config("stream_options" if protocol == "openai_chat" else "native"),
         ),
         model=ModelProfile(
-            model="demo",
+            model=Attribute(default_value="demo"),
             max_tokens=parameter("max_tokens", 2048, protocol=protocol),
             supports_function_calling=config(True),
         ),

@@ -3,14 +3,14 @@
 Run with: python examples/request_pipeline.py
 """
 
-from my_llm import ModelProfile, MyCodec, ProviderProfile, omit, resolve_profiles
+from my_llm import Attribute, Config, ModelProfile, MyCodec, ProviderProfile, omit, resolve_profiles
 
 
 def main():
     codec = MyCodec()
     profile = resolve_profiles(
-        ProviderProfile(protocol="anthropic"),
-        ModelProfile(model="example-model"),
+        ProviderProfile(protocol=Config(default_value="anthropic")),
+        ModelProfile(model=Attribute(default_value="example-model")),
     )
     codec.validate_profile(profile)
     # Prepare connection kwargs once; the same read-only settings serve later calls.

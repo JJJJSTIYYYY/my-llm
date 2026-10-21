@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 import pytest
 
 from my_llm import (
+    Attribute,
     Config,
     ConfigurationError,
     ModelProfile,
@@ -24,7 +25,10 @@ from tests.helpers.protocols import PROTOCOLS
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_standard_defaults_are_preserved_in_independent_profile_snapshots(protocol):
     defaults = protocol_defaults(protocol)
-    resolved = resolve_profiles(ProviderProfile(protocol=protocol), ModelProfile(model="demo"))
+    resolved = resolve_profiles(
+        ProviderProfile(protocol=Config(default_value=protocol)),
+        ModelProfile(model=Attribute(default_value="demo")),
+    )
     assert all(
         (resolved.parameters[key] if isinstance(value, (Parameter, Omit)) else resolved.get(key))
         == (value if isinstance(value, (Parameter, Omit)) else value.default_value)
@@ -49,7 +53,10 @@ def test_llm_uses_its_own_codec_for_protocol_validation(monkeypatch):
             super().validate_profile(profile)
 
     monkeypatch.setattr("my_llm.invoke.MyCodec", Codec)
-    llm = MyLLM(provider=ProviderProfile(protocol="openai_chat"), model=ModelProfile(model="demo"))
+    llm = MyLLM(
+        provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
+        model=ModelProfile(model=Attribute(default_value="demo")),
+    )
     assert instances == [llm.codec]
     assert calls == [(llm.codec, llm.resolved_profile)]
 
@@ -57,8 +64,8 @@ def test_llm_uses_its_own_codec_for_protocol_validation(monkeypatch):
 @pytest.mark.parametrize(
     "provider,model",
     [
-        (None, ModelProfile(model="demo")),
-        ({"protocol": "openai_chat"}, ModelProfile(model="demo")),
+        (None, ModelProfile(model=Attribute(default_value="demo"))),
+        ({"protocol": "openai_chat"}, ModelProfile(model=Attribute(default_value="demo"))),
         (ProviderProfile(), None),
     ],
 )
@@ -82,7 +89,10 @@ def test_inherited_protocol_defaults_are_discovered_without_a_central_table(monk
     codec = codec_for("openai_chat")
     inherited = protocol_defaults("openai_chat")
     monkeypatch.setattr(type(codec), "defaults", SamplingDefaults(**inherited))
-    result = resolve_profiles(ProviderProfile(protocol="openai_chat"), ModelProfile(model="demo"))
+    result = resolve_profiles(
+        ProviderProfile(protocol=Config(default_value="openai_chat")),
+        ModelProfile(model=Attribute(default_value="demo")),
+    )
     assert result.get("temperature") == 0.25
     assert result.parameter("temperature").path == "$.extra_body.temperature"
     assert result.get("custom_mode") == "standard"
@@ -101,10 +111,16 @@ def test_inherited_protocol_none_default_and_omit_are_preserved(monkeypatch):
         temperature=Parameter(path="$.extra_body.temperature", default_value=None),
     )
     monkeypatch.setattr(type(codec), "defaults", defaults)
-    result = resolve_profiles(ProviderProfile(protocol="openai_chat"), ModelProfile(model="demo"))
+    result = resolve_profiles(
+        ProviderProfile(protocol=Config(default_value="openai_chat")),
+        ModelProfile(model=Attribute(default_value="demo")),
+    )
     assert result.get("temperature", "missing") is None
     monkeypatch.setattr(type(codec), "defaults", replace(defaults, temperature=omit))
-    result = resolve_profiles(ProviderProfile(protocol="openai_chat"), ModelProfile(model="demo"))
+    result = resolve_profiles(
+        ProviderProfile(protocol=Config(default_value="openai_chat")),
+        ModelProfile(model=Attribute(default_value="demo")),
+    )
     assert result.values["temperature"] is omit
 
 
@@ -118,4 +134,7 @@ def test_unclassified_protocol_default_is_rejected(monkeypatch):
     codec = codec_for("openai_chat")
     monkeypatch.setattr(type(codec), "defaults", BadDefaults(**protocol_defaults("openai_chat")))
     with pytest.raises(ConfigurationError, match="accidental"):
-        resolve_profiles(ProviderProfile(protocol="openai_chat"), ModelProfile(model="demo"))
+        resolve_profiles(
+            ProviderProfile(protocol=Config(default_value="openai_chat")),
+            ModelProfile(model=Attribute(default_value="demo")),
+        )

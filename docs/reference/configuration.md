@@ -6,17 +6,17 @@ MyLLM 构造时按 `Codec.defaults → provider → model` 解析为独立的 `R
 generate 不接受动态 provider/model 或连接参数。
 
 ```python
-from my_llm import Config, ModelProfile, MyLLM, Parameter, ProviderProfile
+from my_llm import Attribute, Config, ModelProfile, MyLLM, Parameter, ProviderProfile
 
 llm = MyLLM(
     provider=ProviderProfile(
-        protocol="openai_responses",
+        protocol=Config(default_value="openai_responses"),
         timeout=Config(default_value=30),
         max_retries=Config(default_value=2),
         usage_mode=Config(default_value="native"),
     ),
     model=ModelProfile(
-        model="your-model",
+        model=Attribute(default_value="your-model"),
         max_tokens=Parameter(
             path="$.max_output_tokens",
             default_value=2048,
@@ -28,10 +28,11 @@ llm = MyLLM(
 
 ## 参数与行为配置
 
-以下类型均可从 `my_llm` 导入，`Parameter` 与 `Config` 都是 frozen、kw_only dataclass：
+以下类型均可从 `my_llm` 导入，`Attribute`、`Parameter` 与 `Config` 都是 frozen、kw_only dataclass：
 
 | 类型 | 字段 | 职责 |
 | --- | --- | --- |
+| `Attribute[T]` | default_value、comment=None | 保存 Profile 自身的数据；校验类型，但不进入配置快照、参数绑定或 SDK 请求 |
 | `Parameter[T]` | path、default_value=omit、supports=True、comment=None | 绑定参数位置、默认值及支持状态；name/source 由 Profile 固定 |
 | `Config[T]` | default_value、comment=None；name 由 Profile 固定 | 控制 Encoder / Decoder / Transport 的代码行为或 SDK 连接 |
 | `Omit` / `omit` | 显式省略标记 | 不依赖任何 SDK 的 Omit，复制保持标记身份 |
@@ -40,9 +41,32 @@ llm = MyLLM(
 Profile 的 `@set_attr` 在初始化时检查并绑定字段名；Parameter 的 source 在 Profile 字段 metadata 中硬编码。
 各层的同名参数必须保持相同 source/scope；解析时也会检查身份是否已正确绑定。
 已有同一身份的 wrapper 可复用，不会重新赋值；不能把已绑定 wrapper 换到另一个字段。
-`comment` 可用于展示说明。两种 wrapper 的 default_value 都支持 None 和 omit。
+`comment` 可用于展示说明。Parameter 与 Config 的 default_value 都支持 None 和 omit。
+Attribute 的 default_value 按声明的类型校验，不参与各层配置合并；通过 `.default_value` 读取其数据。
 `Parameter(supports=False, ...)` 会将 default_value 强制设为 omit，并停止自动读取或写入（包括块起始和最终快照中的可见字段）；
 原生请求中手动提供的字段仍保留，显式请求不受支持的 reasoning 时会报错。
+
+ProviderProfile、ModelProfile、ProtocolDefaults 共享 `Profile` 基类的三个成员获取方法：
+
+| 方法 | 返回内容 |
+| --- | --- |
+| `get_attributes()` | 所有声明为 Attribute 的字段 |
+| `get_configs()` | 所有声明为 Config 的字段 |
+| `get_parameters()` | 所有声明为 Parameter 的字段，包括 supports=False 的参数 |
+
+每次返回按声明顺序排列的新字典，键为字段名，值为原始 wrapper、None 或 omit，不展开 default_value。
+分类依据字段声明，包含继承字段，排除 ClassVar；这些方法只枚举当前实例，不解析其他 Profile 层。
+返回字典的增删不影响 Profile，其 wrapper 和嵌套数据仍由原实例持有。
+
+```python
+from my_llm import Attribute, Config, ModelProfile, ProviderProfile
+
+provider = ProviderProfile(protocol=Config(default_value="openai_chat"))
+model = ModelProfile(model=Attribute(default_value="demo"))
+assert provider.get_configs()["protocol"] is provider.protocol
+assert provider.get_parameters()["max_tokens"] is None
+assert model.get_attributes()["model"].default_value == "demo"
+```
 
 `extra_body` / `extra_headers` 保留 Config，控制请求字段组的组装与合并：extra_body 在 Anthropic / Ollama 对应根字段组，Gemini 对应 config 组，Chat / Responses 对应 SDK overlay 组；headers 还参与 Ollama 客户端配置。
 单个需要指定 path 路由的业务参数使用 Parameter。
@@ -79,10 +103,18 @@ Profiles 是 frozen dataclass；使用 `dataclasses.replace()` 创建新配置�
 MyLLM 构造时隔离配置的嵌套可变数据；请求只在需要独立所有权的边界复制数据。
 
 ```python
-from my_llm import Config, ModelProfile, Parameter, ProviderProfile, omit, resolve_profiles
+from my_llm import (
+    Attribute,
+    Config,
+    ModelProfile,
+    Parameter,
+    ProviderProfile,
+    omit,
+    resolve_profiles,
+)
 
 provider = ProviderProfile(
-    protocol="openai_chat",
+    protocol=Config(default_value="openai_chat"),
     extra_body=Config(default_value={"a": 1, "b": 2}),
     max_tokens=Parameter(
         path="$.max_completion_tokens",
@@ -90,7 +122,7 @@ provider = ProviderProfile(
     ),
 )
 model = ModelProfile(
-    model="demo",
+    model=Attribute(default_value="demo"),
     extra_body=Config(default_value={"a": 3, "b": omit}),
     max_tokens=None,  # 继承 provider 的整份 Parameter
 )
@@ -128,15 +160,15 @@ Chat 的 reasoning_content 是兼容服务扩展；Responses、Gemini 仍按标�
 
 | 字段 | 归属 / 说明 |
 | --- | --- |
-| `protocol` | Provider；默认 None，使用前须显式指定已注册协议名 |
+| `protocol` | Provider Config[Protocol]；默认 None，使用前须以 Config 包装已注册协议名；它决定选用哪一份 Codec 默认值 |
 | `base_url` | Provider Config；默认继承 SDK 配置 |
 | `api_key` | Provider input Parameter；配置连接密钥的传递位置，default_value 默认为 omit，不出现在 repr |
 | `timeout` / `max_retries` | Provider Config；正秒数 / 非负整数，默认使用 SDK 配置 |
 | `supports_stream` | Provider Config；默认 True，False/omit 不支持，因为两种返回模式均使用上游流 |
 | `usage_mode` | Provider Config；默认 none；可选值由协议 Decoder.usage_modes 声明 |
-| `models` | Provider；可选 ModelProfile 列表，生成仍须显式选择模型 |
-| `model` | Model；必填非空模型 ID |
-| `max_context_window` | Model；默认 256000，仅描述性整数元数据，不截断输入或限制输出 |
+| `models` | Provider Attribute[list[ModelProfile]]；可选模型目录，生成仍须显式选择模型 |
+| `model` | Model Attribute[str]；必填非空模型 ID；解析后作为请求模型名使用 |
+| `max_context_window` | Model Attribute[int]；默认 256000，仅描述性整数元数据，不截断输入或限制输出 |
 | `reasoning_enable.supports` | Parameter；默认 True，替代 supports_reasoning |
 | `supports_function_calling` | Model Config；默认 False，发送非空 tools 前开启 |
 | `supports_message_name` | Model Config；默认 True，False/omit 在 Chat 请求移除 name |
@@ -155,17 +187,17 @@ Gemini 的 HttpOptions.headers 或 Ollama 的 headers；密钥不会作为生成
 配置值是完整字符串，Authorization 的 Bearer 前缀也由配置显式提供：
 
 ```python
-from my_llm import Parameter, ProviderProfile
+from my_llm import Config, Parameter, ProviderProfile
 
 sdk_key = ProviderProfile(
-    protocol="anthropic",
+    protocol=Config(default_value="anthropic"),
     api_key=Parameter(
         path="$.api_key",
         default_value="your-api-key",
     ),
 )
 header_key = ProviderProfile(
-    protocol="anthropic",
+    protocol=Config(default_value="anthropic"),
     api_key=Parameter(
         path="$.extra_headers.Authorization",
         default_value="Bearer your-api-key",
@@ -218,7 +250,7 @@ Anthropic 的预算必须小于 max_tokens。模型支持的强度由具体协�
 from my_llm import Config, Parameter, ProviderProfile, omit
 
 compatible = ProviderProfile(
-    protocol="openai_chat",
+    protocol=Config(default_value="openai_chat"),
     replay_reasoning_content_when_tool_calls=Config(default_value=True),
     reasoning_enable=Parameter(
         path="$.extra_body.thinking",
@@ -243,10 +275,13 @@ name/source 固定，展示说明通过 comment 提供。reasoning_enable 与 re
 ProviderProfile、ModelProfile、ProtocolDefaults 均支持 dataclass 继承扩展。
 新增 Parameter 字段须在 metadata 中固定 source；若重写 __post_init__，须调用 super().__post_init__() 完成身份绑定。
 新业务参数直接声明 `Parameter[T] | Omit | None`，新分支控制声明 `Config[T] | Omit | None`。
+只供应用或 Profile 使用的数据声明为 `Attribute[T]`，例如展示名称或标签；
+解析器按类型标记区分职责，不再按字段名排除元数据。
 解析器自动发现继承字段并检查类型、路径和 source，不需要路径字段配对或中央参数清单。
 
 ```python
 from dataclasses import dataclass, field
+
 from my_llm import Config, Omit, Parameter, ProviderProfile
 
 
@@ -277,6 +312,7 @@ Model 不必重复声明 Provider 的扩展字段即可继承其解析结果；P
 
 ```python
 from dataclasses import dataclass, field
+
 from my_llm import Parameter, ProviderProfile
 
 
@@ -335,10 +371,10 @@ Chat / Ollama 无法原生读取 URL 文档时保留文本引用，不隐式下�
 支持状态与值一起覆盖，例如禁用 reasoning：
 
 ```python
-from my_llm import ModelProfile, Parameter
+from my_llm import Attribute, ModelProfile, Parameter
 
 model = ModelProfile(
-    model="demo",
+    model=Attribute(default_value="demo"),
     reasoning_enable=Parameter(path="$.reasoning_effort", supports=False),
 )
 assert model.reasoning_enable.name == "reasoning_enable"

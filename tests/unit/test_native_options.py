@@ -4,7 +4,15 @@ from copy import deepcopy
 
 import pytest
 
-from my_llm import ConfigurationError, ModelProfile, MyCodec, MyLLM, ProviderProfile
+from my_llm import (
+    Attribute,
+    Config,
+    ConfigurationError,
+    ModelProfile,
+    MyCodec,
+    MyLLM,
+    ProviderProfile,
+)
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import history
 from tests.helpers.requests import encode_request
@@ -107,8 +115,10 @@ def test_ollama_cannot_silently_ignore_requested_retries(retries):
     with pytest.raises(UnsupportedCapabilityError, match="max_retries"):
         MyLLM(
             stdio_protocol="openai_chat",
-            provider=ProviderProfile(protocol="ollama", max_retries=config(retries)),
-            model=ModelProfile(model="demo"),
+            provider=ProviderProfile(
+                protocol=Config(default_value="ollama"), max_retries=config(retries)
+            ),
+            model=ModelProfile(model=Attribute(default_value="demo")),
         )
 
 

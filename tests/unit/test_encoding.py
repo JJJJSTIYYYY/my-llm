@@ -3,6 +3,8 @@ import copy
 import pytest
 
 from my_llm import (
+    Attribute,
+    Config,
     ConfigurationError,
     ModelProfile,
     ProviderProfile,
@@ -82,7 +84,7 @@ def test_unsupported_reasoning_and_effort(profile_factory):
 
 def test_custom_effort_body_and_generated_priority():
     provider = ProviderProfile(
-        protocol="openai_chat",
+        protocol=Config(default_value="openai_chat"),
         reasoning_enable=parameter(
             "reasoning_enable", True, protocol="openai_chat", path="$.extra_body.enable_thinking"
         ),
@@ -97,7 +99,7 @@ def test_custom_effort_body_and_generated_priority():
         extra_body=config({"source": "provider"}),
     )
     model = ModelProfile(
-        model="demo",
+        model=Attribute(default_value="demo"),
         extra_headers=config({"a": "model"}),
         extra_body=config({"source": "model"}),
     )
@@ -228,10 +230,10 @@ def test_reasoning_replay_only_pads_tool_calls_when_thinking(
         message["reasoning_content"] = visible
     profile = resolve_profiles(
         ProviderProfile(
-            protocol=protocol,
+            protocol=Config(default_value=protocol),
             replay_reasoning_content_when_tool_calls=config(replay),
         ),
-        ModelProfile(model="demo"),
+        ModelProfile(model=Attribute(default_value="demo")),
     )
     result = MyCodec().convert(
         [message],

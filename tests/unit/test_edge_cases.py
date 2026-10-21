@@ -1,6 +1,8 @@
 import pytest
 
 from my_llm import (
+    Attribute,
+    Config,
     ConfigurationError,
     ModelProfile,
     ProviderProfile,
@@ -70,7 +72,10 @@ def test_chat_name_supported_by_default(profile_factory):
 
 def test_model_string_whitespace_rejected():
     with pytest.raises(ConfigurationError):
-        resolve_profiles(ProviderProfile(protocol="openai_chat"), ModelProfile(model=" "))
+        resolve_profiles(
+            ProviderProfile(protocol=Config(default_value="openai_chat")),
+            ModelProfile(model=Attribute(default_value=" ")),
+        )
 
 
 def test_default_response_object_is_replaced_as_one_parameter(profile_factory):

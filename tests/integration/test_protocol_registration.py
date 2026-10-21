@@ -9,10 +9,12 @@ import pytest
 from typing_extensions import TypedDict
 
 from my_llm import (
+    Attribute,
     BaseCodec,
     BaseDecoder,
     BaseEncoder,
     BaseTransport,
+    Config,
     ConfigurationError,
     ModelProfile,
     MyCodec,
@@ -231,8 +233,12 @@ def registered(monkeypatch):
 
 def profiles():
     return (
-        ProviderProfile(protocol=PROTOCOL, usage_mode=config("independent_counter_mode")),
-        ModelProfile(model="independent", supports_function_calling=config(True)),
+        ProviderProfile(
+            protocol=Config(default_value=PROTOCOL), usage_mode=config("independent_counter_mode")
+        ),
+        ModelProfile(
+            model=Attribute(default_value="independent"), supports_function_calling=config(True)
+        ),
     )
 
 
@@ -259,7 +265,9 @@ async def test_new_protocol_reuses_caches_with_unhashable_annotations(registered
     monkeypatch.setattr(Codec, "decoder", AnnotatedDecoder())
     provider, _ = profiles()
     async with MyLLM(
-        provider=provider, model=ExtendedModel(model="independent"), stdio_protocol=PROTOCOL
+        provider=provider,
+        model=ExtendedModel(model=Attribute(default_value="independent")),
+        stdio_protocol=PROTOCOL,
     ) as llm:
         for body in ("first request", "second request"):
             result = await llm.generate(
@@ -498,8 +506,8 @@ async def test_builtin_upstreams_render_registered_protocol_without_shared_chang
     )
     monkeypatch.setattr(type(transport), "upstream", upstream_events)
     monkeypatch.setattr(type(transport), "close_client", close_client)
-    provider = ProviderProfile(protocol=upstream)
-    model = ModelProfile(model="builtin")
+    provider = ProviderProfile(protocol=Config(default_value=upstream))
+    model = ModelProfile(model=Attribute(default_value="builtin"))
     async with MyLLM(provider=provider, model=model, stdio_protocol=PROTOCOL) as llm:
         result = await llm.generate(
             messages=[{"speaker": "user", "body": "hi"}], stream=streaming, max_tokens=23
@@ -645,7 +653,7 @@ def test_external_protocol_inherits_generic_input_parameters_and_source_isolatio
 
     provider, _ = profiles()
     model = ExtensionModel(
-        model="independent",
+        model=Attribute(default_value="independent"),
         content=Parameter(path="$.hint.body", default_value="fallback"),
     )
     profile = resolve_profiles(provider, model)

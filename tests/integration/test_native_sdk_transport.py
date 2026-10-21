@@ -8,7 +8,7 @@ from anthropic import AsyncAnthropic
 from google import genai
 from ollama import AsyncClient
 
-from my_llm import ModelProfile, MyLLM, ProviderProfile
+from my_llm import Attribute, Config, ModelProfile, MyLLM, ProviderProfile
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import history, stream_events, tools
 from tests.helpers.schema import validate_request
@@ -88,7 +88,7 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
         monkeypatch.setattr("my_llm.codec.gemini.transport.genai.Client", factory)
     llm = MyLLM(
         provider=ProviderProfile(
-            protocol=protocol,
+            protocol=Config(default_value=protocol),
             api_key=parameter(
                 "api_key",
                 "Bearer local-test" if protocol == "ollama" else "local-test",
@@ -98,7 +98,7 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
             usage_mode=config("native"),
         ),
         model=ModelProfile(
-            model="demo",
+            model=Attribute(default_value="demo"),
             max_tokens=parameter("max_tokens", 2048, protocol=protocol),
             supports_function_calling=config(True),
         ),
@@ -197,7 +197,7 @@ async def test_header_authentication_without_sdk_api_key(
     monkeypatch.setattr(target, factory)
     async with MyLLM(
         provider=ProviderProfile(
-            protocol=protocol,
+            protocol=Config(default_value=protocol),
             base_url=config("https://local.test"),
             api_key=parameter(
                 "api_key", "Bearer local-header-test", path=f"$.extra_headers.{header}"
@@ -205,7 +205,8 @@ async def test_header_authentication_without_sdk_api_key(
             extra_headers=config({header: "provider-override"} if provider_override else {}),
         ),
         model=ModelProfile(
-            model="demo", max_tokens=parameter("max_tokens", 2048, protocol=protocol)
+            model=Attribute(default_value="demo"),
+            max_tokens=parameter("max_tokens", 2048, protocol=protocol),
         ),
         stdio_protocol="openai_chat",
     ) as llm:

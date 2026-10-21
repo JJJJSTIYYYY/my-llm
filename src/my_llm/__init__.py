@@ -22,11 +22,13 @@ from my_llm.exceptions import (
 )
 from my_llm.invoke import MyLLM, generate
 from my_llm.profile import (
+    Attribute,
     Config,
     ModelProfile,
     Omit,
     OverridableProfile,
     Parameter,
+    Profile,
     Protocol,
     ProtocolDefaults,
     ProviderProfile,
@@ -38,6 +40,7 @@ from my_llm.profile import (
 from my_llm.stream import MessageStream
 
 __all__ = [
+    "Attribute",
     "BaseCodec",
     "BaseDecoder",
     "BaseEncoder",
@@ -47,6 +50,7 @@ __all__ = [
     "MessageStream",
     "ModelProfile",
     "OverridableProfile",
+    "Profile",
     "ProviderProfile",
     "ResolvedProfile",
     "resolve_profiles",

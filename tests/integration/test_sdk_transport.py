@@ -1,13 +1,14 @@
 """Official OpenAI SDK serialization and SSE parsing, without public client injection."""
 
 import json
+from copy import deepcopy
 from dataclasses import dataclass, field
 
 import httpx
 import pytest
 from openai import AsyncOpenAI
 
-from my_llm import ModelProfile, MyLLM, ProviderProfile
+from my_llm import Attribute, Config, ModelProfile, MyLLM, ProviderProfile
 from my_llm.profile.types import Parameter
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import history, stream_events, tools
@@ -43,12 +44,14 @@ async def test_official_openai_transport_all_stdio_formats(monkeypatch, protocol
     monkeypatch.setattr("my_llm.codec.openai.responses.transport.AsyncOpenAI", factory)
     llm = MyLLM(
         provider=ProviderProfile(
-            protocol=protocol,
+            protocol=Config(default_value=protocol),
             api_key=parameter("api_key", "local-test"),
             base_url=config("https://local.test/v1"),
             usage_mode=config("native" if protocol == "openai_responses" else "stream_options"),
         ),
-        model=ModelProfile(model="demo", supports_function_calling=config(True)),
+        model=ModelProfile(
+            model=Attribute(default_value="demo"), supports_function_calling=config(True)
+        ),
         stdio_protocol=stdio,
     )
     result = await llm.generate(messages=history(stdio), tools=tools(stdio), stream=stream)
@@ -68,6 +71,58 @@ async def test_official_openai_transport_all_stdio_formats(monkeypatch, protocol
     assert not clients[0].is_closed()
     await llm.aclose()
     assert clients[0].is_closed()
+
+
+@pytest.mark.parametrize("usage_mode", ["none", "stream_options"])
+@pytest.mark.parametrize("body_source", ["provider", "call"])
+@pytest.mark.parametrize(
+    "stream_options",
+    [None, {"include_usage": False}, {"include_usage": False, "include_obfuscation": False}],
+)
+async def test_chat_generated_usage_overrides_sdk_body_overlay(
+    monkeypatch, usage_mode, body_source, stream_options
+):
+    bodies = []
+    extra_body = {"stream_options": deepcopy(stream_options), "temperature": 0.25}
+    original_body = deepcopy(extra_body)
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            text=sse(stream_events("openai_chat")),
+            headers={"Content-Type": "text/event-stream"},
+        )
+
+    def factory(**kwargs):
+        return AsyncOpenAI(
+            **kwargs, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        )
+
+    monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
+    async with MyLLM(
+        provider=ProviderProfile(
+            protocol=Config(default_value="openai_chat"),
+            api_key=parameter("api_key", "local-test"),
+            usage_mode=config(usage_mode),
+            extra_body=config(extra_body) if body_source == "provider" else None,
+        ),
+        model=ModelProfile(model=Attribute(default_value="demo")),
+        stdio_protocol="openai_chat",
+    ) as llm:
+        await llm.generate(
+            messages=[{"role": "user", "content": "hi"}],
+            **({"extra_body": extra_body} if body_source == "call" else {}),
+        )
+
+    expected = (
+        {**(stream_options or {}), "include_usage": True}
+        if usage_mode == "stream_options"
+        else stream_options
+    )
+    assert bodies[0]["stream_options"] == expected
+    assert bodies[0]["temperature"] == 0.25
+    assert extra_body == original_body
 
 
 @pytest.mark.parametrize(
@@ -103,11 +158,11 @@ async def test_custom_token_path_is_serialized_by_official_sdk(
     monkeypatch.setattr("my_llm.codec.openai.responses.transport.AsyncOpenAI", factory)
     async with MyLLM(
         provider=ProviderProfile(
-            protocol=protocol,
+            protocol=Config(default_value=protocol),
             api_key=parameter("api_key", "local-test"),
             max_tokens=parameter("max_tokens", 100, protocol=protocol, path=path),
         ),
-        model=ModelProfile(model="demo"),
+        model=ModelProfile(model=Attribute(default_value="demo")),
         stdio_protocol="openai_chat",
     ) as llm:
         await llm.generate(messages=[{"role": "user", "content": "hi"}], max_tokens=50)
@@ -138,11 +193,11 @@ async def test_sdk_http_errors_retain_their_type_and_preserve_client(monkeypatch
     llm = MyLLM(
         stdio_protocol="openai_chat",
         provider=ProviderProfile(
-            protocol="openai_chat",
+            protocol=Config(default_value="openai_chat"),
             api_key=parameter("api_key", "local"),
             max_retries=config(0),
         ),
-        model=ModelProfile(model="demo"),
+        model=ModelProfile(model=Attribute(default_value="demo")),
     )
     with pytest.raises(BadRequestError):
         await llm.generate(messages=[{"role": "user", "content": "hi"}])
@@ -183,9 +238,11 @@ async def test_inherited_parameter_defaults_and_vendor_effort_reach_official_sdk
     monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
     monkeypatch.setattr("my_llm.codec.openai.responses.transport.AsyncOpenAI", factory)
     async with MyLLM(
-        provider=ProviderProfile(protocol=protocol, api_key=parameter("api_key", "local-test")),
+        provider=ProviderProfile(
+            protocol=Config(default_value=protocol), api_key=parameter("api_key", "local-test")
+        ),
         model=VendorModel(
-            model="demo",
+            model=Attribute(default_value="demo"),
             reasoning_effort=parameter("reasoning_effort", supports=True, protocol=protocol),
             reasoning_effort_mapping=config({"low": "vendor_effort"}),
         ),

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from my_llm.exceptions import ConfigurationError
+from my_llm.profile.base import Profile
 from my_llm.profile.types import Config, Omit, Parameter, omit, set_attr
 
 type Protocol = str
@@ -15,14 +16,15 @@ EFFORTS = ("none", "low", "medium", "high", "xhigh", "max")
 
 
 @dataclass(frozen=True, kw_only=True)
-class ProtocolDefaults:
+class ProtocolDefaults(Profile):
     """Settings declared by a protocol's Codec, extensible with typed wrappers.
 
     Parameter binds its own path, default, support and fixed input/output source.
     Field metadata scope="client" targets connection options (built-in api_key);
     other input parameters target requests.
-    Config controls code behavior. Dataclass field names identify each setting;
-    wrapper identities are fixed by their Profile fields.
+    Config controls code behavior; Attribute marks profile-owned data excluded
+    from resolution. Dataclass field names identify each setting; Parameter and
+    Config identities are fixed by their Profile fields.
     """
 
     replay_reasoning_content_when_tool_calls: Config[bool] | Omit
@@ -58,12 +60,13 @@ class ProtocolDefaults:
 
 
 @dataclass(frozen=True, kw_only=True)
-class OverridableProfile:
+class OverridableProfile(Profile):
     """Shared overrides: None inherits, omit disables, wrappers replace settings.
 
-    Extend profiles with Parameter[T] or Config[T] fields. Parameter overrides
-    replace path, support and default together. Config dictionaries merge by key.
-    A wrapper's explicit default_value=None is retained.
+    Extend profiles with Parameter[T], Config[T] or Attribute[T] fields.
+    Parameter overrides replace path, support and default together. Config
+    dictionaries merge by key; Attribute data stays with the Profile.
+    A setting's explicit default_value=None is retained.
     """
 
     extra_headers: Config[dict[str, Any]] | Omit | None = None

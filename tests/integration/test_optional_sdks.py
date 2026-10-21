@@ -47,8 +47,8 @@ def test_only_installed_sdks_are_required(installed):
             for protocol in names:
                 if sdk == installed:
                     profile = my_llm.resolve_profiles(
-                        my_llm.ProviderProfile(protocol=protocol),
-                        my_llm.ModelProfile(model="demo"),
+                        my_llm.ProviderProfile(protocol=my_llm.Config(default_value=protocol)),
+                        my_llm.ModelProfile(model=my_llm.Attribute(default_value="demo")),
                     )
                     assert profile.protocol == protocol
                     assert converter.decoder(protocol)
@@ -69,8 +69,8 @@ def test_only_installed_sdks_are_required(installed):
                 for action in (
                     lambda: converter.decoder(protocol),
                     lambda: my_llm.resolve_profiles(
-                        my_llm.ProviderProfile(protocol=protocol),
-                        my_llm.ModelProfile(model="demo"),
+                        my_llm.ProviderProfile(protocol=my_llm.Config(default_value=protocol)),
+                        my_llm.ModelProfile(model=my_llm.Attribute(default_value="demo")),
                     ),
                     lambda: getattr(my_llm.codec, exports[sdk]),
                 ):

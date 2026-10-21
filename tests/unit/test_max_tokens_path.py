@@ -4,7 +4,15 @@ from copy import deepcopy
 
 import pytest
 
-from my_llm import ConfigurationError, ModelProfile, ProviderProfile, omit, resolve_profiles
+from my_llm import (
+    Attribute,
+    Config,
+    ConfigurationError,
+    ModelProfile,
+    ProviderProfile,
+    omit,
+    resolve_profiles,
+)
 from my_llm.codec.shared.options import path_value
 from tests.helpers.profiles import config, parameter
 from tests.helpers.requests import encode_request
@@ -139,13 +147,13 @@ def test_unsupported_token_default_is_not_validated_or_inserted_into_requests(
 def test_max_tokens_path_layering(model_path, expected):
     profile = resolve_profiles(
         ProviderProfile(
-            protocol="openai_chat",
+            protocol=Config(default_value="openai_chat"),
             max_tokens=parameter(
                 "max_tokens", protocol="openai_chat", path="$.extra_body.max_tokens"
             ),
         ),
         ModelProfile(
-            model="demo",
+            model=Attribute(default_value="demo"),
             max_tokens=(
                 model_path
                 if model_path is None or model_path is omit
@@ -165,28 +173,35 @@ def test_invalid_max_tokens_path(path):
     with pytest.raises(ConfigurationError):
         resolve_profiles(
             ProviderProfile(
-                protocol="openai_chat",
+                protocol=Config(default_value="openai_chat"),
                 max_tokens=parameter("max_tokens", protocol="openai_chat", path=path),
             ),
-            ModelProfile(model="demo"),
+            ModelProfile(model=Attribute(default_value="demo")),
         )
 
 
 def test_max_tokens_default_is_omitted_and_explicit_none_is_a_value():
-    profile = resolve_profiles(ProviderProfile(protocol="openai_chat"), ModelProfile(model="demo"))
+    profile = resolve_profiles(
+        ProviderProfile(protocol=Config(default_value="openai_chat")),
+        ModelProfile(model=Attribute(default_value="demo")),
+    )
     assert profile.get("max_tokens", omit) is omit
     assert profile.parameter("max_tokens").default_value is omit
     inherited = resolve_profiles(
         ProviderProfile(
-            protocol="openai_chat", max_tokens=parameter("max_tokens", 2048, protocol="openai_chat")
+            protocol=Config(default_value="openai_chat"),
+            max_tokens=parameter("max_tokens", 2048, protocol="openai_chat"),
         ),
-        ModelProfile(model="demo"),
+        ModelProfile(model=Attribute(default_value="demo")),
     )
     assert inherited.get("max_tokens") == 2048
     result = resolve_profiles(
         ProviderProfile(
-            protocol="openai_chat", max_tokens=parameter("max_tokens", 2048, protocol="openai_chat")
+            protocol=Config(default_value="openai_chat"),
+            max_tokens=parameter("max_tokens", 2048, protocol="openai_chat"),
         ),
-        ModelProfile(model="demo", max_tokens=parameter("max_tokens", None)),
+        ModelProfile(
+            model=Attribute(default_value="demo"), max_tokens=parameter("max_tokens", None)
+        ),
     )
     assert result.get("max_tokens", 100) is None

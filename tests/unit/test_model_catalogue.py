@@ -1,6 +1,6 @@
 import pytest
 
-from my_llm import ConfigurationError, ModelProfile, ProviderProfile, generate
+from my_llm import Attribute, Config, ConfigurationError, ModelProfile, ProviderProfile, generate
 from my_llm.profile.resolution import resolve_profiles
 from tests.helpers.profiles import parameter
 from tests.helpers.protocols import chat_event, response_completed
@@ -8,75 +8,95 @@ from tests.helpers.transport import FakeClient
 
 
 def test_context_window_default():
-    assert ModelProfile(model="demo").max_context_window == 256000
+    assert (
+        ModelProfile(model=Attribute(default_value="demo")).max_context_window.default_value
+        == 256000
+    )
 
 
 @pytest.mark.parametrize("value", [-1, 0, 1, 128000, 2**80])
 def test_context_window_accepts_any_integer(value):
-    assert ModelProfile(model="demo", max_context_window=value).max_context_window == value
+    assert (
+        ModelProfile(
+            model=Attribute(default_value="demo"), max_context_window=Attribute(default_value=value)
+        ).max_context_window.default_value
+        == value
+    )
 
 
 @pytest.mark.parametrize("value", [None, "256000", 1.5, True, False])
 def test_context_window_rejects_non_integer_values(value):
     with pytest.raises(ConfigurationError, match="max_context_window"):
-        ModelProfile(model="demo", max_context_window=value)
+        ModelProfile(
+            model=Attribute(default_value="demo"), max_context_window=Attribute(default_value=value)
+        )
 
 
 def test_provider_models_default_and_independent_lists():
     first, second = ProviderProfile(), ProviderProfile()
     assert first.models is None
     assert first.list_models() == []
-    model = ModelProfile(model="demo")
+    model = ModelProfile(model=Attribute(default_value="demo"))
     first.add_models(model)
     assert first.list_models() == [model]
     assert second.models is None
 
 
 def test_catalogue_constructor_and_listing_copy_only_the_container():
-    model = ModelProfile(model="demo")
+    model = ModelProfile(model=Attribute(default_value="demo"))
     initial = [model]
-    provider = ProviderProfile(models=initial)
+    provider = ProviderProfile(models=Attribute(default_value=initial))
     initial.clear()
     listed = provider.list_models()
     assert listed == [model]
     assert listed[0] is model
-    listed.append(ModelProfile(model="other"))
+    listed.append(ModelProfile(model=Attribute(default_value="other")))
     assert provider.list_models() == [model]
 
 
 def test_add_single_batch_and_replace_matching_id_in_stable_order():
-    first, second, third = [ModelProfile(model=name) for name in ("first", "second", "third")]
-    provider = ProviderProfile(models=[first])
+    first, second, third = [
+        ModelProfile(model=Attribute(default_value=name)) for name in ("first", "second", "third")
+    ]
+    provider = ProviderProfile(models=Attribute(default_value=[first]))
     provider.add_models(second)
     provider.add_models([third])
-    replacement = ModelProfile(model="second", max_context_window=8192)
-    provider.add_models([replacement, ModelProfile(model="fourth")])
-    assert [model.model for model in provider.list_models()] == [
+    replacement = ModelProfile(
+        model=Attribute(default_value="second"), max_context_window=Attribute(default_value=8192)
+    )
+    provider.add_models([replacement, ModelProfile(model=Attribute(default_value="fourth"))])
+    assert [model.model.default_value for model in provider.list_models()] == [
         "first",
         "second",
         "third",
         "fourth",
     ]
     assert provider.list_models()[1] is replacement
-    assert replacement.max_context_window == 8192
+    assert replacement.max_context_window.default_value == 8192
 
 
 def test_duplicate_ids_in_constructor_and_batch_use_last_configuration():
-    first = ModelProfile(model="demo", max_context_window=1)
-    updated = ModelProfile(model="demo", max_context_window=2)
-    provider = ProviderProfile(models=[first, updated])
+    first = ModelProfile(
+        model=Attribute(default_value="demo"), max_context_window=Attribute(default_value=1)
+    )
+    updated = ModelProfile(
+        model=Attribute(default_value="demo"), max_context_window=Attribute(default_value=2)
+    )
+    provider = ProviderProfile(models=Attribute(default_value=[first, updated]))
     assert provider.list_models() == [updated]
     provider.add_models([updated, first])
     assert provider.list_models() == [first]
 
 
 def test_delete_multiple_ids_ignores_unknown_and_retains_remaining_order():
-    models = [ModelProfile(model=name) for name in ("first", "second", "third")]
-    provider = ProviderProfile(models=models)
+    models = [
+        ModelProfile(model=Attribute(default_value=name)) for name in ("first", "second", "third")
+    ]
+    provider = ProviderProfile(models=Attribute(default_value=models))
     provider.delete_model(["first", "missing", "third", "first"])
     assert provider.list_models() == [models[1]]
     provider.delete_model(["second"])
-    assert provider.models == []
+    assert provider.models.default_value == []
     provider.delete_model(["missing"])
     assert provider.list_models() == []
 
@@ -87,24 +107,36 @@ def test_empty_catalogue_operations():
     provider.delete_model([])
     provider.delete_model(["missing"])
     assert provider.models is None
-    assert ProviderProfile(models=[]).models == []
+    assert ProviderProfile(models=Attribute(default_value=[])).models.default_value == []
 
 
 @pytest.mark.parametrize(
-    "models", ["demo", (ModelProfile(model="demo"),), ["demo"], [ModelProfile(model="ok"), None]]
+    "models",
+    [
+        "demo",
+        (ModelProfile(model=Attribute(default_value="demo")),),
+        ["demo"],
+        [ModelProfile(model=Attribute(default_value="ok")), None],
+    ],
 )
 def test_invalid_constructor_catalogues(models):
     with pytest.raises(ConfigurationError, match="models"):
-        ProviderProfile(models=models)
+        ProviderProfile(models=Attribute(default_value=models))
 
 
 @pytest.mark.parametrize(
     "incoming",
-    [None, "demo", ["demo"], [ModelProfile(model="new"), None], [ModelProfile(model=" ")]],
+    [
+        None,
+        "demo",
+        ["demo"],
+        [ModelProfile(model=Attribute(default_value="new")), None],
+        [ModelProfile(model=Attribute(default_value=" "))],
+    ],
 )
 def test_invalid_additions_are_atomic(incoming):
-    original = ModelProfile(model="original")
-    provider = ProviderProfile(models=[original])
+    original = ModelProfile(model=Attribute(default_value="original"))
+    provider = ProviderProfile(models=Attribute(default_value=[original]))
     with pytest.raises(ConfigurationError):
         provider.add_models(incoming)
     assert provider.list_models() == [original]
@@ -112,8 +144,8 @@ def test_invalid_additions_are_atomic(incoming):
 
 @pytest.mark.parametrize("model_id", [None, "demo", [1], ("demo",)])
 def test_invalid_deletions_do_not_modify_catalogue(model_id):
-    original = ModelProfile(model="demo")
-    provider = ProviderProfile(models=[original])
+    original = ModelProfile(model=Attribute(default_value="demo"))
+    provider = ProviderProfile(models=Attribute(default_value=[original]))
     with pytest.raises(ConfigurationError, match="model_id"):
         provider.delete_model(model_id)
     assert provider.list_models() == [original]
@@ -125,9 +157,18 @@ def test_catalogue_and_context_metadata_are_excluded_from_resolution_and_deepcop
             raise AssertionError("request resolution must not copy the model catalogue")
 
     provider = ProviderProfile(
-        protocol="openai_chat", models=[CatalogueModel(model="catalogue-only")]
+        protocol=Config(default_value="openai_chat"),
+        models=Attribute(
+            default_value=[CatalogueModel(model=Attribute(default_value="catalogue-only"))]
+        ),
     )
-    resolved = resolve_profiles(provider, ModelProfile(model="selected", max_context_window=-1))
+    resolved = resolve_profiles(
+        provider,
+        ModelProfile(
+            model=Attribute(default_value="selected"),
+            max_context_window=Attribute(default_value=-1),
+        ),
+    )
     assert "models" not in resolved.values
     assert "max_context_window" not in resolved.values
     assert resolved.model == "selected"
@@ -137,15 +178,20 @@ def test_catalogue_and_context_metadata_are_excluded_from_resolution_and_deepcop
 @pytest.mark.parametrize("window", [-1, 0, 1, 256000])
 async def test_metadata_does_not_change_request_or_limit_content(protocol, window, monkeypatch):
     provider = ProviderProfile(
-        protocol=protocol,
-        models=[
-            ModelProfile(model="demo", max_tokens=parameter("max_tokens", 1, protocol=protocol))
-        ],
+        protocol=Config(default_value=protocol),
+        models=Attribute(
+            default_value=[
+                ModelProfile(
+                    model=Attribute(default_value="demo"),
+                    max_tokens=parameter("max_tokens", 1, protocol=protocol),
+                )
+            ]
+        ),
     )
     model = ModelProfile(
-        model="demo",
+        model=Attribute(default_value="demo"),
         max_tokens=parameter("max_tokens", 64, protocol=protocol),
-        max_context_window=window,
+        max_context_window=Attribute(default_value=window),
     )
     events = (
         [response_completed()] if protocol == "openai_responses" else [chat_event(finish="stop")]

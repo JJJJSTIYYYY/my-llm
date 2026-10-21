@@ -1,6 +1,6 @@
 import pytest
 
-from my_llm import MessageValidationError, ModelProfile, MyLLM, ProviderProfile
+from my_llm import Attribute, Config, MessageValidationError, ModelProfile, MyLLM, ProviderProfile
 from tests.helpers.profiles import config
 from tests.helpers.protocols import chat_event
 from tests.helpers.transport import FakeClient
@@ -13,7 +13,10 @@ async def test_mixed_protocol_history_is_rejected_before_request(monkeypatch):
         "my_llm.codec.openai.responses.transport.AsyncOpenAI",
         lambda **kwargs: client,
     )
-    llm = MyLLM(provider=ProviderProfile(protocol="openai_chat"), model=ModelProfile(model="demo"))
+    llm = MyLLM(
+        provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
+        model=ModelProfile(model=Attribute(default_value="demo")),
+    )
     with pytest.raises(MessageValidationError):
         await llm.generate(
             messages=[
@@ -34,8 +37,8 @@ async def test_previous_response_id_allows_external_tool_results(monkeypatch):
         lambda **kwargs: client,
     )
     llm = MyLLM(
-        provider=ProviderProfile(protocol="openai_responses"),
-        model=ModelProfile(model="demo"),
+        provider=ProviderProfile(protocol=Config(default_value="openai_responses")),
+        model=ModelProfile(model=Attribute(default_value="demo")),
         stdio_protocol="openai_responses",
     )
     result = [{"type": "function_call_output", "call_id": "server_call", "output": "ok"}]
@@ -54,8 +57,10 @@ async def test_stdio_protocol_matches_tools_before_ambiguous_messages(monkeypatc
         lambda **kwargs: client,
     )
     llm = MyLLM(
-        provider=ProviderProfile(protocol="openai_chat"),
-        model=ModelProfile(model="demo", supports_function_calling=config(True)),
+        provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
+        model=ModelProfile(
+            model=Attribute(default_value="demo"), supports_function_calling=config(True)
+        ),
     )
     result = await llm.generate(
         messages=[{"role": "user", "content": "hi"}],

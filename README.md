@@ -83,20 +83,20 @@ pip install 'my-llm-py[openai,anthropic]'
 import asyncio
 import os
 
-from my_llm import ModelProfile, MyLLM, Parameter, ProviderProfile
+from my_llm import Attribute, Config, ModelProfile, MyLLM, Parameter, ProviderProfile
 
 
 async def main():
     async with MyLLM(
         provider=ProviderProfile(
-            protocol="anthropic",  # 实际请求的 API 协议
+            protocol=Config(default_value="anthropic"),  # 实际请求的 API 协议
             api_key=Parameter(
                 path="$.api_key",
                 default_value=os.environ["ANTHROPIC_API_KEY"],
             ),
         ),
         model=ModelProfile(
-            model=os.environ["LLM_MODEL"],
+            model=Attribute(default_value=os.environ["LLM_MODEL"]),
             max_tokens=Parameter(
                 path="$.max_tokens",
                 default_value=4096,

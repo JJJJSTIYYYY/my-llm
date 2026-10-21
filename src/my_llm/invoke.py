@@ -14,7 +14,7 @@ from my_llm.profile.configuration import Protocol, ReasoningEffort
 from my_llm.profile.model_profile import ModelProfile
 from my_llm.profile.provider_profile import ProviderProfile
 from my_llm.profile.resolution import resolve_profiles
-from my_llm.profile.types import omit
+from my_llm.profile.types import Attribute, omit
 from my_llm.stream._state import StreamState
 from my_llm.stream.message_stream import MessageStream
 
@@ -185,7 +185,9 @@ async def generate(
     **parameters: Any,
 ) -> MessageStream | dict | list:
     """One-shot generation; a returned stream owns the temporary MyLLM lifetime."""
-    selected = ModelProfile(model=model) if isinstance(model, str) else model
+    selected = (
+        ModelProfile(model=Attribute(default_value=model)) if isinstance(model, str) else model
+    )
     async with AsyncExitStack() as resources:
         llm = await resources.enter_async_context(
             MyLLM(provider=provider, model=selected, stdio_protocol=stdio_protocol)

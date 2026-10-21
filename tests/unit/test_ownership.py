@@ -1,6 +1,6 @@
 from copy import deepcopy
 
-from my_llm import ModelProfile, MyCodec, MyLLM, ProviderProfile
+from my_llm import Attribute, Config, ModelProfile, MyCodec, MyLLM, ProviderProfile
 from my_llm.profile import resolve_profiles
 from tests.helpers.profiles import config
 from tests.helpers.protocols import chat_event
@@ -9,8 +9,14 @@ from tests.helpers.transport import FakeClient
 
 def test_profile_and_request_snapshots_are_independent():
     body = {"nested": {"value": "original"}}
-    provider = ProviderProfile(protocol="openai_chat", extra_body=config(body))
-    llm = MyLLM(stdio_protocol="openai_chat", provider=provider, model=ModelProfile(model="demo"))
+    provider = ProviderProfile(
+        protocol=Config(default_value="openai_chat"), extra_body=config(body)
+    )
+    llm = MyLLM(
+        stdio_protocol="openai_chat",
+        provider=provider,
+        model=ModelProfile(model=Attribute(default_value="demo")),
+    )
     body["nested"]["value"] = "changed"
     assert llm.provider.extra_body.default_value["nested"]["value"] == "original"
     assert llm.resolved_profile.get("extra_body")["nested"]["value"] == "original"
@@ -37,8 +43,8 @@ async def test_lazy_generation_captures_history_and_request_options(monkeypatch)
     body = {"nested": {"value": "original"}}
     llm = MyLLM(
         stdio_protocol="openai_chat",
-        provider=ProviderProfile(protocol="openai_chat"),
-        model=ModelProfile(model="demo"),
+        provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
+        model=ModelProfile(model=Attribute(default_value="demo")),
     )
     stream = await llm.generate(messages=history, extra_body=body, stream=True)
     history[0]["content"][0]["text"] = "changed"
@@ -57,7 +63,10 @@ def test_converter_never_mutates_input_or_profile():
     codec = MyCodec()
     messages = [{"role": "user", "content": "hi", "nested": {"value": [1]}}]
     before = deepcopy(messages)
-    profile = resolve_profiles(ProviderProfile(protocol="openai_chat"), ModelProfile(model="demo"))
+    profile = resolve_profiles(
+        ProviderProfile(protocol=Config(default_value="openai_chat")),
+        ModelProfile(model=Attribute(default_value="demo")),
+    )
     for protocol in codec.codecs:
         converted = codec.convert(
             messages, input_format="openai_chat", target_format=protocol, profile=profile

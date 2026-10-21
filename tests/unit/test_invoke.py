@@ -3,6 +3,8 @@ import asyncio
 import pytest
 
 from my_llm import (
+    Attribute,
+    Config,
     ConfigurationError,
     IncompleteStreamError,
     MessageValidationError,
@@ -36,7 +38,7 @@ async def test_owned_client_configuration_and_cleanup(monkeypatch):
     result = await generate(
         stdio_protocol="openai_chat",
         provider=ProviderProfile(
-            protocol="openai_chat",
+            protocol=Config(default_value="openai_chat"),
             api_key=parameter("api_key", "profile"),
             timeout=config(30),
             max_retries=config(0),
@@ -56,8 +58,8 @@ async def test_unstarted_and_early_closed_streams_release_resources(monkeypatch)
     )
     llm = MyLLM(
         stdio_protocol="openai_chat",
-        provider=ProviderProfile(protocol="openai_chat"),
-        model=ModelProfile(model="demo"),
+        provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
+        model=ModelProfile(model=Attribute(default_value="demo")),
     )
     stream = await llm.generate(messages=[{"role": "user", "content": "x"}], stream=True)
     await stream.aclose()
@@ -80,7 +82,7 @@ async def test_missing_terminal_event_preserves_partial_message(monkeypatch):
     with pytest.raises(IncompleteStreamError) as error:
         await generate(
             stdio_protocol="openai_chat",
-            provider=ProviderProfile(protocol="openai_chat"),
+            provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
             model="demo",
             messages=[{"role": "user", "content": "x"}],
         )
@@ -93,7 +95,7 @@ async def test_transport_error_closes_everything(monkeypatch):
     with pytest.raises(RuntimeError, match="transport failed"):
         await generate(
             stdio_protocol="openai_chat",
-            provider=ProviderProfile(protocol="openai_chat"),
+            provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
             model="demo",
             messages=[{"role": "user", "content": "x"}],
         )
@@ -113,7 +115,7 @@ async def test_cancellation_closes_everything(monkeypatch):
         task = tasks.create_task(
             generate(
                 stdio_protocol="openai_chat",
-                provider=ProviderProfile(protocol="openai_chat"),
+                provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
                 model="demo",
                 messages=[{"role": "user", "content": "x"}],
             )
@@ -127,7 +129,10 @@ async def test_cancellation_closes_everything(monkeypatch):
 
 async def test_stdio_protocol_binds_once_and_rejects_other_formats(monkeypatch):
     patch_client(monkeypatch, [chat_event(finish="stop")])
-    llm = MyLLM(provider=ProviderProfile(protocol="openai_chat"), model=ModelProfile(model="demo"))
+    llm = MyLLM(
+        provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
+        model=ModelProfile(model=Attribute(default_value="demo")),
+    )
     await llm.generate(messages=[{"role": "developer", "content": [{"type": "text", "text": "x"}]}])
     assert llm.stdio_protocol == "openai_chat"
     with pytest.raises(MessageValidationError, match="bound"):
@@ -138,8 +143,8 @@ async def test_configuration_errors_happen_before_sdk_creation(monkeypatch):
     _, captured = patch_client(monkeypatch, [])
     llm = MyLLM(
         stdio_protocol="openai_chat",
-        provider=ProviderProfile(protocol="openai_chat"),
-        model=ModelProfile(model="demo"),
+        provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
+        model=ModelProfile(model=Attribute(default_value="demo")),
     )
     with pytest.raises(ConfigurationError):
         await llm.generate(messages=[{"role": "user", "content": "x"}], stream="yes")
@@ -163,7 +168,7 @@ async def test_provider_error_is_not_masked_by_partial_tool_json(monkeypatch):
     with pytest.raises(ResponseFailedError) as failure:
         await generate(
             stdio_protocol="openai_chat",
-            provider=ProviderProfile(protocol="openai_chat"),
+            provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
             model="demo",
             messages=[{"role": "user", "content": "hi"}],
         )
@@ -175,8 +180,8 @@ async def test_provider_error_is_not_masked_by_partial_tool_json(monkeypatch):
 async def test_bound_stdio_protocol_does_not_detect_again(monkeypatch):
     patch_client(monkeypatch, [chat_event(finish="stop")])
     llm = MyLLM(
-        provider=ProviderProfile(protocol="openai_chat"),
-        model=ModelProfile(model="demo"),
+        provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
+        model=ModelProfile(model=Attribute(default_value="demo")),
         stdio_protocol="openai_chat",
     )
 
@@ -195,13 +200,13 @@ async def test_provider_paths_apply_before_standard_output_decoding(monkeypatch)
     patch_client(monkeypatch, [event, chat_event(finish="stop")])
     llm = MyLLM(
         provider=ProviderProfile(
-            protocol="openai_chat",
+            protocol=Config(default_value="openai_chat"),
             content=parameter(
                 "content", protocol="openai_chat", path="$.choices[0].delta.provider_text"
             ),
             reasoning_content=omit,
         ),
-        model=ModelProfile(model="demo"),
+        model=ModelProfile(model=Attribute(default_value="demo")),
         stdio_protocol="gemini",
     )
     result = await llm.generate(messages=[{"role": "user", "parts": [{"text": "hi"}]}])
@@ -217,9 +222,10 @@ async def test_target_finish_failure_does_not_publish_a_completed_result(monkeyp
     client = FakeClient(events)
     monkeypatch.setattr("my_llm.codec.anthropic.transport.AsyncAnthropic", lambda **kwargs: client)
     llm = MyLLM(
-        provider=ProviderProfile(protocol="anthropic"),
+        provider=ProviderProfile(protocol=Config(default_value="anthropic")),
         model=ModelProfile(
-            model="demo", max_tokens=parameter("max_tokens", 2048, protocol="anthropic")
+            model=Attribute(default_value="demo"),
+            max_tokens=parameter("max_tokens", 2048, protocol="anthropic"),
         ),
         stdio_protocol="openai_chat",
     )
@@ -239,8 +245,8 @@ async def test_early_exit_during_final_tool_frames_has_no_completed_result(monke
 
     client, _ = patch_client(monkeypatch, stream_events("openai_chat", tool=True))
     llm = MyLLM(
-        provider=ProviderProfile(protocol="openai_chat"),
-        model=ModelProfile(model="demo"),
+        provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
+        model=ModelProfile(model=Attribute(default_value="demo")),
         stdio_protocol="openai_chat",
     )
     stream = await llm.generate(messages=[{"role": "user", "content": "hi"}], stream=True)

@@ -1,4 +1,4 @@
-"""Declarative parameters, code configuration and SDK-independent omission."""
+"""Profile attributes, parameters, configuration and SDK-independent omission."""
 
 from __future__ import annotations
 
@@ -41,6 +41,17 @@ class Omit:
 
 
 omit = Omit()
+
+
+@dataclass(frozen=True, kw_only=True)
+class Attribute(Generic[_T]):
+    """Profile-owned data excluded from resolved configuration and SDK routing."""
+
+    default_value: _T
+    comment: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_comment(self.comment)
 
 
 @dataclass(frozen=True, kw_only=True)

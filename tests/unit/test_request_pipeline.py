@@ -6,7 +6,16 @@ from unittest.mock import patch
 
 import pytest
 
-from my_llm import ModelProfile, MyCodec, MyLLM, Parameter, ProviderProfile, resolve_profiles
+from my_llm import (
+    Attribute,
+    Config,
+    ModelProfile,
+    MyCodec,
+    MyLLM,
+    Parameter,
+    ProviderProfile,
+    resolve_profiles,
+)
 from my_llm.profile import resolution
 from tests.helpers.protocols import PROTOCOLS
 from tests.performance.runner import measure
@@ -107,7 +116,10 @@ def test_client_scope_is_declared_instead_of_inferred_from_field_name():
             metadata={"scope": "client", "source": "input"},
         )
 
-    profile = resolve_profiles(AuthProvider(protocol="openai_chat"), ModelProfile(model="demo"))
+    profile = resolve_profiles(
+        AuthProvider(protocol=Config(default_value="openai_chat")),
+        ModelProfile(model=Attribute(default_value="demo")),
+    )
     codec = MyCodec()
     codec.validate_profile(profile)
     assert codec.client_parameters(profile) == {"default_headers": {"x-auth": "offline-token"}}
@@ -160,7 +172,10 @@ def test_anthropic_open_tool_schema_is_captured_once():
             "additionalProperties": False,
         },
     }
-    profile = resolve_profiles(ProviderProfile(protocol="anthropic"), ModelProfile(model="demo"))
+    profile = resolve_profiles(
+        ProviderProfile(protocol=Config(default_value="anthropic")),
+        ModelProfile(model=Attribute(default_value="demo")),
+    )
     result = MyCodec().decoder("anthropic").filter_tools([source], profile)
     assert copies == [True]
     result[0]["input_schema"]["properties"]["choice"]["enum"].append(3)

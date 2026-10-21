@@ -5,6 +5,7 @@ from dataclasses import FrozenInstanceError, dataclass, field, replace
 import pytest
 
 from my_llm import (
+    Attribute,
     Config,
     ConfigurationError,
     ModelProfile,
@@ -24,11 +25,13 @@ def test_profile_fixes_names_and_sources_across_every_layer(protocol):
     from my_llm.registry import codec_for
 
     provider = ProviderProfile(
-        protocol=protocol,
+        protocol=Config(default_value=protocol),
         max_tokens=parameter("max_tokens", 2048, protocol=protocol),
         timeout=Config(default_value=30),
     )
-    model = ModelProfile(model="demo", content=parameter("content", protocol=protocol))
+    model = ModelProfile(
+        model=Attribute(default_value="demo"), content=parameter("content", protocol=protocol)
+    )
     resolved = resolve_profiles(provider, model)
     for profile in (codec_for(protocol).defaults, provider, model):
         for name, source in (("max_tokens", "input"), ("content", "output")):
@@ -44,7 +47,9 @@ def test_profile_fixes_names_and_sources_across_every_layer(protocol):
 def test_parameter_identity_cannot_be_supplied_or_reassigned(attribute, value):
     with pytest.raises(TypeError, match=attribute):
         Parameter(path="$.limit", **{attribute: value})
-    bound = ModelProfile(model="demo", max_tokens=Parameter(path="$.limit")).max_tokens
+    bound = ModelProfile(
+        model=Attribute(default_value="demo"), max_tokens=Parameter(path="$.limit")
+    ).max_tokens
     with pytest.raises(FrozenInstanceError):
         setattr(bound, attribute, value)
     with pytest.raises(ValueError, match=attribute):
@@ -57,17 +62,24 @@ def test_config_name_cannot_be_supplied_or_rebound_to_another_field():
     bound = ProviderProfile(timeout=Config(default_value=30)).timeout
     with pytest.raises(ConfigurationError, match="already been assigned"):
         ProviderProfile(max_retries=bound)
-    assert replace(ProviderProfile(timeout=bound), protocol="openai_chat").timeout is bound
+    assert (
+        replace(
+            ProviderProfile(timeout=bound), protocol=Config(default_value="openai_chat")
+        ).timeout
+        is bound
+    )
 
 
 def test_reusable_unbound_declaration_gets_independent_fixed_identity():
     declaration = Parameter(path="$.vendor")
-    profile = ModelProfile(model="demo", content=declaration, reasoning_content=declaration)
+    profile = ModelProfile(
+        model=Attribute(default_value="demo"), content=declaration, reasoning_content=declaration
+    )
     assert declaration.name is declaration.source is None
     assert profile.content.name == "content"
     assert profile.reasoning_content.name == "reasoning_content"
     with pytest.raises(ConfigurationError, match="already been assigned"):
-        ModelProfile(model="demo", reasoning_content=profile.content)
+        ModelProfile(model=Attribute(default_value="demo"), reasoning_content=profile.content)
 
 
 def test_custom_parameters_require_source_in_profile_declaration():
@@ -76,7 +88,7 @@ def test_custom_parameters_require_source_in_profile_declaration():
         vendor: Parameter[int] = Parameter(path="$.extra_body.vendor")
 
     with pytest.raises(ConfigurationError, match="source in Profile"):
-        MissingSource(model="demo")
+        MissingSource(model=Attribute(default_value="demo"))
 
     @dataclass(frozen=True, kw_only=True)
     class Vendor(ModelProfile):
@@ -85,7 +97,10 @@ def test_custom_parameters_require_source_in_profile_declaration():
             metadata={"source": "input"},
         )
 
-    profile = resolve_profiles(ProviderProfile(protocol="openai_chat"), Vendor(model="demo"))
+    profile = resolve_profiles(
+        ProviderProfile(protocol=Config(default_value="openai_chat")),
+        Vendor(model=Attribute(default_value="demo")),
+    )
     assert encode_request(profile)["extra_body"]["vendor"] == 7
 
 
@@ -98,7 +113,10 @@ def test_client_parameters_must_be_inputs():
         )
 
     with pytest.raises(ConfigurationError, match="credential must use the input source"):
-        resolve_profiles(InvalidClient(protocol="openai_chat"), ModelProfile(model="demo"))
+        resolve_profiles(
+            InvalidClient(protocol=Config(default_value="openai_chat")),
+            ModelProfile(model=Attribute(default_value="demo")),
+        )
 
 
 @pytest.mark.parametrize("value", [None, Parameter(path="$.max_completion_tokens")])
@@ -111,7 +129,10 @@ def test_parameter_source_and_scope_cannot_change_between_profile_layers(value, 
         )
 
     with pytest.raises(ConfigurationError, match="max_tokens must keep the same source and scope"):
-        resolve_profiles(ProviderProfile(protocol="openai_chat"), ChangedModel(model="demo"))
+        resolve_profiles(
+            ProviderProfile(protocol=Config(default_value="openai_chat")),
+            ChangedModel(model=Attribute(default_value="demo")),
+        )
 
 
 def test_profile_overriding_post_init_cannot_silently_skip_identity_binding():
@@ -122,8 +143,11 @@ def test_profile_overriding_post_init_cannot_silently_skip_identity_binding():
 
     with pytest.raises(ConfigurationError, match="identity must be bound"):
         resolve_profiles(
-            ProviderProfile(protocol="openai_chat"),
-            UnboundModel(model="demo", max_tokens=Parameter(path="$.max_completion_tokens")),
+            ProviderProfile(protocol=Config(default_value="openai_chat")),
+            UnboundModel(
+                model=Attribute(default_value="demo"),
+                max_tokens=Parameter(path="$.max_completion_tokens"),
+            ),
         )
 
 
@@ -132,9 +156,9 @@ def test_omitting_enable_route_preserves_independent_effort_route(protocol):
     from my_llm.codec.shared.options import path_value
 
     profile = resolve_profiles(
-        ProviderProfile(protocol=protocol),
+        ProviderProfile(protocol=Config(default_value=protocol)),
         ModelProfile(
-            model="demo",
+            model=Attribute(default_value="demo"),
             max_tokens=parameter("max_tokens", 2048, protocol=protocol),
             reasoning_enable=omit,
             reasoning_effort=parameter("reasoning_effort", protocol=protocol, supports=True),
@@ -147,9 +171,9 @@ def test_omitting_enable_route_preserves_independent_effort_route(protocol):
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_omitting_both_reasoning_routes_only_disables_automatic_insertion(protocol):
     profile = resolve_profiles(
-        ProviderProfile(protocol=protocol),
+        ProviderProfile(protocol=Config(default_value=protocol)),
         ModelProfile(
-            model="demo",
+            model=Attribute(default_value="demo"),
             max_tokens=parameter("max_tokens", 2048, protocol=protocol),
             reasoning_enable=omit,
             reasoning_effort=omit,
@@ -163,7 +187,8 @@ def test_unsupported_parameter_forces_omit_before_profile_type_validation(value)
     declaration = Parameter(path="$.max_completion_tokens", supports=False, default_value=value)
     assert declaration.default_value is omit
     profile = resolve_profiles(
-        ProviderProfile(protocol="openai_chat"), ModelProfile(model="demo", max_tokens=declaration)
+        ProviderProfile(protocol=Config(default_value="openai_chat")),
+        ModelProfile(model=Attribute(default_value="demo"), max_tokens=declaration),
     )
     assert profile.values["max_tokens"] is omit
     assert profile.parameter("max_tokens") is None
@@ -176,18 +201,18 @@ def test_unsupported_parameter_forces_omit_before_profile_type_validation(value)
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_reasoning_capability_is_owned_by_parameter(protocol):
     model = ModelProfile(
-        model="demo",
+        model=Attribute(default_value="demo"),
         max_tokens=parameter("max_tokens", 2048, protocol=protocol),
         reasoning_enable=parameter("reasoning_enable", protocol=protocol, supports=False),
     )
-    profile = resolve_profiles(ProviderProfile(protocol=protocol), model)
+    profile = resolve_profiles(ProviderProfile(protocol=Config(default_value=protocol)), model)
     assert profile.parameters["reasoning_enable"].default_value is omit
     assert "supports_reasoning" not in profile.values
     assert "supports_reasoning_effort" not in profile.values
     with pytest.raises(UnsupportedCapabilityError, match="reasoning"):
         encode_request(profile, reasoning=True)
     enabled = replace(model, reasoning_enable=parameter("reasoning_enable", protocol=protocol))
-    profile = resolve_profiles(ProviderProfile(protocol=protocol), enabled)
+    profile = resolve_profiles(ProviderProfile(protocol=Config(default_value=protocol)), enabled)
     assert profile.parameter("reasoning_enable").supports is True
     encode_request(profile, reasoning=True)
 
@@ -199,8 +224,11 @@ def test_generated_enable_wins_over_native_body_and_preserves_input(protocol):
     from my_llm.codec.shared.options import path_value
 
     profile = resolve_profiles(
-        ProviderProfile(protocol=protocol),
-        ModelProfile(model="demo", max_tokens=parameter("max_tokens", 2048, protocol=protocol)),
+        ProviderProfile(protocol=Config(default_value=protocol)),
+        ModelProfile(
+            model=Attribute(default_value="demo"),
+            max_tokens=parameter("max_tokens", 2048, protocol=protocol),
+        ),
     )
     binding = profile.parameter("reasoning_enable")
     body = {
@@ -230,8 +258,11 @@ def test_unsupported_output_parameter_skips_present_native_payload(protocol, nam
     from my_llm import MyCodec
 
     profile = resolve_profiles(
-        ProviderProfile(protocol=protocol),
-        ModelProfile(model="demo", **{name: parameter(name, protocol=protocol, supports=False)}),
+        ProviderProfile(protocol=Config(default_value=protocol)),
+        ModelProfile(
+            model=Attribute(default_value="demo"),
+            **{name: parameter(name, protocol=protocol, supports=False)},
+        ),
     )
     codec = MyCodec().codecs[protocol]
     event = codec.decoder.chunks(
@@ -258,8 +289,11 @@ def test_anthropic_initial_block_cannot_restore_unsupported_output(name, kind):
     from my_llm.stream._state import StreamState
 
     profile = resolve_profiles(
-        ProviderProfile(protocol="anthropic"),
-        ModelProfile(model="demo", **{name: parameter(name, protocol="anthropic", supports=False)}),
+        ProviderProfile(protocol=Config(default_value="anthropic")),
+        ModelProfile(
+            model=Attribute(default_value="demo"),
+            **{name: parameter(name, protocol="anthropic", supports=False)},
+        ),
     )
     block = {"type": kind, kind: "disabled"}
     if kind == "thinking":
@@ -289,9 +323,10 @@ def test_responses_final_snapshot_cannot_restore_unsupported_output(name):
     from tests.helpers.protocols import response_completed
 
     profile = resolve_profiles(
-        ProviderProfile(protocol="openai_responses"),
+        ProviderProfile(protocol=Config(default_value="openai_responses")),
         ModelProfile(
-            model="demo", **{name: parameter(name, protocol="openai_responses", supports=False)}
+            model=Attribute(default_value="demo"),
+            **{name: parameter(name, protocol="openai_responses", supports=False)},
         ),
     )
     part = {"type": "output_text", "text": "answer", "annotations": []}

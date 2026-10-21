@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 from copy import copy, deepcopy
-from dataclasses import dataclass, field, fields
-from functools import lru_cache
+from dataclasses import dataclass, field
 from types import UnionType
-from typing import Any, Literal, TypeAliasType, Union, get_args, get_origin, get_type_hints
+from typing import Any, Literal, TypeAliasType, Union, get_args, get_origin
 
 from my_llm.exceptions import ConfigurationError, UnsupportedProviderError
+from my_llm.profile.base import _declarations
 from my_llm.profile.configuration import Protocol, ProtocolDefaults, merge_dicts
 from my_llm.profile.model_profile import ModelProfile
 from my_llm.profile.paths import path_keys
 from my_llm.profile.provider_profile import ProviderProfile
-from my_llm.profile.types import Config, Omit, Parameter
+from my_llm.profile.types import Attribute, Config, Omit, Parameter
 from my_llm.registry import codec_for
 
 
@@ -58,13 +58,21 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
 
     None inherits a setting; omit disables it. Parameter wrappers replace the
     entire binding and Config dictionary defaults merge by key. A default_value
-    of None remains an explicit value. Excludes descriptive model metadata.
+    of None remains an explicit value. Attribute data is validated but excluded
+    from configuration snapshots and parameter bindings.
     """
     if not isinstance(provider, ProviderProfile) or not isinstance(model, ModelProfile):
         raise ConfigurationError("provider and model must be profile instances")
-    if not isinstance(model.model, str) or not model.model.strip():
+    if (
+        not isinstance(model.model, Attribute)
+        or not isinstance(model.model.default_value, str)
+        or not model.model.default_value.strip()
+    ):
         raise ConfigurationError("model must be a non-empty string")
-    defaults = codec_for(provider.protocol).defaults
+    if provider.protocol is not None and not isinstance(provider.protocol, Config):
+        raise ConfigurationError("protocol must use Config[Protocol]")
+    protocol = provider.protocol.default_value if provider.protocol is not None else None
+    defaults = codec_for(protocol).defaults
     if not isinstance(defaults, ProtocolDefaults):
         raise ConfigurationError("codec defaults must be a ProtocolDefaults instance")
     declarations: dict[str, tuple[str, str | None, str]] = {}
@@ -85,6 +93,8 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
                 continue
             if not _matches(value, annotation):
                 raise ConfigurationError(f"{name} does not match its declared profile type")
+            if kind == "attribute":
+                continue
             if isinstance(value, (Parameter, Config)) and (
                 value.name != name or isinstance(value, Parameter) and value.source != source
             ):
@@ -104,7 +114,9 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
         if isinstance(parameter, Parameter) and parameter.default_value is not values[name]:
             parameters[name] = copy(parameter)
             object.__setattr__(parameters[name], "default_value", values[name])
-    resolved = ResolvedProfile(provider.protocol, model.model, values, parameters)
+    if values.get("protocol") != protocol:
+        raise ConfigurationError("protocol cannot change after selecting codec defaults")
+    resolved = ResolvedProfile(protocol, model.model.default_value, values, parameters)
     for key in (
         "supports_stream",
         "supports_function_calling",
@@ -144,48 +156,6 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
     return resolved
 
 
-@lru_cache(maxsize=128)
-def _declarations(profile_type: type) -> tuple[tuple[str, str, Any, str | None, str], ...]:
-    """Cache type analysis, bounded for applications constructing dynamic types."""
-    annotations = get_type_hints(profile_type, include_extras=True)
-    result = []
-    descriptive = {"protocol", "model", "models", "max_context_window"}
-    for item in fields(profile_type):
-        if item.name in descriptive:
-            continue
-        annotation = annotations[item.name]
-        kinds = _kinds(annotation)
-        if len(kinds) != 1:
-            raise ConfigurationError(f"{item.name} must declare exactly one of Parameter or Config")
-        kind = kinds.pop()
-        source = item.metadata.get("source")
-        scope = item.metadata.get("scope", "request")
-        if scope not in ("client", "request"):
-            raise ConfigurationError("parameter scope must be client or request")
-        if kind == "parameter":
-            if source not in ("input", "output"):
-                raise ConfigurationError(f"{item.name} must declare input/output source in Profile")
-            if scope == "client" and source != "input":
-                raise ConfigurationError(f"{item.name} must use the input source")
-        result.append((item.name, kind, annotation, source, scope))
-    return tuple(result)
-
-
-def _kinds(annotation: Any) -> set[str]:
-    origin = get_origin(annotation)
-    if origin in (Parameter, Config) or annotation in (Parameter, Config):
-        kind = "parameter" if (origin or annotation) is Parameter else "config"
-        arguments = get_args(annotation)
-        if arguments and _kinds(arguments[0]):
-            return {"parameter", "config"}
-        return {kind}
-    if isinstance(annotation, TypeAliasType):
-        return _kinds(annotation.__value__)
-    if origin in (Union, UnionType):
-        return set().union(*(_kinds(argument) for argument in get_args(annotation)))
-    return set()
-
-
 def _matches(value: Any, annotation: Any) -> bool:
     """Validate wrapper payload types without walking open dictionaries."""
     if annotation is Any:
@@ -199,6 +169,10 @@ def _matches(value: Any, annotation: Any) -> bool:
             payload is None
             or isinstance(payload, Omit)
             or _matches(payload, get_args(annotation)[0])
+        )
+    if origin is Attribute:
+        return isinstance(value, Attribute) and _matches(
+            value.default_value, get_args(annotation)[0]
         )
     if isinstance(annotation, TypeAliasType):
         return _matches(value, annotation.__value__)

@@ -108,6 +108,7 @@ SDK 根参数必须符合 SDK 调用签名，非标准字段使用 SDK 正式提
 
 ```python
 from my_llm import (
+    Attribute,
     BaseCodec,
     Config,
     ModelProfile,
@@ -142,8 +143,8 @@ class ExampleCodec(BaseCodec):
 MyCodec.register(ExampleCodec())
 codec = MyCodec()
 llm = MyLLM(
-    provider=ProviderProfile(protocol="example"),
-    model=ModelProfile(model="example-model"),
+    provider=ProviderProfile(protocol=Config(default_value="example")),
+    model=ModelProfile(model=Attribute(default_value="example-model")),
     stdio_protocol="example",
 )
 ```

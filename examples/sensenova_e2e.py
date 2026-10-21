@@ -14,7 +14,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from my_llm import Config, ModelProfile, MyLLM, Parameter, ProviderProfile
+from my_llm import Attribute, Config, ModelProfile, MyLLM, Parameter, ProviderProfile
 
 PROTOCOLS = ("openai_chat", "openai_responses", "anthropic")
 MODEL = "sensenova-6.8-flash-lite"
@@ -46,7 +46,7 @@ def provider(protocol, key):
             default_value=None,
         )
     return ProviderProfile(
-        protocol=protocol,
+        protocol=Config(default_value=protocol),
         base_url=config("https://token.sensenova.cn" + ("" if protocol == "anthropic" else "/v1")),
         # Anthropic's SDK normally sends x-api-key; this service specifies Bearer.
         api_key=Parameter(
@@ -156,8 +156,8 @@ def delta_text(protocol, events):
 def check_answer(llm, protocol, answer, expected):
     # Foreign thinking blocks intentionally become text (translation-boundaries.md).
     # Require exact output otherwise; do not silently accept arbitrary prefixes.
-    foreign_thinking = llm.provider.protocol in ("openai_chat", "anthropic") and (
-        protocol != llm.provider.protocol
+    foreign_thinking = llm.resolved_profile.protocol in ("openai_chat", "anthropic") and (
+        protocol != llm.resolved_profile.protocol
     )
     if foreign_thinking:
         assert answer.splitlines()[-1] == expected, "unexpected final answer line"
@@ -207,7 +207,9 @@ async def run(args, key):
         "endpoint": "https://token.sensenova.cn",
         "results": [],
     }
-    model = ModelProfile(model=args.model, supports_function_calling=config(True))
+    model = ModelProfile(
+        model=Attribute(default_value=args.model), supports_function_calling=config(True)
+    )
     for upstream in args.upstream or PROTOCOLS:
         for stdio in args.stdio or PROTOCOLS:
             async with MyLLM(

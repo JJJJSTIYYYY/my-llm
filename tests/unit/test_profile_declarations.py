@@ -5,6 +5,7 @@ from dataclasses import FrozenInstanceError, dataclass, field
 import pytest
 
 from my_llm import (
+    Attribute,
     Config,
     ConfigurationError,
     ModelProfile,
@@ -36,15 +37,15 @@ class SamplingModel(ModelProfile):
 
 
 def test_parameter_defaults_distinguish_inheritance_none_and_omit():
-    provider = SamplingProvider(protocol="openai_chat")
-    inherited = resolve_profiles(provider, SamplingModel(model="demo"))
+    provider = SamplingProvider(protocol=Config(default_value="openai_chat"))
+    inherited = resolve_profiles(provider, SamplingModel(model=Attribute(default_value="demo")))
     assert inherited.get("temperature") == 0.5
     assert inherited.parameter("temperature").path == "$.extra_body.temperature"
     assert inherited.get("sampling_enabled") is True
     explicit_none = resolve_profiles(
         provider,
         SamplingModel(
-            model="demo",
+            model=Attribute(default_value="demo"),
             temperature=Parameter(
                 path="$.extra_body.temperature",
                 default_value=None,
@@ -53,16 +54,20 @@ def test_parameter_defaults_distinguish_inheritance_none_and_omit():
     )
     assert explicit_none.get("temperature", "missing") is None
     assert explicit_none.values["temperature"] is None
-    removed = resolve_profiles(provider, SamplingModel(model="demo", temperature=omit))
+    removed = resolve_profiles(
+        provider, SamplingModel(model=Attribute(default_value="demo"), temperature=omit)
+    )
     assert removed.values["temperature"] is omit
     assert removed.get("temperature", "missing") == "missing"
 
 
 def test_parameter_path_and_config_layering_in_custom_profiles():
     result = resolve_profiles(
-        SamplingProvider(protocol="openai_chat", sampling_enabled=config(False)),
+        SamplingProvider(
+            protocol=Config(default_value="openai_chat"), sampling_enabled=config(False)
+        ),
         SamplingModel(
-            model="demo",
+            model=Attribute(default_value="demo"),
             temperature=Parameter(
                 path="$.extra_body.vendor.temperature",
                 default_value=None,
@@ -73,7 +78,8 @@ def test_parameter_path_and_config_layering_in_custom_profiles():
     assert result.parameter("temperature").path == "$.extra_body.vendor.temperature"
     assert result.get("sampling_enabled") is False
     disabled = resolve_profiles(
-        SamplingProvider(protocol="openai_chat"), SamplingModel(model="demo", temperature=omit)
+        SamplingProvider(protocol=Config(default_value="openai_chat")),
+        SamplingModel(model=Attribute(default_value="demo"), temperature=omit),
     )
     assert disabled.parameter("temperature") is None
 
@@ -86,21 +92,23 @@ def test_custom_default_types_are_checked(profile_class, value):
     with pytest.raises(ConfigurationError, match="temperature"):
         resolve_profiles(
             profile_class(
-                protocol="openai_chat",
+                protocol=Config(default_value="openai_chat"),
                 temperature=Parameter(
                     path="$.extra_body.temperature",
                     default_value=value,
                 ),
             ),
-            ModelProfile(model="demo"),
+            ModelProfile(model=Attribute(default_value="demo")),
         )
 
 
 def test_custom_config_type_is_checked():
     with pytest.raises(ConfigurationError, match="sampling_enabled"):
         resolve_profiles(
-            SamplingProvider(protocol="openai_chat", sampling_enabled=config("yes")),
-            ModelProfile(model="demo"),
+            SamplingProvider(
+                protocol=Config(default_value="openai_chat"), sampling_enabled=config("yes")
+            ),
+            ModelProfile(model=Attribute(default_value="demo")),
         )
 
 
@@ -110,7 +118,10 @@ def test_unclassified_extension_is_rejected():
         accidental: str = "not-a-declaration"
 
     with pytest.raises(ConfigurationError, match="accidental.*Parameter"):
-        resolve_profiles(Unclassified(protocol="openai_chat"), ModelProfile(model="demo"))
+        resolve_profiles(
+            Unclassified(protocol=Config(default_value="openai_chat")),
+            ModelProfile(model=Attribute(default_value="demo")),
+        )
 
 
 def test_parameter_binds_path_default_and_source_without_a_paired_field():
@@ -124,7 +135,10 @@ def test_parameter_binds_path_default_and_source_without_a_paired_field():
             metadata={"source": "input"},
         )
 
-    resolved = resolve_profiles(ProviderProfile(protocol="openai_chat"), Extension(model="demo"))
+    resolved = resolve_profiles(
+        ProviderProfile(protocol=Config(default_value="openai_chat")),
+        Extension(model=Attribute(default_value="demo")),
+    )
     assert resolved.parameter("arbitrary").path == "$.extra_body.vendor"
     assert resolved.get("arbitrary") == "fallback"
 
@@ -147,7 +161,10 @@ def test_profile_marker_cannot_change_between_layers():
         max_tokens: Config[int] = config(2048)
 
     with pytest.raises(ConfigurationError, match="same profile marker"):
-        resolve_profiles(ProviderProfile(protocol="openai_chat"), ConflictingModel(model="demo"))
+        resolve_profiles(
+            ProviderProfile(protocol=Config(default_value="openai_chat")),
+            ConflictingModel(model=Attribute(default_value="demo")),
+        )
 
 
 def test_a_field_cannot_declare_multiple_responsibilities():
@@ -158,7 +175,10 @@ def test_a_field_cannot_declare_multiple_responsibilities():
         )
 
     with pytest.raises(ConfigurationError, match="exactly one"):
-        resolve_profiles(AmbiguousProvider(protocol="openai_chat"), ModelProfile(model="demo"))
+        resolve_profiles(
+            AmbiguousProvider(protocol=Config(default_value="openai_chat")),
+            ModelProfile(model=Attribute(default_value="demo")),
+        )
 
 
 def test_profile_marker_must_describe_the_field_not_a_contained_item():
@@ -167,7 +187,10 @@ def test_profile_marker_must_describe_the_field_not_a_contained_item():
         feature: list[Config[bool]] = None
 
     with pytest.raises(ConfigurationError, match="exactly one"):
-        resolve_profiles(NestedMarker(protocol="openai_chat"), ModelProfile(model="demo"))
+        resolve_profiles(
+            NestedMarker(protocol=Config(default_value="openai_chat")),
+            ModelProfile(model=Attribute(default_value="demo")),
+        )
 
 
 def test_a_field_cannot_nest_different_profile_markers():
@@ -176,7 +199,10 @@ def test_a_field_cannot_nest_different_profile_markers():
         feature: Config[Parameter[bool]] = field(default=config(True), metadata={"source": "input"})
 
     with pytest.raises(ConfigurationError, match="exactly one"):
-        resolve_profiles(NestedResponsibilities(protocol="openai_chat"), ModelProfile(model="demo"))
+        resolve_profiles(
+            NestedResponsibilities(protocol=Config(default_value="openai_chat")),
+            ModelProfile(model=Attribute(default_value="demo")),
+        )
 
 
 @pytest.mark.parametrize(
@@ -194,25 +220,31 @@ def test_declared_extension_defaults_reach_filtered_sdk_request(configured, body
     intermediate = codec.encode([{"role": "user", "content": "hello"}], input_format="openai_chat")
     profile = resolve_profiles(
         SamplingProvider(
-            protocol="openai_chat",
+            protocol=Config(default_value="openai_chat"),
             temperature=Parameter(
                 path="$.extra_body.temperature",
                 default_value=configured,
             ),
             extra_body=config(body),
         ),
-        ModelProfile(model="demo"),
+        ModelProfile(model=Attribute(default_value="demo")),
     )
     request = codec.request(intermediate, profile)
     assert request.get("extra_body", {}) == expected
 
 
 def test_config_wrapper_none_is_a_value_and_field_none_inherits():
-    provider = SamplingProvider(protocol="openai_chat", sampling_enabled=config(True))
-    inherited = resolve_profiles(provider, SamplingModel(model="demo", sampling_enabled=None))
+    provider = SamplingProvider(
+        protocol=Config(default_value="openai_chat"), sampling_enabled=config(True)
+    )
+    inherited = resolve_profiles(
+        provider, SamplingModel(model=Attribute(default_value="demo"), sampling_enabled=None)
+    )
     explicit_none = resolve_profiles(
         provider,
-        SamplingModel(model="demo", sampling_enabled=Config(default_value=None)),
+        SamplingModel(
+            model=Attribute(default_value="demo"), sampling_enabled=Config(default_value=None)
+        ),
     )
     assert inherited.get("sampling_enabled") is True
     assert explicit_none.get("sampling_enabled", "missing") is None
@@ -224,8 +256,8 @@ def test_parameter_override_replaces_path_and_default_without_changing_source():
         default_value=None,
     )
     resolved = resolve_profiles(
-        SamplingProvider(protocol="openai_chat"),
-        SamplingModel(model="demo", temperature=replacement),
+        SamplingProvider(protocol=Config(default_value="openai_chat")),
+        SamplingModel(model=Attribute(default_value="demo"), temperature=replacement),
     )
     assert resolved.parameter("temperature", "output") is None
     assert resolved.parameter("temperature", "input").path == replacement.path

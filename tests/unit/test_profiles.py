@@ -6,6 +6,8 @@ from copy import copy, deepcopy
 import pytest
 
 from my_llm import (
+    Attribute,
+    Config,
     ConfigurationError,
     ModelProfile,
     Omit,
@@ -36,18 +38,18 @@ def test_shared_overrides_are_public():
 
     assert OverridableProfile is ProfileExport is ConfigurationExport
     assert isinstance(ProviderProfile(), OverridableProfile)
-    assert isinstance(ModelProfile(model="demo"), OverridableProfile)
+    assert isinstance(ModelProfile(model=Attribute(default_value="demo")), OverridableProfile)
 
 
 def test_model_overrides_provider_and_dict_keys():
     provider = ProviderProfile(
-        protocol="openai_chat",
+        protocol=Config(default_value="openai_chat"),
         extra_body=config({"a": 1, "b": 2, "nested": {"a": 1}}),
         extra_headers=config({"x": "one"}),
         reasoning_effort=parameter("reasoning_effort", supports=True, protocol="openai_chat"),
     )
     model = ModelProfile(
-        model="demo",
+        model=Attribute(default_value="demo"),
         extra_body=config({"a": 3, "b": omit, "nested": {"b": 2}}),
         extra_headers=config({"y": "two"}),
         reasoning_effort=parameter("reasoning_effort", supports=False),
@@ -73,18 +75,20 @@ def test_omit_disables_defaults_and_none_inherits(profile_factory):
     assert merge_dicts({"a": 1}, None) == {"a": 1}
 
 
-@pytest.mark.parametrize("settings", [{}, {"protocol": None}, {"protocol": "unknown"}])
+@pytest.mark.parametrize("settings", [{}, {"protocol": None}, {"protocol": config("unknown")}])
 def test_provider_requires_a_registered_protocol(settings):
     provider = ProviderProfile(**settings)
-    with pytest.raises(
-        UnsupportedProviderError, match=f"unsupported protocol: {provider.protocol!r}"
-    ):
-        resolve_profiles(provider, ModelProfile(model="demo"))
+    protocol = provider.protocol.default_value if provider.protocol is not None else None
+    with pytest.raises(UnsupportedProviderError, match=f"unsupported protocol: {protocol!r}"):
+        resolve_profiles(provider, ModelProfile(model=Attribute(default_value="demo")))
 
 
 @pytest.mark.parametrize("protocol", ["anthropic", "gemini", "ollama"])
 def test_native_protocols_keep_profile_defaults(protocol):
-    native = resolve_profiles(ProviderProfile(protocol=protocol), ModelProfile(model="demo"))
+    native = resolve_profiles(
+        ProviderProfile(protocol=Config(default_value=protocol)),
+        ModelProfile(model=Attribute(default_value="demo")),
+    )
     assert native.protocol == protocol
     assert native.parameter("reasoning_enable").path.startswith("$.")
     assert native.get("reasoning_effort", omit) is omit
@@ -104,9 +108,9 @@ def test_native_protocols_keep_profile_defaults(protocol):
 def test_bad_model_configuration(field, value):
     with pytest.raises(ConfigurationError):
         resolve_profiles(
-            ProviderProfile(protocol="openai_chat"),
+            ProviderProfile(protocol=Config(default_value="openai_chat")),
             ModelProfile(
-                model="demo",
+                model=Attribute(default_value="demo"),
                 **{
                     field: (
                         parameter(field, value)
@@ -125,13 +129,13 @@ def test_bad_model_configuration(field, value):
 def test_parameter_default_objects_replace_instead_of_merging():
     result = resolve_profiles(
         ProviderProfile(
-            protocol="openai_chat",
+            protocol=Config(default_value="openai_chat"),
             reasoning_enable=parameter(
                 "reasoning_enable", {"type": "enabled", "budget": 1024}, protocol="openai_chat"
             ),
         ),
         ModelProfile(
-            model="demo",
+            model=Attribute(default_value="demo"),
             reasoning_enable=parameter(
                 "reasoning_enable", {"type": "adaptive"}, protocol="openai_chat"
             ),
@@ -151,7 +155,8 @@ def test_omit_is_owned_by_my_llm_and_survives_snapshotting():
     assert copy(omit) is deepcopy(omit) is pickle.loads(pickle.dumps(omit)) is omit
     assert (
         resolve_profiles(
-            ProviderProfile(protocol="openai_chat", max_tokens=omit), ModelProfile(model="demo")
+            ProviderProfile(protocol=Config(default_value="openai_chat"), max_tokens=omit),
+            ModelProfile(model=Attribute(default_value="demo")),
         ).values["max_tokens"]
         is omit
     )
@@ -161,8 +166,10 @@ def test_omit_is_owned_by_my_llm_and_survives_snapshotting():
     "value", [None, omit, parameter("max_tokens", None), parameter("max_tokens", 2048)]
 )
 def test_profile_pickle_preserves_default_inheritance_and_explicit_values(value):
-    provider = ProviderProfile(protocol="openai_chat", max_tokens=parameter("max_tokens", 4096))
-    model = ModelProfile(model="demo", max_tokens=value)
+    provider = ProviderProfile(
+        protocol=Config(default_value="openai_chat"), max_tokens=parameter("max_tokens", 4096)
+    )
+    model = ModelProfile(model=Attribute(default_value="demo"), max_tokens=value)
     original = resolve_profiles(provider, model)
     restored_provider, restored_model = pickle.loads(pickle.dumps((provider, model)))
     assert restored_model.max_tokens == model.max_tokens

@@ -5,7 +5,7 @@ import json
 from copy import deepcopy
 from dataclasses import dataclass
 
-from my_llm import ModelProfile, ProviderProfile
+from my_llm import Attribute, Config, ModelProfile, ProviderProfile
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import chat_event, response_completed
 
@@ -802,7 +802,7 @@ def build(protocol: str, stdio: str, size: Size, *, native: bool) -> Workload:
 def profiles(protocol: str):
     return (
         ProviderProfile(
-            protocol=protocol,
+            protocol=Config(default_value=protocol),
             api_key=parameter(
                 "api_key",
                 "Bearer offline-benchmark" if protocol == "ollama" else "offline-benchmark",
@@ -814,7 +814,7 @@ def profiles(protocol: str):
             extra_headers=config({"x-benchmark": "provider"}),
         ),
         ModelProfile(
-            model="benchmark",
+            model=Attribute(default_value="benchmark"),
             max_tokens=parameter("max_tokens", 32768, protocol=protocol),
             supports_function_calling=config(True),
             reasoning_enable=parameter("reasoning_enable", supports=True, protocol=protocol),

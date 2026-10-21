@@ -120,6 +120,14 @@ class ChatCompletionsDecoder(BaseDecoder):
     ) -> dict:
         if profile.get("usage_mode", "none") == "stream_options":
             request["stream_options"] = {"include_usage": True}
+            body = request.get("extra_body", {})
+            if "stream_options" in body:
+                # The SDK overlays extra_body after serializing root parameters.
+                stream_options = body["stream_options"]
+                body["stream_options"] = {
+                    **(stream_options if isinstance(stream_options, dict) else {}),
+                    "include_usage": True,
+                }
         return request
 
     def assemble_request(

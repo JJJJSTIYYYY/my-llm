@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from my_llm import ModelProfile, MyLLM, ProviderProfile, generate
+from my_llm import Attribute, Config, ModelProfile, MyLLM, ProviderProfile, generate
 from my_llm.codec.openai.chat.codec import ChatCompletionsCodec
 from my_llm.codec.openai.chat.transport import ChatCompletionsTransport
 from tests.helpers.protocols import chat_event
@@ -27,8 +27,8 @@ def sdk_factory(monkeypatch):
 def make_llm():
     return MyLLM(
         stdio_protocol="openai_chat",
-        provider=ProviderProfile(protocol="openai_chat"),
-        model=ModelProfile(model="demo"),
+        provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
+        model=ModelProfile(model=Attribute(default_value="demo")),
     )
 
 
@@ -154,7 +154,7 @@ async def test_one_shot_stream_owns_and_closes_temporary_client(
 ):
     stream = await generate(
         stdio_protocol="openai_chat",
-        provider=ProviderProfile(protocol="openai_chat"),
+        provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
         model="demo",
         messages=[{"role": "user", "content": "hi"}],
         stream=True,
@@ -198,7 +198,7 @@ async def test_one_shot_stream_owns_and_closes_temporary_client(
 async def test_unstarted_one_shot_stream_does_not_create_client(sdk_factory):
     stream = await generate(
         stdio_protocol="openai_chat",
-        provider=ProviderProfile(protocol="openai_chat"),
+        provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
         model="demo",
         messages=[{"role": "user", "content": "hi"}],
         stream=True,

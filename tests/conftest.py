@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from my_llm import ModelProfile, ProviderProfile, resolve_profiles
+from my_llm import Attribute, Config, ModelProfile, ProviderProfile, resolve_profiles
 from tests.helpers.protocols import CHAT_HISTORY, CHAT_TOOL
 
 
@@ -12,7 +12,8 @@ from tests.helpers.protocols import CHAT_HISTORY, CHAT_TOOL
 def profile_factory():
     def make(protocol="openai_chat", *, provider=None, **model):
         return resolve_profiles(
-            provider or ProviderProfile(protocol=protocol), ModelProfile(model="demo", **model)
+            provider or ProviderProfile(protocol=Config(default_value=protocol)),
+            ModelProfile(model=Attribute(default_value="demo"), **model),
         )
 
     return make

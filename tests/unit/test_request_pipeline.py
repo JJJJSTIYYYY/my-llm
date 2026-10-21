@@ -101,15 +101,13 @@ def test_client_scope_is_declared_instead_of_inferred_from_field_name():
     class AuthProvider(ProviderProfile):
         authentication: Parameter[str] = field(
             default=Parameter(
-                name="Custom authentication",
                 path="$.extra_headers.x-auth",
                 default_value="offline-token",
-                phase="decode",
             ),
-            metadata={"scope": "client"},
+            metadata={"scope": "client", "source": "input"},
         )
 
-    profile = resolve_profiles(AuthProvider(), ModelProfile(model="demo"))
+    profile = resolve_profiles(AuthProvider(protocol="openai_chat"), ModelProfile(model="demo"))
     codec = MyCodec()
     codec.validate_profile(profile)
     assert codec.client_parameters(profile) == {"default_headers": {"x-auth": "offline-token"}}

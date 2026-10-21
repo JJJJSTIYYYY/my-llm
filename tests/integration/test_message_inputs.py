@@ -13,7 +13,7 @@ async def test_mixed_protocol_history_is_rejected_before_request(monkeypatch):
         "my_llm.codec.openai.responses.transport.AsyncOpenAI",
         lambda **kwargs: client,
     )
-    llm = MyLLM(provider=ProviderProfile(), model=ModelProfile(model="demo"))
+    llm = MyLLM(provider=ProviderProfile(protocol="openai_chat"), model=ModelProfile(model="demo"))
     with pytest.raises(MessageValidationError):
         await llm.generate(
             messages=[
@@ -54,10 +54,8 @@ async def test_stdio_protocol_matches_tools_before_ambiguous_messages(monkeypatc
         lambda **kwargs: client,
     )
     llm = MyLLM(
-        provider=ProviderProfile(),
-        model=ModelProfile(
-            model="demo", supports_function_calling=config("supports_function_calling", True)
-        ),
+        provider=ProviderProfile(protocol="openai_chat"),
+        model=ModelProfile(model="demo", supports_function_calling=config(True)),
     )
     result = await llm.generate(
         messages=[{"role": "user", "content": "hi"}],

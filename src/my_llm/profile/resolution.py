@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
-from dataclasses import dataclass, field, fields, replace
+from copy import copy, deepcopy
+from dataclasses import dataclass, field, fields
 from functools import lru_cache
 from types import UnionType
 from typing import Any, Literal, TypeAliasType, Union, get_args, get_origin, get_type_hints
@@ -40,11 +40,15 @@ class ResolvedProfile:
         return default if isinstance(value, Omit) else value
 
     def parameter(
-        self, name: str, phase: Literal["encode", "decode"] | None = None
+        self, name: str, source: Literal["input", "output"] | None = None
     ) -> Parameter[Any] | None:
-        """Read a binding by field name, optionally restricted to its phase."""
+        """Read a binding by field name, optionally restricted to its input/output source."""
         value = self.parameters.get(name)
-        if isinstance(value, Parameter) and (phase is None or value.phase == phase):
+        if (
+            isinstance(value, Parameter)
+            and value.supports
+            and (source is None or value.source == source)
+        ):
             return value
         return None
 
@@ -63,21 +67,28 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
     defaults = codec_for(provider.protocol).defaults
     if not isinstance(defaults, ProtocolDefaults):
         raise ConfigurationError("codec defaults must be a ProtocolDefaults instance")
-    declarations: dict[str, str] = {}
+    declarations: dict[str, tuple[str, str | None, str]] = {}
     values: dict[str, Any] = {}
     parameters: dict[str, Parameter[Any] | Omit] = {}
-    scopes = {}
     for profile in (defaults, provider, model):
-        for name, kind, annotation, scope in _declarations(type(profile)):
-            scopes.setdefault(name, scope)
-            previous_kind = declarations.setdefault(name, kind)
-            if previous_kind != kind:
+        for name, kind, annotation, source, scope in _declarations(type(profile)):
+            identity = (kind, source, scope)
+            previous = declarations.setdefault(name, identity)
+            if previous[0] != kind:
                 raise ConfigurationError(f"{name} must use the same profile marker in every layer")
+            if kind == "parameter" and previous != identity:
+                raise ConfigurationError(
+                    f"{name} must keep the same source and scope in every layer"
+                )
             value = getattr(profile, name)
             if value is None:
                 continue
             if not _matches(value, annotation):
                 raise ConfigurationError(f"{name} does not match its declared profile type")
+            if isinstance(value, (Parameter, Config)) and (
+                value.name != name or isinstance(value, Parameter) and value.source != source
+            ):
+                raise ConfigurationError(f"{name} identity must be bound by Profile.__post_init__")
             if kind == "parameter":
                 parameters[name] = value
                 values[name] = value.default_value if isinstance(value, Parameter) else value
@@ -91,14 +102,13 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
     values = deepcopy(values)
     for name, parameter in parameters.items():
         if isinstance(parameter, Parameter) and parameter.default_value is not values[name]:
-            parameters[name] = replace(parameter, default_value=values[name])
+            parameters[name] = copy(parameter)
+            object.__setattr__(parameters[name], "default_value", values[name])
     resolved = ResolvedProfile(provider.protocol, model.model, values, parameters)
     for key in (
         "supports_stream",
-        "supports_reasoning",
         "supports_function_calling",
         "supports_message_name",
-        "supports_reasoning_effort",
         "replay_reasoning_content_when_tool_calls",
     ):
         value = resolved.get(key, False)
@@ -109,7 +119,7 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
     usage = resolved.get("usage_mode", "none")
     if usage is not None and (not isinstance(usage, str) or not usage):
         raise ConfigurationError("usage_mode must be a non-empty string, None or omit")
-    if resolved.parameter("max_tokens", "decode") is not None:
+    if resolved.parameter("max_tokens", "input") is not None:
         validate_max_tokens(resolved.get("max_tokens"))
     object.__setattr__(
         resolved,
@@ -118,21 +128,24 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
             (name, parameter)
             for name, parameter in parameters.items()
             if isinstance(parameter, Parameter)
-            and parameter.phase == "decode"
-            and scopes[name] == "request"
+            and parameter.source == "input"
+            and parameter.supports
+            and declarations[name][2] == "request"
         ),
     )
     connection_bindings = tuple(
         (name, parameter)
         for name, parameter in parameters.items()
-        if isinstance(parameter, Parameter) and scopes[name] == "client"
+        if isinstance(parameter, Parameter)
+        and parameter.supports
+        and declarations[name][2] == "client"
     )
     resolved.connection.update(_connection_parameters(resolved, connection_bindings))
     return resolved
 
 
 @lru_cache(maxsize=128)
-def _declarations(profile_type: type) -> tuple[tuple[str, str, Any, str], ...]:
+def _declarations(profile_type: type) -> tuple[tuple[str, str, Any, str | None, str], ...]:
     """Cache type analysis, bounded for applications constructing dynamic types."""
     annotations = get_type_hints(profile_type, include_extras=True)
     result = []
@@ -144,10 +157,17 @@ def _declarations(profile_type: type) -> tuple[tuple[str, str, Any, str], ...]:
         kinds = _kinds(annotation)
         if len(kinds) != 1:
             raise ConfigurationError(f"{item.name} must declare exactly one of Parameter or Config")
+        kind = kinds.pop()
+        source = item.metadata.get("source")
         scope = item.metadata.get("scope", "request")
         if scope not in ("client", "request"):
             raise ConfigurationError("parameter scope must be client or request")
-        result.append((item.name, kinds.pop(), annotation, scope))
+        if kind == "parameter":
+            if source not in ("input", "output"):
+                raise ConfigurationError(f"{item.name} must declare input/output source in Profile")
+            if scope == "client" and source != "input":
+                raise ConfigurationError(f"{item.name} must use the input source")
+        result.append((item.name, kind, annotation, source, scope))
     return tuple(result)
 
 
@@ -227,8 +247,6 @@ def _connection_parameters(profile: ResolvedProfile, bindings: tuple) -> dict[st
         result[key] = value
     for name, parameter in bindings:
         keys = path_keys(parameter.path)
-        if parameter.phase != "decode":
-            raise ConfigurationError(f"{name} must use the decode phase")
         if keys != ("api_key",) and not (
             len(keys) == 2 and keys[0] == "extra_headers" and isinstance(keys[1], str)
         ):

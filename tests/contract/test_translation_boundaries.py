@@ -227,9 +227,7 @@ def test_profile_paths_translate_configured_nonstandard_fields_without_sibling_l
         reasoning_content=parameter(
             "reasoning_content", protocol="openai_chat", path="$.choices[0].delta.vendor_reasoning"
         ),
-        replay_reasoning_content_when_tool_calls=config(
-            "replay_reasoning_content_when_tool_calls", True
-        ),
+        replay_reasoning_content_when_tool_calls=config(True),
     )
     incoming = [
         {

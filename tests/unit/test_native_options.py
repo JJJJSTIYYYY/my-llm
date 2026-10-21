@@ -39,7 +39,7 @@ def test_native_request_options_are_owned(profile_factory, protocol):
     profile = profile_factory(
         protocol,
         max_tokens=parameter("max_tokens", 2048, protocol=protocol),
-        extra_body=config("extra_body", values),
+        extra_body=config(values),
     )
     request = encode_request(profile)
     if protocol == "gemini":
@@ -63,24 +63,25 @@ def test_unknown_anthropic_option_is_not_a_validation_error(profile_factory):
 @pytest.mark.parametrize(
     "source", ["openai_chat", "openai_responses", "anthropic", "gemini", "ollama"]
 )
-def test_official_chat_requests_do_not_pad_compatible_reasoning_fields(profile_factory, source):
+def test_chat_can_disable_compatible_reasoning_replay(profile_factory, source):
     codec = MyCodec()
     intermediate = codec.encode(history(source), input_format=source)
     profile = profile_factory(
-        "openai_chat", supports_function_calling=config("supports_function_calling", True)
+        "openai_chat",
+        supports_function_calling=config(True),
+        replay_reasoning_content_when_tool_calls=config(False),
     )
     request = codec.request(intermediate, profile, reasoning=True)
     assert request["reasoning_effort"] == "medium"
     assert all("reasoning_content" not in message for message in request["messages"])
 
 
-def test_compatible_reasoning_replay_remains_explicitly_available(profile_factory):
+@pytest.mark.parametrize("replay", [None, config(True)])
+def test_chat_replays_compatible_reasoning_by_default_and_when_enabled(profile_factory, replay):
     codec = MyCodec()
     profile = profile_factory(
         "openai_chat",
-        replay_reasoning_content_when_tool_calls=config(
-            "replay_reasoning_content_when_tool_calls", True
-        ),
+        replay_reasoning_content_when_tool_calls=replay,
     )
     request = codec.request(
         codec.encode(history("openai_chat"), input_format="openai_chat"), profile, reasoning=True
@@ -92,8 +93,8 @@ def test_compatible_reasoning_replay_remains_explicitly_available(profile_factor
 def test_ollama_effort_mapping_can_use_model_defined_strings(profile_factory):
     profile = profile_factory(
         "ollama",
-        supports_reasoning_effort=config("supports_reasoning_effort", True),
-        reasoning_effort_mapping=config("reasoning_effort_mapping", {"high": "deep"}),
+        reasoning_effort=parameter("reasoning_effort", supports=True, protocol="ollama"),
+        reasoning_effort_mapping=config({"high": "deep"}),
     )
     request = encode_request(profile, reasoning_effort="high")
     assert request["think"] == "deep"
@@ -106,7 +107,7 @@ def test_ollama_cannot_silently_ignore_requested_retries(retries):
     with pytest.raises(UnsupportedCapabilityError, match="max_retries"):
         MyLLM(
             stdio_protocol="openai_chat",
-            provider=ProviderProfile(protocol="ollama", max_retries=config("max_retries", retries)),
+            provider=ProviderProfile(protocol="ollama", max_retries=config(retries)),
             model=ModelProfile(model="demo"),
         )
 
@@ -127,8 +128,8 @@ def test_native_sdk_configuration_objects_remain_usable_with_generated_parameter
     request = encode_request(
         profile_factory("gemini"), reasoning=True, extra_body={"thinking_config": thinking}
     )
-    assert request["config"]["thinking_config"]["thinking_budget"] == 512
-    assert request["config"]["thinking_config"]["include_thoughts"] is False
+    assert request["config"]["thinking_config"]["thinking_budget"] == -1
+    assert request["config"]["thinking_config"]["include_thoughts"] is True
     assert thinking.include_thoughts is False
     options = Options(num_predict=7, temperature=0.2)
     request = encode_request(

@@ -20,10 +20,10 @@ class ProviderProfile(OverridableProfile):
     other SDK connection values use Config fields.
     """
 
-    protocol: Protocol = "openai_chat"
+    protocol: Protocol | None = None
     base_url: Config[str] | Omit | None = None
     api_key: Parameter[str] | Omit | None = field(
-        default=None, repr=False, metadata={"scope": "client"}
+        default=None, repr=False, metadata={"scope": "client", "source": "input"}
     )
     timeout: Config[float] | Omit | None = None
     max_retries: Config[int] | Omit | None = None
@@ -32,6 +32,7 @@ class ProviderProfile(OverridableProfile):
     models: list[ModelProfile] | None = None
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         if self.models is not None:
             object.__setattr__(self, "models", list(_models_by_id(self.models).values()))
 

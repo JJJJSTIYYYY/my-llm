@@ -90,19 +90,18 @@ MyLLM 根据 Decoder 生成的 client_key 管理实例缓存和最终关闭。
 ## Codec 组合
 
 BaseCodec 必须提供 protocol_or_api_style、defaults、encoder、decoder、transport。
-defaults 使用 frozen dataclass ProtocolDefaults。两个行为开关
-replay_reasoning_content_when_tool_calls、supports_reasoning_effort 通过 Config 明确声明；
+defaults 使用 frozen dataclass ProtocolDefaults。replay_reasoning_content_when_tool_calls 通过 Config 明确声明；
 max_tokens、content、reasoning_content、reasoning_enable、reasoning_effort 使用 Parameter 声明，不用的字段保留默认 omit。
-max_tokens / reasoning_enable / reasoning_effort 属于 decode，content / reasoning_content 属于 encode。
+max_tokens / reasoning_enable / reasoning_effort source 固定为 input，content / reasoning_content source 固定为 output。
 路径从根字典定位，使用 $. 前缀，$ 表示 **parameters 解包字典的根；事件类型不是参数路径。
-wrapper 的 name / comment 仅为展示信息；字段标识承载语义。
+wrapper 的 name 与 Parameter.source 由 Profile 固定；comment 可用于展示说明。
 Profile 字段 None 表示继承，wrapper.default_value=None 为实际值，仅在目标字段缺失时应用。
 
-ProtocolDefaults、ProviderProfile、ModelProfile 可继承扩展：新增参数声明
+ProtocolDefaults、ProviderProfile、ModelProfile 可继承扩展：新增参数通过字段 metadata 硬编码 source="input" 或 source="output"，声明
 Parameter[T] | Omit | None，分支配置声明 Config[T] | Omit | None。
 解析器自动发现继承字段并检查声明，不需要路径与默认值配对，也不需要中央参数表。
-自定义 Config 的含义由协议组件实现；所有请求 scope 的 decode 参数路径和默认值由 BaseDecoder 自动应用。
-自定义 encode 参数由协议钩子调用 BaseEncoder.parameter_value 后映射为明确的中间态语义。
+自定义 Config 的含义由协议组件实现；所有请求 scope 的 input 参数路径和默认值由 BaseDecoder 自动应用。
+自定义 output 参数由协议钩子调用 BaseEncoder.parameter_value 后映射为明确的中间态语义。
 SDK 根参数必须符合 SDK 调用签名，非标准字段使用 SDK 正式提供的 extra_body 等扩展入口。
 
 完成自己的 Encoder、Decoder、Transport 后，组合和注册如下；将 your_package 替换为实际包名：
@@ -128,13 +127,10 @@ class ExampleCodec(BaseCodec):
     __slots__ = ()
     protocol_or_api_style = "example"
     defaults = ProtocolDefaults(
-        replay_reasoning_content_when_tool_calls=Config(name="回放思考", default_value=False),
-        supports_reasoning_effort=Config(name="思考强度", default_value=False),
+        replay_reasoning_content_when_tool_calls=Config(default_value=False),
         max_tokens=Parameter(
-            name="输出上限",
             path="$.max_tokens",
             default_value=omit,
-            phase="decode",
         ),
     )
     encoder = ExampleEncoder()

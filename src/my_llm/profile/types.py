@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from copy import copy
+from dataclasses import dataclass, field, fields
+from functools import lru_cache, wraps
 from typing import Any, Generic, Literal, TypeVar
 
 from my_llm.exceptions import ConfigurationError
@@ -43,40 +45,75 @@ omit = Omit()
 
 @dataclass(frozen=True, kw_only=True)
 class Parameter(Generic[_T]):
-    """Bind a protocol parameter's location, missing-value default and phase.
+    """A parameter's route, support and default; Profile fixes its identity.
 
-    encode reads an API response into intermediate state; decode writes a request
-    from intermediate state. name and comment are presentation metadata only.
-    A present value, including None, always takes precedence over default_value.
+    source="input" means a user/API request parameter; source="output" means
+    an API response parameter. Unsupported parameters always default to omit.
     """
 
-    name: str
     path: str
-    default_value: Omit | None | _T
-    phase: Literal["encode", "decode"]
+    default_value: Omit | None | _T = omit
+    supports: bool = True
     comment: str | None = None
+    name: str | None = field(default=None, init=False)
+    source: Literal["input", "output"] | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
-        _validate_metadata(self.name, self.comment)
-        if self.phase not in ("encode", "decode"):
-            raise ConfigurationError("parameter phase must be 'encode' or 'decode'")
+        _validate_comment(self.comment)
+        if not isinstance(self.supports, bool):
+            raise ConfigurationError("parameter supports must be a bool")
+        if not self.supports:
+            object.__setattr__(self, "default_value", omit)
         path_keys(self.path)
 
 
 @dataclass(frozen=True, kw_only=True)
 class Config(Generic[_T]):
-    """Declare a code setting; name and comment are presentation metadata only."""
+    """A code setting whose name is fixed by its Profile field."""
 
-    name: str
     default_value: Omit | None | _T
     comment: str | None = None
+    name: str | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
-        _validate_metadata(self.name, self.comment)
+        _validate_comment(self.comment)
 
 
-def _validate_metadata(name: str, comment: str | None) -> None:
-    if not isinstance(name, str):
-        raise ConfigurationError("configuration name must be a string")
+def set_attr(method):
+    """Bind wrapper identity once, from hard-coded Profile declarations.
+
+    Decorate a Profile's __post_init__. Parameter fields declare source through
+    dataclass metadata. Copy each unbound wrapper so reusable declarations never
+    acquire an identity as a side effect of constructing another profile.
+    """
+
+    @wraps(method)
+    def bind(self, *args, **kwargs):
+        for name, source in _attributes(type(self)):
+            value = getattr(self, name)
+            if not isinstance(value, (Parameter, Config)):
+                continue
+            if value.name is not None or isinstance(value, Parameter) and value.source is not None:
+                if value.name != name or isinstance(value, Parameter) and value.source != source:
+                    raise ConfigurationError(f"{name} name/source have already been assigned")
+                continue
+            bound = copy(value)
+            object.__setattr__(bound, "name", name)
+            if isinstance(bound, Parameter):
+                if source not in ("input", "output"):
+                    raise ConfigurationError(f"{name} must declare input/output source in Profile")
+                object.__setattr__(bound, "source", source)
+            object.__setattr__(self, name, bound)
+        return method(self, *args, **kwargs)
+
+    return bind
+
+
+@lru_cache(maxsize=128)
+def _attributes(profile_type: type) -> tuple[tuple[str, str | None], ...]:
+    return tuple((item.name, item.metadata.get("source")) for item in fields(profile_type))
+
+
+def _validate_comment(comment: str | None) -> None:
     if comment is not None and not isinstance(comment, str):
         raise ConfigurationError("configuration comment must be a string or None")

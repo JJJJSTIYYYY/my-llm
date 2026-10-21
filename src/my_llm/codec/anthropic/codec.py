@@ -12,28 +12,18 @@ class AnthropicCodec(BaseCodec):
     __slots__ = ()
     protocol_or_api_style = "anthropic"
     defaults = ProtocolDefaults(
-        replay_reasoning_content_when_tool_calls=Config(
-            name="replay_reasoning_content_when_tool_calls", default_value=True
-        ),
-        supports_reasoning_effort=Config(name="supports_reasoning_effort", default_value=False),
-        max_tokens=Parameter(
-            name="max_tokens", path="$.max_tokens", default_value=omit, phase="decode"
-        ),
-        content=Parameter(name="content", path="$.delta.text", default_value=omit, phase="encode"),
-        reasoning_content=Parameter(
-            name="reasoning_content", path="$.delta.thinking", default_value=omit, phase="encode"
-        ),
+        replay_reasoning_content_when_tool_calls=Config(default_value=True),
+        max_tokens=Parameter(path="$.max_tokens", default_value=omit),
+        content=Parameter(path="$.delta.text", default_value=omit),
+        reasoning_content=Parameter(path="$.delta.thinking", default_value=omit),
         reasoning_enable=Parameter(
-            name="reasoning_enable",
             path="$.thinking",
             default_value={"type": "enabled", "budget_tokens": 1024},
-            phase="decode",
         ),
         reasoning_effort=Parameter(
-            name="reasoning_effort",
+            supports=False,
             path="$.output_config.effort",
             default_value=omit,
-            phase="decode",
         ),
     )
     encoder = AnthropicEncoder()

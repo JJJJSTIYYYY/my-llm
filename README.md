@@ -91,19 +91,15 @@ async def main():
         provider=ProviderProfile(
             protocol="anthropic",  # 实际请求的 API 协议
             api_key=Parameter(
-                name="API 密钥",
                 path="$.api_key",
                 default_value=os.environ["ANTHROPIC_API_KEY"],
-                phase="decode",
             ),
         ),
         model=ModelProfile(
             model=os.environ["LLM_MODEL"],
             max_tokens=Parameter(
-                name="输出上限",
                 path="$.max_tokens",
                 default_value=4096,
-                phase="decode",
             ),
         ),
         stdio_protocol="openai_chat",  # 输入和输出均使用 Chat 协议
@@ -137,7 +133,7 @@ async def print_answer(llm):
 ```
 
 使用 `async with` 管理实例和流。传入工具前，在 `ModelProfile` 中设置
-`supports_function_calling=Config(name="工具调用", default_value=True)`。
+`supports_function_calling=Config(default_value=True)`。
 
 ### 独立格式转换
 

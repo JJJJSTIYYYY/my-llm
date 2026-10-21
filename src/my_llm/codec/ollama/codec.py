@@ -12,31 +12,16 @@ class OllamaCodec(BaseCodec):
     __slots__ = ()
     protocol_or_api_style = "ollama"
     defaults = ProtocolDefaults(
-        replay_reasoning_content_when_tool_calls=Config(
-            name="replay_reasoning_content_when_tool_calls", default_value=True
-        ),
-        supports_reasoning_effort=Config(name="supports_reasoning_effort", default_value=False),
+        replay_reasoning_content_when_tool_calls=Config(default_value=True),
         api_key=Parameter(
-            name="api_key",
             path="$.extra_headers.Authorization",
             default_value=omit,
-            phase="decode",
         ),
-        max_tokens=Parameter(
-            name="max_tokens", path="$.options.num_predict", default_value=omit, phase="decode"
-        ),
-        content=Parameter(
-            name="content", path="$.message.content", default_value=omit, phase="encode"
-        ),
-        reasoning_content=Parameter(
-            name="reasoning_content", path="$.message.thinking", default_value=omit, phase="encode"
-        ),
-        reasoning_enable=Parameter(
-            name="reasoning_enable", path="$.think", default_value=True, phase="decode"
-        ),
-        reasoning_effort=Parameter(
-            name="reasoning_effort", path="$.think", default_value=omit, phase="decode"
-        ),
+        max_tokens=Parameter(path="$.options.num_predict", default_value=omit),
+        content=Parameter(path="$.message.content", default_value=omit),
+        reasoning_content=Parameter(path="$.message.thinking", default_value=omit),
+        reasoning_enable=Parameter(path="$.think", default_value=True),
+        reasoning_effort=Parameter(supports=False, path="$.think", default_value=omit),
     )
     encoder = OllamaEncoder()
     decoder = OllamaDecoder()

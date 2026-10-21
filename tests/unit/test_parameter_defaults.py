@@ -1,7 +1,7 @@
 """Declared defaults, presence, omission and Config precedence at SDK-root paths."""
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pytest
 
@@ -20,10 +20,10 @@ from tests.helpers.requests import encode_request
 
 @dataclass(frozen=True, kw_only=True)
 class TemperatureProvider(ProviderProfile):
-    temperature: Parameter[float | None] = Parameter(
-        name="Temperature", path="$.temperature", default_value=0.4, phase="decode"
+    temperature: Parameter[float | None] = field(
+        default=Parameter(path="$.temperature", default_value=0.4), metadata={"source": "input"}
     )
-    trace_enabled: Config[bool] = config("Trace", True)
+    trace_enabled: Config[bool] = config(True)
 
 
 CASES = [
@@ -39,9 +39,7 @@ def profile(protocol, path, value=0.4):
     return resolve_profiles(
         TemperatureProvider(
             protocol=protocol,
-            temperature=Parameter(
-                name="Temperature", path=path, default_value=value, phase="decode"
-            ),
+            temperature=Parameter(path=path, default_value=value),
         ),
         ModelProfile(model="demo", max_tokens=parameter("max_tokens", 4096, protocol=protocol)),
     )
@@ -82,9 +80,10 @@ def test_existing_false_or_zero_does_not_trigger_default(protocol, path, body):
 def test_config_generated_effort_overrides_parameter_default(profile_factory):
     p = profile_factory(
         "openai_chat",
-        supports_reasoning_effort=config("supports_reasoning_effort", True),
-        reasoning_effort=parameter("reasoning_effort", "low", protocol="openai_chat"),
-        reasoning_effort_mapping=config("reasoning_effort_mapping", {"high": "medium"}),
+        reasoning_effort=parameter(
+            "reasoning_effort", "low", protocol="openai_chat", supports=True
+        ),
+        reasoning_effort_mapping=config({"high": "medium"}),
     )
     assert encode_request(p, reasoning_effort="high")["reasoning_effort"] == "medium"
 
@@ -110,26 +109,20 @@ def test_path_read_distinguishes_missing_from_explicit_none():
     assert value == {"nested": {"keep": True, "items": [None, {"name": "value"}]}}
 
 
-def test_display_metadata_does_not_control_business_parameters_or_branches(profile_factory):
+def test_comments_do_not_control_business_parameters_or_branches(profile_factory):
     original = profile_factory(
         max_tokens=parameter("max_tokens", 120),
-        supports_reasoning_effort=config("Effort", True),
-        reasoning_effort_mapping=config("Mapping", {"high": "medium"}),
+        reasoning_effort=parameter("reasoning_effort", supports=True),
+        reasoning_effort_mapping=config({"high": "medium"}),
     )
     decorated = profile_factory(
         max_tokens=Parameter(
-            name="用户可编辑的名称",
             comment="Only shown in the UI",
             path="$.max_completion_tokens",
             default_value=120,
-            phase="decode",
         ),
-        supports_reasoning_effort=Config(
-            name="完全无关的标识",
-            comment="No branch depends on this label",
-            default_value=True,
-        ),
-        reasoning_effort_mapping=config("Different label", {"high": "medium"}),
+        reasoning_effort=parameter("reasoning_effort", supports=True),
+        reasoning_effort_mapping=Config(default_value={"high": "medium"}, comment="Display only"),
     )
     assert encode_request(original, reasoning_effort="high") == encode_request(
         decorated, reasoning_effort="high"

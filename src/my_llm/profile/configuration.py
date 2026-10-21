@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from my_llm.exceptions import ConfigurationError
-from my_llm.profile.types import Config, Omit, Parameter, omit
+from my_llm.profile.types import Config, Omit, Parameter, omit, set_attr
 
 type Protocol = str
 type ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
@@ -18,46 +18,43 @@ EFFORTS = ("none", "low", "medium", "high", "xhigh", "max")
 class ProtocolDefaults:
     """Settings declared by a protocol's Codec, extensible with typed wrappers.
 
-    Parameter binds its own path, missing-value default and translation phase.
+    Parameter binds its own path, default, support and fixed input/output source.
     Field metadata scope="client" targets connection options (built-in api_key);
-    other decode parameters target requests.
+    other input parameters target requests.
     Config controls code behavior. Dataclass field names identify each setting;
-    wrapper names and comments are presentation metadata.
+    wrapper identities are fixed by their Profile fields.
     """
 
     replay_reasoning_content_when_tool_calls: Config[bool] | Omit
-    supports_reasoning_effort: Config[bool] | Omit
     api_key: Parameter[str] | Omit = field(
-        default=Parameter(name="api_key", path="$.api_key", default_value=omit, phase="decode"),
+        default=Parameter(path="$.api_key", default_value=omit),
         repr=False,
-        metadata={"scope": "client"},
+        metadata={"scope": "client", "source": "input"},
     )
-    max_tokens: Parameter[int] | Omit = omit
-    content: Parameter[Any] | Omit = omit
-    reasoning_content: Parameter[Any] | Omit = omit
-    reasoning_enable: Parameter[Any] | Omit = omit
-    reasoning_effort: Parameter[Any] | Omit = omit
+    max_tokens: Parameter[int] | Omit = field(default=omit, metadata={"source": "input"})
+    content: Parameter[Any] | Omit = field(default=omit, metadata={"source": "output"})
+    reasoning_content: Parameter[Any] | Omit = field(default=omit, metadata={"source": "output"})
+    reasoning_enable: Parameter[Any] | Omit = field(default=omit, metadata={"source": "input"})
+    reasoning_effort: Parameter[Any] | Omit = field(default=omit, metadata={"source": "input"})
     extra_headers: Config[dict[str, Any]] | Omit = field(
-        default_factory=lambda: Config(name="Extra headers", default_value={})
+        default_factory=lambda: Config(default_value={})
     )
     extra_body: Config[dict[str, Any]] | Omit = field(
-        default_factory=lambda: Config(name="Extra body", default_value={})
+        default_factory=lambda: Config(default_value={})
     )
     reasoning_effort_mapping: Config[dict[str, Any]] | Omit = field(
         default_factory=lambda: Config(
-            name="Reasoning effort mapping",
             default_value={effort: effort for effort in EFFORTS},
         )
     )
-    supports_stream: Config[bool] | Omit = Config(name="Supports streaming", default_value=True)
-    supports_reasoning: Config[bool] | Omit = Config(name="Supports reasoning", default_value=True)
-    supports_function_calling: Config[bool] | Omit = Config(
-        name="Supports function calling", default_value=False
-    )
-    supports_message_name: Config[bool] | Omit = Config(
-        name="Supports message names", default_value=True
-    )
-    usage_mode: Config[str] | Omit = Config(name="Usage mode", default_value="none")
+    supports_stream: Config[bool] | Omit = Config(default_value=True)
+    supports_function_calling: Config[bool] | Omit = Config(default_value=False)
+    supports_message_name: Config[bool] | Omit = Config(default_value=True)
+    usage_mode: Config[str] | Omit = Config(default_value="none")
+
+    @set_attr
+    def __post_init__(self) -> None:
+        pass
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -65,20 +62,29 @@ class OverridableProfile:
     """Shared overrides: None inherits, omit disables, wrappers replace settings.
 
     Extend profiles with Parameter[T] or Config[T] fields. Parameter overrides
-    replace path, phase and default together. Config dictionaries merge by key.
+    replace path, support and default together. Config dictionaries merge by key.
     A wrapper's explicit default_value=None is retained.
     """
 
     extra_headers: Config[dict[str, Any]] | Omit | None = None
     extra_body: Config[dict[str, Any]] | Omit | None = None
     reasoning_effort_mapping: Config[dict[str, Any]] | Omit | None = None
-    supports_reasoning_effort: Config[bool] | Omit | None = None
-    max_tokens: Parameter[int] | Omit | None = None
-    content: Parameter[Any] | Omit | None = None
-    reasoning_content: Parameter[Any] | Omit | None = None
-    reasoning_enable: Parameter[Any] | Omit | None = None
-    reasoning_effort: Parameter[Any] | Omit | None = None
+    max_tokens: Parameter[int] | Omit | None = field(default=None, metadata={"source": "input"})
+    content: Parameter[Any] | Omit | None = field(default=None, metadata={"source": "output"})
+    reasoning_content: Parameter[Any] | Omit | None = field(
+        default=None, metadata={"source": "output"}
+    )
+    reasoning_enable: Parameter[Any] | Omit | None = field(
+        default=None, metadata={"source": "input"}
+    )
+    reasoning_effort: Parameter[Any] | Omit | None = field(
+        default=None, metadata={"source": "input"}
+    )
     replay_reasoning_content_when_tool_calls: Config[bool] | Omit | None = None
+
+    @set_attr
+    def __post_init__(self) -> None:
+        pass
 
 
 def merge_dicts(

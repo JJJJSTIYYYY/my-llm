@@ -1,6 +1,6 @@
 """Profile snapshots use declarative defaults; Codec coordinates protocol validation."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import pytest
 
@@ -49,7 +49,7 @@ def test_llm_uses_its_own_codec_for_protocol_validation(monkeypatch):
             super().validate_profile(profile)
 
     monkeypatch.setattr("my_llm.invoke.MyCodec", Codec)
-    llm = MyLLM(provider=ProviderProfile(), model=ModelProfile(model="demo"))
+    llm = MyLLM(provider=ProviderProfile(protocol="openai_chat"), model=ModelProfile(model="demo"))
     assert instances == [llm.codec]
     assert calls == [(llm.codec, llm.resolved_profile)]
 
@@ -69,10 +69,11 @@ def test_llm_preserves_profile_type_errors_before_reading_defaults(provider, mod
 
 @dataclass(frozen=True, kw_only=True)
 class SamplingDefaults(ProtocolDefaults):
-    temperature: Parameter[float | None] | Omit = Parameter(
-        name="Temperature", path="$.extra_body.temperature", default_value=0.25, phase="decode"
+    temperature: Parameter[float | None] | Omit = field(
+        default=Parameter(path="$.extra_body.temperature", default_value=0.25),
+        metadata={"source": "input"},
     )
-    custom_mode: Config[str] = Config(name="Mode", default_value="standard")
+    custom_mode: Config[str] = Config(default_value="standard")
 
 
 def test_inherited_protocol_defaults_are_discovered_without_a_central_table(monkeypatch):
@@ -81,7 +82,7 @@ def test_inherited_protocol_defaults_are_discovered_without_a_central_table(monk
     codec = codec_for("openai_chat")
     inherited = protocol_defaults("openai_chat")
     monkeypatch.setattr(type(codec), "defaults", SamplingDefaults(**inherited))
-    result = resolve_profiles(ProviderProfile(), ModelProfile(model="demo"))
+    result = resolve_profiles(ProviderProfile(protocol="openai_chat"), ModelProfile(model="demo"))
     assert result.get("temperature") == 0.25
     assert result.parameter("temperature").path == "$.extra_body.temperature"
     assert result.get("custom_mode") == "standard"
@@ -97,15 +98,13 @@ def test_inherited_protocol_none_default_and_omit_are_preserved(monkeypatch):
     codec = codec_for("openai_chat")
     defaults = SamplingDefaults(
         **protocol_defaults("openai_chat"),
-        temperature=Parameter(
-            name="Temperature", path="$.extra_body.temperature", default_value=None, phase="decode"
-        ),
+        temperature=Parameter(path="$.extra_body.temperature", default_value=None),
     )
     monkeypatch.setattr(type(codec), "defaults", defaults)
-    result = resolve_profiles(ProviderProfile(), ModelProfile(model="demo"))
+    result = resolve_profiles(ProviderProfile(protocol="openai_chat"), ModelProfile(model="demo"))
     assert result.get("temperature", "missing") is None
     monkeypatch.setattr(type(codec), "defaults", replace(defaults, temperature=omit))
-    result = resolve_profiles(ProviderProfile(), ModelProfile(model="demo"))
+    result = resolve_profiles(ProviderProfile(protocol="openai_chat"), ModelProfile(model="demo"))
     assert result.values["temperature"] is omit
 
 
@@ -119,4 +118,4 @@ def test_unclassified_protocol_default_is_rejected(monkeypatch):
     codec = codec_for("openai_chat")
     monkeypatch.setattr(type(codec), "defaults", BadDefaults(**protocol_defaults("openai_chat")))
     with pytest.raises(ConfigurationError, match="accidental"):
-        resolve_profiles(ProviderProfile(), ModelProfile(model="demo"))
+        resolve_profiles(ProviderProfile(protocol="openai_chat"), ModelProfile(model="demo"))

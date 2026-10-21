@@ -44,10 +44,8 @@ async def session():
         model=ModelProfile(
             model="your-model",
             max_tokens=Parameter(
-                name="输出上限",
                 path="$.max_output_tokens",
                 default_value=2048,
-                phase="decode",
             ),
         ),
         stdio_protocol="openai_chat",
@@ -133,7 +131,7 @@ async def add_round_trip(provider, model_id):
         provider=provider,
         model=ModelProfile(
             model=model_id,
-            supports_function_calling=Config(name="工具调用", default_value=True),
+            supports_function_calling=Config(default_value=True),
         ),
         stdio_protocol="openai_chat",
     ) as llm:

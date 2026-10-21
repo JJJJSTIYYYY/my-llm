@@ -88,16 +88,18 @@ class BaseEncoder(ABC):
         *,
         use_default: bool = True,
     ) -> Any:
-        """Read one semantic field, using only its encode declaration.
+        """Read one semantic field, using only its output declaration.
 
-        Native paths remain the protocol hook's responsibility. Neither display
-        names nor decode declarations change how upstream values are read.
+        Native paths remain the protocol hook's responsibility. Comments and
+        input declarations do not change how upstream values are read.
         """
         if profile is not None:
             declaration = profile.parameters.get(name)
-            if isinstance(declaration, Omit):
+            if isinstance(declaration, Omit) or (
+                declaration is not None and not declaration.supports
+            ):
                 return default
-            if declaration is not None and declaration.phase == "encode":
+            if declaration is not None and declaration.source == "output":
                 default_path = declaration.path
                 if use_default and not isinstance(declaration.default_value, Omit):
                     default = declaration.default_value

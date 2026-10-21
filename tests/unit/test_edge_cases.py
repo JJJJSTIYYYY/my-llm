@@ -1,6 +1,11 @@
 import pytest
 
-from my_llm import ConfigurationError, ModelProfile, ProviderProfile, omit
+from my_llm import (
+    ConfigurationError,
+    ModelProfile,
+    ProviderProfile,
+    omit,
+)
 from my_llm.profile.resolution import resolve_profiles
 from tests.helpers.profiles import config, parameter
 from tests.helpers.requests import codec
@@ -8,8 +13,8 @@ from tests.helpers.requests import codec
 
 def test_custom_chat_effort_named_parameter(profile_factory):
     profile = profile_factory(
-        supports_reasoning_effort=config("supports_reasoning_effort", True),
-        reasoning_effort_mapping=config("reasoning_effort_mapping", {"high": "medium"}),
+        reasoning_effort=parameter("reasoning_effort", supports=True),
+        reasoning_effort_mapping=config({"high": "medium"}),
     )
     request = codec(profile).encode(
         [{"role": "user", "content": "x"}], tools=omit, reasoning_effort="high"
@@ -65,7 +70,7 @@ def test_chat_name_supported_by_default(profile_factory):
 
 def test_model_string_whitespace_rejected():
     with pytest.raises(ConfigurationError):
-        resolve_profiles(ProviderProfile(), ModelProfile(model=" "))
+        resolve_profiles(ProviderProfile(protocol="openai_chat"), ModelProfile(model=" "))
 
 
 def test_default_response_object_is_replaced_as_one_parameter(profile_factory):

@@ -9,7 +9,7 @@ from tests.helpers.transport import FakeClient
 
 def test_profile_and_request_snapshots_are_independent():
     body = {"nested": {"value": "original"}}
-    provider = ProviderProfile(extra_body=config("extra_body", body))
+    provider = ProviderProfile(protocol="openai_chat", extra_body=config(body))
     llm = MyLLM(stdio_protocol="openai_chat", provider=provider, model=ModelProfile(model="demo"))
     body["nested"]["value"] = "changed"
     assert llm.provider.extra_body.default_value["nested"]["value"] == "original"
@@ -36,7 +36,9 @@ async def test_lazy_generation_captures_history_and_request_options(monkeypatch)
     history = [{"role": "user", "content": [{"type": "text", "text": "original"}]}]
     body = {"nested": {"value": "original"}}
     llm = MyLLM(
-        stdio_protocol="openai_chat", provider=ProviderProfile(), model=ModelProfile(model="demo")
+        stdio_protocol="openai_chat",
+        provider=ProviderProfile(protocol="openai_chat"),
+        model=ModelProfile(model="demo"),
     )
     stream = await llm.generate(messages=history, extra_body=body, stream=True)
     history[0]["content"][0]["text"] = "changed"
@@ -55,7 +57,7 @@ def test_converter_never_mutates_input_or_profile():
     codec = MyCodec()
     messages = [{"role": "user", "content": "hi", "nested": {"value": [1]}}]
     before = deepcopy(messages)
-    profile = resolve_profiles(ProviderProfile(), ModelProfile(model="demo"))
+    profile = resolve_profiles(ProviderProfile(protocol="openai_chat"), ModelProfile(model="demo"))
     for protocol in codec.codecs:
         converted = codec.convert(
             messages, input_format="openai_chat", target_format=protocol, profile=profile

@@ -26,7 +26,9 @@ def sdk_factory(monkeypatch):
 
 def make_llm():
     return MyLLM(
-        stdio_protocol="openai_chat", provider=ProviderProfile(), model=ModelProfile(model="demo")
+        stdio_protocol="openai_chat",
+        provider=ProviderProfile(protocol="openai_chat"),
+        model=ModelProfile(model="demo"),
     )
 
 
@@ -152,7 +154,7 @@ async def test_one_shot_stream_owns_and_closes_temporary_client(
 ):
     stream = await generate(
         stdio_protocol="openai_chat",
-        provider=ProviderProfile(),
+        provider=ProviderProfile(protocol="openai_chat"),
         model="demo",
         messages=[{"role": "user", "content": "hi"}],
         stream=True,
@@ -196,7 +198,7 @@ async def test_one_shot_stream_owns_and_closes_temporary_client(
 async def test_unstarted_one_shot_stream_does_not_create_client(sdk_factory):
     stream = await generate(
         stdio_protocol="openai_chat",
-        provider=ProviderProfile(),
+        provider=ProviderProfile(protocol="openai_chat"),
         model="demo",
         messages=[{"role": "user", "content": "hi"}],
         stream=True,

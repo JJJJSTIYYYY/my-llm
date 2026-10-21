@@ -271,7 +271,7 @@ class BaseDecoder(ABC):
 
     @final
     def request_parameters(self, profile: ResolvedProfile, options: PreparedOptions) -> dict:
-        """Apply decode declarations at SDK-root paths for every protocol."""
+        """Apply input declarations at SDK-root paths for every protocol."""
         request = request_parameters(
             profile,
             options,

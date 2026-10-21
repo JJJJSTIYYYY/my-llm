@@ -67,15 +67,13 @@ def test_response_reasoning_mapping(profile_factory, effort):
 
 def test_unsupported_reasoning_and_effort(profile_factory):
     with pytest.raises(UnsupportedCapabilityError, match="reasoning"):
-        codec(profile_factory(supports_reasoning=config("supports_reasoning", False))).encode(
-            [{"role": "user", "content": "x"}], tools=omit, reasoning_effort="low"
-        )
+        codec(
+            profile_factory(reasoning_enable=parameter("reasoning_enable", supports=False))
+        ).encode([{"role": "user", "content": "x"}], tools=omit, reasoning_effort="low")
     limited = codec(
         profile_factory(
             "openai_responses",
-            reasoning_effort_mapping=config(
-                "reasoning_effort_mapping", {"xhigh": None, "max": None}
-            ),
+            reasoning_effort_mapping=config({"xhigh": None, "max": None}),
         )
     )
     with pytest.raises(UnsupportedCapabilityError, match="xhigh"):
@@ -84,21 +82,24 @@ def test_unsupported_reasoning_and_effort(profile_factory):
 
 def test_custom_effort_body_and_generated_priority():
     provider = ProviderProfile(
-        supports_reasoning_effort=config("supports_reasoning_effort", True),
+        protocol="openai_chat",
         reasoning_enable=parameter(
             "reasoning_enable", True, protocol="openai_chat", path="$.extra_body.enable_thinking"
         ),
         reasoning_effort=parameter(
-            "reasoning_effort", protocol="openai_chat", path="$.extra_body.thinking.budget"
+            "reasoning_effort",
+            protocol="openai_chat",
+            path="$.extra_body.thinking.budget",
+            supports=True,
         ),
-        reasoning_effort_mapping=config("reasoning_effort_mapping", {"high": "large"}),
-        extra_headers=config("extra_headers", {"a": "provider", "b": "provider"}),
-        extra_body=config("extra_body", {"source": "provider"}),
+        reasoning_effort_mapping=config({"high": "large"}),
+        extra_headers=config({"a": "provider", "b": "provider"}),
+        extra_body=config({"source": "provider"}),
     )
     model = ModelProfile(
         model="demo",
-        extra_headers=config("extra_headers", {"a": "model"}),
-        extra_body=config("extra_body", {"source": "model"}),
+        extra_headers=config({"a": "model"}),
+        extra_body=config({"source": "model"}),
     )
     request = codec(resolve_profiles(provider, model)).encode(
         [{"role": "user", "content": "x"}],
@@ -110,7 +111,7 @@ def test_custom_effort_body_and_generated_priority():
     assert request["extra_headers"] == {"a": "request"}
     assert request["extra_body"] == {
         "source": "request",
-        "enable_thinking": False,
+        "enable_thinking": True,
         "thinking": {"budget": "large"},
     }
     assert "reasoning_effort" not in request
@@ -149,11 +150,9 @@ def test_tools_conversion_and_no_input_mutation(
         else function_tool
     ]
     before = copy.deepcopy(tools)
-    request = codec(
-        profile_factory(
-            protocol, supports_function_calling=config("supports_function_calling", True)
-        )
-    ).encode([{"role": "user", "content": "x"}], tools=tools, tools_format=input_format)
+    request = codec(profile_factory(protocol, supports_function_calling=config(True))).encode(
+        [{"role": "user", "content": "x"}], tools=tools, tools_format=input_format
+    )
     assert request["tools"] == (
         [{"type": "function", **function_tool["function"]}]
         if protocol == "openai_responses"
@@ -180,11 +179,9 @@ def test_tool_extensions_are_filtered_and_foreign_null_options_are_omitted(
         if input_format == "openai_responses"
         else {"type": "function", "function": function}
     )
-    request = codec(
-        profile_factory(
-            protocol, supports_function_calling=config("supports_function_calling", True)
-        )
-    ).encode([{"role": "user", "content": "x"}], tools=[tool], tools_format=input_format)
+    request = codec(profile_factory(protocol, supports_function_calling=config(True))).encode(
+        [{"role": "user", "content": "x"}], tools=[tool], tools_format=input_format
+    )
     if protocol == "openai_responses":
         assert request["tools"] == [
             {"type": "function", "name": "weather", "parameters": None, "strict": False}
@@ -232,9 +229,7 @@ def test_reasoning_replay_only_pads_tool_calls_when_thinking(
     profile = resolve_profiles(
         ProviderProfile(
             protocol=protocol,
-            replay_reasoning_content_when_tool_calls=config(
-                "replay_reasoning_content_when_tool_calls", replay
-            ),
+            replay_reasoning_content_when_tool_calls=config(replay),
         ),
         ModelProfile(model="demo"),
     )
@@ -256,7 +251,7 @@ def test_native_generation_parameters_and_tools(profile_factory, protocol, funct
     profile = profile_factory(
         protocol,
         max_tokens=parameter("max_tokens", 2048, protocol=protocol),
-        supports_function_calling=config("supports_function_calling", True),
+        supports_function_calling=config(True),
     )
     request = encode_request(profile, tools=[function_tool], reasoning=True)
     if protocol == "anthropic":

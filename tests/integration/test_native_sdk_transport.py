@@ -94,13 +94,13 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
                 "Bearer local-test" if protocol == "ollama" else "local-test",
                 protocol=protocol,
             ),
-            base_url=config("base_url", "https://local.test"),
-            usage_mode=config("usage_mode", "native"),
+            base_url=config("https://local.test"),
+            usage_mode=config("native"),
         ),
         model=ModelProfile(
             model="demo",
             max_tokens=parameter("max_tokens", 2048, protocol=protocol),
-            supports_function_calling=config("supports_function_calling", True),
+            supports_function_calling=config(True),
         ),
         stdio_protocol=stdio,
     )
@@ -198,13 +198,11 @@ async def test_header_authentication_without_sdk_api_key(
     async with MyLLM(
         provider=ProviderProfile(
             protocol=protocol,
-            base_url=config("base_url", "https://local.test"),
+            base_url=config("https://local.test"),
             api_key=parameter(
                 "api_key", "Bearer local-header-test", path=f"$.extra_headers.{header}"
             ),
-            extra_headers=config(
-                "extra_headers", {header: "provider-override"} if provider_override else {}
-            ),
+            extra_headers=config({header: "provider-override"} if provider_override else {}),
         ),
         model=ModelProfile(
             model="demo", max_tokens=parameter("max_tokens", 2048, protocol=protocol)

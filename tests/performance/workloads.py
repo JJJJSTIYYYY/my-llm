@@ -808,20 +808,18 @@ def profiles(protocol: str):
                 "Bearer offline-benchmark" if protocol == "ollama" else "offline-benchmark",
                 protocol=protocol,
             ),
-            base_url=config("base_url", "https://benchmark.invalid"),
-            max_retries=config("max_retries", 0),
-            usage_mode=config(
-                "usage_mode", "stream_options" if protocol == "openai_chat" else "native"
-            ),
-            extra_headers=config("extra_headers", {"x-benchmark": "provider"}),
+            base_url=config("https://benchmark.invalid"),
+            max_retries=config(0),
+            usage_mode=config("stream_options" if protocol == "openai_chat" else "native"),
+            extra_headers=config({"x-benchmark": "provider"}),
         ),
         ModelProfile(
             model="benchmark",
             max_tokens=parameter("max_tokens", 32768, protocol=protocol),
-            supports_function_calling=config("supports_function_calling", True),
-            supports_reasoning=config("supports_reasoning", True),
-            supports_reasoning_effort=config("supports_reasoning_effort", True),
-            extra_headers=config("extra_headers", {"x-benchmark-model": "model"}),
+            supports_function_calling=config(True),
+            reasoning_enable=parameter("reasoning_enable", supports=True, protocol=protocol),
+            reasoning_effort=parameter("reasoning_effort", supports=True, protocol=protocol),
+            extra_headers=config({"x-benchmark-model": "model"}),
         ),
     )
 

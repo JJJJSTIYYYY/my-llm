@@ -12,26 +12,15 @@ class ResponsesCodec(BaseCodec):
     __slots__ = ()
     protocol_or_api_style = "openai_responses"
     defaults = ProtocolDefaults(
-        replay_reasoning_content_when_tool_calls=Config(
-            name="replay_reasoning_content_when_tool_calls", default_value=True
-        ),
-        supports_reasoning_effort=Config(name="supports_reasoning_effort", default_value=True),
-        max_tokens=Parameter(
-            name="max_tokens", path="$.max_output_tokens", default_value=omit, phase="decode"
-        ),
-        content=Parameter(name="content", path="$.delta", default_value=omit, phase="encode"),
-        reasoning_content=Parameter(
-            name="reasoning_content", path="$.delta", default_value=omit, phase="encode"
-        ),
+        replay_reasoning_content_when_tool_calls=Config(default_value=True),
+        max_tokens=Parameter(path="$.max_output_tokens", default_value=omit),
+        content=Parameter(path="$.delta", default_value=omit),
+        reasoning_content=Parameter(path="$.delta", default_value=omit),
         reasoning_enable=Parameter(
-            name="reasoning_enable",
             path="$.reasoning",
             default_value={"effort": "medium", "summary": "detailed"},
-            phase="decode",
         ),
-        reasoning_effort=Parameter(
-            name="reasoning_effort", path="$.reasoning.effort", default_value=omit, phase="decode"
-        ),
+        reasoning_effort=Parameter(supports=True, path="$.reasoning.effort", default_value=omit),
     )
     encoder = ResponsesEncoder()
     decoder = ResponsesDecoder()

@@ -103,7 +103,9 @@ async def test_guide_text_stream_and_tool_round_trip(monkeypatch):
 
     monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
     monkeypatch.setattr("my_llm.codec.openai.responses.transport.AsyncOpenAI", factory)
-    provider = ProviderProfile(api_key=parameter("api_key", "local-doc-test"))
+    provider = ProviderProfile(
+        protocol="openai_chat", api_key=parameter("api_key", "local-doc-test")
+    )
     llm = MyLLM(stdio_protocol="openai_chat", provider=provider, model=ModelProfile(model="demo"))
     for name in ("ask", "print_stream"):
         assert (await api_example(name)(llm, "Hello"))["content"] == "Hello"

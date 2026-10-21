@@ -219,7 +219,9 @@ class ResponsesEncoder(BaseEncoder):
                                 index,
                                 event.get("content_index", 0),
                             ),
-                            "block": deepcopy(encode_content([part])[0]),
+                            "block": self._output_block(
+                                deepcopy(encode_content([part])[0]), profile
+                            ),
                         }
                     )
             elif kind == "response.refusal.delta":
@@ -241,11 +243,14 @@ class ResponsesEncoder(BaseEncoder):
                     {
                         "type": "block_set",
                         "ref": BlockRef("thinking", index, event.get("summary_index", 0)),
-                        "block": {
-                            "type": "thinking",
-                            "thinking": part.get("text", ""),
-                            "summary": [select(part, "type", "text")],
-                        },
+                        "block": self._output_block(
+                            {
+                                "type": "thinking",
+                                "thinking": part.get("text", ""),
+                                "summary": [select(part, "type", "text")],
+                            },
+                            profile,
+                        ),
                     }
                 )
             elif kind == "response.completed":
@@ -263,7 +268,7 @@ class ResponsesEncoder(BaseEncoder):
                                 }
                             }
                         ),
-                        self._snapshot(output),
+                        self._snapshot(output, profile),
                         {
                             "type": "finish",
                             "reason": "tool_calls"
@@ -350,7 +355,16 @@ class ResponsesEncoder(BaseEncoder):
             if isinstance(item.get(key), str)
         }
 
-    def _snapshot(self, output: list) -> dict:
+    def _output_block(self, block: dict, profile: ResolvedProfile | None) -> dict:
+        """Suppress disabled visible fields in an owned block, retaining native metadata."""
+        name = {"text": "content", "thinking": "reasoning_content"}.get(block["type"])
+        if name is not None and profile is not None and profile.parameter(name, "output") is None:
+            block["text" if name == "content" else "thinking"] = ""
+            if "summary" in block:
+                block["summary"] = [{**part, "text": ""} for part in block["summary"]]
+        return block
+
+    def _snapshot(self, output: list, profile: ResolvedProfile | None = None) -> dict:
         """Address recognized final blocks with their live item/part coordinates."""
         blocks = []
         for index, item in enumerate(output):
@@ -359,7 +373,7 @@ class ResponsesEncoder(BaseEncoder):
                 continue
             message = encoded[0]
             for part, block in enumerate(message.get("content", [])):
-                block = deepcopy(block)
+                block = self._output_block(deepcopy(block), profile)
                 kind = block["type"]
                 if kind == "thinking":
                     for summary_index, summary in enumerate(block.get("summary") or [{}]):

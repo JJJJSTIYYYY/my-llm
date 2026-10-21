@@ -98,7 +98,7 @@ class OllamaDecoder(BaseDecoder):
         if thinking is not None and not isinstance(thinking, (str, bool)):
             raise ConfigurationError("Ollama think must be a boolean or model-defined string")
         if (
-            (binding := profile.parameter("reasoning_enable", "decode")) is not None
+            (binding := profile.parameter("reasoning_enable", "input")) is not None
             and binding.path == "$.think"
             and (
                 parameters.get("reasoning") is True

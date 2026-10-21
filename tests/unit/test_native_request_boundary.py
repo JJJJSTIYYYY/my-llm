@@ -1,7 +1,7 @@
 """Native transport boundaries validate and filter every request-bearing structure."""
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import pytest
@@ -174,7 +174,7 @@ def test_anthropic_tool_json_schema_preserves_open_keywords(profile_factory):
             profile_factory(
                 "anthropic",
                 max_tokens=parameter("max_tokens", 2048, protocol="anthropic"),
-                supports_function_calling=config("supports_function_calling", True),
+                supports_function_calling=config(True),
             ),
         )
     )
@@ -236,8 +236,9 @@ def test_request_projection_addresses_sdk_fields_without_reading_extensions(
 def test_profile_extension_restores_only_its_declared_unknown_sdk_leaf():
     @dataclass(frozen=True, kw_only=True)
     class ExtendedModel(ModelProfile):
-        vendor_limit: Parameter[int | None] = Parameter(
-            name="Vendor limit", path="$.reasoning.vendor_limit", default_value=None, phase="decode"
+        vendor_limit: Parameter[int | None] = field(
+            default=Parameter(path="$.reasoning.vendor_limit", default_value=None),
+            metadata={"source": "input"},
         )
 
     profile = resolve_profiles(
@@ -359,9 +360,7 @@ def test_nested_request_paths_delegate_to_override_hooks_once_and_capture_payloa
 
     result = Decoder().native_request(
         request,
-        profile_factory(
-            "openai_chat", supports_function_calling=config("supports_function_calling", True)
-        ),
+        profile_factory("openai_chat", supports_function_calling=config(True)),
     )
 
     assert len(hooks) == 2
@@ -414,9 +413,7 @@ def test_gemini_nested_tool_schemas_and_other_open_config_are_captured_once(
         .decoder("gemini")
         .native_request(
             request,
-            profile_factory(
-                "gemini", supports_function_calling=config("supports_function_calling", True)
-            ),
+            profile_factory("gemini", supports_function_calling=config(True)),
         )
     )
 
@@ -503,11 +500,11 @@ def test_direct_chat_request_preserves_explicit_none_extra_body(profile_factory)
 def test_declared_unknown_sdk_root_reports_configuration_error():
     @dataclass(frozen=True, kw_only=True)
     class ExtendedModel(ModelProfile):
-        vendor: Parameter[int] = Parameter(
-            name="Vendor", path="$.vendor", default_value=1, phase="decode"
+        vendor: Parameter[int] = field(
+            default=Parameter(path="$.vendor", default_value=1), metadata={"source": "input"}
         )
 
-    profile = resolve_profiles(ProviderProfile(), ExtendedModel(model="demo"))
+    profile = resolve_profiles(ProviderProfile(protocol="openai_chat"), ExtendedModel(model="demo"))
     bound = MyCodec().decoder("openai_chat")
 
     for validate in (bound.validate_profile,):

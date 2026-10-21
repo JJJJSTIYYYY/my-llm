@@ -203,16 +203,14 @@ def make_llm(protocol, stdio):
                 else "local-concurrency-test",
                 protocol=protocol,
             ),
-            base_url=config("base_url", "https://local.test"),
-            max_retries=config("max_retries", 0),
-            usage_mode=config(
-                "usage_mode", "stream_options" if protocol == "openai_chat" else "native"
-            ),
+            base_url=config("https://local.test"),
+            max_retries=config(0),
+            usage_mode=config("stream_options" if protocol == "openai_chat" else "native"),
         ),
         model=ModelProfile(
             model="demo",
             max_tokens=parameter("max_tokens", 2048, protocol=protocol),
-            supports_function_calling=config("supports_function_calling", True),
+            supports_function_calling=config(True),
         ),
         # Exercise unique format binding while other requests are in flight.
         stdio_protocol=None if stdio == "gemini" else stdio,

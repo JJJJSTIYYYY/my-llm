@@ -102,8 +102,8 @@ def test_prepared_options_and_requests_own_their_nested_values(
     profile = profile_factory(
         protocol,
         max_tokens=parameter("max_tokens", 4096, protocol=protocol),
-        extra_body=config("extra_body", profile_body),
-        extra_headers=config("extra_headers", {"x-source": "profile"}),
+        extra_body=config(profile_body),
+        extra_headers=config({"x-source": "profile"}),
         reasoning_enable=parameter(
             "reasoning_enable", ["default"], protocol=protocol, path="$." + request_path
         ),
@@ -114,11 +114,11 @@ def test_prepared_options_and_requests_own_their_nested_values(
     )
     options_before = deepcopy(options)
     request = codec.decoder(protocol).request_parameters(profile, options)
-    assert path_value(request, "$." + request_path) == ["caller"]
+    assert path_value(request, "$." + request_path) == ["default"]
 
     path_value(caller_body, "$." + body_path).append("caller edit")
     caller_headers["x-source"] = "caller edit"
-    assert path_value(request, "$." + request_path) == ["caller"]
+    assert path_value(request, "$." + request_path) == ["default"]
     assert options == options_before
 
     path_value(request, "$." + request_path).append("request edit")
@@ -129,7 +129,7 @@ def test_prepared_options_and_requests_own_their_nested_values(
     assert path_value(profile_body, "$." + body_path) == ["profile"]
     assert path_value(
         codec.decoder(protocol).request_parameters(profile, options), "$." + request_path
-    ) == ["caller"]
+    ) == ["default"]
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
@@ -139,8 +139,8 @@ def test_none_effort_mapping_preserves_configuration_and_rejects_requested_effor
     profile = profile_factory(
         protocol,
         max_tokens=parameter("max_tokens", 4096, protocol=protocol),
-        supports_reasoning_effort=config("Effort capability", True),
-        reasoning_effort_mapping=config("Disabled effort mapping", None),
+        reasoning_effort=parameter("reasoning_effort", supports=True, protocol=protocol),
+        reasoning_effort_mapping=config(None),
     )
     assert profile.get("reasoning_effort_mapping", "missing") is None
     with pytest.raises(UnsupportedCapabilityError, match="effort"):

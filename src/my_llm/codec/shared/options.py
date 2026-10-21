@@ -127,9 +127,10 @@ def resolve_options(
         raise ConfigurationError("reasoning=False conflicts with a non-none effort")
     effort = "medium" if reasoning is True and reasoning_effort == "none" else reasoning_effort
     if effort != "none":
-        if not profile.get("supports_reasoning", False):
+        enable = profile.parameters.get("reasoning_enable")
+        if isinstance(enable, Parameter) and not enable.supports:
             raise UnsupportedCapabilityError("model does not support reasoning")
-        if profile.get("supports_reasoning_effort", False):
+        if profile.parameter("reasoning_effort", "input") is not None:
             mapping = profile.get("reasoning_effort_mapping")
             effort = mapping.get(effort) if mapping is not None else None
             if not isinstance(effort, str) or not effort:
@@ -137,7 +138,7 @@ def resolve_options(
                     f"model does not support effort {reasoning_effort!r}"
                 )
     if max_tokens is _MISSING:
-        parameter = profile.parameter("max_tokens", "decode")
+        parameter = profile.parameter("max_tokens", "input")
         tokens = parameter.default_value if parameter is not None else omit
     else:
         tokens = max_tokens
@@ -233,20 +234,20 @@ def request_parameters(
         request = {}
     if headers_field is not None and options.headers:
         set_path(request, headers_field, deepcopy(options.headers))
-    enable = profile.parameter("reasoning_enable", "decode")
-    if options.effort is not None and enable is not None:
-        _apply_parameter(request, enable, overlay=overlay)
+    enable = profile.parameter("reasoning_enable", "input")
+    if (
+        options.effort is not None
+        and enable is not None
+        and not isinstance(enable.default_value, Omit)
+    ):
+        _apply_parameter(request, enable, generated=enable.default_value, overlay=overlay)
     for name, parameter in profile.request_parameters:
         if name in ("reasoning_enable", "reasoning_effort"):
             continue
         generated = options.tokens if name == "max_tokens" and options.explicit_tokens else _MISSING
         _apply_parameter(request, parameter, generated=generated, overlay=overlay)
-    effort = profile.parameter("reasoning_effort", "decode")
-    if (
-        options.effort is not None
-        and effort is not None
-        and profile.get("supports_reasoning_effort", False)
-    ):
+    effort = profile.parameter("reasoning_effort", "input")
+    if options.effort is not None and effort is not None:
         _apply_parameter(request, effort, generated=options.effort, overlay=overlay)
     return request
 

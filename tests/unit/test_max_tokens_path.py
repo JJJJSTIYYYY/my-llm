@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from my_llm import ConfigurationError, omit
+from my_llm import ConfigurationError, ModelProfile, ProviderProfile, omit, resolve_profiles
 from my_llm.codec.shared.options import path_value
 from tests.helpers.profiles import config, parameter
 from tests.helpers.requests import encode_request
@@ -56,7 +56,7 @@ def test_custom_token_routes_override_body_and_preserve_siblings(
     profile = profile_factory(
         protocol,
         max_tokens=parameter("max_tokens", 100, protocol=protocol, path=path),
-        extra_body=config("extra_body", body),
+        extra_body=config(body),
     )
     for tokens in (50, 75):
         request = encode_request(profile, max_tokens=tokens)
@@ -106,19 +106,19 @@ def test_incompatible_existing_path_container_is_a_configuration_error(profile_f
                 max_tokens=parameter(
                     "max_tokens", 64, protocol="openai_chat", path="$.extra_body.limits.tokens"
                 ),
-                extra_body=config("extra_body", {"limits": "scalar"}),
+                extra_body=config({"limits": "scalar"}),
             )
         )
 
 
 @pytest.mark.parametrize("protocol,path", DEFAULT_PATHS)
-def test_encode_phase_token_default_is_not_validated_or_inserted_into_requests(
+def test_unsupported_token_default_is_not_validated_or_inserted_into_requests(
     profile_factory, protocol, path
 ):
     profile = profile_factory(
         protocol,
         max_tokens=parameter(
-            "max_tokens", 0, protocol=protocol, path="$.vendor.limit", phase="encode"
+            "max_tokens", 0, protocol=protocol, path="$.vendor.limit", supports=False
         ),
     )
     request = encode_request(
@@ -126,3 +126,67 @@ def test_encode_phase_token_default_is_not_validated_or_inserted_into_requests(
     )
     assert "vendor" not in request
     assert path_value(request, path, "missing") == (128 if protocol == "anthropic" else "missing")
+
+
+@pytest.mark.parametrize(
+    "model_path,expected",
+    [
+        (None, "$.extra_body.max_tokens"),
+        ("$.max_completion_tokens", "$.max_completion_tokens"),
+        (omit, None),
+    ],
+)
+def test_max_tokens_path_layering(model_path, expected):
+    profile = resolve_profiles(
+        ProviderProfile(
+            protocol="openai_chat",
+            max_tokens=parameter(
+                "max_tokens", protocol="openai_chat", path="$.extra_body.max_tokens"
+            ),
+        ),
+        ModelProfile(
+            model="demo",
+            max_tokens=(
+                model_path
+                if model_path is None or model_path is omit
+                else parameter("max_tokens", path=model_path)
+            ),
+        ),
+    )
+    assert (
+        profile.parameter("max_tokens").path if profile.parameter("max_tokens") else None
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    "path", ["", 1, True, [], "$", "$.extra_body..tokens", "$.limits[-1].tokens", "tokens[bad]"]
+)
+def test_invalid_max_tokens_path(path):
+    with pytest.raises(ConfigurationError):
+        resolve_profiles(
+            ProviderProfile(
+                protocol="openai_chat",
+                max_tokens=parameter("max_tokens", protocol="openai_chat", path=path),
+            ),
+            ModelProfile(model="demo"),
+        )
+
+
+def test_max_tokens_default_is_omitted_and_explicit_none_is_a_value():
+    profile = resolve_profiles(ProviderProfile(protocol="openai_chat"), ModelProfile(model="demo"))
+    assert profile.get("max_tokens", omit) is omit
+    assert profile.parameter("max_tokens").default_value is omit
+    inherited = resolve_profiles(
+        ProviderProfile(
+            protocol="openai_chat", max_tokens=parameter("max_tokens", 2048, protocol="openai_chat")
+        ),
+        ModelProfile(model="demo"),
+    )
+    assert inherited.get("max_tokens") == 2048
+    result = resolve_profiles(
+        ProviderProfile(
+            protocol="openai_chat", max_tokens=parameter("max_tokens", 2048, protocol="openai_chat")
+        ),
+        ModelProfile(model="demo", max_tokens=parameter("max_tokens", None)),
+    )
+    assert result.get("max_tokens", 100) is None

@@ -12,36 +12,24 @@ class GeminiCodec(BaseCodec):
     __slots__ = ()
     protocol_or_api_style = "gemini"
     defaults = ProtocolDefaults(
-        replay_reasoning_content_when_tool_calls=Config(
-            name="replay_reasoning_content_when_tool_calls", default_value=True
-        ),
-        supports_reasoning_effort=Config(name="supports_reasoning_effort", default_value=False),
-        max_tokens=Parameter(
-            name="max_tokens", path="$.config.max_output_tokens", default_value=omit, phase="decode"
-        ),
+        replay_reasoning_content_when_tool_calls=Config(default_value=True),
+        max_tokens=Parameter(path="$.config.max_output_tokens", default_value=omit),
         content=Parameter(
-            name="content",
             path="$.candidates[0].content.parts[0].text",
             default_value=omit,
-            phase="encode",
         ),
         reasoning_content=Parameter(
-            name="reasoning_content",
             path="$.candidates[0].content.parts[0].text",
             default_value=omit,
-            phase="encode",
         ),
         reasoning_enable=Parameter(
-            name="reasoning_enable",
             path="$.config.thinking_config",
             default_value={"include_thoughts": True, "thinking_budget": -1},
-            phase="decode",
         ),
         reasoning_effort=Parameter(
-            name="reasoning_effort",
+            supports=False,
             path="$.config.thinking_config.thinking_level",
             default_value=omit,
-            phase="decode",
         ),
     )
     encoder = GeminiEncoder()

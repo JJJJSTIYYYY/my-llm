@@ -66,20 +66,15 @@ DELTA_PATHS = {
 @pytest.mark.parametrize(
     "semantic,field,index", [("content", "text", 0), ("reasoning_content", "thinking", 1)]
 )
-@pytest.mark.parametrize("phase", ["encode", "decode"])
 @pytest.mark.parametrize("value", ["translated", None])
 def test_parameter_translation_does_not_rewrite_standard_chunk_output(
-    protocol, semantic, field, index, phase, value, profile_factory
+    protocol, semantic, field, index, value, profile_factory
 ):
     from my_llm.codec.shared.options import path_value
 
     profile = profile_factory(
         protocol,
-        **{
-            semantic: parameter(
-                semantic, "fallback", protocol=protocol, path="$.vendor.payload", phase=phase
-            )
-        },
+        **{semantic: parameter(semantic, "fallback", protocol=protocol, path="$.vendor.payload")},
     )
     result = (
         MyCodec()

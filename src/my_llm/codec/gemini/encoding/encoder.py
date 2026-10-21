@@ -165,10 +165,8 @@ class GeminiEncoder(BaseEncoder):
                             name = "reasoning_content" if block["type"] == "thinking" else "content"
                             seen_text.add(name)
                             if profile is not None:
-                                parameter = profile.parameter(name, "encode")
-                                if isinstance(profile.parameters.get(name), Omit) or (
-                                    parameter is not None and parameter.path != TEXT_PATH
-                                ):
+                                parameter = profile.parameter(name, "output")
+                                if parameter is None or parameter.path != TEXT_PATH:
                                     continue
                         for key in ("input", "content", "part_metadata"):
                             if key in block:
@@ -190,7 +188,7 @@ class GeminiEncoder(BaseEncoder):
                     ("content", "text", "text"),
                     ("reasoning_content", "thinking", "thinking"),
                 ):
-                    parameter = profile.parameter(name, "encode")
+                    parameter = profile.parameter(name, "output")
                     if parameter is None:
                         continue
                     if parameter.path != TEXT_PATH:

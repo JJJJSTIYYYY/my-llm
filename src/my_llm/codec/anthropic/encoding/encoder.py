@@ -148,6 +148,11 @@ class AnthropicEncoder(BaseEncoder):
                 block = native_block(event["content_block"])
                 if block is None:
                     continue
+                if profile is not None and block["type"] in ("text", "thinking"):
+                    field = "text" if block["type"] == "text" else "thinking"
+                    name = "content" if field == "text" else "reasoning_content"
+                    if profile.parameter(name, "output") is None:
+                        block[field] = ""
                 ops.append(
                     {
                         "type": "block_set",

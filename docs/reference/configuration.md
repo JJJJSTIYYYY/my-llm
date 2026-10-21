@@ -11,17 +11,15 @@ from my_llm import Config, ModelProfile, MyLLM, Parameter, ProviderProfile
 llm = MyLLM(
     provider=ProviderProfile(
         protocol="openai_responses",
-        timeout=Config(name="超时秒数", default_value=30),
-        max_retries=Config(name="重试次数", default_value=2),
-        usage_mode=Config(name="用量模式", default_value="native"),
+        timeout=Config(default_value=30),
+        max_retries=Config(default_value=2),
+        usage_mode=Config(default_value="native"),
     ),
     model=ModelProfile(
         model="your-model",
         max_tokens=Parameter(
-            name="输出上限",
             path="$.max_output_tokens",
             default_value=2048,
-            phase="decode",
         ),
     ),
     stdio_protocol="openai_chat",
@@ -34,22 +32,27 @@ llm = MyLLM(
 
 | 类型 | 字段 | 职责 |
 | --- | --- | --- |
-| `Parameter[T]` | name、path、default_value、phase、comment=None | 将参数的位置、缺失默认值和翻译阶段绑定在一起 |
-| `Config[T]` | name、default_value、comment=None | 控制 Encoder / Decoder / Transport 的代码行为或 SDK 连接 |
+| `Parameter[T]` | path、default_value=omit、supports=True、comment=None | 绑定参数位置、默认值及支持状态；name/source 由 Profile 固定 |
+| `Config[T]` | default_value、comment=None；name 由 Profile 固定 | 控制 Encoder / Decoder / Transport 的代码行为或 SDK 连接 |
 | `Omit` / `omit` | 显式省略标记 | 不依赖任何 SDK 的 Omit，复制保持标记身份 |
 
-`name` 与 `comment` 只用于前端展示。业务由 Profile 的字段标识决定，例如 `max_tokens`，
-不会根据展示名称、注释或路径末段猜测参数含义。两种 wrapper 的 default_value 都支持 None 和 omit。
+`Parameter.name`、`Parameter.source` 和 `Config.name` 不接受构造参数，也不能二次赋值。
+Profile 的 `@set_attr` 在初始化时检查并绑定字段名；Parameter 的 source 在 Profile 字段 metadata 中硬编码。
+各层的同名参数必须保持相同 source/scope；解析时也会检查身份是否已正确绑定。
+已有同一身份的 wrapper 可复用，不会重新赋值；不能把已绑定 wrapper 换到另一个字段。
+`comment` 可用于展示说明。两种 wrapper 的 default_value 都支持 None 和 omit。
+`Parameter(supports=False, ...)` 会将 default_value 强制设为 omit，并停止自动读取或写入（包括块起始和最终快照中的可见字段）；
+原生请求中手动提供的字段仍保留，显式请求不受支持的 reasoning 时会报错。
 
 `extra_body` / `extra_headers` 保留 Config，控制请求字段组的组装与合并：extra_body 在 Anthropic / Ollama 对应根字段组，Gemini 对应 config 组，Chat / Responses 对应 SDK overlay 组；headers 还参与 Ollama 客户端配置。
-单个需要指定 path / phase 翻译的业务参数使用 Parameter。
+单个需要指定 path 路由的业务参数使用 Parameter。
 
-| phase | 翻译方向 | 例子 |
+| source | 参数来源 | 例子 |
 | --- | --- | --- |
-| `encode` | 从接口返回的指定位置读取值，编码到中间态 | content、reasoning_content |
-| `decode` | 将中间态或生成选项翻译为接口请求，在指定位置应用参数 | max_tokens、reasoning_enable、reasoning_effort |
+| `output` | 从接口返回的指定位置读取值，编码到中间态 | content、reasoning_content |
+| `input` | 将中间态或生成选项翻译为接口请求，在指定位置应用参数 | max_tokens、reasoning_enable、reasoning_effort |
 
-encode 参数不会注入请求；decode 参数不会被用来读取响应。
+output 参数不会注入请求；input 参数不会被用来读取响应。
 `Parameter` 声明字段位置，不会自动实现新的消息语义。自定义 Encoder 通过基类的
 `parameter_value()` 读取声明参数，再将它映射到明确支持的中间态语义。
 
@@ -65,11 +68,12 @@ Profile 的参数与行为字段都使用 `Parameter[T] | Omit | None` 或 `Conf
 | Parameter(default_value=omit, ...) | 字段缺失时不补值；已经存在的值仍保留 |
 | Config(default_value=None, ...) | 将行为配置值设为实际的 None |
 
-**目标字段存在时，即使为 None，也保留原值。** default_value 只在字段缺失时使用。
+**普通字段的 default_value 仅补缺，目标字段存在时（包括 None）保留原值。**
+显式 token 控制、reasoning_enable 的配置生成值、reasoning_effort 的映射结果覆盖同路径的原生字段，生成控制值保持最高优先级。
 显式 generate 控制参数和由行为配置生成的控制值优先于参数默认值。
 `generate(max_tokens=omit)` 删除该请求的 token 目标键；这与禁用 Profile 的参数声明不同。
 
-Parameter 整体覆盖，路径、阶段和默认值作为一份声明更新，不与上一层分别拼接。
+Parameter 整体覆盖，路径、支持状态和默认值作为一份声明更新，不与上一层分别拼接。
 Config 字典按键合并，嵌套值整体替换，字典中的 omit 删除该键。
 Profiles 是 frozen dataclass；使用 `dataclasses.replace()` 创建新配置，再创建 MyLLM。
 MyLLM 构造时隔离配置的嵌套可变数据；请求只在需要独立所有权的边界复制数据。
@@ -78,27 +82,26 @@ MyLLM 构造时隔离配置的嵌套可变数据；请求只在需要独立所�
 from my_llm import Config, ModelProfile, Parameter, ProviderProfile, omit, resolve_profiles
 
 provider = ProviderProfile(
-    extra_body=Config(name="附加请求体", default_value={"a": 1, "b": 2}),
+    protocol="openai_chat",
+    extra_body=Config(default_value={"a": 1, "b": 2}),
     max_tokens=Parameter(
-        name="输出上限",
         path="$.max_completion_tokens",
         default_value=4096,
-        phase="decode",
     ),
 )
 model = ModelProfile(
     model="demo",
-    extra_body=Config(name="模型请求体", default_value={"a": 3, "b": omit}),
+    extra_body=Config(default_value={"a": 3, "b": omit}),
     max_tokens=None,  # 继承 provider 的整份 Parameter
 )
 resolved = resolve_profiles(provider, model)
 assert resolved.get("extra_body") == {"a": 3}
 assert resolved.get("max_tokens") == 4096
-assert resolved.parameter("max_tokens", phase="decode").path == "$.max_completion_tokens"
+assert resolved.parameter("max_tokens").path == "$.max_completion_tokens"
 ```
 
 `ResolvedProfile.get(field)` 返回声明的 default_value，保留实际 None；缺失或 omit 使用调用时的默认值。
-`parameter(field, phase=...)` 返回对应 Parameter，字段被禁用或阶段不符时返回 None。
+`parameter(field, source=...)` 返回对应 Parameter，字段被禁用、supports=False 或来源不符时返回 None。
 不再维护与值分离的 parameter_paths，也不提供 ParameterPath / ParameterDefaultV 别名。
 
 ## 统一参数路径
@@ -106,11 +109,11 @@ assert resolved.parameter("max_tokens", phase="decode").path == "$.max_completio
 路径维持 `$.` 前缀、点分键和非负数值索引的语义。
 生成参数的 `$` 表示 SDK 方法的 `**parameters` 解包字典根目录；例如 `$.reasoning.effort` 指根参数 reasoning 内的 effort，
 `$.extra_body.vendor_options.enabled` 指 SDK 正式 extra_body 入口内的扩展字段。
-encode 参数从接口返回对象的根部按同样的路径语法读取。
+output 参数从接口返回对象的根部按同样的路径语法读取。
 键名支持连字符，例如 `$.extra_headers.x-api-key`。路径不接受省略 `$.` 的写法，也不使用事件类型字符串充当路径。
 事件类型的识别由协议 Encoder / Decoder 负责。
 
-| 协议 | max_tokens（decode） | content（encode） | reasoning_content（encode） |
+| 协议 | max_tokens（input） | content（output） | reasoning_content（output） |
 | --- | --- | --- | --- |
 | openai_chat | `$.max_completion_tokens` | `$.choices[0].delta.content` | `$.choices[0].delta.reasoning_content` |
 | openai_responses | `$.max_output_tokens` | `$.delta` | `$.delta` |
@@ -125,16 +128,16 @@ Chat 的 reasoning_content 是兼容服务扩展；Responses、Gemini 仍按标�
 
 | 字段 | 归属 / 说明 |
 | --- | --- |
-| `protocol` | Provider；默认 openai_chat，接受已注册协议名 |
+| `protocol` | Provider；默认 None，使用前须显式指定已注册协议名 |
 | `base_url` | Provider Config；默认继承 SDK 配置 |
-| `api_key` | Provider decode Parameter；配置连接密钥的传递位置，default_value 默认为 omit，不出现在 repr |
+| `api_key` | Provider input Parameter；配置连接密钥的传递位置，default_value 默认为 omit，不出现在 repr |
 | `timeout` / `max_retries` | Provider Config；正秒数 / 非负整数，默认使用 SDK 配置 |
 | `supports_stream` | Provider Config；默认 True，False/omit 不支持，因为两种返回模式均使用上游流 |
 | `usage_mode` | Provider Config；默认 none；可选值由协议 Decoder.usage_modes 声明 |
 | `models` | Provider；可选 ModelProfile 列表，生成仍须显式选择模型 |
 | `model` | Model；必填非空模型 ID |
 | `max_context_window` | Model；默认 256000，仅描述性整数元数据，不截断输入或限制输出 |
-| `supports_reasoning` | Model Config；默认 True |
+| `reasoning_enable.supports` | Parameter；默认 True，替代 supports_reasoning |
 | `supports_function_calling` | Model Config；默认 False，发送非空 tools 前开启 |
 | `supports_message_name` | Model Config；默认 True，False/omit 在 Chat 请求移除 name |
 
@@ -157,19 +160,15 @@ from my_llm import Parameter, ProviderProfile
 sdk_key = ProviderProfile(
     protocol="anthropic",
     api_key=Parameter(
-        name="API 密钥",
         path="$.api_key",
         default_value="your-api-key",
-        phase="decode",
     ),
 )
 header_key = ProviderProfile(
     protocol="anthropic",
     api_key=Parameter(
-        name="API 密钥",
         path="$.extra_headers.Authorization",
         default_value="Bearer your-api-key",
-        phase="decode",
     ),
 )
 ```
@@ -180,7 +179,7 @@ Ollama SDK 没有 api_key 参数，须使用 header 路径。显式 extra_header
 generate 的 extra_headers 继续按现有规则覆盖；Ollama 的请求头仍参与客户端缓存键。
 省略密钥不会改变 SDK 自身的环境变量读取与认证要求。
 例如 Anthropic SDK 的 header 认证检查使用 `Authorization` 或 `X-Api-Key`，应按该大小写配置。
-原先的 `api_key=Config(...)` 需改为 `Parameter(...)`，并显式提供 path 和 phase。
+原先的 `api_key=Config(...)` 需改为 `Parameter(...)`，并显式提供 path。
 
 ## Provider / Model 共享覆盖项
 
@@ -189,19 +188,21 @@ generate 的 extra_headers 继续按现有规则覆盖；Ollama 的请求头仍�
 | 字段 | 类型 / 说明 |
 | --- | --- |
 | `extra_headers` / `extra_body` | Config；请求头及协议原生生成参数，按键合并 |
-| `max_tokens` | decode Parameter；正整数输出上限，标准缺失默认值 omit |
-| `content` | encode Parameter；文本位置及缺失时默认值，标准缺失默认值 omit |
-| `reasoning_content` | encode Parameter；思考内容位置及缺失时默认值，标准缺失默认值 omit |
-| `reasoning_enable` | decode Parameter；开启思考的参数位置及缺失时默认值 |
-| `reasoning_effort` | decode Parameter；强度位置及缺失时默认值 |
-| `supports_reasoning_effort` | Config；Responses 默认 True，其他默认 False |
+| `max_tokens` | input Parameter；正整数输出上限，标准缺失默认值 omit |
+| `content` | output Parameter；文本位置及缺失时默认值，标准缺失默认值 omit |
+| `reasoning_content` | output Parameter；思考内容位置及缺失时默认值，标准缺失默认值 omit |
+| `reasoning_enable` | input Parameter；开启思考的参数位置及缺失时默认值 |
+| `reasoning_effort` | input Parameter；强度位置及缺失时默认值 |
+| `reasoning_effort.supports` | Parameter；Responses 默认 True，其他默认 False，替代 supports_reasoning_effort |
 | `reasoning_effort_mapping` | Config；none/low/medium/high/xhigh/max 的映射，映射项 None/omit 禁用对应级别 |
-| `replay_reasoning_content_when_tool_calls` | Config；Chat 默认 False，其他默认 True；控制可见思考回放 |
+| `replay_reasoning_content_when_tool_calls` | Config；所有内置协议默认 True；控制可见思考回放 |
 
 generate 的显式 max_tokens 覆盖 Profile 默认，omit 删除该请求目标键。
 max_tokens 声明的 default_value=omit 时不制造 token 参数；Anthropic 仍要求提供有效 max_tokens。
 路径不能覆盖 model、messages、tools 等库管理结构。
 
+reasoning_enable=omit 只关闭该自动路由，仍可独立使用 reasoning_effort；
+reasoning_enable.supports=False 才表示模型不支持 reasoning。
 开启 reasoning 时才应用 reasoning_enable；支持强度时，映射结果写入 reasoning_effort 的路径，覆盖该参数的默认值。
 各协议默认值由 Codec 声明：Chat 使用 medium，Responses 使用 effort=medium、summary=detailed；
 Anthropic 使用 enabled 与 budget_tokens=1024，Gemini 使用 include_thoughts=True、thinking_budget=-1，Ollama 使用 True。
@@ -218,64 +219,60 @@ from my_llm import Config, Parameter, ProviderProfile, omit
 
 compatible = ProviderProfile(
     protocol="openai_chat",
-    replay_reasoning_content_when_tool_calls=Config(name="工具回合回放思考", default_value=True),
+    replay_reasoning_content_when_tool_calls=Config(default_value=True),
     reasoning_enable=Parameter(
-        name="启用思考",
         path="$.extra_body.thinking",
         default_value={"type": "enabled"},
-        phase="decode",
     ),
     reasoning_content=Parameter(
-        name="思考内容",
         path="$.choices[0].delta.vendor_reasoning",
         default_value=omit,
-        phase="encode",
     ),
     max_tokens=Parameter(
-        name="输出上限",
         path="$.max_tokens",
         default_value=4096,
-        phase="decode",
     ),
 )
 ```
 
-展示名称可以调整，参数行为仍由 reasoning_enable、reasoning_content 和 max_tokens 字段标识决定。
-覆盖路径时显式提供该参数的 default_value 和 phase，避免位置与默认值从不同层隐式拼接。
+name/source 固定，展示说明通过 comment 提供。reasoning_enable 与 reasoning_effort 的支持状态分别在对应 Parameter.supports 中声明。
+覆盖路径时显式提供该参数的 default_value 和 supports，避免位置与默认值从不同层隐式拼接。
 
 ## 继承扩展 Profile
 
 ProviderProfile、ModelProfile、ProtocolDefaults 均支持 dataclass 继承扩展。
+新增 Parameter 字段须在 metadata 中固定 source；若重写 __post_init__，须调用 super().__post_init__() 完成身份绑定。
 新业务参数直接声明 `Parameter[T] | Omit | None`，新分支控制声明 `Config[T] | Omit | None`。
-解析器自动发现继承字段并检查类型、路径和阶段，不需要路径字段配对或中央参数清单。
+解析器自动发现继承字段并检查类型、路径和 source，不需要路径字段配对或中央参数清单。
 
 ```python
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from my_llm import Config, Omit, Parameter, ProviderProfile
 
 
 @dataclass(frozen=True, kw_only=True)
 class CompatibleProvider(ProviderProfile):
-    vendor_budget: Parameter[int] | Omit | None = Parameter(
-        name="供应商预算",
-        path="$.extra_body.vendor_budget",
-        default_value=256,
-        phase="decode",
-        comment="仅在请求未提供该字段时使用",
+    vendor_budget: Parameter[int] | Omit | None = field(
+        default=Parameter(
+            path="$.extra_body.vendor_budget",
+            default_value=256,
+            comment="仅在请求未提供该字段时使用",
+        ),
+        metadata={"source": "input"},
     )
-    vendor_mode: Config[bool] | Omit | None = Config(name="供应商模式", default_value=True)
+    vendor_mode: Config[bool] | Omit | None = Config(default_value=True)
 
 
 provider = CompatibleProvider()  # 使用扩展类声明的预算配置
 ```
 
-BaseDecoder 的统一请求流程应用所有 decode 参数，以上 vendor_budget 无需在协议中另写默认值注入。
-encode 参数由 BaseEncoder.parameter_value() 统一读取，再由协议钩子完成对应消息语义。
+BaseDecoder 的统一请求流程应用所有 input 参数，以上 vendor_budget 无需在协议中另写默认值注入。
+output 参数由 BaseEncoder.parameter_value() 统一读取，再由协议钩子完成对应消息语义。
 Config 的含义由需要它的 Encoder / Decoder / Transport 实现，不会自动产生业务功能。
 Model 不必重复声明 Provider 的扩展字段即可继承其解析结果；ProtocolDefaults 子类的新字段也自动加入解析。
 
 连接 Parameter 通过 dataclass 字段 metadata 声明 scope="client"；内置 `api_key` 已设置。
-其余 decode Parameter 默认属于 request，解析器一次完成分类，不根据字段名称在过滤器中排除认证参数。
+其余 input Parameter 默认属于 request，解析器一次完成分类，不根据字段名称在过滤器中排除认证参数。
 例如给认证字段使用不同名称：
 
 ```python
@@ -286,10 +283,8 @@ from my_llm import Parameter, ProviderProfile
 @dataclass(frozen=True, kw_only=True)
 class HeaderProvider(ProviderProfile):
     authentication: Parameter[str] = field(
-        default=Parameter(
-            name="认证头", path="$.extra_headers.x-auth", default_value="offline-token", phase="decode"
-        ),
-        metadata={"scope": "client"},
+        default=Parameter(path="$.extra_headers.x-auth", default_value="offline-token"),
+        metadata={"scope": "client", "source": "input"},
     )
 ```
 
@@ -336,3 +331,20 @@ Encoder / Decoder 只读取并构造标准协议及 Profile 明确声明的已�
 标准签名、redacted_thinking、encrypted_content 按对应协议明确处理，不能转换成其他协议的原生签名，
 也不通过隐藏记录保存供后续恢复。不能表达的媒体或会改变工具约束的已知 SDK 限制会在请求前报错。
 Chat / Ollama 无法原生读取 URL 文档时保留文本引用，不隐式下载文件。
+
+支持状态与值一起覆盖，例如禁用 reasoning：
+
+```python
+from my_llm import ModelProfile, Parameter
+
+model = ModelProfile(
+    model="demo",
+    reasoning_enable=Parameter(path="$.reasoning_effort", supports=False),
+)
+assert model.reasoning_enable.name == "reasoning_enable"
+assert model.reasoning_enable.source == "input"
+```
+
+`supports_stream`、`supports_function_calling`、`supports_message_name` 控制流协议、工具能力和消息处理分支，
+当前没有对应的可路由 Parameter，继续使用独立 Config。`replay_reasoning_content_when_tool_calls`、
+`reasoning_effort_mapping` 等行为配置也保持 Config。

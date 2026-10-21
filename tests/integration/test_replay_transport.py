@@ -89,7 +89,7 @@ async def test_signed_tool_round_trip_uses_only_supported_wire_fields(monkeypatc
         model=ModelProfile(
             model="demo",
             max_tokens=parameter("max_tokens", 4096, protocol="anthropic"),
-            supports_function_calling=config("supports_function_calling", True),
+            supports_function_calling=config(True),
         ),
         stdio_protocol="anthropic",
     ) as llm:

@@ -66,13 +66,23 @@ def test_profiles_reject_separate_parameter_paths(profile_type, field):
     [
         ("max_tokens", 1024),
         ("reasoning_enable", {"type": "enabled"}),
-        ("supports_reasoning_effort", True),
+        ("reasoning_effort", True),
         ("extra_body", {"temperature": 0.5}),
     ],
 )
 def test_profiles_reject_unwrapped_configuration(layer, field, value):
     overrides = {field: value}
-    provider = ProviderProfile(**overrides) if layer == "provider" else ProviderProfile()
+    provider = (
+        ProviderProfile(protocol="openai_chat", **overrides)
+        if layer == "provider"
+        else ProviderProfile(protocol="openai_chat")
+    )
     model = ModelProfile(model="demo", **(overrides if layer == "model" else {}))
     with pytest.raises(ConfigurationError, match=field):
         resolve_profiles(provider, model)
+
+
+def test_roles_are_fixed():
+    assert ModelProfile.supported_roles == ("system", "user", "assistant", "tool")
+    with pytest.raises(TypeError):
+        ModelProfile(model="demo", supported_roles=["developer"])

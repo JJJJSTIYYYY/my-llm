@@ -124,7 +124,9 @@ def test_catalogue_and_context_metadata_are_excluded_from_resolution_and_deepcop
         def __deepcopy__(self, memo):
             raise AssertionError("request resolution must not copy the model catalogue")
 
-    provider = ProviderProfile(models=[CatalogueModel(model="catalogue-only")])
+    provider = ProviderProfile(
+        protocol="openai_chat", models=[CatalogueModel(model="catalogue-only")]
+    )
     resolved = resolve_profiles(provider, ModelProfile(model="selected", max_context_window=-1))
     assert "models" not in resolved.values
     assert "max_context_window" not in resolved.values

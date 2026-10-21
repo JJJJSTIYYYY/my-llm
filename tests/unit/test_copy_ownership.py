@@ -92,7 +92,7 @@ def test_repeated_public_requests_do_not_share_mutable_input(profile_factory, pr
     profile = profile_factory(
         protocol,
         max_tokens=parameter("max_tokens", 2048, protocol=protocol),
-        supports_function_calling=config("supports_function_calling", True),
+        supports_function_calling=config(True),
     )
     before = deepcopy(intermediate)
     first = codec.request(intermediate, profile)
@@ -107,9 +107,7 @@ def test_repeated_public_requests_do_not_share_mutable_input(profile_factory, pr
 def test_expanded_binding_owns_native_sdk_option_model(profile_factory):
     profile = profile_factory(
         "gemini",
-        extra_body=config(
-            "extra_body", {"thinking_config": types.ThinkingConfig(include_thoughts=True)}
-        ),
+        extra_body=config({"thinking_config": types.ThinkingConfig(include_thoughts=True)}),
     )
     before = deepcopy(profile.values)
     options = resolve_options(profile, reasoning=True)
@@ -123,7 +121,6 @@ def test_expanded_binding_owns_mutable_values_inside_tuple(profile_factory):
     profile = profile_factory(
         "gemini",
         extra_body=config(
-            "extra_body",
             {
                 "safety_settings": (
                     types.SafetySetting(
@@ -295,7 +292,7 @@ def test_anthropic_tool_cache_control_survives_request_translation(profile_facto
         profile_factory(
             "anthropic",
             max_tokens=parameter("max_tokens", 256, protocol="anthropic"),
-            supports_function_calling=config("supports_function_calling", True),
+            supports_function_calling=config(True),
         ),
     )
 

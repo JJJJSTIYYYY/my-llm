@@ -26,8 +26,8 @@ SCHEMA = {
 }
 
 
-def config(name, value):
-    return Config(name=name, default_value=value)
+def config(value):
+    return Config(default_value=value)
 
 
 def provider(protocol, key):
@@ -39,31 +39,23 @@ def provider(protocol, key):
     }[protocol]
     overrides = {}
     if protocol == "openai_chat":
-        overrides["max_tokens"] = Parameter(
-            name="max_tokens", path="$.max_tokens", default_value=512, phase="decode"
-        )
+        overrides["max_tokens"] = Parameter(path="$.max_tokens", default_value=512)
         # SenseNova's Chat stream uses reasoning rather than reasoning_content.
         overrides["reasoning_content"] = Parameter(
-            name="reasoning_content",
             path="$.choices[0].delta.reasoning",
             default_value=None,
-            phase="encode",
         )
     return ProviderProfile(
         protocol=protocol,
-        base_url=config(
-            "base_url", "https://token.sensenova.cn" + ("" if protocol == "anthropic" else "/v1")
-        ),
+        base_url=config("https://token.sensenova.cn" + ("" if protocol == "anthropic" else "/v1")),
         # Anthropic's SDK normally sends x-api-key; this service specifies Bearer.
         api_key=Parameter(
-            name="api_key",
             path="$.extra_headers.Authorization" if protocol == "anthropic" else "$.api_key",
             default_value=f"Bearer {key}" if protocol == "anthropic" else key,
-            phase="decode",
         ),
-        extra_body=config("extra_body", body),
-        timeout=config("timeout", 60.0),
-        max_retries=config("max_retries", 0),
+        extra_body=config(body),
+        timeout=config(60.0),
+        max_retries=config(0),
         **overrides,
     )
 
@@ -215,9 +207,7 @@ async def run(args, key):
         "endpoint": "https://token.sensenova.cn",
         "results": [],
     }
-    model = ModelProfile(
-        model=args.model, supports_function_calling=config("supports_function_calling", True)
-    )
+    model = ModelProfile(model=args.model, supports_function_calling=config(True))
     for upstream in args.upstream or PROTOCOLS:
         for stdio in args.stdio or PROTOCOLS:
             async with MyLLM(

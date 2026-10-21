@@ -124,7 +124,7 @@ def test_codec_request_translates_before_native_assembly(profile_factory, protoc
     profile = profile_factory(
         protocol,
         max_tokens=parameter("max_tokens", 100, protocol=protocol),
-        supports_function_calling=config("supports_function_calling", True),
+        supports_function_calling=config(True),
     )
     intermediate = converter.encode(
         messages=[{"role": "user", "parts": [{"text": "hello"}]}],
@@ -158,7 +158,7 @@ def test_codec_request_translates_before_native_assembly(profile_factory, protoc
 @pytest.mark.parametrize("tool_values", [None, [], tools("openai_chat")])
 def test_request_pipeline_decodes_once_before_native_assembly(profile_factory, tool_values):
     calls = []
-    profile = profile_factory(supports_function_calling=config("supports_function_calling", True))
+    profile = profile_factory(supports_function_calling=config(True))
     intermediate = MyCodec().encode(
         messages=[{"role": "user", "content": "hello"}],
         tools=tool_values,

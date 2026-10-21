@@ -21,12 +21,12 @@ class ModelProfile(OverridableProfile):
 
     model: str
     max_context_window: int = 256000
-    supports_reasoning: Config[bool] | Omit | None = None
     supports_function_calling: Config[bool] | Omit | None = None
     supports_message_name: Config[bool] | Omit | None = None
     supported_roles: ClassVar[tuple[str, ...]] = ("system", "user", "assistant", "tool")
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         if not isinstance(self.max_context_window, int) or isinstance(
             self.max_context_window, bool
         ):

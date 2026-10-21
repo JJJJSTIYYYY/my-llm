@@ -1,7 +1,7 @@
 """Official OpenAI SDK serialization and SSE parsing, without public client injection."""
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 import pytest
@@ -45,14 +45,10 @@ async def test_official_openai_transport_all_stdio_formats(monkeypatch, protocol
         provider=ProviderProfile(
             protocol=protocol,
             api_key=parameter("api_key", "local-test"),
-            base_url=config("base_url", "https://local.test/v1"),
-            usage_mode=config(
-                "usage_mode", "native" if protocol == "openai_responses" else "stream_options"
-            ),
+            base_url=config("https://local.test/v1"),
+            usage_mode=config("native" if protocol == "openai_responses" else "stream_options"),
         ),
-        model=ModelProfile(
-            model="demo", supports_function_calling=config("supports_function_calling", True)
-        ),
+        model=ModelProfile(model="demo", supports_function_calling=config(True)),
         stdio_protocol=stdio,
     )
     result = await llm.generate(messages=history(stdio), tools=tools(stdio), stream=stream)
@@ -142,7 +138,9 @@ async def test_sdk_http_errors_retain_their_type_and_preserve_client(monkeypatch
     llm = MyLLM(
         stdio_protocol="openai_chat",
         provider=ProviderProfile(
-            api_key=parameter("api_key", "local"), max_retries=config("max_retries", 0)
+            protocol="openai_chat",
+            api_key=parameter("api_key", "local"),
+            max_retries=config(0),
         ),
         model=ModelProfile(model="demo"),
     )
@@ -159,11 +157,12 @@ async def test_inherited_parameter_defaults_and_vendor_effort_reach_official_sdk
 ):
     @dataclass(frozen=True, kw_only=True)
     class VendorModel(ModelProfile):
-        vendor_limit: Parameter[int | None] = Parameter(
-            name="Vendor limit",
-            path="$.extra_body.vendor_limit",
-            default_value=None,
-            phase="decode",
+        vendor_limit: Parameter[int | None] = field(
+            default=Parameter(
+                path="$.extra_body.vendor_limit",
+                default_value=None,
+            ),
+            metadata={"source": "input"},
         )
 
     bodies = []
@@ -187,8 +186,8 @@ async def test_inherited_parameter_defaults_and_vendor_effort_reach_official_sdk
         provider=ProviderProfile(protocol=protocol, api_key=parameter("api_key", "local-test")),
         model=VendorModel(
             model="demo",
-            supports_reasoning_effort=config("supports_reasoning_effort", True),
-            reasoning_effort_mapping=config("reasoning_effort_mapping", {"low": "vendor_effort"}),
+            reasoning_effort=parameter("reasoning_effort", supports=True, protocol=protocol),
+            reasoning_effort_mapping=config({"low": "vendor_effort"}),
         ),
         stdio_protocol="openai_chat",
     ) as llm:

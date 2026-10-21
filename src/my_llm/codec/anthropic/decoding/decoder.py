@@ -102,7 +102,7 @@ class AnthropicDecoder(BaseDecoder):
                 raise ConfigurationError(f"invalid Anthropic {field}") from exc
         thinking = request.get("thinking", {})
         if (
-            (binding := profile.parameter("reasoning_enable", "decode")) is not None
+            (binding := profile.parameter("reasoning_enable", "input")) is not None
             and binding.path == "$.thinking"
             and (
                 parameters.get("reasoning") is True

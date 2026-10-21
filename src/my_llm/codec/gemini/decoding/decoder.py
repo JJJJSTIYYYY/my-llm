@@ -97,7 +97,7 @@ class GeminiDecoder(BaseDecoder):
     ) -> dict:
         config = request["config"]
         config["automatic_function_calling"] = {"disable": True}
-        if options.effort and profile.get("supports_reasoning_effort", False):
+        if options.effort and profile.parameter("reasoning_effort", "input") is not None:
             thinking = config.get("thinking_config")
             if isinstance(thinking, dict) and thinking.get("thinking_level") is not None:
                 thinking.pop("thinking_budget", None)

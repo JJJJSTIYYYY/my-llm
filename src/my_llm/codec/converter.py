@@ -2,15 +2,11 @@
 
 from typing import Any
 
-from my_llm.codec.anthropic.codec import AnthropicCodec
+from my_llm._optional import BUILTIN_CODECS, builtin_codec, require_sdk, sdk_available
 from my_llm.codec.base.codec import BaseCodec
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.base.transport import BaseTransport
-from my_llm.codec.gemini.codec import GeminiCodec
-from my_llm.codec.ollama.codec import OllamaCodec
-from my_llm.codec.openai.chat.codec import ChatCompletionsCodec
-from my_llm.codec.openai.responses.codec import ResponsesCodec
 from my_llm.codec.shared.conversion import dictionary_views
 from my_llm.codec.shared.stream import is_batch
 from my_llm.exceptions import ConfigurationError, MessageValidationError, UnsupportedProviderError
@@ -69,6 +65,7 @@ class MyCodec:
         try:
             return self.codecs[protocol]
         except (KeyError, TypeError) as exc:
+            require_sdk(protocol)
             raise UnsupportedProviderError(f"unsupported protocol: {protocol!r}") from exc
 
     def match_protocol(self, messages_or_tools: list[Any]) -> str | None:
@@ -195,12 +192,7 @@ class MyCodec:
         )
 
 
-for _builtin in (
-    ChatCompletionsCodec(),
-    ResponsesCodec(),
-    AnthropicCodec(),
-    GeminiCodec(),
-    OllamaCodec(),
-):
-    MyCodec.register(_builtin)
-del _builtin
+for _protocol in BUILTIN_CODECS:
+    if sdk_available(_protocol):
+        MyCodec.register(builtin_codec(_protocol)())
+del _protocol

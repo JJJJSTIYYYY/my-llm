@@ -56,8 +56,11 @@ jobs:
         shell: bash
         run: |
           uv venv "$RUNNER_TEMP/my-llm-py-wheel" --python 3.12
-          uv pip install --python "$RUNNER_TEMP/my-llm-py-wheel/bin/python" dist/*.whl
-          "$RUNNER_TEMP/my-llm-py-wheel/bin/python" -I -c 'import my_llm; from importlib.metadata import version; assert my_llm.__version__ == version("my-llm-py"); assert callable(my_llm.generate)'
+          wheels=(dist/*.whl)
+          uv pip install --python "$RUNNER_TEMP/my-llm-py-wheel/bin/python" "${wheels[0]}"
+          "$RUNNER_TEMP/my-llm-py-wheel/bin/python" -I -c 'from my_llm import MyCodec; assert not MyCodec().codecs'
+          uv pip install --python "$RUNNER_TEMP/my-llm-py-wheel/bin/python" "${wheels[0]}[all]"
+          "$RUNNER_TEMP/my-llm-py-wheel/bin/python" -I -c 'import my_llm; from importlib.metadata import version; assert my_llm.__version__ == version("my-llm-py"); assert callable(my_llm.generate); assert len(my_llm.MyCodec().codecs) == 5'
       - uses: actions/upload-artifact@v7
         with:
           name: python-distributions

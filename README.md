@@ -53,9 +53,26 @@ Profile 用 `Parameter` 集中声明字段路径、缺失默认值和翻译阶�
 需要 **Python 3.12+**。
 
 ```sh
-pip install my-llm-py
-# 或 uv add my-llm-py
+pip install 'my-llm-py[all]'
+# 或 uv add 'my-llm-py[all]'
 ```
+
+推荐使用 `[all]` 安装全部 SDK。也可以按需选择，支持用逗号组合多个 extra：
+
+```sh
+pip install 'my-llm-py[openai]'
+pip install 'my-llm-py[anthropic]'
+pip install 'my-llm-py[google-genai]'
+pip install 'my-llm-py[ollama]'
+pip install 'my-llm-py[openai,anthropic]'
+```
+
+`pip install my-llm-py` 仅安装核心依赖。每种输入、输出及上游协议都需要对应 SDK；
+例如 Chat 输入调用 Anthropic API 需要 `[openai,anthropic]`。
+未安装的协议不会注册，显式选择时会提示安装命令。
+
+项目开发环境执行 `uv sync` 默认安装开发工具和全部 SDK。
+仅安装指定 SDK 可使用 `uv sync --no-default-groups --extra openai`。
 
 ## 快速开始
 

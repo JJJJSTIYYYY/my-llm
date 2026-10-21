@@ -33,7 +33,7 @@ wheel 包含 `my_llm` 包和分发元数据，排除目录占位文件。
 ```sh
 uv venv /tmp/my-llm-py-package-check --python 3.12
 package_version=$(uv run python -c 'from my_llm import __version__; print(__version__)')
-uv pip install --python /tmp/my-llm-py-package-check/bin/python "dist/my_llm_py-${package_version}-py3-none-any.whl"
+uv pip install --python /tmp/my-llm-py-package-check/bin/python "dist/my_llm_py-${package_version}-py3-none-any.whl[all]"
 /tmp/my-llm-py-package-check/bin/python -I -c 'import my_llm; from importlib.metadata import version; assert my_llm.__version__ == version("my-llm-py"); print(my_llm.__version__); print(my_llm.__file__)'
 ```
 

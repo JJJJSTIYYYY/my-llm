@@ -717,9 +717,26 @@ wheels = [
 name = "my-llm-py"
 source = { editable = "." }
 dependencies = [
+    { name = "pydantic" },
+]
+
+[package.optional-dependencies]
+all = [
     { name = "anthropic" },
     { name = "google-genai" },
     { name = "ollama" },
+    { name = "openai" },
+]
+anthropic = [
+    { name = "anthropic" },
+]
+google-genai = [
+    { name = "google-genai" },
+]
+ollama = [
+    { name = "ollama" },
+]
+openai = [
     { name = "openai" },
 ]
 
@@ -732,14 +749,23 @@ dev = [
     { name = "ruff" },
     { name = "twine" },
 ]
+sdks = [
+    { name = "my-llm-py", extra = ["all"] },
+]
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", specifier = ">=0.76,<1" },
-    { name = "google-genai", specifier = ">=1.56,<2" },
-    { name = "ollama", specifier = ">=0.6.3,<1" },
-    { name = "openai", specifier = ">=2.0,<3" },
+    { name = "anthropic", marker = "extra == 'all'", specifier = ">=0.76,<1" },
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.76,<1" },
+    { name = "google-genai", marker = "extra == 'all'", specifier = ">=1.56,<2" },
+    { name = "google-genai", marker = "extra == 'google-genai'", specifier = ">=1.56,<2" },
+    { name = "ollama", marker = "extra == 'all'", specifier = ">=0.6.3,<1" },
+    { name = "ollama", marker = "extra == 'ollama'", specifier = ">=0.6.3,<1" },
+    { name = "openai", marker = "extra == 'all'", specifier = ">=2.0,<3" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=2.0,<3" },
+    { name = "pydantic", specifier = ">=2.9,<3" },
 ]
+provides-extras = ["all", "anthropic", "google-genai", "ollama", "openai"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -750,6 +776,7 @@ dev = [
     { name = "ruff", specifier = ">=0.9" },
     { name = "twine", specifier = ">=6" },
 ]
+sdks = [{ name = "my-llm-py", extras = ["all"] }]
 
 [[package]]
 name = "nh3"

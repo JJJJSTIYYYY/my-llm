@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from my_llm._optional import require_sdk
 from my_llm.exceptions import ConfigurationError, UnsupportedProviderError
 
 if TYPE_CHECKING:
@@ -27,4 +28,5 @@ def codec_for(protocol: str) -> BaseCodec:
     try:
         return _CODECS[protocol]
     except (KeyError, TypeError) as exc:
+        require_sdk(protocol)
         raise UnsupportedProviderError(f"unsupported protocol: {protocol!r}") from exc

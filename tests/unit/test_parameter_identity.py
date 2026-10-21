@@ -52,7 +52,8 @@ def test_parameter_identity_cannot_be_supplied_or_reassigned(attribute, value):
     ).max_tokens
     with pytest.raises(FrozenInstanceError):
         setattr(bound, attribute, value)
-    with pytest.raises(ValueError, match=attribute):
+    # Supported Python versions differ in the exception raised for init=False.
+    with pytest.raises((TypeError, ValueError), match=rf"field {attribute} .*init=False"):
         replace(bound, **{attribute: value})
 
 

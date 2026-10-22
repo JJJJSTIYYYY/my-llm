@@ -19,11 +19,18 @@ from my_llm.registry import codec_for
 
 @dataclass(frozen=True)
 class ResolvedProfile:
-    """Construction-time snapshot, with values and parameter bindings separated.
+    """Read-only configuration snapshot returned by resolve_profiles.
 
-    Applications normally pass ProviderProfile/ModelProfile to MyLLM instead.
-    Decoder validates protocol-specific constraints. Treat values, parameters
-    and their nested payloads as read-only.
+    Attributes:
+        protocol: Selected upstream protocol name.
+        model: Selected model ID.
+        values: Resolved defaults and behavior settings, keyed by field name.
+        parameters: Parameter declarations or omit, keyed by field name.
+        request_parameters: Tuple of supported request-input parameter bindings.
+        connection: Validated connection settings.
+
+    Treat dictionaries and nested values as read-only. Applications normally pass
+    ProviderProfile and ModelProfile to MyLLM rather than constructing this class.
     """
 
     protocol: Protocol
@@ -35,14 +42,27 @@ class ResolvedProfile:
     connection: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Read a resolved default or code setting, falling back for omit."""
+        """Read a resolved value by key, using default for absent or omitted values.
+
+        An explicit stored None is returned as None. Values are borrowed; do not
+        mutate returned dictionaries or other nested objects.
+        """
         value = self.values.get(key, default)
         return default if isinstance(value, Omit) else value
 
     def parameter(
         self, name: str, source: Literal["input", "output"] | None = None
     ) -> Parameter[Any] | None:
-        """Read a binding by field name, optionally restricted to its input/output source."""
+        """Return a supported Parameter binding, optionally restricted by source.
+
+        Args:
+            name: Profile field name.
+            source: Optional "input" or "output" filter.
+
+        Returns:
+            The declaration, or None if absent, omitted, unsupported or source-mismatched.
+            A declaration with default_value=omit may still be supported.
+        """
         value = self.parameters.get(name)
         if (
             isinstance(value, Parameter)
@@ -54,12 +74,25 @@ class ResolvedProfile:
 
 
 def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> ResolvedProfile:
-    """Validate and snapshot protocol, provider and model settings in order.
+    """Resolve independent settings in protocol-default, provider, model order.
 
-    None inherits a setting; omit disables it. Parameter wrappers replace the
-    entire binding and Config dictionary defaults merge by key. A default_value
-    of None remains an explicit value. Attribute data is validated but excluded
-    from configuration snapshots and parameter bindings.
+    Args:
+        provider: ProviderProfile with an explicit protocol Config.
+        model: ModelProfile containing a nonempty model ID.
+
+    Returns:
+        An independent ResolvedProfile snapshot. None inherits; omit disables.
+        Parameter wrappers replace whole declarations; Config dictionaries merge
+        by key. Explicit default_value=None is retained. Attribute metadata does
+        not appear in resolved settings, apart from the selected model identity.
+
+    Raises:
+        ConfigurationError: Declarations, values or connection settings are invalid.
+        UnsupportedProviderError: The upstream protocol is unavailable or cannot
+            support generation.
+
+    Direct integrations should also call MyCodec.validate_profile before use to
+    check protocol-specific constraints. MyLLM performs both steps automatically.
     """
     if not isinstance(provider, ProviderProfile) or not isinstance(model, ModelProfile):
         raise ConfigurationError("provider and model must be profile instances")

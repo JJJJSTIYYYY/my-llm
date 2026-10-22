@@ -19,7 +19,7 @@ class UnsupportedProviderError(ConfigurationError):
 
 
 class UnsupportedCapabilityError(ConfigurationError):
-    """A model does not support the requested capability."""
+    """A model or target protocol cannot support the requested capability or content."""
 
 
 class MessageValidationError(ConfigurationError):
@@ -36,7 +36,14 @@ class StreamError(MyLLMError):
     """
 
     def __init__(self, message: str, *, details: Any = None, partial_message: Any = None) -> None:
-        """Set the error message and optional native details/partial output."""
+        """Create a response error with optional native details and partial output.
+
+        Args:
+            message: Human-readable description.
+            details: Native error/status payload, or None.
+            partial_message: Incomplete output in the input/output protocol, or None.
+                It must not be treated as a successful result.
+        """
         super().__init__(message)
         self.details = details
         self.partial_message = partial_message

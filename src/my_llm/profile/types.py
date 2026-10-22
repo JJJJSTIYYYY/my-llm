@@ -14,7 +14,12 @@ _T = TypeVar("_T")
 
 
 class Omit:
-    """Explicitly omit a configured parameter; every instance is the same marker."""
+    """Type of the public omit marker for explicit omission.
+
+    Use ``omit`` to disable a profile setting or remove a supported request value.
+    It differs from None, is false in boolean contexts, and retains its identity
+    when copied. Calling Omit() returns the same marker.
+    """
 
     __slots__ = ()
     _instance: Omit | None = None
@@ -45,7 +50,15 @@ omit = Omit()
 
 @dataclass(frozen=True, kw_only=True)
 class Attribute(Generic[_T]):
-    """Profile-owned data excluded from resolved configuration and SDK routing."""
+    """Descriptive or identity data owned by a profile, without parameter routing.
+
+    Args:
+        default_value: Required value of the declared type, such as a model ID.
+        comment: Optional description for display.
+
+    Read the data through default_value. Attributes do not participate in
+    configuration inheritance. Instances are frozen keyword-only dataclasses.
+    """
 
     default_value: _T
     comment: str | None = None
@@ -56,10 +69,24 @@ class Attribute(Generic[_T]):
 
 @dataclass(frozen=True, kw_only=True)
 class Parameter(Generic[_T]):
-    """A parameter's route, support and default; Profile fixes its identity.
+    """Declare a parameter's path, default value and capability support.
 
-    source="input" means a user/API request parameter; source="output" means
-    an API response parameter. Unsupported parameters always default to omit.
+    Args:
+        path: Rooted field path, such as ``$.max_tokens`` or ``$.choices[0].delta.content``.
+        default_value: Value used when the target field is absent; omit adds no
+            default and None is an explicit value.
+        supports: Whether automatic routing is supported. False forces the
+            default_value to omit.
+        comment: Optional description for display.
+
+    Attributes:
+        name: Read-only field name assigned by the containing profile.
+        source: Read-only "input" or "output" assigned by the profile declaration.
+
+    Input parameters configure requests; output parameters select response values.
+    The containing profile determines the source; callers cannot pass name/source
+    to this frozen keyword-only dataclass. Invalid paths, comments or support flags
+    raise ConfigurationError.
     """
 
     path: str
@@ -80,7 +107,19 @@ class Parameter(Generic[_T]):
 
 @dataclass(frozen=True, kw_only=True)
 class Config(Generic[_T]):
-    """A code setting whose name is fixed by its Profile field."""
+    """Declare a behavior setting or a group of native options.
+
+    Args:
+        default_value: Required setting value, including explicit None or omit.
+            Dictionary values merge by key when profiles are resolved.
+        comment: Optional description for display.
+
+    Attributes:
+        name: Read-only field name assigned by the containing profile.
+
+    Instances are frozen keyword-only dataclasses. Unlike Parameter, Config has
+    no field path; supported setting names determine its meaning.
+    """
 
     default_value: Omit | None | _T
     comment: str | None = None

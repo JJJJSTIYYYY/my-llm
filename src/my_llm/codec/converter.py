@@ -17,24 +17,32 @@ from my_llm.registry import register_codec, registered_codecs
 
 
 class MyCodec:
-    """Convert recognized standard fields to intermediate dictionaries and back.
+    """Convert messages, tools and complete event lists between standard protocols.
 
-    No profile, format guess or stream fragments are retained between calls.
-    ``profile=None`` means the standard protocol without provider overrides.
+    Construction takes no arguments and captures the currently registered codecs
+    in the codecs mapping. Register custom protocols before creating instances.
+    Calls do not retain profiles, inferred formats or stream fragments.
+    Use convert for direct conversion; profile=None selects standard field behavior.
+    Only recognized fields are translated; conversion is not guaranteed lossless.
     """
 
     __slots__ = ("codecs",)
 
     def __init__(self) -> None:
+        """Capture the currently registered protocol implementations."""
         self.codecs = registered_codecs()
 
     @staticmethod
     def register(codec: BaseCodec) -> None:
-        """Register a stateless protocol before constructing MyCodec or MyLLM.
+        """Register a protocol for subsequently constructed MyCodec/MyLLM instances.
 
-        The Codec owns its default configuration and all three implementations.
-        Existing converter instances keep their registration snapshot. Names
-        cannot replace an already registered protocol.
+        Args:
+            codec: BaseCodec with ProtocolDefaults and matching encoder/decoder protocol
+                names. The codec and its components must declare empty __slots__.
+
+        Raises:
+            ConfigurationError: Components are invalid or the protocol name is already
+                registered. Existing instances retain their registration snapshot.
         """
         if not isinstance(codec, BaseCodec):
             raise ConfigurationError("protocol implementation must be a BaseCodec")
@@ -86,16 +94,42 @@ class MyCodec:
         return self._codec(protocol).transport
 
     def validate_profile(self, profile: ResolvedProfile) -> None:
+        """Validate protocol-specific settings in a ResolvedProfile.
+
+        Raises ConfigurationError for incompatible options, or
+        UnsupportedProviderError for an unregistered protocol. A missing optional
+        SDK for a built-in protocol raises ModuleNotFoundError.
+        """
         self._codec(profile.protocol).validate_profile(profile)
 
     def validate_input(self, protocol: str, messages: list, tools: list | None = None) -> None:
-        """Validate declared input through its codec's transport."""
+        """Validate messages and optional tools in the specified standard protocol.
+
+        Raises MessageValidationError for invalid input. No request is sent.
+        """
         self._codec(protocol).validate_input(messages, tools)
 
     def client_parameters(self, profile: ResolvedProfile) -> dict:
+        """Return prepared SDK connection arguments for a resolved profile.
+
+        Does not create a client or send a request. Treat the returned settings as
+        read-only when reusing them across prepare calls.
+        """
         return self.decoder(profile.protocol).client_parameters(profile)
 
     def bind_input(self, inputs: dict, protocol: Protocol | None) -> Protocol:
+        """Return an explicit protocol or infer a unique protocol from inputs.
+
+        Args:
+            inputs: Dictionary containing messages and tools. Inference replaces these
+                entries with inspected values; pass a separate dictionary if needed.
+            protocol: Explicit protocol to return unchanged, or None for inference.
+
+        Raises:
+            MessageValidationError: Inference is ambiguous or has no match.
+
+        This method does not remember the selected protocol between calls.
+        """
         if protocol is not None:
             return protocol
         history = list(dictionary_views(inputs["messages"]))
@@ -114,14 +148,46 @@ class MyCodec:
     def prepare(
         self, inputs: dict, profile: ResolvedProfile, *, input_format: Protocol, client: dict
     ) -> dict:
+        """Prepare one complete generation call without performing network I/O.
+
+        Args:
+            inputs: MyLLM.generate options as a dictionary, including messages, tools
+                and stream. Values use input_format.
+            profile: Resolved upstream provider/model settings.
+            input_format: Registered protocol used by the supplied history and tools.
+            client: Connection settings from client_parameters(profile).
+
+        Returns:
+            Dictionary with client (SDK constructor arguments), request (SDK call
+            arguments), and local (stream flag and client_key) entries.
+
+        Raises:
+            ConfigurationError: Generation options or target request are invalid.
+            MessageValidationError: Messages, tools or their associations are invalid.
+            UnsupportedCapabilityError: Required content cannot be represented.
+        """
         source = self._codec(input_format)
         intermediate = source.encoder.request(inputs, profile)
         return self.decoder(profile.protocol).prepare(intermediate, client)
 
     def upstream(self, client: Any, request: dict, profile: ResolvedProfile):
+        """Return an async context manager yielding upstream SDK events.
+
+        Args:
+            client: Client created by the selected protocol's transport.
+            request: Prepared native SDK call arguments.
+            profile: Resolved profile selecting the upstream protocol.
+
+        Exiting the context closes response resources; the caller owns the client.
+        """
         return self.transport(profile.protocol).upstream(client, request)
 
     def result(self, messages: list, *, target_format: Protocol):
+        """Render intermediate messages as one completed target-protocol result.
+
+        Returns a message dictionary, or an output items list for openai_responses.
+        Use decode when a list of converted messages is required instead.
+        """
         converted = self.decode(messages=messages, target_format=target_format)["messages"]
         return self.decoder(target_format).result(converted)
 
@@ -135,6 +201,25 @@ class MyCodec:
         chunks: Any = None,
         **parameters: Any,
     ) -> dict[str, Any]:
+        """Convert selected standard-protocol values to intermediate dictionaries.
+
+        Args:
+            messages: Standard message list, or None to leave it out of the result.
+            tools: Standard tool declarations, or None to leave them out.
+            input_format: Registered source protocol name.
+            profile: Optional source-profile overrides; None uses standard fields.
+            chunks: Standard event list, or None to leave it out.
+            **parameters: Additional conversion options supported by the source codec.
+
+        Returns:
+            A dictionary containing only supplied messages, tools and chunks entries;
+            each value is a list. Empty supplied lists remain present.
+
+        Intermediate values are for conversion APIs, not application history.
+        Invalid recognized values raise MessageValidationError or
+        UnsupportedCapabilityError; unregistered protocols raise UnsupportedProviderError.
+        A missing optional SDK for a built-in protocol raises ModuleNotFoundError.
+        """
         codec = self._codec(input_format)
         result = {}
         for kind, values in (("messages", messages), ("tools", tools), ("chunks", chunks)):
@@ -152,6 +237,23 @@ class MyCodec:
         chunks: Any = None,
         **parameters: Any,
     ) -> dict[str, Any]:
+        """Render selected intermediate values in a standard target protocol.
+
+        Args:
+            messages: Intermediate messages, or None to leave them out.
+            tools: Intermediate tool declarations, or None to leave them out.
+            target_format: Registered target protocol name.
+            profile: Optional target-profile overrides; None uses standard fields.
+            chunks: Intermediate events, or a complete encoded offline event batch.
+            **parameters: Target conversion options, such as model or sequence_number.
+
+        Returns:
+            A dictionary containing lists under supplied messages, tools and chunks
+            keys. Unsupported fields are not added to the target format.
+
+        Use convert for direct standard-to-standard conversion. Live asynchronous
+        consumption is available through MyLLM.generate(stream=True).
+        """
         codec = self._codec(target_format)
         if chunks and all(is_batch(chunk) for chunk in chunks):
             # Complete offline streams use the same request-owned accumulation
@@ -180,13 +282,43 @@ class MyCodec:
         chunks: Any = None,
         **parameters: Any,
     ) -> dict[str, Any]:
-        """Convert standard input directly to a target protocol."""
+        """Convert standard messages, tools or a complete event list in one call.
+
+        Args:
+            messages: Source-protocol history, or None.
+            tools: Source-protocol tool declarations, or None.
+            input_format: Registered source protocol name.
+            target_format: Registered target protocol name.
+            profile: Optional target-profile overrides.
+            chunks: Complete source-protocol event list for offline stream conversion.
+            **parameters: Options forwarded to target conversion.
+
+        Returns:
+            Dictionary of converted lists, containing only the supplied messages,
+            tools and chunks keys. Source values are not modified. Unknown fields
+            are excluded; cross-protocol conversion is not guaranteed lossless.
+
+        Use MessageStream for live events rather than converting successive fragments
+        with this method.
+        """
         intermediate = self.encode(messages, tools, input_format=input_format, chunks=chunks)
         return self.decode(
             **intermediate, target_format=target_format, profile=profile, **parameters
         )
 
     def request(self, intermediate: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
+        """Build a native SDK request from encoded messages and optional tools.
+
+        Args:
+            intermediate: Dictionary with messages and optional tools from encode.
+            profile: Resolved upstream settings.
+            **parameters: Generation options accepted by the target decoder.
+
+        Returns:
+            Validated SDK keyword arguments without creating clients or sending I/O.
+
+        Use prepare to supply a complete unencoded generation call.
+        """
         return self._codec(profile.protocol).request(
             intermediate["messages"], intermediate.get("tools"), profile, **parameters
         )

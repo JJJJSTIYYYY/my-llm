@@ -12,28 +12,49 @@ from my_llm.profile.types import Omit
 
 
 class BaseEncoder(ABC):
-    """Read recognized input fields, then own only the translated values."""
+    """Abstract converter from native protocol values to intermediate dictionaries.
+
+    Implement protocol, message_type, tool_type, match_item, usage and the protected
+    conversion hooks. Instances must be stateless and declare empty __slots__.
+    Public messages/tools/chunks methods accept lists, an optional ResolvedProfile
+    and protocol-specific keyword options. None selects standard field behavior.
+    """
 
     __slots__ = ()
 
     @property
     @abstractmethod
-    def protocol(self) -> str: ...
+    def protocol(self) -> str:
+        """Registered name of the native source protocol."""
+        ...
 
     @property
     @abstractmethod
-    def message_type(self) -> Any: ...
+    def message_type(self) -> Any:
+        """Schema type accepted for native message validation."""
+        ...
 
     @property
     @abstractmethod
-    def tool_type(self) -> Any: ...
+    def tool_type(self) -> Any:
+        """Schema type accepted for native tool declaration validation."""
+        ...
 
     def validate_values(self, values: list, schema: Any, *, filtered: bool = False) -> None:
+        """Validate each item against schema, raising MessageValidationError on failure.
+
+        Set filtered=True only when values have already been filtered to the schema.
+        """
         validate_values(values, schema, filtered=filtered)
 
     @final
     def request(self, inputs: dict, profile: ResolvedProfile) -> dict:
-        """Encode the complete call, borrowing controls until Decoder captures them."""
+        """Return encoded messages/tools alongside a complete call's generation options.
+
+        inputs must include messages and tools. profile supplies upstream settings;
+        the returned dictionary also contains profile for BaseDecoder.prepare.
+        Invalid input raises MessageValidationError.
+        """
         history = list(dictionary_views(inputs["messages"]))
         tools = inputs["tools"]
         tools = None if tools is None or isinstance(tools, Omit) else list(dictionary_views(tools))
@@ -57,24 +78,28 @@ class BaseEncoder(ABC):
 
     @final
     def matches(self, values: list) -> bool:
+        """Return whether the nonempty list conforms to this protocol as a whole."""
         return match_all(values, self.match_item)
 
     @final
     def messages(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Return independent intermediate message dictionaries from native values."""
         return capture(self._messages(dictionaries(values), profile, **parameters))
 
     @final
     def tools(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Return independent intermediate tool declarations from native values."""
         return capture(self._tools(dictionaries(values), profile, **parameters))
 
     @final
     def chunks(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Return intermediate event dictionaries from the supplied native event list."""
         return self._chunks(dictionaries(values), profile, **parameters)
 
     @final
@@ -88,10 +113,18 @@ class BaseEncoder(ABC):
         *,
         use_default: bool = True,
     ) -> Any:
-        """Read one semantic field, using only its output declaration.
+        """Read a semantic response field using an optional output Parameter.
 
-        Native paths remain the protocol hook's responsibility. Comments and
-        input declarations do not change how upstream values are read.
+        Args:
+            value: Native response dictionary or supported SDK model.
+            profile: Resolved settings, or None for the default path.
+            name: Output Parameter field name.
+            default_path: Rooted native path used without an output override.
+            default: Value returned when the path is absent or routing is disabled.
+            use_default: Whether a declaration's non-omit default replaces default.
+
+        An explicit None at the addressed path is preserved. Input declarations do
+        not change response lookup; omitted or unsupported declarations return default.
         """
         if profile is not None:
             declaration = profile.parameters.get(name)
@@ -106,17 +139,23 @@ class BaseEncoder(ABC):
         return path_value(value, default_path, default)
 
     @abstractmethod
-    def match_item(self, item: dict) -> bool: ...
+    def match_item(self, item: dict) -> bool:
+        """Return whether one native message or tool dictionary matches this protocol."""
+        ...
 
     @abstractmethod
     def _messages(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict]: ...
+    ) -> list[dict]:
+        """Translate recognized native messages into intermediate message dictionaries."""
+        ...
 
     @abstractmethod
     def _tools(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict]: ...
+    ) -> list[dict]:
+        """Translate native tool declarations into intermediate tool dictionaries."""
+        ...
 
     @abstractmethod
     def _chunks(
@@ -126,4 +165,6 @@ class BaseEncoder(ABC):
         ...
 
     @abstractmethod
-    def usage(self, value: dict | None) -> dict | None: ...
+    def usage(self, value: dict | None) -> dict | None:
+        """Return intermediate token accounting from native usage, or None if absent."""
+        ...

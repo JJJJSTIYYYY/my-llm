@@ -9,6 +9,12 @@ from my_llm.profile.types import Config, Parameter, omit
 
 
 class OllamaCodec(BaseCodec):
+    """Ollama Chat conversion with protocol defaults and SDK transport.
+
+    Construct without arguments. Uses protocol name "ollama" and the BaseCodec
+    conversion interface. Requires the ollama optional dependency.
+    """
+
     __slots__ = ()
     protocol_or_api_style = "ollama"
     defaults = ProtocolDefaults(

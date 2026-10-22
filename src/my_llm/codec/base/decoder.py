@@ -26,7 +26,13 @@ from my_llm.profile.types import Omit
 
 
 class BaseDecoder(ABC):
-    """Prepare and validate final SDK dictionaries; never construct SDK clients."""
+    """Abstract target-protocol converter and native request builder.
+
+    Implement the abstract schema properties, conversion hooks, usage and
+    assemble_request, and declare empty __slots__. Public messages/tools/chunks
+    methods accept lists, optional profile overrides and protocol options.
+    Request-building methods return dictionaries and perform no network I/O.
+    """
 
     __slots__ = ()
     body_container: str | None = None
@@ -74,7 +80,13 @@ class BaseDecoder(ABC):
         previous_response_id: Any = None,
         **parameters: Any,
     ) -> PreparedOptions:
-        """Validate and prepare generation settings for the request's Decoder."""
+        """Return PreparedOptions after validating profile and generation controls.
+
+        parameters accepts generation options such as stream, max_tokens, reasoning,
+        reasoning_effort, extra_headers and extra_body. previous_response_id must be a
+        nonempty ID for a supported protocol. Invalid options raise ConfigurationError;
+        unsupported reasoning raises UnsupportedCapabilityError.
+        """
         if not isinstance(parameters.get("stream", False), bool):
             raise ConfigurationError("stream must be a bool")
         options = resolve_options(profile, **parameters)
@@ -183,14 +195,20 @@ class BaseDecoder(ABC):
         return request
 
     def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
+        """Return independent message values restricted to the target message schema."""
         apply = _plan(self.message_type).apply
         return [apply(message) for message in messages]
 
     def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
+        """Return independent tool declarations restricted to the target tool schema."""
         apply = _plan(self.tool_type).apply
         return [apply(tool) for tool in tools]
 
     def allows_external_calls(self, previous_response_id: Any) -> bool:
+        """Return whether server history may satisfy missing tool-call references.
+
+        The default is False; supported protocols can use previous_response_id.
+        """
         return False
 
     def validate_profile(self, profile: ResolvedProfile) -> None:
@@ -200,14 +218,25 @@ class BaseDecoder(ABC):
             raise ConfigurationError("usage_mode is incompatible with the selected API")
 
     def validate_values(self, values: list, schema: Any, *, filtered: bool = False) -> None:
+        """Validate each item against schema, raising MessageValidationError on failure.
+
+        Set filtered=True only for values already filtered to the declared schema.
+        """
         validate_values(values, schema, filtered=filtered)
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
+        """Return request after protocol-specific semantic validation.
+
+        The default accepts request unchanged; overrides may reject incompatible
+        values with ConfigurationError or UnsupportedCapabilityError.
+        """
         return request
 
     @property
     @abstractmethod
-    def protocol(self) -> str: ...
+    def protocol(self) -> str:
+        """Registered name of the native target protocol."""
+        ...
 
     @final
     def request(
@@ -219,7 +248,18 @@ class BaseDecoder(ABC):
         options: PreparedOptions | None = None,
         **parameters: Any,
     ) -> dict:
-        """Translate once, then capture/validate each native leaf once."""
+        """Return validated native SDK call arguments for intermediate messages/tools.
+
+        Args:
+            messages: Intermediate message history.
+            tools: Intermediate tool declarations, or None to omit tools.
+            profile: Resolved upstream provider/model settings.
+            options: Already validated controls, or None to validate parameters here.
+            **parameters: Generation controls and protocol-specific options.
+
+        Raises ConfigurationError, MessageValidationError or UnsupportedCapabilityError
+        for invalid options, history or unsupported content. Does not perform I/O.
+        """
         if options is None:
             options = self.validate_parameters(profile, **parameters)
         # These internal translations borrow intermediate application leaves.
@@ -237,7 +277,12 @@ class BaseDecoder(ABC):
 
     @final
     def prepare(self, intermediate: dict, client: dict) -> dict:
-        """Return the three explicit destinations of a complete generate call."""
+        """Return client, request and local dictionaries for a complete encoded call.
+
+        intermediate is the dictionary from BaseEncoder.request; client contains
+        prepared connection arguments. local contains stream and a client_key.
+        This method creates no SDK clients and sends no network request.
+        """
         profile = intermediate["profile"]
         parameters = {
             key: value
@@ -267,6 +312,10 @@ class BaseDecoder(ABC):
         return client
 
     def client_key(self, client: dict) -> Any:
+        """Return a hashable reuse key for client settings; the default is None.
+
+        Override when distinct connection settings require distinct clients.
+        """
         return None
 
     @final
@@ -305,21 +354,29 @@ class BaseDecoder(ABC):
     def messages(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Return independent native message dictionaries from intermediate values."""
         return capture(self._messages(values, profile, **parameters))
 
     @final
     def tools(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Return independent native tool declarations from intermediate values."""
         return capture(self._tools(values, profile, **parameters))
 
     @final
     def chunks(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Return native event dictionaries from the supplied intermediate events."""
         return self._chunks(values, profile, **parameters)
 
     def result(self, messages: list) -> dict | list:
+        """Return the first native message as a completed result.
+
+        Protocols with list-shaped results override this method. messages must contain
+        at least one item for this default implementation.
+        """
         return messages[0]
 
     @abstractmethod

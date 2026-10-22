@@ -14,7 +14,18 @@ from my_llm.profile.types import Omit, Parameter, omit
 
 @dataclass(frozen=True, slots=True)
 class PreparedOptions:
-    """Captured controls; explicit call values can override parameter defaults."""
+    """Validated generation controls passed to protocol extension hooks.
+
+    Attributes:
+        tokens: Resolved token limit, None, or omit.
+        headers: Request headers after merging call and profile values.
+        body: Native generation options after merging call and profile values.
+        effort: Mapped native reasoning effort, or None when inactive.
+        explicit_tokens: Whether the call supplied max_tokens explicitly.
+
+    Frozen dataclass returned by BaseDecoder.validate_parameters. Treat its
+    nested dictionaries as read-only when passing options between hooks.
+    """
 
     tokens: Any
     headers: dict

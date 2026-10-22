@@ -9,6 +9,12 @@ from my_llm.profile.types import Config, Parameter, omit
 
 
 class AnthropicCodec(BaseCodec):
+    """Anthropic Messages conversion with protocol defaults and SDK transport.
+
+    Construct without arguments. Uses protocol name "anthropic" and the
+    BaseCodec conversion interface. Requires the anthropic optional dependency.
+    """
+
     __slots__ = ()
     protocol_or_api_style = "anthropic"
     defaults = ProtocolDefaults(

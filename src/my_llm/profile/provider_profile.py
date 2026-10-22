@@ -12,12 +12,26 @@ from my_llm.profile.types import Attribute, Config, Omit, Parameter
 
 @dataclass(frozen=True, kw_only=True)
 class ProviderProfile(OverridableProfile):
-    """Provider connection, API selection and explicit model catalogue.
+    """Provider connection, upstream protocol and optional model catalogue.
 
-    None inherits; omit disables a setting. Parameter and Config wrappers retain
-    explicit default_value=None. Config dictionaries merge by key. Extend with
-    typed Parameter or Config fields, or Attribute for descriptive data.
-    api_key binds a connection parameter; other SDK connection values use Config.
+    Args:
+        protocol: Config containing a registered protocol name; required for use
+            with MyLLM or resolve_profiles, although its field default is None.
+        base_url: Config containing the service URL; None inherits SDK defaults.
+        api_key: Input Parameter containing the authentication value and path.
+            Use the SDK key path or an authentication-header path for the protocol.
+        timeout: Config containing a positive timeout in seconds.
+        max_retries: Config containing a nonnegative retry count. Ollama accepts
+            only None, omit or zero.
+        supports_stream: Config capability flag; must remain enabled for generation.
+        usage_mode: Config containing a protocol-supported usage mode.
+        models: Optional Attribute containing a list of ModelProfile entries.
+            It does not select a model automatically.
+
+    This is a frozen keyword-only dataclass with explicit catalogue mutation
+    methods. None inherits a setting; omit disables it. Parameter overrides
+    replace a whole declaration; Config dictionaries merge by key.
+    Additional keyword fields are inherited from OverridableProfile.
     """
 
     protocol: Config[Protocol] | None = None
@@ -46,11 +60,15 @@ class ProviderProfile(OverridableProfile):
             )
 
     def add_models(self, model_profile: list[ModelProfile] | ModelProfile) -> None:
-        """Add one ModelProfile or a list, replacing matching IDs in place.
+        """Add or replace model catalogue entries by model ID.
 
-        New IDs are appended; existing IDs retain their position. Later duplicate
-        IDs win. Invalid input raises ConfigurationError without changing the
-        catalogue. ModelProfile instances are stored without cloning.
+        Args:
+            model_profile: One ModelProfile or a list of ModelProfile instances.
+
+        New IDs append; existing IDs retain their positions. Later duplicate IDs win.
+        Stored profiles are reused, not cloned. This mutates the provider catalogue
+        and returns None; existing MyLLM instances retain their configuration.
+        Invalid entries raise ConfigurationError without changing the catalogue.
         """
         incoming = [model_profile] if isinstance(model_profile, ModelProfile) else model_profile
         updates = _models_by_id(incoming)

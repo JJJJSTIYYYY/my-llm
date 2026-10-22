@@ -11,11 +11,17 @@ from my_llm.stream._state import StreamState
 
 
 class MessageStream(AsyncIterator[dict[str, Any]]):
-    """A closable stream of standard event dictionaries in ``stdio_protocol``.
+    """A closable asynchronous iterator of protocol-native event dictionaries.
 
-    Text/thinking are incremental. Function calls are emitted only when complete.
-    After exhaustion, ``result`` contains the native message (Responses: items).
-    Use ``async with stream`` to release SDK resources after early exit.
+    Obtain streams from ``await llm.generate(..., stream=True)``. Text and visible
+    reasoning arrive incrementally; tool calls are exposed with complete arguments.
+    Use ``async with stream`` so early exit, errors and cancellation release the
+    response. Iteration is single-use; do not consume the same stream concurrently.
+
+    Attributes:
+        result: Independent copy of the completed native message, or Responses
+            output items. None until successful exhaustion, including after an
+            early close. Save this result as conversation history.
     """
 
     def __init__(self, iterator: AsyncGenerator[dict[str, Any], None], state: StreamState) -> None:
@@ -25,20 +31,26 @@ class MessageStream(AsyncIterator[dict[str, Any]]):
         self._close_callbacks = AsyncExitStack()
 
     def add_close_callback(self, callback: Callable[[], Awaitable[None]]) -> None:
-        """Release an async owner once when this stream closes, including before iteration."""
+        """Register an asynchronous no-argument cleanup callback.
+
+        Callbacks run once in reverse registration order when the stream closes,
+        even if iteration never starts. Registering after close raises RuntimeError.
+        """
         if self._closed:
             raise RuntimeError("MessageStream is closed")
         self._close_callbacks.push_async_callback(callback)
 
     @property
     def result(self) -> Any:
-        """Return the completed standard message, or None before exhaustion."""
+        """Return a deep copy of the completed message/items, or None before completion."""
         return deepcopy(self._state.result)
 
     def __aiter__(self) -> MessageStream:
+        """Return this single-use asynchronous iterator."""
         return self
 
     async def __anext__(self) -> dict[str, Any]:
+        """Yield the next event; close on exhaustion, errors or cancellation."""
         if self._closed:
             raise StopAsyncIteration
         try:
@@ -49,7 +61,11 @@ class MessageStream(AsyncIterator[dict[str, Any]]):
             raise
 
     async def aclose(self) -> None:
-        """Close the response and any one-shot owner, preserving reusable clients."""
+        """Close the response and run registered cleanup callbacks once.
+
+        Safe before iteration and on repeated calls. Closing early does not produce a
+        completed result. A reusable MyLLM instance remains available for other calls.
+        """
         if not self._closed:
             self._closed = True
             try:
@@ -58,7 +74,9 @@ class MessageStream(AsyncIterator[dict[str, Any]]):
                 await self._close_callbacks.aclose()
 
     async def __aenter__(self) -> MessageStream:
+        """Return this stream for managed asynchronous consumption."""
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
+        """Close the stream when leaving its asynchronous context."""
         await self.aclose()

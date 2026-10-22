@@ -11,7 +11,13 @@ from my_llm.profile.resolution import ResolvedProfile
 
 
 class BaseCodec(ABC):
-    """Compose a protocol's stateless encoder, decoder and SDK transport."""
+    """Abstract protocol extension with encoder, decoder, transport and defaults.
+
+    Implement the abstract properties and declare empty __slots__, then register
+    an instance with MyCodec.register. Public conversion methods accept lists and
+    an optional ResolvedProfile; None selects standard protocol behavior.
+    Encoding returns intermediate dictionaries; decoding returns native values.
+    """
 
     __slots__ = ()
 
@@ -59,6 +65,11 @@ class BaseCodec(ABC):
     def request(
         self, messages: list, tools: list | None, profile: ResolvedProfile, **parameters: Any
     ) -> dict:
+        """Return validated SDK call arguments from intermediate messages and tools.
+
+        profile selects upstream settings; parameters supplies generation controls.
+        This method performs no network I/O.
+        """
         self.validate_profile(profile)
         return self.decoder.request(messages, tools, profile, **parameters)
 
@@ -66,36 +77,42 @@ class BaseCodec(ABC):
     def encode_messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict[str, Any]]:
+        """Return intermediate messages from native values using optional profile overrides."""
         return self.encoder.messages(messages, profile, **parameters)
 
     @final
     def decode_messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict[str, Any]]:
+        """Return native message dictionaries from intermediate messages."""
         return self.decoder.messages(messages, profile, **parameters)
 
     @final
     def encode_tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict[str, Any]]:
+        """Return intermediate tool declarations from native tool values."""
         return self.encoder.tools(tools, profile, **parameters)
 
     @final
     def decode_tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict[str, Any]]:
+        """Return native tool declarations from intermediate tools."""
         return self.decoder.tools(tools, profile, **parameters)
 
     @final
     def encode_chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict[str, Any]]:
+        """Return intermediate events from the supplied native event list."""
         return self.encoder.chunks(chunks, profile, **parameters)
 
     @final
     def decode_chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict[str, Any]]:
+        """Return native event dictionaries from the supplied intermediate events."""
         return self.decoder.chunks(chunks, profile, **parameters)
 
     @final

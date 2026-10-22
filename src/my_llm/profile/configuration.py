@@ -17,14 +17,18 @@ EFFORTS = ("none", "low", "medium", "high", "xhigh", "max")
 
 @dataclass(frozen=True, kw_only=True)
 class ProtocolDefaults(Profile):
-    """Settings declared by a protocol's Codec, extensible with typed wrappers.
+    """Declare default settings for a registered protocol.
 
-    Parameter binds its own path, default, support and fixed input/output source.
-    Field metadata scope="client" targets connection options (built-in api_key);
-    other input parameters target requests.
-    Config controls code behavior; Attribute marks profile-owned data excluded
-    from resolution. Dataclass field names identify each setting; Parameter and
-    Config identities are fixed by their Profile fields.
+    Required keyword argument replay_reasoning_content_when_tool_calls is a Config
+    or omit. Other fields provide default parameter routes, extra_headers,
+    extra_body, reasoning_effort_mapping, capability flags and usage_mode.
+    See OverridableProfile for the shared setting meanings.
+
+    Parameter field metadata fixes source="input" or "output"; scope="client"
+    marks connection parameters such as api_key. Config and Parameter names are
+    assigned from field names. Extend this frozen keyword-only dataclass for
+    custom protocol settings; applications normally use ProviderProfile and
+    ModelProfile to override protocol defaults.
     """
 
     replay_reasoning_content_when_tool_calls: Config[bool] | Omit
@@ -61,12 +65,24 @@ class ProtocolDefaults(Profile):
 
 @dataclass(frozen=True, kw_only=True)
 class OverridableProfile(Profile):
-    """Shared overrides: None inherits, omit disables, wrappers replace settings.
+    """Shared provider/model overrides, all keyword-only and defaulting to None.
 
-    Extend profiles with Parameter[T], Config[T] or Attribute[T] fields.
-    Parameter overrides replace path, support and default together. Config
-    dictionaries merge by key; Attribute data stays with the Profile.
-    A setting's explicit default_value=None is retained.
+    Args:
+        extra_headers: Config of default request headers.
+        extra_body: Config of native generation options.
+        reasoning_effort_mapping: Config mapping public effort levels to native values.
+        max_tokens: Input Parameter for the output token limit.
+        content: Output Parameter selecting visible text.
+        reasoning_content: Output Parameter selecting visible reasoning.
+        reasoning_enable: Input Parameter enabling reasoning.
+        reasoning_effort: Input Parameter selecting native reasoning effort.
+        replay_reasoning_content_when_tool_calls: Config controlling visible
+            reasoning replay in tool-call history.
+
+    None inherits a declaration; omit disables it. Parameter overrides replace
+    path, support and default together. Config dictionaries merge by key, with
+    omit deleting a key. A wrapper's default_value=None remains explicit.
+    Extend profiles with typed Parameter, Config or Attribute fields.
     """
 
     extra_headers: Config[dict[str, Any]] | Omit | None = None

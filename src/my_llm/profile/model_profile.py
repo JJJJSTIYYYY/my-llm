@@ -12,12 +12,21 @@ from my_llm.profile.types import Attribute, Config, Omit
 
 @dataclass(frozen=True, kw_only=True)
 class ModelProfile(OverridableProfile):
-    """Model identity, descriptive metadata and inherited provider overrides.
+    """Model identity, descriptive metadata and provider-setting overrides.
 
-    None inherits; omit disables a setting. Parameter and Config wrappers retain
-    explicit default_value=None. max_context_window is descriptive and never
-    changes request parameters. Attribute marks identity and descriptive data;
-    extend settings with typed Parameter or Config fields.
+    Args:
+        model: Required Attribute containing a nonempty model ID.
+        max_context_window: Descriptive Attribute integer, default 256000. It does
+            not truncate history or enforce token limits.
+        supports_function_calling: Config capability flag; protocol default False.
+            Enable it before sending nonempty tool declarations.
+        supports_message_name: Config controlling message-name support.
+
+    This is a frozen keyword-only dataclass. None inherits provider settings;
+    omit disables an override. supported_roles is the fixed class attribute
+    ("system", "user", "assistant", "tool"), not a constructor option.
+    Additional keyword fields are inherited from OverridableProfile.
+    Use dataclasses.replace to derive a model profile.
     """
 
     model: Attribute[str]

@@ -1,34 +1,12 @@
-# API 使用指南
+# API 参考
 
-`MyLLM` 构造时接收 `provider: ProviderProfile`、`model: ModelProfile` 和可选的
-`stdio_protocol: Protocol`。实例保留 `provider` / `model` 的副本、`resolved_profile`、
-无状态的 `codec: MyCodec` 和输入输出协议 `stdio_protocol`。
-`generate(provider=..., model=..., messages=..., stdio_protocol=..., **parameters)`
-是创建临时实例的一次性入口，其中 model 也可传模型 ID 字符串。
-Protocol 是 str 别名；内置协议之外，也可使用启动时通过 MyCodec.register(codec) 注册的协议名。
+本文介绍 `my_llm` 的公开接口、参数、返回值和使用约束。
+除另行注明外，下列类型、函数和异常均可从 `my_llm` 导入。
+完整配置示例见[配置指南](configuration.md)，协议字段见[标准协议参考](schema/README.md)。
 
-## 协议与返回值
+## 生成入口
 
-| stdio_protocol | messages 标准格式 | 非流式返回 | 流式事件 |
-| --- | --- | --- | --- |
-| `openai_chat` | Chat 消息列表 | assistant 消息字典 | ChatCompletionChunk 字典 |
-| `openai_responses` | Responses input/output items | output items 列表 | Responses 事件字典 |
-| `anthropic` | role/content Messages 列表 | assistant role/content 字典 | Messages 事件字典 |
-| `gemini` | role/parts Content 列表 | model role/parts 字典 | GenerateContentResponse 字典 |
-| `ollama` | 原生 role/content 消息列表 | assistant 消息字典 | ChatResponse 字典 |
-
-返回的是消息或 items，可直接追加到相同协议的历史；不额外包一层统一结果对象。
-结果只包含目标协议已识别的字段，不附加未知字段或跨协议恢复记录。
-Responses 使用 `history.extend(result)`，其他协议使用 `history.append(result)`。
-完成原因和用量出现在各协议标准流事件的位置，不增加自定义消息字段。
-所有输入可使用普通字典或官方 SDK 模型；只按已支持的字段读取模型属性。
-
-`stdio_protocol` 与 `ProviderProfile.protocol` 独立。前者未指定时，
-`guess_stdio_protocol(messages_or_tools)` 从整个列表识别，仅在唯一匹配一种协议时绑定；
-空列表、零匹配或多匹配均报 `MessageValidationError`，错误不会绑定协议。
-纯文本 Chat / Responses / Anthropic / Ollama 输入有重叠，应显式指定 `stdio_protocol`。
-显式指定会跳过推测，输入仍按所选协议验证；绑定后不会重新猜测。
-messages 和 tools 都遵循这个协议，历史不混用不同协议格式。
+### `MyLLM`
 
 ```python
 from my_llm import Attribute, Config, ModelProfile, MyLLM, Parameter, ProviderProfile
@@ -43,56 +21,120 @@ async def session():
         provider=ProviderProfile(protocol=Config(default_value="openai_responses")),
         model=ModelProfile(
             model=Attribute(default_value="your-model"),
-            max_tokens=Parameter(
-                path="$.max_output_tokens",
-                default_value=2048,
-            ),
+            max_tokens=Parameter(path="$.max_output_tokens", default_value=2048),
         ),
         stdio_protocol="openai_chat",
     ) as llm:
         return await ask(llm, "Hello")
 ```
 
-## 生成选项
+认证通过 Provider 配置或相应 SDK 支持的环境变量提供，见[配置指南](configuration.md#provider-与-model-字段)。
 
-`MyLLM.generate()` 只接受以下 keyword 参数：
+`MyLLM(*, provider, model, stdio_protocol=None)` 创建可重复调用的实例；所有构造参数仅限关键字：
+
+| 参数 | 类型 | 含义 |
+| --- | --- | --- |
+| `provider` | `ProviderProfile` | 必填，连接配置和明确指定的上游协议 |
+| `model` | `ModelProfile` | 必填，模型 ID 和模型配置 |
+| `stdio_protocol` | `Protocol \| None` | 输入消息、工具和输出共用的协议；默认尝试唯一推断 |
+
+`ProviderProfile.protocol` 选择上游 API，`stdio_protocol` 选择应用使用的消息格式，两者可以不同。
+`stdio_protocol` 未指定时，第一次生成从整个消息与工具列表中推断；只有唯一匹配时才绑定。
+纯文本输入常同时符合多种协议，建议显式指定。零匹配、多匹配或空输入无法推断时抛出
+`MessageValidationError`；推断失败不会绑定协议。绑定后后续调用沿用该协议。
+
+实例提供以下可读属性；配置和嵌套数据应视为只读，更换配置时创建新实例：
+
+| 属性 | 含义 |
+| --- | --- |
+| `provider` / `model` | 构造时传入配置的副本 |
+| `resolved_profile` | 已解析的 `ResolvedProfile` |
+| `stdio_protocol` | 绑定的输入输出协议，推断前可为 `None` |
+| `codec` | 当前实例的 `MyCodec` |
+| `client_parameters` | 已准备的连接参数，供高级集成使用 |
+
+### `await MyLLM.generate(...)`
+
+所有参数仅限关键字。`messages` 必填，其余参数可省略：
 
 | 参数 | 默认值 | 含义 |
 | --- | --- | --- |
-| `messages` | 必填 | 非空、同协议的消息或 items 列表 |
-| `tools` | `omit` | 同协议的工具声明列表；None/omit 不发送，[] 发送空列表 |
-| `stream` | False | True 返回需异步消费的 MessageStream |
-| `max_tokens` | 未设置 | 未传时继承 Profile 默认值；显式 None 保留，omit 删除目标参数；按 `max_tokens` 的 decode 参数路径写入 SDK 请求 |
-| `reasoning` | None | True 在 effort=none 时使用 medium；False 与非 none effort 冲突 |
-| `reasoning_effort` | `none` | none/low/medium/high/xhigh/max，经 profile 映射 |
-| `extra_headers` | None | 按键覆盖 profile headers |
-| `extra_body` | None | 按键覆盖 profile body，不能覆盖协议核心字段 |
-| `previous_response_id` | None | 仅上游 openai_responses 支持的服务端历史引用 |
+| `messages` | 必填 | 非空、同协议的历史序列；元素可为字典或支持的官方 SDK 模型 |
+| `stream` | `False` | `False` 等待完整结果；`True` 返回 `MessageStream` |
+| `tools` | `omit` | 同协议工具声明；`None` / `omit` 不发送，`[]` 发送空列表 |
+| `max_tokens` | 继承配置 | 正整数输出上限；显式 `None` 保留为空值，`omit` 删除本次请求的目标参数；目标 API 仍可要求有效数值 |
+| `reasoning` | `None` | `True` 且 effort 为 `none` 时使用 `medium`；`False` 与非 `none` effort 冲突 |
+| `reasoning_effort` | `"none"` | `none` / `low` / `medium` / `high` / `xhigh` / `max`，受模型支持状态和配置映射约束 |
+| `extra_headers` | `None` | 请求头字典，按键覆盖配置默认值；字典中的 `omit` 删除对应键 |
+| `extra_body` | `None` | 协议原生生成参数字典，按键覆盖配置默认值；不能覆盖模型、消息、工具等受管理字段 |
+| `previous_response_id` | `None` | 非空服务端历史 ID，仅用于 `openai_responses` 上游；`None` / `omit` 不发送 |
 
-provider、model、protocol、连接参数和 SDK client 不作为实例 generate 的动态参数。
-改变连接或模型时构造新实例。配置默认值和协议参数映射见 [配置指南](configuration.md)。
+实例的生成方法不接收 provider、model 或连接选项。输入历史和可变选项在协程被 `await` 时隔离，
+调用不会自动更新业务历史。工具由调用者执行。
 
-## 流与资源
+### 协议和返回值
 
-调用 `await llm.generate(..., stream=True)` 后使用 `async with stream`。
-未消费的流不启动请求或创建客户端；提前退出、取消、SDK 失败和正常结束都会关闭本次响应流。
-同一 MyLLM 实例的串行、并发、流式与非流式调用复用官方 SDK 客户端，累积状态仍按请求独立。
-一路取消或失败不会关闭共享客户端或其他请求。
+`Protocol` 是字符串类型别名，内置协议如下；自定义协议须提前注册。
 
-应用结束时使用 `await llm.aclose()`，或者将实例放入 `async with MyLLM(...) as llm`；
-先完成或关闭所有响应流，再关闭实例。关闭操作可重复调用，关闭后新请求及尚未开始消费的流
-均报 RuntimeError，不重新创建客户端。实例应在同一异步事件循环内使用。
-独立函数 `generate(...)` 的临时实例自动清理；返回流时，其所有权延续至 MessageStream 关闭。
-高级集成可通过 `stream.add_close_callback(async_callback)` 登记异步清理；回调在流关闭时执行一次，包含尚未开始消费的情况。
+| `stdio_protocol` | 消息及工具所用格式 | 非流式返回 / `stream.result` | 流事件 |
+| --- | --- | --- | --- |
+| `openai_chat` | Chat messages / tools | assistant 消息字典 | ChatCompletionChunk 字典 |
+| `openai_responses` | Responses input/output items / tools | output items 列表 | Responses 事件字典 |
+| `anthropic` | Messages role/content / tools | assistant role/content 字典 | Messages 事件字典 |
+| `gemini` | Content role/parts / tools | model role/parts 字典 | GenerateContentResponse 字典 |
+| `ollama` | Chat role/content / tools | assistant 消息字典 | ChatResponse 字典 |
 
-Ollama 的公开 chat 接口不接受逐请求 headers，因此它按合并后的请求头分别缓存 SDK 客户端；
-相同请求头复用，不修改共享客户端的 headers。其余协议将请求头作为本次 SDK 调用的参数。
-不检测直接修改 MyLLM 内部属性后的配置失效。详见[客户端生命周期](../design/client-lifecycle.md)
-和[并发复核](../audits/concurrency.md)。
+非流式结果直接是消息或 items；完成原因与用量通过各协议标准流事件提供。
+保存历史时，Responses 使用 `history.extend(result)`，其他协议使用 `history.append(result)`。
+同一历史中的消息与工具必须遵循所选协议。
+
+只转换已支持的字段；未知协议字段不保证保留，跨协议往返转换不保证无损。
+工具参数、结果对象和 JSON Schema 等已识别开放字段中的应用数据会保留。
+需要保留工具调用、思考签名或其他原生内容时，应保存完整返回值或 `stream.result`。
+
+### `await generate(...)`
+
+模块函数提供一次性调用：
+
+```python
+from my_llm import generate
+
+
+async def ask_once(provider, model_id):
+    return await generate(
+        provider=provider,
+        model=model_id,
+        messages=[{"role": "user", "content": "Hello"}],
+        stdio_protocol="openai_chat",
+        max_tokens=512,
+    )
+```
+
+签名为 `generate(*, provider, model, messages, stdio_protocol=None, **parameters)`。
+`provider` 与实例入口相同；`model` 可为 `ModelProfile` 或非空模型 ID 字符串。
+字符串直接作为模型 ID，不查找 Provider 的模型目录。
+`parameters` 接收 `MyLLM.generate` 的其他生成选项，返回值和异常约定相同。
+
+非流式调用结束后自动释放资源。返回流时，必须消费或显式关闭该流，以释放本次调用的资源。
+
+### 协议推断与关闭
+
+| 方法 | 返回值及约束 |
+| --- | --- |
+| `llm.guess_stdio_protocol(messages_or_tools)` | 返回已绑定协议；未绑定时从整个列表推断并绑定，非唯一匹配抛出 `MessageValidationError` |
+| `await llm.aclose()` | 关闭实例；返回 `None`，可重复调用 |
+| `async with MyLLM(...) as llm` | 退出上下文时自动关闭实例 |
+
+先完成或关闭所有响应流，再关闭实例。关闭后调用 `generate` 或开始消费先前未启动的流会抛出
+`RuntimeError`。同一实例支持并发生成，须在同一个异步事件循环内使用。
+
+## `MessageStream`
+
+通过 `await llm.generate(..., stream=True)` 或模块函数获取，使用 `async with` 管理生命周期：
 
 ```python
 async def print_stream(llm, prompt):
-    # llm 的 stdio_protocol 是 openai_chat。
+    # llm 的 stdio_protocol 为 openai_chat。
     stream = await llm.generate(messages=[{"role": "user", "content": prompt}], stream=True)
     async with stream:
         async for event in stream:
@@ -100,25 +142,146 @@ async def print_stream(llm, prompt):
                 delta = choice["delta"]
                 print(delta.get("content", ""), end="")
                 if delta.get("tool_calls"):
-                    print(delta["tool_calls"])  # 参数已经完整
+                    print(delta["tool_calls"])
     return stream.result
 ```
 
-`stream.result` 在完整消费后提供与非流式模式相同的标准消息/items，读取时返回独立副本。
-工具调用之前的文本和可见思考增量即时输出；工具参数保存在请求状态中，
-整条响应成功结束后再生成目标协议的工具事件。为保留内容顺序，工具调用之后出现的块
-一并暂存到完成时发布；失败或中断不会发布这些待完成调用。
-Anthropic/Gemini 的签名内容保留在完成消息和对应的原生流字段中。
-启用用量时，Chat 先发送结束 choice，再发送 `choices=[]` 的独立 usage 尾块。
-跨协议输出到 Responses 时，输出限制与内容过滤分别生成相应的 `response.incomplete`，
-成功结束才生成 `response.completed`；协议字段依据与校验范围见[协议复核](../audits/protocol-conformance.md)。
-块引用、快照协调及发布规则见[流状态设计](../design/stream-state.md)。
+| 接口 | 含义 |
+| --- | --- |
+| `async for event in stream` | 按所选协议产生事件字典；流只能消费一次，同一流不能并发消费 |
+| `stream.result` | 成功完整消费后的标准消息或 items；此前、提前关闭或失败时为 `None`；每次读取返回独立副本 |
+| `await stream.aclose()` | 关闭响应并执行清理回调，返回 `None`；可在开始消费前调用，也可重复调用 |
+| `stream.add_close_callback(callback)` | 登记无参数异步清理函数，关闭时按登记逆序各执行一次；关闭后登记抛出 `RuntimeError` |
+| `async with stream` | 离开上下文时关闭流，适用于提前退出、异常和取消 |
+
+文本和可见思考逐步输出；工具调用以完整参数提供，成功完成后才发布。
+提前退出或失败时，不能将部分文本视为完成的工具调用或成功结果。
+对可复用实例，关闭一个响应流不会关闭该实例。
+
+## 配置接口
+
+### `Attribute`、`Parameter`、`Config` 与 `omit`
+
+三种包装类型均为冻结、仅限关键字参数的 dataclass，通过 `.default_value` 读取值：
+
+| 类型 / 构造参数 | 用途 |
+| --- | --- |
+| `Attribute(default_value=..., comment=None)` | 模型 ID、上下文窗口或模型目录等数据；不参与配置继承 |
+| `Parameter(path=..., default_value=omit, supports=True, comment=None)` | 参数位置、默认值和支持状态；输入参数用于请求，输出参数用于读取响应字段 |
+| `Config(default_value=..., comment=None)` | 行为设置、连接选项或一组原生生成参数；字典按键合并 |
+| `omit` / `Omit` | 显式省略标记及其类型；`Omit()` 返回同一标记，布尔值为假 |
+
+`Parameter.name`、`Parameter.source` 和 `Config.name` 由所属 Profile 的声明固定，不接受构造参数。
+`source` 为 `input` 或 `output`；`comment` 仅用于说明。
+路径使用 `$.` 前缀、点分字段及非负列表索引，例如 `$.max_tokens`、`$.choices[0].delta.content`。
+`supports=False` 表示不支持自动路由，并将参数默认值设为 `omit`。
+
+配置的省略规则：
+
+| 值 | 含义 |
+| --- | --- |
+| Profile 字段为 `None` | 继承上一层声明 |
+| Profile 字段为 `omit` | 禁用该声明的自动应用 |
+| 包装对象的 `default_value=None` | 显式的空值 |
+| `Parameter(default_value=omit, ...)` | 不补默认值，已有原生值保留 |
+
+Parameter 覆盖时替换完整声明。Config 字典按键合并，嵌套值整体替换，键值 `omit` 删除该键。
+显式 token 控制和启用 reasoning 时生成的控制值优先于同位置的普通原生值。
+禁用一个参数声明不会删除手动提供的原生字段；`generate(max_tokens=omit)` 则删除本次请求的 token 目标键。
+
+### `ProviderProfile`
+
+`ProviderProfile(*, ...)` 描述连接和上游协议，所有字段默认 `None`，并继承下文的共享覆盖项：
+
+| 字段 | 包装类型 | 含义 |
+| --- | --- | --- |
+| `protocol` | `Config[Protocol]` | 使用时必须明确指定已注册协议名 |
+| `base_url` | `Config[str]` | 服务地址；未设置时遵循 SDK 默认值 |
+| `api_key` | `Parameter[str]` | 认证值及其位置；使用所选协议支持的密钥或认证头路径 |
+| `timeout` | `Config[float]` | 正数，单位为秒 |
+| `max_retries` | `Config[int]` | 非负重试次数；Ollama 仅接受未设置或 `0` |
+| `supports_stream` | `Config[bool]` | 生成要求支持流，默认继承协议的 `True` |
+| `usage_mode` | `Config[str]` | 协议支持的用量模式，内置协议默认 `"none"` |
+| `models` | `Attribute[list[ModelProfile]]` | 可选模型目录，不自动选择生成模型 |
+
+模型目录方法直接修改当前 Provider 的目录，不影响已经创建的 MyLLM：
+
+| 方法 | 行为 |
+| --- | --- |
+| `add_models(model_profile)` | 接收单个 `ModelProfile` 或列表；按 ID 替换，新 ID 追加，已有 ID 保留原位置；重复 ID 后者优先 |
+| `list_models()` | 返回目录列表副本，未设置时为 `[]`；其中的模型对象复用原对象 |
+| `delete_model(model_id)` | 接收 ID 字符串列表，忽略不存在的 ID；空列表合法 |
+
+修改方法返回 `None`；输入无效时抛出 `ConfigurationError`，目录保持原状。
+
+### `ModelProfile`
+
+`ModelProfile(*, model, ...)` 描述模型及其覆盖项：
+
+| 字段 | 类型 / 默认值 | 含义 |
+| --- | --- | --- |
+| `model` | 必填 `Attribute[str]` | 非空模型 ID |
+| `max_context_window` | `Attribute[int]`，默认 `256000` | 描述性上下文窗口，不自动截断输入或限制输出 |
+| `supports_function_calling` | `Config[bool] \| Omit \| None`，默认继承 | 协议默认 `False`；使用非空 tools 前启用 |
+| `supports_message_name` | `Config[bool] \| Omit \| None`，默认继承 | 协议默认 `True`；控制消息名称支持 |
+
+`ModelProfile.supported_roles` 为固定类属性 `("system", "user", "assistant", "tool")`，不是构造参数。
+Provider 与 Model 均为冻结的、仅限关键字参数的 dataclass；用 `dataclasses.replace()` 创建配置变体。
+
+### `OverridableProfile`
+
+Provider 与 Model 共享以下覆盖项，均默认 `None`，表示继承：
+
+| 字段 | 包装类型 | 含义 |
+| --- | --- | --- |
+| `extra_headers` / `extra_body` | `Config[dict]` | 默认请求头与协议原生生成选项 |
+| `max_tokens` | 输入 `Parameter[int]` | 输出 token 上限 |
+| `content` / `reasoning_content` | 输出 `Parameter` | 可见文本与思考字段 |
+| `reasoning_enable` | 输入 `Parameter` | 开启思考的参数；`supports=False` 表示不支持 reasoning |
+| `reasoning_effort` | 输入 `Parameter` | 思考强度参数及支持状态 |
+| `reasoning_effort_mapping` | `Config[dict]` | 公共强度到原生值的映射；值为 `None` / `omit` 时该级别不可用 |
+| `replay_reasoning_content_when_tool_calls` | `Config[bool]` | 是否在工具历史中回放可见思考 |
+
+`ReasoningEffort` 是 `Literal["none", "low", "medium", "high", "xhigh", "max"]` 类型别名。
+可接受的强度还取决于具体模型及其配置。完整字段配置示例见[配置指南](configuration.md)。
+
+### `Profile` 成员查询
+
+`Profile` 是配置基类；Provider、Model、OverridableProfile 和 ProtocolDefaults 提供以下方法：
+
+| 方法 | 返回值 |
+| --- | --- |
+| `get_attributes()` | 所有声明为 Attribute 的字段字典 |
+| `get_configs()` | 所有声明为 Config 的字段字典 |
+| `get_parameters()` | 所有声明为 Parameter 的字段字典，包括不支持的参数 |
+
+结果按字段声明顺序排列，包含继承字段和未设置字段，排除类属性。
+键为字段名，值是当前字段的包装对象、`None` 或 `omit`；不会展开 `.default_value`。
+返回字典可独立增删，其中的对象与嵌套数据仍与原配置共享。
+
+### `resolve_profiles` 与 `ResolvedProfile`
+
+`resolve_profiles(provider, model) -> ResolvedProfile` 按协议默认值、Provider、Model 顺序解析，
+返回独立配置快照。无效声明或值抛出 `ConfigurationError`，不可用协议抛出 `UnsupportedProviderError`。
+直接集成时再调用 `MyCodec.validate_profile(resolved)` 检查协议约束；MyLLM 自动完成这些检查。
+
+| 属性 / 方法 | 含义 |
+| --- | --- |
+| `protocol` / `model` | 上游协议名和模型 ID |
+| `values` | 字段名到已解析默认值或行为配置的字典 |
+| `parameters` | 字段名到 Parameter 声明或 `omit` 的字典 |
+| `request_parameters` | 受支持的请求输入参数绑定元组 |
+| `connection` | 已验证的连接选项字典 |
+| `get(key, default=None)` | 读取值；缺失或 `omit` 返回 default，显式 `None` 保留 |
+| `parameter(name, source=None)` | 返回受支持的 Parameter；缺失、禁用、不支持或 source 不符时为 `None` |
+
+`source` 可选 `"input"` 或 `"output"`。默认值为 `omit` 的 Parameter 仍可受支持。
+快照及查询返回的嵌套对象应视为只读，通常通过解析函数获取此类型。
 
 ## 工具回合
 
-调用者执行工具；本库只转换声明、调用和结果，并校验消息间的 ID 对应关系。
-重复调用 ID、重复结果、未知结果 ID 和缺少结果均报错。
-Gemini/Ollama 中没有 ID 的调用按历史顺序建立局部 ID；无 ID 的结果按名称关联待完成调用。
+库返回工具调用，由应用执行工具、追加结果并再次生成。
+下面示例使用 Chat 输入输出协议，并明确开启工具能力：
 
 ```python
 import json
@@ -163,96 +326,133 @@ async def add_round_trip(provider, model_id):
         return await llm.generate(messages=history, tools=tools)
 ```
 
-`previous_response_id` 允许发送仅包含新消息/结果的历史，并允许结果引用服务端已保存的调用 ID。
-仅上游 API 为 `openai_responses` 时可用，不作为 input item 发送。
-原生 Responses 的 reasoning / encrypted_content / item_reference 等字段同协议回放保留。
+重复调用 ID、重复结果、未知结果 ID 和缺少结果均会报错。
+Gemini / Ollama 的无 ID 调用与结果须保持历史顺序与名称对应。
+`previous_response_id` 用于 Responses 上游时，可仅发送新增消息或结果，并引用服务端已有的调用。
 
-## 独立 Codec
+## `MyCodec` 协议转换
 
-`BaseCodec` 声明 ProtocolDefaults 并组合协议对应的 `BaseEncoder` / `BaseDecoder` / `BaseTransport`；它们不保存 profile、
-流片段或识别结果。每种协议独立一对 encoder/decoder。
-
-- `encode_messages` / `decode_messages`
-- `encode_tools` / `decode_tools`
-- `encode_chunks` / `decode_chunks`
-
-以上方法签名均为 `(values: list, profile: ResolvedProfile | None = None, **parameters)`。
-encode 从标准协议到内部开放字典；decode 从内部字典到标准协议。
-`profile=None` 表示标准协议，有 profile 时应用厂商配置。
-BaseCodec 的 `match_protocol(values)` 返回协议名或 None。
-MyCodec 的 `match_protocol(values)` 只有在整批输入唯一匹配时返回协议名；零匹配或多匹配返回 None。
+`MyCodec()` 创建转换器，不发送请求。协议名必须已注册；官方协议需要安装对应 SDK 可选依赖。
+转换调用不修改原始业务输入。
 
 ```python
 from my_llm import MyCodec
 
 codec = MyCodec()
-intermediate = codec.encode(
+converted = codec.convert(
     messages=[{"role": "user", "content": "Hello"}],
     input_format="openai_chat",
+    target_format="gemini",
 )
-native = codec.decode(**intermediate, target_format="gemini")
-assert native["messages"] == [{"role": "user", "parts": [{"text": "Hello"}]}]
-
-# 同样可用 codec.convert(..., input_format=..., target_format=...) 一步转换。
+assert converted["messages"] == [{"role": "user", "parts": [{"text": "Hello"}]}]
 ```
 
-MyCodec 持有创建时的注册快照，默认包含五个内置 Codec，可复用于不同转换路径。
-`MyCodec.register(codec: BaseCodec) -> None` 是静态注册入口，须早于 MyCodec / MyLLM 实例创建；
-既有实例保留原快照，重名注册报 ConfigurationError。实现与注册示例见[接入指南](../guides/adding-protocol.md)。
-中间态是内部实现，不是应用消息协议。
-Encoder 和 Decoder 只翻译明确识别的协议字段。未知字段不进入中间态，也不出现在翻译输出中；
-非标准差异通过 Profile 明确支持的字段路径、参数绑定或思考回放配置处理。
-工具参数、结果对象和 JSON Schema 等已识别开放字典完整保留内部应用键值。
+### 转换方法
 
-原生 Anthropic 签名、redacted thinking、Responses encrypted_content 等标准字段由协议实现
-显式处理；跨协议转换不附加隐藏快照或恢复记录，也不保证转换回原协议后恢复原始对象。
-流式多轮对话应保存 stream.result，完整文本不能替代工具调用及原生内容块。
-
-实际请求由 Decoder 过滤并校验目标 SDK 支持的结构，不修改业务历史。
-详见[翻译字段边界](../design/translation-boundaries.md)与[兼容边界](configuration.md#跨协议请求的处理边界)。
-
-## 异常边界
-
-`ConfigurationError` 表示配置错误，`MessageValidationError` 表示标准输入/消息关联错误；
-`UnsupportedCapabilityError` 表示模型禁用了所需能力，或目标协议 / SDK 无法安全表达必要内容或约束。SDK HTTP/传输错误保持原有类型。
-`StreamError` 及其子类包含原生 `details` 和相同 stdio 协议的 `partial_message`。
-缺少消息级终止事件报 `IncompleteStreamError`；Responses failed/incomplete 使用对应子类。
-本库不提供消息内部中断恢复、工具执行或部分 JSON 工具调用接口。
-
-`MyCodec.convert(chunks=完整事件列表, input_format=..., target_format=...)` 也可离线转换
-整个流；跨协议的完整 batch 在本次调用内组装，不保存到转换器。
-实时消费使用 MyLLM，由每次请求持有累积状态；BaseEncoder/BaseDecoder 仍只转换单次传入的块。
-
-Encoder 验证并编码输入；Decoder 统一准备选项、映射路径、过滤和验证最终 SDK 请求。
-Transport 只负责 SDK 客户端创建、调用及响应资源管理。MyLLM 构造时准备连接参数，
-每次 generate 将所有输入字段打包后送入 MyCodec.prepare，最终得到三个明确的字典：
-
-| 键 | 内容 |
+| 方法 | 输入与返回 |
 | --- | --- |
-| client | 已准备的 SDK 构造参数；SDK 将动态参数绑定客户端时使用请求独立变体。 |
-| request | 过滤和验证后的 SDK 调用 kwargs。 |
-| local | stream（业务返回方式）、client_key（实例客户端复用键）。 |
+| `convert(messages=None, tools=None, *, input_format, target_format, profile=None, chunks=None, **parameters)` | 标准协议直接转换为目标标准协议 |
+| `encode(messages=None, tools=None, *, input_format, profile=None, chunks=None, **parameters)` | 将标准值转换为供后续转换接口使用的中间值 |
+| `decode(messages=None, tools=None, *, target_format, profile=None, chunks=None, **parameters)` | 将中间值转换为目标标准值 |
+| `result(messages, *, target_format)` | 将中间消息列表转换为完整结果：单个消息字典，或 Responses items 列表 |
 
-MyCodec.client_parameters(profile) 按实例准备连接字典；
-MyCodec.prepare(inputs, profile, *, input_format, client) 处理完整调用；
-MyCodec.request(intermediate, profile, **parameters) 继续提供离线构造裸 SDK 请求的入口。
-这些接口均不创建 SDK 客户端。可运行示例见[请求准备](../../examples/request_pipeline.py)。
+前三个方法返回字典，只包含传入的 `messages`、`tools`、`chunks` 键，各值为列表。
+参数为 `None` 时该键不出现在返回值中，空列表仍保留。
+`profile=None` 表示标准字段行为；`convert` 的 profile 和额外选项作用于目标转换。
+额外选项由目标协议支持情况决定，例如事件中的 `model`。
 
-| 实现 | 必须提供 |
+`convert(chunks=完整事件列表, ...)` 支持离线转换完整响应流。
+实时响应请使用 `MyLLM.generate(stream=True)`；转换器不记住前一次调用的流片段。
+中间值用于转换接口之间传递，应用对话历史使用标准协议值。
+
+### 验证、注册和高级调用
+
+| 方法 / 属性 | 契约 |
 | --- | --- |
-| BaseCodec | protocol_or_api_style、defaults、encoder / decoder / transport。 |
-| BaseEncoder | protocol、message_type / tool_type、_messages / _tools / _chunks、match_item、usage。 |
-| BaseDecoder | protocol、request_schema、message_type / tool_type、message_path / tool_path、_messages / _tools / _chunks、usage、assemble_request。 |
-| BaseTransport | create_client(parameters)、upstream(client, request)；close_client 可覆盖。 |
+| `codecs` | 构造时可用的协议名到 BaseCodec 的映射，按只读使用 |
+| `MyCodec.register(codec)` | 注册 BaseCodec；须早于使用它的 MyCodec / MyLLM 创建；重名或无效实现抛出 `ConfigurationError` |
+| `match_protocol(messages_or_tools)` | 整批输入唯一匹配时返回协议名，否则为 `None` |
+| `validate_input(protocol, messages, tools=None)` | 验证指定协议的输入，失败抛出 `MessageValidationError` |
+| `validate_profile(profile)` | 验证已解析配置的协议约束，失败抛出配置或能力异常 |
+| `decoder(protocol)` / `transport(protocol)` | 获取指定协议的 BaseDecoder / BaseTransport |
+| `bind_input(inputs, protocol)` | 返回显式协议或从 messages/tools 唯一推断；推断时更新传入字典的这两个值；不记住协议 |
+| `client_parameters(profile)` | 返回连接参数字典 |
+| `prepare(inputs, profile, *, input_format, client)` | 准备完整调用，返回 `client`、`request`、`local` 三个字典；inputs 需包含 messages、tools、stream 和使用的生成选项 |
+| `request(intermediate, profile, **parameters)` | 从 encode 返回的消息与可选工具构造原生请求参数字典 |
+| `upstream(client, request, profile)` | 返回异步上下文管理器，迭代原生事件；退出时关闭响应，由调用者管理 client |
 
-Decoder 的 validate_parameters 每次解析一次 PreparedOptions，request_parameters 应用 decode 声明，
-assemble_request 仅向已有字典写入消息和工具；native_request 负责历史、能力、Schema 过滤和验证。
-client_parameters、request_client 和 client_key 处理实例连接映射及请求级客户端变体，不操作 SDK 客户端。
-BaseEncoder.parameter_value 固定读取 encode 参数；标准响应翻译仍通过公开独立出口返回副本。
+`prepare` 的 `client` 参数来自 `client_parameters`。返回值中 `client` 是 SDK 构造参数，
+`request` 是 SDK 调用参数，`local` 包含 `stream` 和 `client_key`。
+参数准备接口均不创建客户端或发出请求。
+新增注册仅对后续创建的实例可见；实现要求和完整接入示例见[协议接入指南](../guides/adding-protocol.md)。
 
-Profile 从注册的 Codec.defaults 解析配置、校验通用字段并建立快照，不创建 SDK 客户端。
-字段 None 继承，wrapper.default_value=None 为实际值；name / comment 仅用于展示。
-连接 Parameter 通过 dataclass 字段 metadata 的 scope="client" 声明；内置 api_key 已设置。
-其余 decode Parameter 默认属于请求，Config 由协议实现解释。
-MyLLM 已在构造时调用 codec.validate_profile；直接使用 resolve_profiles / MyCodec 的集成也应先调用。
-完整实现和覆盖钩子见[接入协议指南](../guides/adding-protocol.md)。
+五个内置 Codec 类从 `my_llm.codec` 导入，均无需构造参数，提供 BaseCodec 接口：
+
+| 类 | 协议名 | 所需可选依赖 |
+| --- | --- | --- |
+| `ChatCompletionsCodec` | `openai_chat` | `my-llm-py[openai]` |
+| `ResponsesCodec` | `openai_responses` | `my-llm-py[openai]` |
+| `AnthropicCodec` | `anthropic` | `my-llm-py[anthropic]` |
+| `GeminiCodec` | `gemini` | `my-llm-py[google-genai]` |
+| `OllamaCodec` | `ollama` | `my-llm-py[ollama]` |
+
+内置协议在对应依赖可用时自动注册，无需再次手动注册。
+
+## 协议扩展接口
+
+以下接口供自定义协议集成使用。具体字段定义与实现示例见[协议接入指南](../guides/adding-protocol.md)，
+各方法的完整签名可通过 docstring 或 IDE 查看。
+
+| 类型 | 公开契约 |
+| --- | --- |
+| `BaseCodec` | 抽象协议接口；提供 protocol_or_api_style、defaults、encoder、decoder、transport 属性 |
+| `BaseEncoder` | 将原生消息、工具和事件转换为中间值；协议名、消息及工具 schema 由子类声明 |
+| `BaseDecoder` | 将中间值转换为原生值，验证配置并构造原生请求参数 |
+| `BaseTransport` | 创建、关闭 SDK 客户端并提供原生异步响应事件 |
+| `ProtocolDefaults` | 协议默认配置，冻结且仅限关键字参数；必填 replay_reasoning_content_when_tool_calls，其余为标准参数与能力默认值 |
+| `PreparedOptions` | 已验证的生成控制值，通常由 BaseDecoder.validate_parameters 返回 |
+
+`BaseCodec` 提供 `encode_messages` / `decode_messages`、`encode_tools` / `decode_tools`、
+`encode_chunks` / `decode_chunks`，签名均为 `(values, profile=None, **parameters)`，返回字典列表。
+`match_protocol(values)` 返回本协议名或 `None`；`validate_input`、`validate_profile` 和 `request`
+分别验证输入、验证配置、返回原生请求参数。
+
+BaseEncoder / BaseDecoder 的 `messages`、`tools`、`chunks` 采用相同参数约定，分别执行对应方向的转换；
+`usage(value)` 转换用量数据，缺失时返回 `None`。
+BaseEncoder 还提供 `matches` / `match_item`、`validate_input`、`validate_values`、
+`parameter_value` 和 `request`。BaseDecoder 提供请求准备、过滤、验证及连接选项的扩展方法；
+覆写要求见接入指南与对应方法 docstring。
+
+BaseTransport 的 `create_client(parameters)` 返回调用者拥有的 SDK 客户端；
+`await close_client(client)` 释放客户端；`upstream(client, request)` 提供异步事件上下文。
+退出响应上下文后再关闭客户端。
+
+`PreparedOptions` 的字段为 `tokens`、`headers`、`body`、`effort`、`explicit_tokens=False`，
+分别表示已解析 token 控制、请求头、原生选项、映射后的强度或 `None`，以及是否显式传入 token 控制。
+其构造参数可按字段顺序或名称传入；嵌套字典按只读使用。
+
+## 异常
+
+| 异常 | 继承关系 | 含义 |
+| --- | --- | --- |
+| `MyLLMError` | `Exception` | 库异常基类 |
+| `ConfigurationError` | `MyLLMError`、`ValueError` | 无效配置、路径或生成选项 |
+| `UnsupportedProviderError` | `ConfigurationError` | 协议不可用或不能用于生成 |
+| `UnsupportedCapabilityError` | `ConfigurationError` | 模型能力不支持，或目标协议无法表达必要内容或约束 |
+| `MessageValidationError` | `ConfigurationError` | 输入格式、协议推断或工具调用与结果关联错误 |
+| `StreamError` | `MyLLMError` | 流式或非流式响应失败 |
+| `IncompleteStreamError` | `StreamError` | 响应未完整结束 |
+| `ResponseFailedError` | `StreamError` | Responses 返回 failed / error 事件 |
+| `ResponseIncompleteError` | `IncompleteStreamError` | Responses 返回 incomplete 状态 |
+
+`StreamError(message, *, details=None, partial_message=None)` 及其子类提供：
+
+- `details`：可用时为原生错误或状态信息。
+- `partial_message`：可用时为与 stdio 协议一致的部分消息或 items，不能作为成功结果使用。
+
+官方 SDK 的 HTTP、认证与传输异常保留原始类型；对已关闭对象的不合法操作使用 `RuntimeError`。
+导入内置 Codec 或选择缺少对应 SDK 的上游协议时抛出 `ModuleNotFoundError`，错误信息包含所需安装项。
+
+## 版本
+
+`my_llm.__version__` 是当前库版本字符串。

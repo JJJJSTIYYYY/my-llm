@@ -11,22 +11,36 @@ from my_llm import (
     IncompleteStreamError,
     MessageValidationError,
     MyCodec,
-    UnsupportedCapabilityError,
+    SemanticLossError,
 )
 from my_llm.codec.gemini.encoding.content import json_schema
 from my_llm.stream._state import StreamState
 from tests.helpers.protocols import PROTOCOLS, response_completed, stream_events
-from tests.helpers.sdk import EVENT_TYPES, MESSAGE_TYPES, TOOL_TYPES, assert_native
+from tests.helpers.sdk import (
+    EVENT_TYPES,
+    MESSAGE_TYPES,
+    TOOL_TYPES,
+    assert_native,
+    assert_output_native,
+)
 from tests.helpers.streaming import render
 
 PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="
 JPEG = "/9j/wAALCAABAAEBAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9sAQwACAgICAgIDAgIDBQMDAwUGBQUFBQYIBgYGBgYICggICAgICAoKCgoKCgoKDAwMDAwMDg4ODg4PDw8PDw8PDw8P/90ABAAB/9oACAEBAAA/AP38r//Z"
 
 
-def native_events(protocol, events):
+def native_events(protocol, events, *, source=False):
     for event in events:
         schema = EVENT_TYPES[protocol]
-        assert_native(event, schema[event["type"]] if isinstance(schema, dict) else schema)
+        projected = event
+        if protocol == "openai_chat" and not source:
+            projected = deepcopy(event)
+            for choice in projected.get("choices", []):
+                reasoning = choice.get("delta", {}).pop("reasoning_content", None)
+                assert reasoning is None or isinstance(reasoning, str)
+        (assert_native if source else assert_output_native)(
+            projected, schema[event["type"]] if isinstance(schema, dict) else schema
+        )
 
 
 @pytest.mark.parametrize("target", PROTOCOLS)
@@ -59,10 +73,13 @@ def test_a01_gemini_native_schema_constraints_survive_explicit_normalization(
     codec = MyCodec()
     encoded = codec.encode(tools=[incoming], input_format="gemini")
     if target == "ollama":
-        with pytest.raises(UnsupportedCapabilityError, match="discard tool parameter schema"):
-            codec.decoder(target).filter_tools(
-                codec.decode(**encoded, target_format=target)["tools"], profile_factory(target)
-            )
+        with pytest.raises(SemanticLossError, match="discard tool parameter schema") as captured:
+            codec.decode(**encoded, target_format=target)
+        assert (
+            captured.value.losses.items[0].origin_path
+            == "$.tools[0].function_declarations[0].parameters"
+        )
+        assert captured.value.draft["tools"][0]["function"]["name"] == "f"
         return
     result = codec.decode(**encoded, target_format=target)["tools"]
     assert_native(result[0], TOOL_TYPES[target])
@@ -129,30 +146,18 @@ def refusal_events(source):
 @pytest.mark.parametrize("target", PROTOCOLS)
 def test_a03_refusal_is_accumulated_inside_target_lifecycle(source, target):
     incoming = refusal_events(source)
-    native_events(source, incoming)
+    native_events(source, incoming, source=True)
     output, state = render(source, target, incoming)
     native_events(target, output)
-    assert "No" in str(MyCodec().decode(state.messages(), target_format=target)["messages"])
-    if target == "openai_chat":
-        assert (
-            "".join(
-                event["choices"][0]["delta"].get("refusal", "")
-                for event in output
-                if event["choices"]
-            )
-            == "No"
-        )
-        assert MyCodec().decode(state.messages(), target_format=target)["messages"] == [
-            {"role": "assistant", "content": None, "refusal": "No"}
-        ]
+    assert '"No"' not in json.dumps(
+        MyCodec().decode(state.messages(), target_format=target)["messages"]
+    )
+    assert "refusal" not in str(output)
+    assert "refusal" not in str(state.messages())
     if target == "openai_responses":
         assert output[0]["type"] == "response.created"
         assert output[-1]["type"] == "response.completed"
         assert [event["sequence_number"] for event in output] == list(range(len(output)))
-        added = next(event for event in output if event["type"] == "response.output_item.added")
-        assert all(
-            event.get("item_id", added["item"]["id"]) == added["item"]["id"] for event in output
-        )
 
 
 def test_a04_stop_sequence_is_preserved_natively_and_translates_to_chat_stop():
@@ -164,7 +169,14 @@ def test_a04_stop_sequence_is_preserved_natively_and_translates_to_chat_stop():
         if target == "anthropic":
             assert output[-2]["delta"] == {"stop_reason": "stop_sequence", "stop_sequence": "END"}
         else:
-            assert output[-2]["choices"][0]["finish_reason"] == "stop"
+            assert (
+                next(
+                    event["choices"][0]["finish_reason"]
+                    for event in output
+                    if event.get("choices") and event["choices"][0]["finish_reason"] is not None
+                )
+                == "stop"
+            )
 
 
 def test_a04_filtering_does_not_become_gemini_stop():
@@ -191,7 +203,7 @@ def test_a05_source_control_fields_do_not_leak_into_chat():
     assert "index" not in result[0]["tool_calls"][0]["function"]
     assert_native(result[0], MESSAGE_TYPES["openai_chat"])
     native = codec.convert(call, input_format="ollama", target_format="ollama")["messages"]
-    assert native[0]["tool_calls"][0]["function"] == {"index": 0, "name": "f", "arguments": {}}
+    assert native[0]["tool_calls"][0]["function"] == {"name": "f", "arguments": {}}
 
 
 @pytest.mark.parametrize("image,mime", [(PNG, "image/png"), (JPEG, "image/jpeg")])
@@ -216,7 +228,7 @@ def test_a06_unknown_image_format_is_explicit(image):
         )
 
 
-def test_a07_citation_deltas_are_in_the_collected_message_and_native_stream():
+def test_a07_citation_deltas_are_outside_the_supported_field_set():
     incoming = stream_events("anthropic")
     citation = {
         "type": "char_location",
@@ -237,8 +249,9 @@ def test_a07_citation_deltas_are_in_the_collected_message_and_native_stream():
     output, state = render("anthropic", "anthropic", incoming)
     native_events("anthropic", output)
     collected = MyCodec().decode(state.messages(), target_format="anthropic")["messages"][0]
-    assert collected["content"][0]["citations"] == [citation]
-    assert any(event.get("delta", {}).get("citation") == citation for event in output)
+    assert collected["content"][0] == {"type": "text", "text": "Hello"}
+    assert "citations" not in str(output)
+    assert "citation" not in str(state.messages())
 
 
 @pytest.mark.parametrize(
@@ -283,24 +296,22 @@ def test_a08_tool_result_becomes_an_ollama_string(content, expected):
     ],
 )
 def test_a09_foreign_thinking_does_not_forge_an_anthropic_signature(source, incoming):
-    result = MyCodec().convert(incoming, input_format=source, target_format="anthropic")["messages"]
-    assert result == [{"role": "assistant", "content": [{"type": "text", "text": "Thinking"}]}]
-    assert_native(result[0], MESSAGE_TYPES["anthropic"])
+    with pytest.raises(SemanticLossError) as captured:
+        MyCodec().convert(incoming, input_format=source, target_format="anthropic")
+    assert "Thinking" not in str(captured.value.draft)
+    assert "Thinking" in str(captured.value.losses.items[0].origin_value)
 
 
 def test_a09_foreign_thinking_stream_uses_anthropic_text_blocks():
     incoming = stream_events("openai_chat")
     incoming[1]["choices"][0]["delta"] = {"reasoning_content": "Thinking"}
-    output, state = render("openai_chat", "anthropic", incoming)
-    native_events("anthropic", output)
-    assert not any(event.get("content_block", {}).get("type") == "thinking" for event in output)
-    assert not any(event.get("delta", {}).get("type") == "signature_delta" for event in output)
-    assert "Thinking" in str(
-        MyCodec().decode(state.messages(), target_format="anthropic")["messages"]
-    )
+    with pytest.raises(SemanticLossError) as captured:
+        render("openai_chat", "anthropic", incoming)
+    assert "signature_delta" not in str(captured.value.draft)
+    assert "Thinking" not in str(captured.value.draft)
 
 
-def test_a10_chat_document_url_becomes_a_text_reference():
+def test_a10_document_url_is_silently_discarded():
     incoming = [
         {
             "role": "user",
@@ -312,7 +323,7 @@ def test_a10_chat_document_url_becomes_a_text_reference():
     result = MyCodec().convert(incoming, input_format="anthropic", target_format="openai_chat")[
         "messages"
     ]
-    assert result == [{"role": "user", "content": "https://example.com/a.pdf"}]
+    assert result == [{"role": "user", "content": ""}]
     assert_native(result[0], MESSAGE_TYPES["openai_chat"])
 
 
@@ -399,9 +410,14 @@ def test_foreign_thinking_streams_can_be_consumed_without_forged_signatures(sour
         ]
         for index, event in enumerate(native):
             event["sequence_number"] = index
+    if source != target and (
+        target in ("anthropic", "gemini") or source in ("anthropic", "gemini", "openai_responses")
+    ):
+        with pytest.raises(SemanticLossError):
+            render(source, target, native)
+        return
     output, _ = render(source, target, native)
-    if target != "openai_chat" or source != target:
-        native_events(target, output)
+    native_events(target, output)
     reconstructed = StreamState("demo")
     reconstructed.feed(MyCodec().encode(chunks=output, input_format=target)["chunks"])
     reconstructed.finish()
@@ -450,7 +466,7 @@ def test_foreign_tool_extensions_cannot_become_native_request_fields(
     assert incoming == before
 
 
-def test_a07_deferred_citations_follow_their_text_block_and_survive_collection():
+def test_a07_deferred_citations_are_discarded_without_changing_text():
     citation = {
         "type": "char_location",
         "cited_text": "source",
@@ -498,12 +514,13 @@ def test_a07_deferred_citations_follow_their_text_block_and_survive_collection()
         for event in output
         if event.get("index") == 1 and event["type"] == "content_block_delta"
     ]
-    assert deltas == ["text_delta", "citations_delta"]
-    assert state.messages()[0]["content"][1]["citations"] == [citation]
+    assert deltas == ["text_delta"]
+    assert "citations" not in str(state.messages())
     reconstructed = StreamState("demo")
     reconstructed.feed(MyCodec().encode(chunks=output, input_format="anthropic")["chunks"])
     reconstructed.finish()
-    assert reconstructed.messages()[0]["content"][1]["citations"] == [citation]
+    assert "citations" not in str(reconstructed.messages())
+    assert "Hello" in str(reconstructed.messages())
 
 
 @pytest.mark.parametrize(
@@ -601,7 +618,7 @@ def test_latest_response_required_fields_cannot_be_hidden_by_sdk_defaults(field)
         validate_event("openai_responses", complete)
 
 
-def test_latest_response_native_metadata_and_logprobs_are_preserved():
+def test_latest_response_metadata_is_discarded_and_required_fields_use_empty_defaults():
     incoming = stream_events("openai_responses")
     metadata = {
         "temperature": 0.2,
@@ -615,7 +632,10 @@ def test_latest_response_native_metadata_and_logprobs_are_preserved():
     output, _ = render("openai_responses", "openai_responses", incoming)
     native_events("openai_responses", output)
     for frame in [output[0], output[-1]]:
-        assert all(frame["response"][key] == value for key, value in metadata.items())
+        assert frame["response"]["metadata"] == {}
+        assert frame["response"]["instructions"] is None
+        assert frame["response"]["temperature"] is None
+        assert frame["response"]["top_p"] is None
     parts = [
         event["part"]
         for event in output
@@ -697,13 +717,13 @@ def test_native_response_reasoning_and_tool_item_ids_remain_replayable():
         for event in output
         if event["type"] == "response.reasoning_summary_text.delta"
     ] == [0, 1]
-    assert json.loads(
-        "".join(
-            event["delta"]
-            for event in output
-            if event["type"] == "response.function_call_arguments.delta"
-        )
-    ) == json.loads(call["arguments"])
+    assert not any(event["type"] == "response.function_call_arguments.delta" for event in output)
+    complete_arguments = [
+        event["arguments"]
+        for event in output
+        if event["type"] == "response.function_call_arguments.done"
+    ]
+    assert [json.loads(value) for value in complete_arguments] == [json.loads(call["arguments"])]
 
 
 def test_unsupported_response_progress_and_items_do_not_pass_through_as_opaque():
@@ -756,7 +776,7 @@ def test_response_stream_metadata_does_not_alias_request_state():
     assert created["response"]["metadata"] == {"source": "original"}
 
 
-def test_assistant_image_history_uses_responses_input_parts_without_fake_output_ids(
+def test_assistant_image_history_is_outside_the_supported_field_set(
     profile_factory,
 ):
     from tests.helpers.schema import validate_request
@@ -769,27 +789,24 @@ def test_assistant_image_history_uses_responses_input_parts_without_fake_output_
     request = codec.request(
         codec.encode(incoming, input_format="gemini"), profile_factory("openai_responses")
     )
-    assert request["input"][0] == {
-        "type": "message",
-        "role": "assistant",
-        "content": [
-            {"type": "input_image", "image_url": f"data:image/png;base64,{PNG}", "detail": "auto"}
-        ],
-    }
+    assert PNG not in str(request)
+    assert "input_image" not in str(request["input"])
+    assert request["input"][1]["content"] == [{"type": "input_text", "text": "Describe it"}]
     validate_request("openai_responses", request)
     assert_native(request["input"][0], MESSAGE_TYPES["openai_responses"])
 
 
 @pytest.mark.parametrize("target", ["openai_chat", "openai_responses"])
-def test_unrepresentable_foreign_binary_reply_media_does_not_become_invalid_messages(target):
+def test_assistant_binary_media_is_discarded_without_semantic_loss(target):
     incoming = [
         {"role": "model", "parts": [{"inline_data": {"mime_type": "image/png", "data": PNG}}]}
     ]
-    with pytest.raises(UnsupportedCapabilityError, match="media"):
-        MyCodec().convert(incoming, input_format="gemini", target_format=target)
+    result = MyCodec().convert(incoming, input_format="gemini", target_format=target)
+    assert PNG not in str(result)
+    assert "image" not in str(result)
 
 
-def test_assistant_image_url_can_be_a_chat_text_reference():
+def test_assistant_image_url_does_not_become_a_chat_text_reference():
     incoming = [
         {
             "role": "model",
@@ -801,5 +818,5 @@ def test_assistant_image_url_can_be_a_chat_text_reference():
     message = MyCodec().convert(incoming, input_format="gemini", target_format="openai_chat")[
         "messages"
     ][0]
-    assert message == {"role": "assistant", "content": "https://example.com/a.png"}
+    assert message == {"role": "assistant", "content": None}
     assert_native(message, MESSAGE_TYPES["openai_chat"])

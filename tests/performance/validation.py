@@ -5,6 +5,7 @@ import json
 
 from jsonschema import Draft202012Validator
 
+from my_llm import ReasoningContent, TextContent, ToolCall
 from tests.helpers.schema import validate_request
 from tests.helpers.sdk import EVENT_TYPES, MESSAGE_TYPES, TOOL_TYPES, assert_native
 from tests.performance.workloads import PNG, Workload, arguments, parameters
@@ -27,6 +28,14 @@ def validate_workload(workload: Workload):
 
 def result_parts(protocol: str, result):
     """Extract public fields directly, independently of MyCodec conversion."""
+    if protocol == "middleware":
+        return (
+            "".join(part.text for part in result.content if isinstance(part, TextContent)),
+            "".join(
+                part.reasoning for part in result.content if isinstance(part, ReasoningContent)
+            ),
+            [(part.name, part.arguments) for part in result.content if isinstance(part, ToolCall)],
+        )
     messages = result if isinstance(result, list) else [result]
     texts, thoughts, calls = [], [], []
     for message in messages:
@@ -75,12 +84,21 @@ def result_parts(protocol: str, result):
 
 def validate_result(workload: Workload, stdio: str, result):
     actual_text, actual_reason, calls = result_parts(stdio, result)
-    native_reasoning = stdio == workload.protocol or stdio == "ollama"
-    expected_text = workload.answer if native_reasoning else workload.reasoning + workload.answer
-    expected_reason = workload.reasoning if native_reasoning else ""
-    assert actual_text == expected_text
-    assert actual_reason == expected_reason
+    assert actual_text == workload.answer
+    assert actual_reason == workload.reasoning
     assert calls == [(call["name"], call["input"]) for call in workload.calls]
+
+
+def result_value(value):
+    """Compare tool-result text independently of the target's native envelope."""
+    if isinstance(value, list):
+        assert all(part.get("type") in ("text", "input_text") for part in value)
+        value = "".join(part["text"] for part in value)
+    if isinstance(value, str):
+        return json.loads(value)
+    if isinstance(value, dict) and set(value) == {"result"}:
+        return result_value(value["result"])
+    return value
 
 
 def validate_exchange(workload: Workload, stdio: str, result, sdk):
@@ -105,6 +123,7 @@ def validate_exchange(workload: Workload, stdio: str, result, sdk):
             if item.get("type") == "function_call"
         ]
         results = [item for item in body["input"] if item.get("type") == "function_call_output"]
+        result_values = [item["output"] for item in results]
         schemas = [function["parameters"] for function in functions]
         images = [
             part["image_url"].partition(",")[2]
@@ -118,6 +137,7 @@ def validate_exchange(workload: Workload, stdio: str, result, sdk):
         blocks = [block for message in body["messages"] for block in message["content"]]
         calls = [(block["name"], block["input"]) for block in blocks if block["type"] == "tool_use"]
         results = [block for block in blocks if block["type"] == "tool_result"]
+        result_values = [block["content"] for block in results]
         schemas = [function["input_schema"] for function in functions]
         images = [block["source"]["data"] for block in blocks if block["type"] == "image"]
     elif protocol == "gemini":
@@ -131,6 +151,7 @@ def validate_exchange(workload: Workload, stdio: str, result, sdk):
             if "functionCall" in part
         ]
         results = [part for part in parts if "functionResponse" in part]
+        result_values = [part["functionResponse"]["response"] for part in results]
         schemas = [function["parameters_json_schema"] for function in functions]
         images = [
             part["inlineData"]["data"]
@@ -150,6 +171,7 @@ def validate_exchange(workload: Workload, stdio: str, result, sdk):
             for call in message.get("tool_calls", [])
         ]
         results = [message for message in body["messages"] if message["role"] == "tool"]
+        result_values = [message["content"] for message in results]
         schemas = [function["parameters"] for function in functions]
         images = (
             [
@@ -179,3 +201,10 @@ def validate_exchange(workload: Workload, stdio: str, result, sdk):
     ]
     assert calls == expected_calls
     assert len(results) == len(expected_calls)
+    expected_output = {
+        "status": "ok",
+        "records": [
+            arguments(workload.size, index) for index in range(workload.size.parallel_calls)
+        ],
+    }
+    assert all(result_value(value) == expected_output for value in result_values)

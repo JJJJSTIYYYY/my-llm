@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack
-from copy import deepcopy
 from typing import Any
 
+from my_llm.middleware import MessageEvent
 from my_llm.stream._state import StreamState
 
 
-class MessageStream(AsyncIterator[dict[str, Any]]):
-    """A closable asynchronous iterator of protocol-native event dictionaries.
+class MessageStream(AsyncIterator[dict[str, Any] | MessageEvent]):
+    """A closable iterator of native event dictionaries or middleware MessageEvents.
 
     Obtain streams from ``await llm.generate(..., stream=True)``. Text and visible
     reasoning arrive incrementally; tool calls are exposed with complete arguments.
@@ -19,12 +19,15 @@ class MessageStream(AsyncIterator[dict[str, Any]]):
     response. Iteration is single-use; do not consume the same stream concurrently.
 
     Attributes:
-        result: Independent copy of the completed native message, or Responses
-            output items. None until successful exhaustion, including after an
+        result: The completed native message, or Responses
+            output items; AssistantMessage for stdio_protocol="middleware".
+            None until successful exhaustion, including after an
             early close. Save this result as conversation history.
     """
 
-    def __init__(self, iterator: AsyncGenerator[dict[str, Any], None], state: StreamState) -> None:
+    def __init__(
+        self, iterator: AsyncGenerator[dict[str, Any] | MessageEvent, None], state: StreamState
+    ) -> None:
         self._iterator = iterator
         self._state = state
         self._closed = False
@@ -42,14 +45,18 @@ class MessageStream(AsyncIterator[dict[str, Any]]):
 
     @property
     def result(self) -> Any:
-        """Return a deep copy of the completed message/items, or None before completion."""
-        return deepcopy(self._state.result)
+        """Return the completed draft itself, or None before successful completion.
+
+        This request owns its result. Repeated reads return the same object, including
+        edits made by an output semantic-loss hook or the caller.
+        """
+        return self._state.result
 
     def __aiter__(self) -> MessageStream:
         """Return this single-use asynchronous iterator."""
         return self
 
-    async def __anext__(self) -> dict[str, Any]:
+    async def __anext__(self) -> dict[str, Any] | MessageEvent:
         """Yield the next event; close on exhaustion, errors or cancellation."""
         if self._closed:
             raise StopAsyncIteration

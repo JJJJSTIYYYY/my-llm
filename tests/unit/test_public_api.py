@@ -16,6 +16,14 @@ from my_llm import (
 
 def test_public_contract_uses_standard_messages_and_one_protocol_field():
     for name in (
+        "ProtocolMiddleWare",
+        "SemanticLossError",
+        "SemanticLossItem",
+        "SemanticLossGroup",
+        "BaseSemanticLossAdaptor",
+        "Message",
+        "ToolCall",
+        "Usage",
         "MyCodec",
         "BaseCodec",
         "BaseEncoder",
@@ -36,10 +44,8 @@ def test_public_contract_uses_standard_messages_and_one_protocol_field():
     ):
         assert name in my_llm.__all__
     for name in (
-        "Message",
         "MessageChunk",
         "MessageInput",
-        "ToolCall",
         "FunctionCall",
         "APIType",
         "Codec",

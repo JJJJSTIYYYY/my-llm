@@ -6,7 +6,6 @@ Encoder validates borrowed inputs; Decoder filters owned SDK request leaves.
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
-from copy import deepcopy
 from functools import lru_cache
 from inspect import Parameter, signature
 from types import UnionType
@@ -24,7 +23,7 @@ from typing import (
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from my_llm.codec.shared.conversion import dictionary_views
+from my_llm.codec.shared.conversion import capture, dictionary_views
 from my_llm.exceptions import MessageValidationError, UnsupportedCapabilityError
 
 
@@ -69,9 +68,7 @@ def _structured(schema):
 
 
 def _copy_payload(value):
-    if type(value) in (str, int, float, bool, bytes, type(None)):
-        return value
-    return deepcopy(value)
+    return capture(value)
 
 
 def _borrow_payload(value):

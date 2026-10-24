@@ -1,30 +1,31 @@
 """openai/responses: intermediate to native output."""
 
-from copy import deepcopy
 from typing import Any
 
 from openai.resources.responses import AsyncResponses
 from openai.types.responses import ResponseInputItemParam, ToolParam
 
 from my_llm.codec.base.decoder import BaseDecoder
-from my_llm.codec.openai.responses.decoding.content import foreign_block, render_content
-from my_llm.codec.openai.responses.utils.metadata import response_parameters
+from my_llm.codec.openai.responses.decoding.content import (
+    _tool_output,
+    foreign_block,
+    render_content,
+)
 from my_llm.codec.shared.conversion import (
     decode_functions,
     dictionaries,
     json_arguments,
-    project_message,
     select,
     select_present,
     source_protocol,
-    tool_output,
 )
 from my_llm.codec.shared.options import PreparedOptions, validate_request_options
 from my_llm.codec.shared.stream import counts, events
 from my_llm.codec.shared.transport import parameter_types
-from my_llm.exceptions import ConfigurationError, ResponseFailedError, UnsupportedCapabilityError
+from my_llm.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
 from my_llm.profile.types import Omit
+from my_llm.semantic_loss import report_loss
 
 PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response_id"}
 
@@ -96,27 +97,32 @@ class ResponsesDecoder(BaseDecoder):
         result = []
         for message in dictionaries(messages):
             group_start = len(result)
-            if source_protocol(message) != PROTOCOL:
-                message = project_message(message, foreign_block)
-            content = message.get("content", [])
+            context_owner = source_protocol(message)
+            content = []
+            for block in message["content"]:
+                owner = block.get("protocol")
+                if (context_owner if owner is None else owner) != PROTOCOL:
+                    block = foreign_block(block)
+                if block is not None:
+                    content.append(block)
             pending = []
 
             def flush():
                 if pending:
-                    if message["role"] == "assistant" and profile is None:
-                        pending[:] = [
-                            {"type": "text", "text": block["source"]["url"]}
-                            if block.get("type") in ("image", "document")
-                            and block.get("source", {}).get("url")
-                            else block
-                            for block in pending
-                        ]
-                    media = any(block.get("type") in ("image", "document") for block in pending)
+                    media = any(block.get("type") == "image" for block in pending)
                     input_media = media and profile is not None
                     if media and message["role"] == "assistant" and profile is None:
-                        raise UnsupportedCapabilityError(
-                            "Responses output messages cannot represent foreign binary media"
-                        )
+                        retained = []
+                        for block in pending:
+                            if block.get("type") == "image":
+                                report_loss(
+                                    block, "Responses assistant output cannot represent images"
+                                )
+                            else:
+                                retained.append(block)
+                        pending[:] = retained
+                        if not pending:
+                            return
                     result.append(
                         {
                             "type": "message",
@@ -142,10 +148,6 @@ class ResponsesDecoder(BaseDecoder):
 
             for block in content:
                 kind = block.get("type")
-                if kind == "item_reference":
-                    flush()
-                    result.append(select(block, "type", "id"))
-                    continue
                 if kind not in ("tool_use", "tool_result", "thinking"):
                     if pending and block.get("item_id") != pending[0].get("item_id"):
                         flush()
@@ -170,7 +172,7 @@ class ResponsesDecoder(BaseDecoder):
                             "call_id": block["tool_use_id"],
                             "output": render_content(block["content"], role="user")
                             if isinstance(block.get("content"), list)
-                            else tool_output(block.get("content", "")),
+                            else _tool_output(block.get("content", "")),
                         }
                     )
                 else:
@@ -235,7 +237,11 @@ class ResponsesDecoder(BaseDecoder):
         result = []
         for event in events(chunks):
             kind = event.get("type")
-            usage = self.usage(event.get("usage"))
+            if kind in ("block_start", "block_stop", "tool", "block"):
+                owner = event["block"].get("protocol")
+                native_owner = (
+                    parameters.get("source_protocol") if owner is None else owner
+                ) == PROTOCOL
             index, part_index, item_id, native = self._address(event, parameters)
             if kind == "start":
                 result.append(
@@ -249,11 +255,7 @@ class ResponsesDecoder(BaseDecoder):
                     }
                 )
             elif kind == "block_start":
-                thinking = (
-                    event["block"].get("type") == "thinking"
-                    and parameters.get("source_protocol") == PROTOCOL
-                )
-                refusal = event["block"].get("type") == "refusal"
+                thinking = event["block"].get("type") == "thinking"
                 item = (
                     {"id": item_id, "type": "reasoning", "summary": []}
                     if thinking
@@ -281,86 +283,48 @@ class ResponsesDecoder(BaseDecoder):
                         "summary_index" if thinking else "content_index": part_index,
                         "part": {"type": "summary_text", "text": ""}
                         if thinking
-                        else {"type": "refusal", "refusal": ""}
-                        if refusal
                         else {"type": "output_text", "text": "", "annotations": [], "logprobs": []},
                     }
                 )
-            elif kind == "delta" and event.get("field") in ("text", "thinking", "refusal"):
-                thinking = (
-                    event["field"] == "thinking" and parameters.get("source_protocol") == PROTOCOL
-                )
-                refusal = event["field"] == "refusal"
+            elif kind == "delta" and event["field"] in ("text", "thinking"):
+                thinking = event["field"] == "thinking"
                 value = {
                     "type": "response.reasoning_summary_text.delta"
                     if thinking
-                    else "response.refusal.delta"
-                    if refusal
                     else "response.output_text.delta",
                     "item_id": item_id,
                     "output_index": index,
                     "summary_index" if thinking else "content_index": part_index,
-                    "delta": deepcopy(event["value"]),
-                    **({"logprobs": []} if not thinking and not refusal else {}),
+                    "delta": event["value"],
+                    **({"logprobs": []} if not thinking else {}),
                 }
                 result.append(value)
             elif kind == "block_stop":
                 block = event["block"]
-                thinking = (
-                    block.get("type") == "thinking"
-                    and parameters.get("source_protocol") == PROTOCOL
-                )
-                refusal = block.get("type") == "refusal"
-                rendered_text = (
-                    deepcopy(
-                        render_content(
-                            [
-                                {"type": "text", "text": block.get("thinking", "")}
-                                if block.get("type") == "thinking"
-                                else block
-                            ],
-                            role="assistant",
-                        )[0]
-                    )
-                    if not thinking and not refusal
-                    else {}
-                )
-                value = block.get(
-                    "thinking"
-                    if block.get("type") == "thinking"
-                    else "refusal"
-                    if refusal
-                    else "text",
-                    "",
-                )
+                if not native_owner:
+                    foreign_block(block)
+                thinking = block.get("type") == "thinking"
+                value = block["thinking" if thinking else "text"]
                 result.append(
                     {
                         "type": "response.reasoning_summary_text.done"
                         if thinking
-                        else "response.refusal.done"
-                        if refusal
                         else "response.output_text.done",
                         "item_id": item_id,
                         "output_index": index,
                         "summary_index" if thinking else "content_index": part_index,
-                        "refusal" if refusal else "text": value,
-                        **(
-                            {"logprobs": rendered_text.get("logprobs", [])}
-                            if not thinking and not refusal
-                            else {}
-                        ),
+                        "text": value,
+                        **({"logprobs": []} if not thinking else {}),
                     }
                 )
                 part = (
                     {"type": "summary_text", "text": value}
                     if thinking
-                    else {"type": "refusal", "refusal": value}
-                    if refusal
                     else {
                         "type": "output_text",
                         "text": value,
-                        "annotations": rendered_text.get("annotations", []),
-                        "logprobs": rendered_text.get("logprobs", []),
+                        "annotations": [],
+                        "logprobs": [],
                     }
                 )
                 result.append(
@@ -401,13 +365,7 @@ class ResponsesDecoder(BaseDecoder):
                         {
                             "type": "response.output_item.added",
                             "output_index": index,
-                            "item": {**item, "arguments": "", "status": "in_progress"},
-                        },
-                        {
-                            "type": "response.function_call_arguments.delta",
-                            "output_index": index,
-                            "item_id": item_id,
-                            "delta": item["arguments"],
+                            "item": {**item, "status": "in_progress"},
                         },
                         {
                             "type": "response.function_call_arguments.done",
@@ -423,10 +381,11 @@ class ResponsesDecoder(BaseDecoder):
                         {"type": "response.output_item.done", "output_index": index, "item": item}
                     )
             elif kind == "block":
-                if (
-                    event["block"].get("type") == "redacted_thinking"
-                    and parameters.get("source_protocol") != PROTOCOL
-                ):
+                if event["block"].get("type") == "redacted_thinking":
+                    report_loss(
+                        event["block"],
+                        "Responses cannot represent opaque reasoning from another protocol",
+                    )
                     continue
                 item = self._output_item(event["block"], index, parameters.get("source_protocol"))
                 result.extend(
@@ -481,7 +440,6 @@ class ResponsesDecoder(BaseDecoder):
                                 {"incomplete_details": {"reason": incomplete}} if incomplete else {}
                             ),
                             "output": output,
-                            "usage": usage,
                         },
                     }
                 )
@@ -511,31 +469,23 @@ class ResponsesDecoder(BaseDecoder):
         return messages
 
     def _response_envelope(self, **parameters: Any) -> dict:
-        # Other protocols do not report these request settings. Supply valid defaults
-        # only when unavailable, preserving native Responses metadata when present.
-        return deepcopy(
-            {
-                "access_programs": None,
-                "error": None,
-                "incomplete_details": None,
-                "instructions": None,
-                "metadata": {},
-                "temperature": None,
-                "top_p": None,
-                "id": parameters.get("response_id", "generated"),
-                "object": "response",
-                "model": parameters.get("model", ""),
-                "created_at": parameters.get("created_at", parameters.get("created", 0)),
-                "parallel_tool_calls": True,
-                "tool_choice": "auto",
-                "tools": [],
-                **(
-                    response_parameters(parameters.get("response_parameters", {}))
-                    if parameters.get("source_protocol") == PROTOCOL
-                    else {}
-                ),
-            }
-        )
+        # Required native envelope defaults carry no unsupported source metadata.
+        return {
+            "access_programs": None,
+            "error": None,
+            "incomplete_details": None,
+            "instructions": None,
+            "metadata": {},
+            "temperature": None,
+            "top_p": None,
+            "id": parameters.get("response_id", "generated"),
+            "object": "response",
+            "model": parameters.get("model", ""),
+            "created_at": parameters.get("created_at", parameters.get("created", 0)),
+            "parallel_tool_calls": True,
+            "tool_choice": "auto",
+            "tools": [],
+        }
 
     def _output_item(self, block: dict, index: int, origin: str | None) -> dict:
         item = self._messages([{"role": "assistant", "content": [block], "protocol": origin}])[0]
@@ -543,7 +493,7 @@ class ResponsesDecoder(BaseDecoder):
             item["id"] = f"item_{index}"
         item.setdefault("id", f"item_{index}")
         item.setdefault("status", "completed")
-        return deepcopy(item)
+        return item
 
     def _completed_output(self, event: dict, origin: str | None, parameters: dict) -> list[dict]:
         entries = event.get("output_blocks", [])
@@ -571,6 +521,14 @@ class ResponsesDecoder(BaseDecoder):
                     "content": render_content(blocks, role="assistant"),
                 }
             elif kind == "reasoning":
+                retained = []
+                for block in blocks:
+                    owner = block.get("protocol")
+                    if (origin if owner is None else owner) != PROTOCOL:
+                        block = foreign_block(block)
+                    if block is not None:
+                        retained.append(block)
+                blocks = retained
                 item = {
                     "type": kind,
                     "summary": [
@@ -589,7 +547,7 @@ class ResponsesDecoder(BaseDecoder):
                 continue
             item.update(select(header, "id", "status", "name", "call_id"))
             result.append(item)
-        return deepcopy(result)
+        return result
 
     def _native_items(self, parameters: dict) -> bool:
         return parameters.get("source_protocol") == PROTOCOL and bool(

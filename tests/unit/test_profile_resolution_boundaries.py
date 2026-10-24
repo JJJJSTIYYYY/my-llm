@@ -44,8 +44,8 @@ def test_llm_uses_its_own_codec_for_protocol_validation(monkeypatch):
     instances = []
 
     class Codec(MyCodec):
-        def __init__(self):
-            super().__init__()
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
             instances.append(self)
 
         def validate_profile(self, profile):

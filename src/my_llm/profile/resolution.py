@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import copy, deepcopy
 from dataclasses import dataclass, field
 from types import UnionType
@@ -73,12 +74,19 @@ class ResolvedProfile:
         return None
 
 
-def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> ResolvedProfile:
+def resolve_profiles(
+    provider: ProviderProfile,
+    model: ModelProfile,
+    *,
+    defaults_for: Callable[[str], ProtocolDefaults] | None = None,
+) -> ResolvedProfile:
     """Resolve independent settings in protocol-default, provider, model order.
 
     Args:
         provider: ProviderProfile with an explicit protocol Config.
         model: ModelProfile containing a nonempty model ID.
+        defaults_for: Optional instance-owned protocol-default lookup. By default,
+            create the selected registered codec independently.
 
     Returns:
         An independent ResolvedProfile snapshot. None inherits; omit disables.
@@ -105,7 +113,7 @@ def resolve_profiles(provider: ProviderProfile, model: ModelProfile) -> Resolved
     if provider.protocol is not None and not isinstance(provider.protocol, Config):
         raise ConfigurationError("protocol must use Config[Protocol]")
     protocol = provider.protocol.default_value if provider.protocol is not None else None
-    defaults = codec_for(protocol).defaults
+    defaults = codec_for(protocol).defaults if defaults_for is None else defaults_for(protocol)
     if not isinstance(defaults, ProtocolDefaults):
         raise ConfigurationError("codec defaults must be a ProtocolDefaults instance")
     declarations: dict[str, tuple[str, str | None, str]] = {}

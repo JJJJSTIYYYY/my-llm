@@ -1,21 +1,30 @@
-"""Stateless standard-protocol-to-intermediate translation."""
+"""Native parsing into the fixed, SDK-independent middleware field set."""
 
 from abc import ABC, abstractmethod
 from typing import Any, final
 
-from my_llm.codec.shared.conversion import capture, dictionaries, dictionary_views, match_all
+from my_llm.codec.shared.conversion import dictionaries, dictionary_views, match_all
 from my_llm.codec.shared.options import path_value
 from my_llm.codec.shared.transport import validate_values
 from my_llm.exceptions import MessageValidationError
+from my_llm.middleware import (
+    FunctionTool,
+    Message,
+    ProtocolMiddleWare,
+    StreamBatch,
+    messages_from_wire,
+    stream_from_wire,
+    tools_from_wire,
+)
 from my_llm.profile.resolution import ResolvedProfile
 from my_llm.profile.types import Omit
 
 
 class BaseEncoder(ABC):
-    """Abstract converter from native protocol values to intermediate dictionaries.
+    """Abstract converter from native protocol values to typed middleware models.
 
     Implement protocol, message_type, tool_type, match_item, usage and the protected
-    conversion hooks. Instances must be stateless and declare empty __slots__.
+    conversion hooks. Each codec factory owns a separate encoder instance.
     Public messages/tools/chunks methods accept lists, an optional ResolvedProfile
     and protocol-specific keyword options. None selects standard field behavior.
     """
@@ -52,29 +61,46 @@ class BaseEncoder(ABC):
         """Return encoded messages/tools alongside a complete call's generation options.
 
         inputs must include messages and tools. profile supplies upstream settings;
-        the returned dictionary also contains profile for BaseDecoder.prepare.
+        the returned envelope contains profile and a typed middleware field for
+        BaseDecoder.prepare. Unknown source fields never enter that middleware.
         Invalid input raises MessageValidationError.
         """
         history = list(dictionary_views(inputs["messages"]))
         tools = inputs["tools"]
         tools = None if tools is None or isinstance(tools, Omit) else list(dictionary_views(tools))
-        self.validate_input(history, tools)
+        self._validate_input(history, tools)
         return {
-            **inputs,
+            **{key: value for key, value in inputs.items() if key not in ("messages", "tools")},
             "profile": profile,
-            "messages": self.messages(history),
-            "tools": self.tools(tools) if tools is not None else None,
+            "middleware": ProtocolMiddleWare(
+                messages=messages_from_wire(self._messages(history, None)),
+                tools=tools_from_wire(self._tools(tools, None)) if tools is not None else None,
+            ),
         }
 
+    @final
     def validate_input(self, messages: list, tools: list | None = None) -> None:
-        """Validate the bound input schema before projecting recognized values."""
+        """Validate native input; customize projection and validate_values hooks."""
+        self._validate_input(
+            dictionaries(messages), dictionaries(tools) if tools is not None else None
+        )
+
+    def _validate_input(self, messages: list, tools: list | None) -> None:
+        """Validate views already normalized at the public input boundary."""
         try:
-            self.validate_values(messages, self.message_type)
-            self.validate_values(tools or [], self.tool_type)
+            self.validate_values(self._validation_messages(messages), self.message_type)
+            if tools is not None:
+                self.validate_values(self._validation_tools(tools), self.tool_type)
         except MessageValidationError as exc:
             raise MessageValidationError(
                 "message or tool does not use the bound input protocol"
             ) from exc
+
+    def _validation_messages(self, messages: list) -> list:
+        return messages
+
+    def _validation_tools(self, tools: list) -> list:
+        return tools
 
     @final
     def matches(self, values: list) -> bool:
@@ -84,23 +110,23 @@ class BaseEncoder(ABC):
     @final
     def messages(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict]:
-        """Return independent intermediate message dictionaries from native values."""
-        return capture(self._messages(dictionaries(values), profile, **parameters))
+    ) -> list[Message]:
+        """Return supported middleware messages; silently discard unsupported fields."""
+        return messages_from_wire(self._messages(dictionaries(values), profile, **parameters))
 
     @final
     def tools(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict]:
-        """Return independent intermediate tool declarations from native values."""
-        return capture(self._tools(dictionaries(values), profile, **parameters))
+    ) -> list[FunctionTool]:
+        """Return SDK-independent function declarations with owned application data."""
+        return tools_from_wire(self._tools(dictionaries(values), profile, **parameters))
 
     @final
     def chunks(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict]:
-        """Return intermediate event dictionaries from the supplied native event list."""
-        return self._chunks(dictionaries(values), profile, **parameters)
+    ) -> list[StreamBatch]:
+        """Return middleware operation batches from the supplied native events."""
+        return stream_from_wire(self._chunks(dictionaries(values), profile, **parameters))
 
     @final
     def parameter_value(
@@ -120,19 +146,20 @@ class BaseEncoder(ABC):
             profile: Resolved settings, or None for the default path.
             name: Output Parameter field name.
             default_path: Rooted native path used without an output override.
-            default: Value returned when the path is absent or routing is disabled.
+            default: Value returned when the addressed source path is absent.
             use_default: Whether a declaration's non-omit default replaces default.
 
         An explicit None at the addressed path is preserved. Input declarations do
-        not change response lookup; omitted or unsupported declarations return default.
+        not change response lookup. Disabled target bindings do not erase supported
+        source content; the decoder reports any resulting semantic loss.
         """
         if profile is not None:
             declaration = profile.parameters.get(name)
-            if isinstance(declaration, Omit) or (
-                declaration is not None and not declaration.supports
+            if (
+                declaration is not None
+                and not isinstance(declaration, Omit)
+                and declaration.source == "output"
             ):
-                return default
-            if declaration is not None and declaration.source == "output":
                 default_path = declaration.path
                 if use_default and not isinstance(declaration.default_value, Omit):
                     default = declaration.default_value
@@ -147,14 +174,14 @@ class BaseEncoder(ABC):
     def _messages(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        """Translate recognized native messages into intermediate message dictionaries."""
+        """Project recognized native messages before constructing middleware models."""
         ...
 
     @abstractmethod
     def _tools(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        """Translate native tool declarations into intermediate tool dictionaries."""
+        """Project native function declarations before constructing middleware models."""
         ...
 
     @abstractmethod

@@ -195,7 +195,7 @@ async def test_bound_stdio_protocol_does_not_detect_again(monkeypatch):
 async def test_provider_paths_apply_before_standard_output_decoding(monkeypatch):
     from my_llm import omit
 
-    event = chat_event(content="standard", reasoning="ignored")
+    event = chat_event(content="standard")
     event["choices"][0]["delta"]["provider_text"] = "configured"
     patch_client(monkeypatch, [event, chat_event(finish="stop")])
     llm = MyLLM(

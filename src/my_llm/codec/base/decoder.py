@@ -1,6 +1,7 @@
-"""Stateless translation of recognized intermediate values and request options."""
+"""Target rendering with complete drafts and collected semantic losses."""
 
 from abc import ABC, abstractmethod
+from functools import wraps
 from typing import Any, final
 
 from my_llm.codec.shared.conversion import capture
@@ -10,6 +11,7 @@ from my_llm.codec.shared.options import (
     resolve_options,
     set_path,
 )
+from my_llm.codec.shared.output import output_chunks, output_messages
 from my_llm.codec.shared.transport import (
     _MISSING,
     _plan,
@@ -20,18 +22,34 @@ from my_llm.codec.shared.transport import (
     validate_values,
 )
 from my_llm.exceptions import ConfigurationError, MessageValidationError, UnsupportedCapabilityError
+from my_llm.middleware import wire_values
 from my_llm.profile.paths import path_keys
 from my_llm.profile.resolution import ResolvedProfile, client_parameters
 from my_llm.profile.types import Omit
+from my_llm.semantic_loss import SemanticLossContext, collect_losses, report_loss
+
+
+def _collect_translation(method):
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        context = SemanticLossContext(None, self.protocol)
+        with collect_losses(context) as (losses, owner):
+            draft = method(self, *args, **kwargs)
+            return losses.complete(draft) if owner else draft
+
+    return call
 
 
 class BaseDecoder(ABC):
     """Abstract target-protocol converter and native request builder.
 
     Implement the abstract schema properties, conversion hooks, usage and
-    assemble_request, and declare empty __slots__. Public messages/tools/chunks
-    methods accept lists, optional profile overrides and protocol options.
-    Request-building methods return dictionaries and perform no network I/O.
+    assemble_request. Each codec factory owns a separate decoder instance.
+    Public messages/tools/chunks methods accept typed middleware values, optional
+    profile overrides and protocol options, and return native dictionaries.
+    Unsupported source fields have already been discarded. Supported values that
+    cannot be represented are collected until the complete draft exists, then
+    raised together as SemanticLossError. Request preparation performs no I/O.
     """
 
     __slots__ = ()
@@ -103,6 +121,7 @@ class BaseDecoder(ABC):
         return options
 
     @final
+    @_collect_translation
     def native_request(
         self,
         request: dict,
@@ -135,7 +154,13 @@ class BaseDecoder(ABC):
             if not isinstance(tools[key], list):
                 raise MessageValidationError("native tools must be a list")
             if tools[key] and not profile.get("supports_function_calling", False):
-                raise UnsupportedCapabilityError("model does not support function calling")
+                for tool in history or []:
+                    for block in tool.get("content", []):
+                        if block.get("type") == "tool_use":
+                            report_loss(block, "model does not support function calling")
+                for tool in tools[key]:
+                    report_loss(tool, "model does not support function calling")
+                tools[key] = []
             tools[key] = self.filter_tools(tools[key], profile)
             self.validate_values(tools[key], self.tool_type, filtered=True)
         request = self.validate_request(request, profile, **parameters)
@@ -239,6 +264,7 @@ class BaseDecoder(ABC):
         ...
 
     @final
+    @_collect_translation
     def request(
         self,
         messages: list,
@@ -257,9 +283,16 @@ class BaseDecoder(ABC):
             options: Already validated controls, or None to validate parameters here.
             **parameters: Generation controls and protocol-specific options.
 
-        Raises ConfigurationError, MessageValidationError or UnsupportedCapabilityError
-        for invalid options, history or unsupported content. Does not perform I/O.
+        Invalid controls or history raise ConfigurationError or MessageValidationError.
+        Supported content that cannot be represented raises SemanticLossError with
+        the complete request draft. This method performs no I/O.
         """
+        messages = wire_values(messages)
+        tools = wire_values(tools) if tools is not None else None
+        if tools and not profile.get("supports_function_calling", False):
+            for tool in tools:
+                report_loss(tool, "model does not support function calling")
+            tools = []
         if options is None:
             options = self.validate_parameters(profile, **parameters)
         # These internal translations borrow intermediate application leaves.
@@ -276,6 +309,7 @@ class BaseDecoder(ABC):
         return self.native_request(request, profile, history=messages, **parameters)
 
     @final
+    @_collect_translation
     def prepare(self, intermediate: dict, client: dict) -> dict:
         """Return client, request and local dictionaries for a complete encoded call.
 
@@ -287,15 +321,15 @@ class BaseDecoder(ABC):
         parameters = {
             key: value
             for key, value in intermediate.items()
-            if key not in ("messages", "tools", "profile")
+            if key not in ("profile", "middleware")
         }
         options = self.validate_parameters(profile, **parameters)
         client = self.request_client(client, options)
         return {
             "client": client,
             "request": self.request(
-                intermediate["messages"],
-                intermediate["tools"],
+                intermediate["middleware"].messages,
+                intermediate["middleware"].tools,
                 profile,
                 options=options,
                 **parameters,
@@ -351,24 +385,29 @@ class BaseDecoder(ABC):
         ...
 
     @final
+    @_collect_translation
     def messages(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         """Return independent native message dictionaries from intermediate values."""
+        values = output_messages(wire_values(values), parameters.pop("semantic_profile", None))
         return capture(self._messages(values, profile, **parameters))
 
     @final
+    @_collect_translation
     def tools(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         """Return independent native tool declarations from intermediate values."""
-        return capture(self._tools(values, profile, **parameters))
+        return capture(self._tools(wire_values(values), profile, **parameters))
 
     @final
+    @_collect_translation
     def chunks(
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         """Return native event dictionaries from the supplied intermediate events."""
+        values = output_chunks(wire_values(values), parameters.pop("semantic_profile", None))
         return self._chunks(values, profile, **parameters)
 
     def result(self, messages: list) -> dict | list:

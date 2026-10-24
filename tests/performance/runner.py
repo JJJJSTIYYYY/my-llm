@@ -1,5 +1,7 @@
 """Measure the public generate call through complete result retrieval."""
 
+import hashlib
+import json
 from dataclasses import asdict, dataclass
 from math import ceil
 from statistics import median
@@ -37,7 +39,7 @@ async def measure(llm: MyLLM, workload: Workload, *, stream: bool, parameters: d
                 if first_event is None:
                     first_event = perf_counter_ns()
                 count += 1
-        # This property deep-copies the completed native message: include it.
+        # Include public result retrieval; each runtime owns its accessor semantics.
         result = result.result
     end = perf_counter_ns()
     cpu_end = process_time_ns()
@@ -93,6 +95,7 @@ async def benchmark(
             _, result = await measure(llm, workload, stream=stream, parameters=parameters)
             validate_exchange(workload, stdio, result, sdk)
             request_bytes = len(sdk.requests[-1].content)
+            request_sha256 = hashlib.sha256(sdk.requests[-1].content).hexdigest()
         sdk.release_samples()
         async with MyLLM(provider=provider, model=model, stdio_protocol=stdio) as llm:
             cold, result = await measure(llm, workload, stream=stream, parameters=parameters)
@@ -115,7 +118,12 @@ async def benchmark(
         "stdio": stdio,
         "stream": stream,
         "request_bytes": request_bytes,
+        "request_sha256": request_sha256,
         "response_bytes": sum(map(len, frames)),
+        "response_sha256": hashlib.sha256(b"".join(frames)).hexdigest(),
+        "workload_sha256": hashlib.sha256(
+            json.dumps(asdict(workload), sort_keys=True, ensure_ascii=True).encode()
+        ).hexdigest(),
         "upstream_events": len(workload.events),
         "http_chunks": len(frames),
         "input_messages": len(workload.messages),

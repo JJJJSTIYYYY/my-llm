@@ -4,11 +4,11 @@
 Encoder 接收完整调用字典，验证和编码输入；Decoder 准备客户端参数、请求参数和本地控制项；
 Transport 只构造／调用 SDK、关闭客户端及本次响应。四个基类、PreparedOptions、Parameter 和 Config 均从 my_llm 导入。
 
-## 目录与无状态约束
+## 目录与实例生命周期
 
 协议包包含 codec.py、transport.py、encoding/encoder.py、decoding/decoder.py；内容辅助放在各方向 content.py，
 双向共用规则按需放在 utils/。例如 Ollama 的公开 base64 Image 验证和 SDK 方法类型分析放在 utils/schema.py。
-四个组件声明空 __slots__，不持有 Profile、客户端、历史或流片段；初始化文件只导出接口。
+注册工厂每次创建独立 codec 与组件，允许实例状态；不能共享 adaptor 或可变组件。初始化文件只导出接口。
 不导入其他协议实现，也不让 Encoder / Decoder 相互导入或依赖 Transport。
 官方 SDK 类型和方法签名可用于静态 Schema 分析；SDK 客户端创建和调用只能出现在 Transport。
 
@@ -22,8 +22,8 @@ Transport 只构造／调用 SDK、关闭客户端及本次响应。四个基类
 
 属性可用类属性实现。messages / tools / chunks 是固定公开入口，私有钩子的签名为
 (values: list, profile: ResolvedProfile | None = None, **parameters)。
-Encoder.matches 负责整批识别，validate_input 使用公开 SDK 类型只读验证；validate_values 可覆盖 SDK 特有的输入规范化。
-Encoder.request(inputs, profile) 接收完整 generate 输入并输出包含 profile 和已转换 messages / tools 的中间字典。
+Encoder.matches 负责整批识别。validate_input 是固定公开入口，先通过 _validation_messages / _validation_tools 丢弃未支持原生字段，再使用公开 SDK 类型只读验证；自定义输入语义通过这些投影钩子和 validate_values 实现。request 复用已归一化视图执行同一组验证钩子，不重复进入公开输入边界。
+Encoder.request(inputs, profile) 接收完整 generate 输入并输出包含 profile 和类型化 middleware 的调用信封。
 
 两个方向的私有转换钩子只读借用输入，只处理已识别字段，不保留未知字段或原始快照。
 公开 messages / tools 捕获独立结果；内部 Decoder.request 直接调用私有钩子，
@@ -101,7 +101,9 @@ ProtocolDefaults、ProviderProfile、ModelProfile 可继承扩展：新增参数
 Parameter[T] | Omit | None，分支配置声明 Config[T] | Omit | None。
 解析器自动发现继承字段并检查声明，不需要路径与默认值配对，也不需要中央参数表。
 自定义 Config 的含义由协议组件实现；所有请求 scope 的 input 参数路径和默认值由 BaseDecoder 自动应用。
-自定义 output 参数由协议钩子调用 BaseEncoder.parameter_value 后映射为明确的中间态语义。
+自定义 output 参数只能映射为现有中间态语义，不能扩大固定支持集合。
+支持字段无法表达时调用 my_llm.semantic_loss.report_loss(value, reason)，继续完成 draft；
+BaseDecoder 聚合损失，BaseCodec 统一执行策略，不在 encoder 报 SemanticLossError。
 SDK 根参数必须符合 SDK 调用签名，非标准字段使用 SDK 正式提供的 extra_body 等扩展入口。
 
 完成自己的 Encoder、Decoder、Transport 后，组合和注册如下；将 your_package 替换为实际包名：
@@ -119,28 +121,37 @@ from my_llm import (
     ProviderProfile,
     omit,
 )
+from copy import deepcopy
+
 from your_package.decoding.decoder import ExampleDecoder
 from your_package.encoding.encoder import ExampleEncoder
 from your_package.transport import ExampleTransport
 
 
 class ExampleCodec(BaseCodec):
-    __slots__ = ()
+    __slots__ = ("encoder", "decoder", "transport", "_defaults")
     protocol_or_api_style = "example"
-    defaults = ProtocolDefaults(
+    _DEFAULTS = ProtocolDefaults(
         replay_reasoning_content_when_tool_calls=Config(default_value=False),
         max_tokens=Parameter(
             path="$.max_tokens",
             default_value=omit,
         ),
     )
-    encoder = ExampleEncoder()
-    decoder = ExampleDecoder()
-    transport = ExampleTransport()
+    def __init__(self):
+        super().__init__()
+        self._defaults = deepcopy(self._DEFAULTS)
+        self.encoder = ExampleEncoder()
+        self.decoder = ExampleDecoder()
+        self.transport = ExampleTransport()
+
+    @property
+    def defaults(self):
+        return self._defaults
 
 
 # 在应用启动时执行一次，早于 Profile 解析及 MyCodec / MyLLM 实例创建。
-MyCodec.register(ExampleCodec())
+MyCodec.register(ExampleCodec)
 codec = MyCodec()
 llm = MyLLM(
     provider=ProviderProfile(protocol=Config(default_value="example")),
@@ -150,22 +161,20 @@ llm = MyLLM(
 ```
 
 注册会检查 Codec 与三个组件的基类类型、ProtocolDefaults 类型，以及 Codec / Encoder / Decoder
-的协议名一致性。四个实现都须声明空 `__slots__`，不能有实例 `__dict__`，
-继承链上的非空数据槽也会被拒绝；
+的协议名一致性。工厂连续两次创建的 codec / encoder / decoder / transport 不得相同；
 协议名须为非空字符串，重名注册抛出 ConfigurationError，不覆盖已有实现。
 MyCodec / MyLLM 实例保留创建时的注册快照；注册新协议后需创建新实例才能使用。
 
 ## 中间态与字段边界
 
 消息使用 role 与 content 块；工具调用与结果使用 tool_use / tool_result。
-它是内部开放字典，不是新的应用消息类型。
+公开中间态是具体 ProtocolMiddleWare 及类型化模型；临时字典仅服务原生解析和组装。应用历史仍使用原生协议值。
 
 - 中间态只包含已识别字段；未声明的非标准字段直接跳过，不读取、不校验，也不逐项扫描检查未知键。
 - protocol 字符串记录必要的来源语义，Responses 的 coalesce 标志控制已识别内容的合并；不保存原始对象或事件。
 - functions 表示规范化工具声明，参数、结果及工具 JSON Schema 的开放键值完整保留。
 - conversion.encode_functions / decode_functions 管理工具声明；stream 管理原生事件操作与用量计数。
-- 响应元数据通过 shared.stream.metadata(values, path=()) 声明：Encoder 显式投影已识别字段并归一化，
-  StreamState 仅沿 path 浅合并 values，不维护任何协议专属字段清单。嵌套更新与完整替换由 Encoder 选择位置。
+- 流控制数据只保留中间协议明确声明的 id、模型、终止与回放分组身份；不能通过 metadata 钩子扩展用户 metadata 支持。
 - options 提供参数路径操作与生成选项；BaseEncoder / BaseDecoder 固定参数读取和请求应用流程，
   shared/transport 提供 Codec 共用的 Schema 规则和历史验证，以及 Transport 使用的响应关闭辅助。
 跨协议来回翻译不保证无损。不能把其他协议的密文解释为本协议的签名，也不通过隐藏记录恢复跨协议无法表达的信息。
@@ -173,7 +182,7 @@ MyCodec / MyLLM 实例保留创建时的注册快照；注册新协议后需创�
 
 ## 注册与验证
 
-1. 实现四个基类并通过 `MyCodec.register(codec)` 注册。Protocol 是 str 别名，
+1. 实现四个基类并通过 `MyCodec.register(CodecFactory)` 注册。Protocol 是 str 别名，
    不需要修改公共入口、协议枚举、默认值表或公共编排。
 2. 独立编写原生样例，覆盖消息、工具、完整流、两个翻译方向未知字段不泄漏及开放字典内部键值保留。
 3. 使用官方 SDK 和本地 HTTP transport 检查实际请求：Profile 兼容能力生效，标准签名按原协议处理，工具参数与 JSON Schema 不被误删。

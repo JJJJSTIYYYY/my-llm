@@ -1,5 +1,6 @@
 # 翻译字段边界
 
+固定模型定义见 [ProtocolMiddleWare](protocol-middleware.md)，损失策略与迁移见[使用指南](../guides/semantic-loss.md)。
 项目接收已支持的标准协议，通过 Profile 明确配置兼容服务差异。翻译仅处理已识别的字段，
 不把原生字典中的全部信息搬运到中间态，也不以隐藏记录提供跨协议恢复能力。
 Encoder / Decoder 直接读取并构造已支持的字段，不扫描、收集或记录未识别字段。
@@ -7,7 +8,8 @@ Encoder / Decoder 直接读取并构造已支持的字段，不扫描、收集�
 ## 输入与输出
 
 - Encoder 将已识别的消息、工具和事件字段翻译为中间态。未知字段和未知原生事件不进入中间态。
-- Decoder 从中间态构造目标协议已识别的字段，不把中间态中的未知键合入输出。
+- Decoder 从中间态构造目标协议已识别的字段；支持值无法表达时继续完成 draft 后聚合 SemanticLossError。
+- audio、file、用户 metadata 等未支持字段只在 Encoder 丢弃，不进入损失集合。
 - 同协议转换也执行这些规则，不以原始对象快照绕过翻译。
 - Decoder 在 SDK 请求边界统一过滤、验证消息与工具结构，并执行 Profile 明确声明的兼容策略。
 
@@ -17,7 +19,7 @@ SDK 模型的 `extra="allow"` 也不构成未知字段的通用透传入口。
 ## 开放字典
 
 已识别字段内部如果本来就是开放应用数据，其内部键值随整个字段保留，例如工具参数、
-工具结果对象、工具 JSON Schema 和协议明确支持的 metadata。
+工具结果对象和工具 JSON Schema。用户 metadata 不在支持集合中。
 
 ```text
 已识别的工具 parameters
@@ -47,7 +49,7 @@ Profile 提供明确的兼容入口：参数路径和缺失默认值、extra_bod
 
 Anthropic thinking.signature、redacted_thinking、Gemini thought_signature、Responses
 encrypted_content 和工具关联 ID 都属于有明确语义的标准字段，由对应协议实现处理。
-同协议路径保留实现支持的原生值；外来思考按目标协议可表达的形式翻译，不伪造签名或解密密文。
+同协议路径保留实现支持的原生值；外来思考保持独立语义，无法表达时报告 SemanticLossError，不伪造签名或解密密文。
 
 不在其他协议输出中附加原始对象、剩余字段或恢复快照。A → B → A 只处理每一步明确支持的语义，
 不能用未修改结果的隐藏记录恢复 B 无法表达的原生信息。

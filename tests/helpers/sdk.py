@@ -15,7 +15,7 @@ from openai.types.chat import (
 from openai.types.responses import Response, ResponseInputItemParam, ResponseStreamEvent, ToolParam
 from pydantic import BaseModel, TypeAdapter
 
-from tests.helpers.schema import response_fields, validate_event, validator
+from tests.helpers.schema import output_event_for_schema, response_fields, validate_event, validator
 
 MESSAGE_TYPES = {
     "openai_chat": ChatCompletionMessageParam,
@@ -121,3 +121,13 @@ def assert_native(value, schema):
             assert isinstance(function.get("description"), str)
     if schema is Message and value.get("images"):
         assert validated.model_dump(mode="json", exclude_none=True)["images"] == value["images"]
+
+
+def assert_output_native(value, schema):
+    """Validate output shape while asserting that public events omit usage."""
+    for protocol, event_schema in EVENT_TYPES.items():
+        if schema is event_schema or (
+            isinstance(event_schema, dict) and schema in event_schema.values()
+        ):
+            return assert_native(output_event_for_schema(protocol, value), schema)
+    return assert_native(value, schema)

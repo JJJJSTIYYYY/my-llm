@@ -13,33 +13,6 @@ PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip
 SIGNATURE = base64.b64encode(b"offline-benchmark-signature").decode()
 
 
-def pdf_data() -> str:
-    """A small self-contained PDF with correct object offsets, built outside timing."""
-    content = b"BT /F1 12 Tf 20 50 Td (Offline benchmark source) Tj ET"
-    objects = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 100] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        f"<< /Length {len(content)} >>\nstream\n".encode() + content + b"\nendstream",
-    ]
-    document = b"%PDF-1.4\n"
-    offsets = []
-    for index, value in enumerate(objects, 1):
-        offsets.append(len(document))
-        document += f"{index} 0 obj\n".encode() + value + b"\nendobj\n"
-    xref = len(document)
-    document += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode()
-    document += b"".join(f"{offset:010} 00000 n \n".encode() for offset in offsets)
-    document += (
-        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
-    )
-    return "data:application/pdf;base64," + base64.b64encode(document).decode()
-
-
-PDF = pdf_data()
-
-
 @dataclass(frozen=True, kw_only=True)
 class Size:
     rounds: int = 12
@@ -138,9 +111,8 @@ def native_tools(protocol: str, size: Size, native: bool):
                 "name": function["name"],
                 "description": function["description"],
                 "input_schema": function["parameters"],
-                **({"cache_control": {"type": "ephemeral"}} if native and index == 0 else {}),
             }
-            for index, function in enumerate(functions)
+            for function in functions
         ]
     if protocol == "gemini":
         return [
@@ -158,7 +130,7 @@ def native_tools(protocol: str, size: Size, native: bool):
     return [{"type": "function", "function": function} for function in functions]
 
 
-def user_message(protocol: str, value: str, *, media: bool, native: bool):
+def user_message(protocol: str, value: str, *, media: bool):
     if protocol == "openai_chat":
         content = [{"type": "text", "text": value}]
         if media:
@@ -168,15 +140,7 @@ def user_message(protocol: str, value: str, *, media: bool, native: bool):
                     "image_url": {"url": f"data:image/png;base64,{PNG}", "detail": "high"},
                 }
             )
-            if native:
-                content.append(
-                    {"type": "file", "file": {"file_data": PDF, "filename": "benchmark.pdf"}}
-                )
-        return {
-            "role": "user",
-            "content": content,
-            **({"name": "benchmark_user"} if native else {}),
-        }
+        return {"role": "user", "content": content}
     if protocol == "openai_responses":
         content = [{"type": "input_text", "text": value}]
         if media:
@@ -187,10 +151,6 @@ def user_message(protocol: str, value: str, *, media: bool, native: bool):
                     "detail": "high",
                 }
             )
-            if native:
-                content.append(
-                    {"type": "input_file", "file_data": PDF, "filename": "benchmark.pdf"}
-                )
         return {"type": "message", "role": "user", "content": content}
     if protocol == "anthropic":
         content = [{"type": "text", "text": value}]
@@ -201,29 +161,11 @@ def user_message(protocol: str, value: str, *, media: bool, native: bool):
                     "source": {"type": "base64", "media_type": "image/png", "data": PNG},
                 }
             )
-            if native:
-                content.append(
-                    {
-                        "type": "document",
-                        "source": {"type": "text", "media_type": "text/plain", "data": value},
-                        "title": "Benchmark source",
-                        "citations": {"enabled": True},
-                    }
-                )
         return {"role": "user", "content": content}
     if protocol == "gemini":
         parts = [{"text": value}]
         if media:
             parts.append({"inline_data": {"mime_type": "image/png", "data": PNG}})
-            if native:
-                parts.append(
-                    {
-                        "inline_data": {
-                            "mime_type": "text/plain",
-                            "data": base64.b64encode(value.encode()).decode(),
-                        }
-                    }
-                )
         return {"role": "user", "parts": parts}
     return {"role": "user", "content": value, **({"images": [PNG]} if media else {})}
 
@@ -338,7 +280,6 @@ def assistant_turn(protocol: str, index: int, calls: list, native: bool):
                                 "name": call["name"],
                                 "args": call["input"],
                             },
-                            "thought_signature": SIGNATURE,
                         }
                         for call in calls
                     ],
@@ -616,24 +557,6 @@ def response_events(protocol: str, size: Size, native: bool, answer: str, reason
             }
             for piece in pieces
         )
-        if native:
-            result.append(
-                {
-                    "type": "content_block_delta",
-                    "index": index,
-                    "delta": {
-                        "type": "citations_delta",
-                        "citation": {
-                            "type": "char_location",
-                            "cited_text": "source",
-                            "document_index": 0,
-                            "document_title": "Benchmark source",
-                            "start_char_index": 0,
-                            "end_char_index": 6,
-                        },
-                    },
-                }
-            )
         result.append({"type": "content_block_stop", "index": index})
         for offset, call in enumerate(calls, index + 1):
             result.append(
@@ -691,7 +614,6 @@ def response_events(protocol: str, size: Size, native: bool, answer: str, reason
                             "name": call["name"],
                             "args": call["input"],
                         },
-                        "thought_signature": SIGNATURE,
                     }
                     for call in calls
                 ]
@@ -762,9 +684,7 @@ def build(protocol: str, stdio: str, size: Size, *, native: bool) -> Workload:
             }
         )
     for index in range(size.rounds):
-        messages.append(
-            user_message(stdio, text(size.text_chars), media=index % 4 == 0, native=native)
-        )
+        messages.append(user_message(stdio, text(size.text_chars), media=index % 4 == 0))
         calls = [
             {
                 "id": f"call_{index}_{number}",
@@ -775,12 +695,12 @@ def build(protocol: str, stdio: str, size: Size, *, native: bool) -> Workload:
         ]
         messages.extend(assistant_turn(stdio, index, calls, native))
     messages.append(
-        user_message(
-            stdio, "Finish the analysis and call each requested tool.", media=True, native=native
-        )
+        user_message(stdio, "Finish the analysis and call each requested tool.", media=True)
     )
     answer = text(size.output_chars)
-    reason = text(size.output_chars // 4) if protocol != "openai_chat" else ""
+    # Cross-protocol timings use the intersection that both implementations
+    # preserve. Semantic-loss behavior is covered by contract tests separately.
+    reason = text(size.output_chars // 4) if native and protocol != "openai_chat" else ""
     calls = [
         {"id": f"call_output_{index}", "name": f"analyze_{index}", "input": arguments(size, index)}
         for index in range(size.parallel_calls)
@@ -828,11 +748,10 @@ def controls(protocol: str):
     body = {
         "openai_chat": {"temperature": 0.2, "top_p": 0.9, "parallel_tool_calls": True},
         "openai_responses": {
-            "metadata": {"purpose": "offline-benchmark"},
             "parallel_tool_calls": True,
             "store": False,
         },
-        "anthropic": {"temperature": 1.0, "metadata": {"user_id": "offline-benchmark"}},
+        "anthropic": {"temperature": 1.0},
         "gemini": {"temperature": 0.2, "top_p": 0.9, "candidate_count": 1},
         "ollama": {"options": {"temperature": 0.2, "top_p": 0.9, "seed": 42}, "keep_alive": "5m"},
     }[protocol]

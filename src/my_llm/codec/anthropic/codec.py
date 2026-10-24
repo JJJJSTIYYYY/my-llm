@@ -1,4 +1,6 @@
-"""Stateless anthropic protocol facade."""
+"""Instance-owned anthropic protocol facade."""
+
+from copy import deepcopy
 
 from my_llm.codec.anthropic.decoding.decoder import AnthropicDecoder
 from my_llm.codec.anthropic.encoding.encoder import AnthropicEncoder
@@ -15,9 +17,9 @@ class AnthropicCodec(BaseCodec):
     BaseCodec conversion interface. Requires the anthropic optional dependency.
     """
 
-    __slots__ = ()
+    __slots__ = ("encoder", "decoder", "transport", "_defaults")
     protocol_or_api_style = "anthropic"
-    defaults = ProtocolDefaults(
+    _DEFAULTS = ProtocolDefaults(
         replay_reasoning_content_when_tool_calls=Config(default_value=True),
         max_tokens=Parameter(path="$.max_tokens", default_value=omit),
         content=Parameter(path="$.delta.text", default_value=omit),
@@ -32,6 +34,14 @@ class AnthropicCodec(BaseCodec):
             default_value=omit,
         ),
     )
-    encoder = AnthropicEncoder()
-    decoder = AnthropicDecoder()
-    transport = AnthropicTransport()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._defaults = deepcopy(self._DEFAULTS)
+        self.encoder = AnthropicEncoder()
+        self.decoder = AnthropicDecoder()
+        self.transport = AnthropicTransport()
+
+    @property
+    def defaults(self) -> ProtocolDefaults:
+        return self._defaults

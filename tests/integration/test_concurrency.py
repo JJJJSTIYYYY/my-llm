@@ -13,7 +13,16 @@ from google.genai import types
 from ollama import AsyncClient
 from openai import AsyncOpenAI
 
-from my_llm import Attribute, Config, ModelProfile, MyCodec, MyLLM, ProviderProfile
+from my_llm import (
+    Attribute,
+    Config,
+    ModelProfile,
+    MyCodec,
+    MyLLM,
+    ProviderProfile,
+    SemanticLossError,
+)
+from my_llm.middleware import Usage
 from my_llm.stream._state import StreamState
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import PROTOCOLS, history, stream_events, tools
@@ -33,10 +42,15 @@ def replace_strings(value, replacements):
     return value
 
 
-def response_frames(protocol, index):
+def response_frames(protocol, index, *, signed=False):
     events = replace_strings(
         stream_events(protocol, tool=True), {"Hello": f"reply-{index}", "上海": f"city-{index}"}
     )
+    if protocol == "gemini" and not signed:
+        for event in events:
+            for candidate in event.get("candidates", []):
+                for part in candidate.get("content", {}).get("parts", []):
+                    part.pop("thought_signature", None)
     # Give every lane distinct counters as well as text and tool arguments.
     prompt, completion = index + 1, index + 2
     if protocol == "openai_chat":
@@ -83,7 +97,7 @@ class ControlledBody(httpx.AsyncByteStream):
         self.resume = asyncio.Event()
 
     async def __aiter__(self):
-        frames = response_frames(self.protocol, self.index)
+        frames = response_frames(self.protocol, self.index, signed=self.harness.signed)
         self.harness.active.add(self.index)
         self.harness.peak = max(self.harness.peak, len(self.harness.active))
         text_seen = False
@@ -110,6 +124,7 @@ class ConcurrentTransport:
         self.paused = paused
         self.every_frame = every_frame
         self.failure_index = None
+        self.signed = False
         self.requests = {}
         self.bodies = {}
         self.clients = []
@@ -227,25 +242,27 @@ def assert_reply(result, stdio, index):
     assert json.loads(calls[0]["function"]["arguments"]) == {"city": f"city-{index}"}
 
 
-def assert_usage(events, stdio, index):
-    if stdio == "openai_chat":
-        usage = events[-1]["usage"]
-        assert usage["prompt_tokens"] == index + 1
-        assert usage["completion_tokens"] == index + 2
-    elif stdio == "openai_responses":
+def assert_usage(events, stdio, index, state, protocol):
+    def without_usage(value):
+        if isinstance(value, dict):
+            assert (
+                not {"usage", "usage_metadata", "usageMetadata", "prompt_eval_count", "eval_count"}
+                & value.keys()
+            )
+            for child in value.values():
+                without_usage(child)
+        elif isinstance(value, list):
+            for child in value:
+                without_usage(child)
+
+    without_usage(events)
+    if stdio == "openai_responses":
         assert [event["sequence_number"] for event in events] == list(range(len(events)))
-        usage = events[-1]["response"]["usage"]
-        assert usage["input_tokens"] == index + 1
-        assert usage["output_tokens"] == index + 2
-    elif stdio == "anthropic":
-        assert events[-2]["usage"]["input_tokens"] == index + 1
-        assert events[-2]["usage"]["output_tokens"] == index + 2
-    elif stdio == "gemini":
-        assert events[-1]["usage_metadata"]["prompt_token_count"] == index + 1
-        assert events[-1]["usage_metadata"]["candidates_token_count"] == index + 2
-    else:
-        assert events[-1]["prompt_eval_count"] == index + 1
-        assert events[-1]["eval_count"] == index + 2
+    usage = Usage.from_record(state.usage)
+    assert usage.input == index + 1
+    assert usage.output == index + 2
+    assert usage.total == (None if protocol in ("anthropic", "ollama") else 2 * index + 3)
+    return usage
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
@@ -260,6 +277,7 @@ async def test_one_instance_concurrent_stream_and_collected_requests(monkeypatch
         replace_strings(history(stdio), {"Weather?": f"request-{i}"}) for i in range(count)
     ]
     before_histories = deepcopy(histories)
+    recorded_usage, state_ids, completion_order = {}, set(), []
 
     async def run(index):
         streaming = index % 2 == 0
@@ -273,7 +291,8 @@ async def test_one_instance_concurrent_stream_and_collected_requests(monkeypatch
         if streaming:
             async with result:
                 events = [event async for event in result]
-            assert_usage(events, stdio, index)
+            recorded_usage[index] = assert_usage(events, stdio, index, result._state, protocol)
+            state_ids.add(id(result._state))
             # Validate the emitted content as well as the final snapshot: a
             # correct result must not hide transient cross-request stream data.
             codec = MyCodec()
@@ -284,12 +303,17 @@ async def test_one_instance_concurrent_stream_and_collected_requests(monkeypatch
             assert_reply(chat[0], "openai_chat", index)
             result = result.result
         assert_reply(result, stdio, index)
+        completion_order.append(index)
         return result
 
     # A deadline turns a serialization regression into a bounded test failure.
     async with asyncio.timeout(15), asyncio.TaskGroup() as group:
         tasks = [group.create_task(run(index)) for index in range(count)]
     assert all(task.done() for task in tasks)
+    assert len(state_ids) == len(recorded_usage) == count // 2
+    assert llm.get_last_usage() == recorded_usage.get(completion_order[-1])
+    for index, usage in recorded_usage.items():
+        assert usage.input == index + 1 and usage.output == index + 2
     assert transport.peak == count
     transport.assert_responses_closed(count)
     transport.assert_clients_open(count if protocol == "ollama" else 1)
@@ -436,4 +460,22 @@ async def test_request_can_be_closed_from_another_task_without_closing_shared_cl
                 pass
         assert_reply(streams[1].result, "openai_chat", 1)
         transport.assert_responses_closed(2)
+    assert transport.clients[0].is_closed
+
+
+async def test_gemini_signature_loss_closes_only_the_response(monkeypatch):
+    transport = ConcurrentTransport(monkeypatch, 1)
+    transport.signed = True
+    async with make_llm("gemini", "openai_chat") as llm:
+        stream = await llm.generate(
+            messages=[{"role": "user", "content": "request-0"}], stream=True
+        )
+        with pytest.raises(SemanticLossError) as captured:
+            async with stream:
+                _ = [event async for event in stream]
+        assert captured.value.losses.origin_source == "output"
+        assert "thought_signature" in str(captured.value.losses.items[0].origin_value)
+        assert stream.result is None
+        transport.assert_responses_closed(1)
+        transport.assert_clients_open(1)
     assert transport.clients[0].is_closed

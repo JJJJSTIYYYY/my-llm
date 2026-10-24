@@ -210,9 +210,9 @@ class Transport(BaseTransport):
 
 
 class Codec(BaseCodec):
-    __slots__ = ()
+    __slots__ = ("encoder", "decoder", "transport", "_defaults")
     protocol_or_api_style = PROTOCOL
-    defaults = ProtocolDefaults(
+    _DEFAULTS = ProtocolDefaults(
         replay_reasoning_content_when_tool_calls=config(False),
         max_tokens=Parameter(path="$.limit", default_value=omit),
         content=Parameter(path="$.body", default_value=omit),
@@ -220,15 +220,26 @@ class Codec(BaseCodec):
         reasoning_enable=Parameter(path="$.hint", default_value={"level": 1}),
         reasoning_effort=Parameter(path="$.hint.level", default_value=omit, supports=False),
     )
-    encoder = Encoder()
-    decoder = Decoder()
-    transport = Transport()
+    encoder_type = Encoder
+    decoder_type = Decoder
+    transport_type = Transport
+
+    def __init__(self):
+        super().__init__()
+        self._defaults = deepcopy(self._DEFAULTS)
+        self.encoder = self.encoder_type()
+        self.decoder = self.decoder_type()
+        self.transport = self.transport_type()
+
+    @property
+    def defaults(self):
+        return self._defaults
 
 
 @pytest.fixture
 def registered(monkeypatch):
-    monkeypatch.setattr(registry, "_CODECS", registry.registered_codecs())
-    MyCodec.register(Codec())
+    monkeypatch.setattr(registry, "_CODECS", registry.registered_codec_factories())
+    MyCodec.register(Codec)
 
 
 def profiles():
@@ -262,7 +273,7 @@ async def test_new_protocol_reuses_caches_with_unhashable_annotations(registered
             metadata={"source": "input"},
         )
 
-    monkeypatch.setattr(Codec, "decoder", AnnotatedDecoder())
+    monkeypatch.setattr(Codec, "decoder_type", AnnotatedDecoder)
     provider, _ = profiles()
     async with MyLLM(
         provider=provider,
@@ -317,9 +328,9 @@ def test_builtin_fixture_protocols_cover_all_registered_protocols():
 
 
 def test_registration_adds_defaults_and_preserves_existing_converter_snapshot(monkeypatch):
-    monkeypatch.setattr(registry, "_CODECS", registry.registered_codecs())
+    monkeypatch.setattr(registry, "_CODECS", registry.registered_codec_factories())
     existing = MyCodec()
-    MyCodec.register(Codec())
+    MyCodec.register(Codec)
     assert PROTOCOL not in existing.codecs
     assert isinstance(MyCodec().codecs[PROTOCOL], Codec)
     provider, model = profiles()
@@ -328,7 +339,7 @@ def test_registration_adds_defaults_and_preserves_existing_converter_snapshot(mo
     assert resolved.parameter("content", "output").path == "$.body"
     assert resolved.get("usage_mode") == "independent_counter_mode"
     with pytest.raises(ConfigurationError, match="registered|duplicate|already"):
-        MyCodec.register(Codec())
+        MyCodec.register(Codec)
     with pytest.raises(UnsupportedProviderError):
         existing.transport(PROTOCOL)
 
@@ -345,47 +356,65 @@ def test_registration_adds_defaults_and_preserves_existing_converter_snapshot(mo
     ],
 )
 def test_registration_rejects_invalid_external_components(bindings, match):
-    invalid = type("InvalidCodec", (Codec,), {"__slots__": (), **bindings})
+    class InvalidCodec(Codec):
+        pass
+
+    def invalid():
+        codec = InvalidCodec()
+        for name, value in bindings.items():
+            setattr(codec, "_defaults" if name == "defaults" else name, value)
+        return codec
+
     with pytest.raises(ConfigurationError, match=match):
-        MyCodec.register(invalid())
+        MyCodec.register(invalid)
 
 
-def test_registration_rejects_non_codecs_and_stateful_components():
+def test_registration_requires_a_factory_returning_codecs():
+    with pytest.raises(ConfigurationError, match="factory|callable"):
+        MyCodec.register(Codec())
     with pytest.raises(ConfigurationError, match="BaseCodec"):
-        MyCodec.register(object())
+        MyCodec.register(object)
+
+
+def test_registration_allows_instance_state_and_keeps_components_independent(monkeypatch):
+    monkeypatch.setattr(registry, "_CODECS", registry.registered_codec_factories())
 
     class StatefulEncoder(Encoder):
-        pass
+        def __init__(self):
+            self.pending = []
 
     class StatefulCodec(Codec):
-        __slots__ = ()
-        encoder = StatefulEncoder()
+        encoder_type = StatefulEncoder
 
-    class StatefulFacade(Codec):
-        pass
+        def __init__(self):
+            super().__init__()
+            self.pending = []
 
-    for invalid in (StatefulCodec(), StatefulFacade()):
-        with pytest.raises(ConfigurationError, match="__slots__"):
-            MyCodec.register(invalid)
+    MyCodec.register(StatefulCodec)
+    first, second = MyCodec().codecs[PROTOCOL], MyCodec().codecs[PROTOCOL]
+    assert first is not second
+    for name in ("encoder", "decoder", "transport", "semantic_loss_adaptor"):
+        assert getattr(first, name) is not getattr(second, name)
+    first.pending.append("owned")
+    first.encoder.pending.append("owned")
+    assert second.pending == []
+    assert second.encoder.pending == []
 
 
 @pytest.mark.parametrize("component", ["codec", "encoder", "decoder", "transport"])
-@pytest.mark.parametrize("inherited", [False, True])
-def test_registration_rejects_instance_state_declared_in_slots(component, inherited):
-    concrete = Codec if component == "codec" else type(getattr(Codec, component))
-    stateful = type("StatefulImplementation", (concrete,), {"__slots__": ("pending",)})
-    if inherited:
-        stateful = type("InheritedImplementation", (stateful,), {"__slots__": ()})
-    implementation = stateful()
-    implementation.pending = []
-    assert not hasattr(implementation, "__dict__")
-    invalid = (
-        implementation
-        if component == "codec"
-        else type("StatefulCodec", (Codec,), {"__slots__": (), component: implementation})()
-    )
-    with pytest.raises(ConfigurationError, match="empty __slots__"):
-        MyCodec.register(invalid)
+def test_registration_rejects_factories_sharing_components(monkeypatch, component):
+    monkeypatch.setattr(registry, "_CODECS", registry.registered_codec_factories())
+    shared = Codec()
+
+    def factory():
+        if component == "codec":
+            return shared
+        codec = Codec()
+        setattr(codec, component, getattr(shared, component))
+        return codec
+
+    with pytest.raises(ConfigurationError, match="independent|shared|new instance"):
+        MyCodec.register(factory)
 
 
 def collected_text(protocol, result):
@@ -554,7 +583,7 @@ async def test_protocol_default_bindings_are_isolated_between_profiles_and_reque
         await llm.generate(messages=messages, reasoning=True)
         assert client.requests[1]["hint"] == {"level": 1}
         assert llm.resolved_profile.get("reasoning_enable") == {"level": 1}
-    assert Codec.defaults.reasoning_enable.default_value == {"level": 1}
+    assert Codec._DEFAULTS.reasoning_enable.default_value == {"level": 1}
     assert client.streams_closed == 2
     assert client.closed
 
@@ -583,13 +612,9 @@ def test_registered_protocol_owns_its_metadata_projection_and_merge_paths(regist
     assert "vendor_unconfigured" not in str(encoded)
     operations = state.feed(encoded)
     operations.extend(state.finish())
-    assert state.metadata["trace"] == {"token": "trace-1", "phase": "complete"}
+    assert "trace" not in state.metadata
     output = codec.decode(chunks=operations, target_format=PROTOCOL, **state.metadata)["chunks"]
-    assert output[-1] == {
-        "body": "",
-        "done": True,
-        "trace": {"token": "trace-1", "phase": "complete"},
-    }
+    assert output[-1] == {"body": "", "done": True}
 
 
 def test_independent_stream_hooks_capture_their_mutable_metadata(registered):
@@ -601,7 +626,7 @@ def test_independent_stream_hooks_capture_their_mutable_metadata(registered):
 
     trace["token"]["parts"].append("caller edit")
     assert encoded == expected
-    encoded[0]["events"][0]["values"]["token"]["parts"].append("output edit")
+    assert all(event.get("type") != "metadata" for batch in encoded for event in batch["events"])
     assert trace["token"]["parts"] == ["original", "caller edit"]
 
     output = codec.decoder.chunks([{"type": "finish", "reason": "stop"}], trace=trace)

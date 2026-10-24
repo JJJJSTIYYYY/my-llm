@@ -30,18 +30,21 @@ OpenAI Chat 格式输入 → 任意协议 API → OpenAI Chat 格式输出
 | 标准消息翻译 | 只翻译已识别的协议字段；工具参数、结果和 JSON Schema 等开放字典保留内部键值。 |
 | 统一工具调用 | 转换工具定义、调用和结果；流式参数自动组装，响应成功结束后交付完整调用。工具由应用执行。 |
 | 流式与完整回复 | 支持文本、可见思考增量；流结束后通过 `stream.result` 获取完整消息。 |
-| 多模态转换 | 按协议与模型能力转换图片、音频、视频和文件等内容。 |
+| 多模态转换 | 支持用户图片、工具结果图片与文本；目标无法表达时按语义损失策略处理。 |
 | 配置兼容 | 非标准协议通过配置兼容，适配服务与模型的参数、字段路径及思考内容等差异，配置可拓展。 |
 | 独立格式转换 | 无需调用模型，即可转换已支持的消息、工具和完整流事件列表。 |
+| 中间模型直连 | 显式 `stdio_protocol="middleware"`，用具体模型收发消息，跳过两端不需要的转换。 |
 | 异步并发 | 复用官方 SDK 客户端，请求状态独立；支持取消、提前退出和资源清理。 |
 | 协议扩展 | 实现四个抽象基类并注册，即可接入现有调用与转换流程。 |
 
 输入接受标准字典或可转为字典的官方 SDK 对象，输出为所选输入协议的标准字典。
-标准协议和 Profile 未声明的字段直接跳过，不读取、不校验；已识别开放字典内部数据保留。
-Profile 用 `Parameter` 集中声明字段路径、缺失默认值和翻译阶段，`Config` 控制代码行为，均支持继承扩展。
+也可[直接使用中间模型](docs/guides/middleware-io.md)，输入 `Message` / `FunctionTool`，返回 `AssistantMessage` / `MessageEvent`。
+文本、图片、思维链、工具与 usage 通过具体的 `ProtocolMiddleWare` 翻译；audio、file、用户 metadata 等未支持字段静默丢弃。
+已支持字段无法表达时默认抛 `SemanticLossError`，可选择 ignore 或双向原位 hook，详见[迁移指南](docs/guides/semantic-loss.md)。
+Profile 用 `Parameter` 声明字段路径、默认值与 source，`Config` 控制代码分支；继承不能扩大固定中间协议的支持集合。
 字段 `None` 继承配置；`default_value=None` 是实际值，已有 `None` 不会被默认值覆盖；跨协议来回翻译不保证无损。
 跨协议转换受目标协议的表达能力限制，详见[兼容边界](docs/reference/configuration.md#跨协议请求的处理边界)。
-新增协议通过 `MyCodec.register(codec)` 在启动时注册，协议默认值随 Codec 声明；
+新增协议通过 `MyCodec.register(CodecFactory)` 在启动时注册，协议默认值随 Codec 声明；
 无需修改公共入口或协议枚举，详见[接入指南](docs/guides/adding-protocol.md)。
 参数路径统一使用 $. 前缀，例如 $.reasoning.effort；非标准请求参数通过 SDK 的 extra_body 等正式扩展入口配置。
 完整生成输入和已解析配置统一经过 Codec，Decoder 区分客户端参数、请求参数与本地控制项；
@@ -69,6 +72,7 @@ pip install 'my-llm-py[openai,anthropic]'
 
 `pip install my-llm-py` 仅安装核心依赖。每种输入、输出及上游协议都需要对应 SDK；
 例如 Chat 输入调用 Anthropic API 需要 `[openai,anthropic]`。
+中间模型 stdio 只需要安装上游对应 SDK。
 未安装的协议不会注册，显式选择时会提示安装命令。
 
 项目开发环境执行 `uv sync` 默认安装开发工具和全部 SDK。

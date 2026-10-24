@@ -1,5 +1,6 @@
 """Reusable, profile-independent conversion among registered protocols."""
 
+from collections.abc import Callable, MutableMapping
 from typing import Any
 
 from my_llm._optional import BUILTIN_CODECS, builtin_codec, require_sdk, sdk_available
@@ -8,66 +9,134 @@ from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.base.transport import BaseTransport
 from my_llm.codec.shared.conversion import dictionary_views
+from my_llm.codec.shared.output import output_chunks, output_messages
 from my_llm.codec.shared.stream import is_batch
 from my_llm.exceptions import ConfigurationError, MessageValidationError, UnsupportedProviderError
+from my_llm.middleware import (
+    FunctionTool,
+    Message,
+    MessageEvent,
+    ProtocolMiddleWare,
+    generation_input,
+    messages_from_wire,
+    tools_from_wire,
+    wire_values,
+)
 from my_llm.profile.configuration import Protocol, ProtocolDefaults
 from my_llm.profile.resolution import ResolvedProfile
 from my_llm.profile.types import Omit
-from my_llm.registry import register_codec, registered_codecs
+from my_llm.registry import register_codec, registered_codec_factories
+from my_llm.semantic_loss import (
+    BaseSemanticLossAdaptor,
+    LossPolicy,
+    SemanticLossContext,
+    SemanticLossHook,
+)
+
+
+class _CodecInstances(MutableMapping[str, BaseCodec]):
+    """Instance-owned factory snapshot; unused protocols allocate no components."""
+
+    def __init__(self, adaptor: BaseSemanticLossAdaptor):
+        self.factories = registered_codec_factories()
+        self.instances: dict[str, BaseCodec] = {}
+        self.adaptor = adaptor
+
+    def __getitem__(self, protocol: str) -> BaseCodec:
+        if protocol not in self.instances:
+            codec = self.factories[protocol]()
+            codec.semantic_loss_adaptor = self.adaptor
+            self.instances[protocol] = codec
+        return self.instances[protocol]
+
+    def __setitem__(self, protocol: str, codec: BaseCodec) -> None:
+        codec.semantic_loss_adaptor = self.adaptor
+        self.instances[protocol] = codec
+        self.factories.setdefault(protocol, type(codec))
+
+    def __delitem__(self, protocol: str) -> None:
+        del self.factories[protocol]
+        self.instances.pop(protocol, None)
+
+    def __iter__(self):
+        return iter(self.factories)
+
+    def __len__(self):
+        return len(self.factories)
+
+    def __contains__(self, protocol):
+        return protocol in self.factories
 
 
 class MyCodec:
     """Convert messages, tools and complete event lists between standard protocols.
 
-    Construction takes no arguments and captures the currently registered codecs
-    in the codecs mapping. Register custom protocols before creating instances.
+    Construction selects a semantic-loss policy and snapshots registered factories.
+    Protocol components are constructed lazily within this converter. Register
+    custom protocols before creating instances.
     Calls do not retain profiles, inferred formats or stream fragments.
     Use convert for direct conversion; profile=None selects standard field behavior.
     Only recognized fields are translated; conversion is not guaranteed lossless.
     """
 
-    __slots__ = ("codecs",)
+    __slots__ = ("codecs", "semantic_loss_adaptor")
 
-    def __init__(self) -> None:
-        """Capture the currently registered protocol implementations."""
-        self.codecs = registered_codecs()
+    def __init__(
+        self,
+        semantic_loss_protocol: LossPolicy = "raise",
+        input_semantic_loss_hook: SemanticLossHook | None = None,
+        output_semantic_loss_hook: SemanticLossHook | None = None,
+    ) -> None:
+        self.semantic_loss_adaptor = BaseSemanticLossAdaptor(
+            semantic_loss_protocol, input_semantic_loss_hook, output_semantic_loss_hook
+        )
+        self.codecs = _CodecInstances(self.semantic_loss_adaptor)
+
+    def set_semantic_loss_policy(
+        self,
+        semantic_loss_protocol: LossPolicy = "raise",
+        input_semantic_loss_hook: SemanticLossHook | None = None,
+        output_semantic_loss_hook: SemanticLossHook | None = None,
+    ) -> None:
+        adaptor = BaseSemanticLossAdaptor(
+            semantic_loss_protocol, input_semantic_loss_hook, output_semantic_loss_hook
+        )
+        self.semantic_loss_adaptor = adaptor
+        self.codecs.adaptor = adaptor
+        for codec in self.codecs.instances.values():
+            codec.semantic_loss_adaptor = adaptor
 
     @staticmethod
-    def register(codec: BaseCodec) -> None:
-        """Register a protocol for subsequently constructed MyCodec/MyLLM instances.
-
-        Args:
-            codec: BaseCodec with ProtocolDefaults and matching encoder/decoder protocol
-                names. The codec and its components must declare empty __slots__.
-
-        Raises:
-            ConfigurationError: Components are invalid or the protocol name is already
-                registered. Existing instances retain their registration snapshot.
-        """
-        if not isinstance(codec, BaseCodec):
-            raise ConfigurationError("protocol implementation must be a BaseCodec")
+    def register(factory: Callable[[], BaseCodec]) -> None:
+        """Register a factory producing independent codecs and components."""
+        if not callable(factory):
+            raise ConfigurationError("protocol implementation must be a codec factory")
+        codec = factory()
+        other = factory()
+        if not isinstance(codec, BaseCodec) or not isinstance(other, BaseCodec):
+            raise ConfigurationError("codec factory must return a BaseCodec")
         protocol = codec.protocol_or_api_style
         if not isinstance(protocol, str) or not protocol.strip():
             raise ConfigurationError("protocol name must be a non-empty string")
+        if protocol == "middleware":
+            raise ConfigurationError("middleware is reserved for direct intermediate I/O")
         if not isinstance(codec.defaults, ProtocolDefaults):
             raise ConfigurationError("protocol defaults must be ProtocolDefaults")
-        components = (
+        for component, expected in (
             (codec.encoder, BaseEncoder),
             (codec.decoder, BaseDecoder),
             (codec.transport, BaseTransport),
-        )
-        for component, expected in components:
+        ):
             if not isinstance(component, expected):
                 raise ConfigurationError(f"protocol component must be a {expected.__name__}")
         if codec.encoder.protocol != protocol or codec.decoder.protocol != protocol:
             raise ConfigurationError("codec, encoder and decoder must use the same protocol name")
-        if any(
-            hasattr(component, "__dict__")
-            or any(base.__dict__.get("__slots__", ()) for base in type(component).__mro__)
-            for component in (codec, *(component for component, _ in components))
+        if codec is other or any(
+            getattr(codec, name) is getattr(other, name)
+            for name in ("encoder", "decoder", "transport")
         ):
-            raise ConfigurationError("protocol components must declare empty __slots__")
-        register_codec(codec)
+            raise ConfigurationError("codec factory must create independent protocol components")
+        register_codec(factory, protocol=protocol)
 
     def _codec(self, protocol: str) -> BaseCodec:
         try:
@@ -86,12 +155,16 @@ class MyCodec:
         return matches[0] if len(matches) == 1 else None
 
     def decoder(self, protocol: str) -> BaseDecoder:
-        """Return the stateless intermediate-to-native converter."""
+        """Return this instance's intermediate-to-native converter."""
         return self._codec(protocol).decoder
 
     def transport(self, protocol: str) -> BaseTransport:
         """Return the SDK execution component composed by this protocol's codec."""
         return self._codec(protocol).transport
+
+    def defaults(self, protocol: str) -> ProtocolDefaults:
+        """Borrow this instance's default declarations for profile resolution."""
+        return self._codec(protocol).defaults
 
     def validate_profile(self, profile: ResolvedProfile) -> None:
         """Validate protocol-specific settings in a ResolvedProfile.
@@ -107,7 +180,10 @@ class MyCodec:
 
         Raises MessageValidationError for invalid input. No request is sent.
         """
-        self._codec(protocol).validate_input(messages, tools)
+        if protocol == "middleware":
+            generation_input(messages, tools)
+        else:
+            self._codec(protocol).validate_input(messages, tools)
 
     def client_parameters(self, profile: ResolvedProfile) -> dict:
         """Return prepared SDK connection arguments for a resolved profile.
@@ -130,6 +206,20 @@ class MyCodec:
 
         This method does not remember the selected protocol between calls.
         """
+        if protocol == "middleware":
+            return protocol
+        if (
+            isinstance(inputs["messages"], (list, tuple))
+            and inputs["messages"]
+            and isinstance(inputs["messages"][0], Message)
+        ) or (
+            isinstance(inputs["tools"], (list, tuple))
+            and inputs["tools"]
+            and isinstance(inputs["tools"][0], FunctionTool)
+        ):
+            raise MessageValidationError(
+                'intermediate inputs require explicit stdio_protocol="middleware"'
+            )
         if protocol is not None:
             return protocol
         history = list(dictionary_views(inputs["messages"]))
@@ -154,7 +244,8 @@ class MyCodec:
             inputs: MyLLM.generate options as a dictionary, including messages, tools
                 and stream. Values use input_format.
             profile: Resolved upstream provider/model settings.
-            input_format: Registered protocol used by the supplied history and tools.
+            input_format: Registered protocol, or "middleware" for typed history/tools
+                that bypass the source encoder.
             client: Connection settings from client_parameters(profile).
 
         Returns:
@@ -166,9 +257,20 @@ class MyCodec:
             MessageValidationError: Messages, tools or their associations are invalid.
             UnsupportedCapabilityError: Required content cannot be represented.
         """
-        source = self._codec(input_format)
-        intermediate = source.encoder.request(inputs, profile)
-        return self.decoder(profile.protocol).prepare(intermediate, client)
+        if input_format == "middleware":
+            intermediate = {
+                **{key: value for key, value in inputs.items() if key not in ("messages", "tools")},
+                "profile": profile,
+                "middleware": generation_input(inputs["messages"], inputs["tools"]),
+            }
+        else:
+            intermediate = self._codec(input_format).encoder.request(inputs, profile)
+        target = self._codec(profile.protocol)
+        return target.translate(
+            lambda: target.decoder.prepare(intermediate, client),
+            SemanticLossContext(input_format, profile.protocol, "input", "request"),
+            draft_key="request",
+        )
 
     def upstream(self, client: Any, request: dict, profile: ResolvedProfile):
         """Return an async context manager yielding upstream SDK events.
@@ -182,14 +284,39 @@ class MyCodec:
         """
         return self.transport(profile.protocol).upstream(client, request)
 
-    def result(self, messages: list, *, target_format: Protocol):
+    def result(
+        self,
+        messages: list,
+        *,
+        target_format: Protocol,
+        origin_source="output",
+        input_format: Protocol | None = None,
+        semantic_profile: ResolvedProfile | None = None,
+    ):
         """Render intermediate messages as one completed target-protocol result.
 
         Returns a message dictionary, or an output items list for openai_responses.
+        For target_format="middleware", returns a typed AssistantMessage and requires
+        input_format identifying the native source for the loss-policy context.
         Use decode when a list of converted messages is required instead.
         """
-        converted = self.decode(messages=messages, target_format=target_format)["messages"]
-        return self.decoder(target_format).result(converted)
+        if target_format == "middleware":
+            if input_format is None:
+                raise ConfigurationError("middleware results require the source input_format")
+            source = self._codec(input_format)
+            return source.translate(
+                lambda: messages_from_wire(
+                    output_messages(wire_values(messages), semantic_profile)
+                )[0],
+                SemanticLossContext(input_format, target_format, origin_source, "result"),
+            )
+        target = self._codec(target_format)
+        return target.translate(
+            lambda: target.decoder.result(
+                target.decoder.messages(messages, semantic_profile=semantic_profile)
+            ),
+            SemanticLossContext(input_format, target_format, origin_source, "result"),
+        )
 
     def encode(
         self,
@@ -200,8 +327,8 @@ class MyCodec:
         profile: ResolvedProfile | None = None,
         chunks: Any = None,
         **parameters: Any,
-    ) -> dict[str, Any]:
-        """Convert selected standard-protocol values to intermediate dictionaries.
+    ) -> ProtocolMiddleWare:
+        """Convert selected native values to the fixed, typed middleware models.
 
         Args:
             messages: Standard message list, or None to leave it out of the result.
@@ -212,20 +339,25 @@ class MyCodec:
             **parameters: Additional conversion options supported by the source codec.
 
         Returns:
-            A dictionary containing only supplied messages, tools and chunks entries;
-            each value is a list. Empty supplied lists remain present.
+            A ProtocolMiddleWare with typed messages, tools and stream collections.
+            Unspecified collections are None; supplied empty collections stay empty.
 
-        Intermediate values are for conversion APIs, not application history.
+        Typed messages/tools can also be passed to MyLLM.generate with explicit
+        stdio_protocol="middleware".
         Invalid recognized values raise MessageValidationError or
         UnsupportedCapabilityError; unregistered protocols raise UnsupportedProviderError.
         A missing optional SDK for a built-in protocol raises ModuleNotFoundError.
         """
         codec = self._codec(input_format)
-        result = {}
-        for kind, values in (("messages", messages), ("tools", tools), ("chunks", chunks)):
-            if values is not None:
-                result[kind] = getattr(codec, f"encode_{kind}")(values, profile, **parameters)
-        return result
+        return ProtocolMiddleWare(
+            messages=codec.encode_messages(messages, profile, **parameters)
+            if messages is not None
+            else None,
+            tools=codec.encode_tools(tools, profile, **parameters) if tools is not None else None,
+            stream=codec.encode_chunks(chunks, profile, **parameters)
+            if chunks is not None
+            else None,
+        )
 
     def decode(
         self,
@@ -243,6 +375,8 @@ class MyCodec:
             messages: Intermediate messages, or None to leave them out.
             tools: Intermediate tool declarations, or None to leave them out.
             target_format: Registered target protocol name.
+                "middleware" returns typed values without invoking a decoder;
+                supply input_format in parameters to identify the native source.
             profile: Optional target-profile overrides; None uses standard fields.
             chunks: Intermediate events, or a complete encoded offline event batch.
             **parameters: Target conversion options, such as model or sequence_number.
@@ -254,7 +388,7 @@ class MyCodec:
         Use convert for direct standard-to-standard conversion. Live asynchronous
         consumption is available through MyLLM.generate(stream=True).
         """
-        codec = self._codec(target_format)
+        chunks = wire_values(chunks) if chunks is not None else None
         if chunks and all(is_batch(chunk) for chunk in chunks):
             # Complete offline streams use the same request-owned accumulation
             # as live calls, regardless of their source and target protocols.
@@ -265,11 +399,53 @@ class MyCodec:
             converted_chunks.extend(state.finish())
             chunks = converted_chunks
             parameters = {**state.metadata, **parameters}
-        result = {}
-        for kind, values in (("messages", messages), ("tools", tools), ("chunks", chunks)):
-            if values is not None:
-                result[kind] = getattr(codec, f"decode_{kind}")(values, profile, **parameters)
-        return result
+        origin_source = parameters.pop("origin_source", "input")
+        input_format = parameters.pop("input_format", parameters.get("source_protocol"))
+
+        if target_format == "middleware":
+            if input_format is None:
+                raise ConfigurationError("middleware output requires the source input_format")
+            semantic_profile = parameters.pop("semantic_profile", None)
+
+            def render_middleware():
+                result = {}
+                if messages is not None:
+                    result["messages"] = messages_from_wire(
+                        output_messages(wire_values(messages), semantic_profile)
+                    )
+                if tools is not None:
+                    result["tools"] = tools_from_wire(wire_values(tools))
+                if chunks is not None:
+                    result["chunks"] = [
+                        MessageEvent.from_wire(event)
+                        for event in output_chunks(chunks, semantic_profile)
+                    ]
+                return result
+
+            return self._codec(input_format).translate(
+                render_middleware,
+                SemanticLossContext(input_format, target_format, origin_source, "middleware"),
+                draft_key="chunks"
+                if chunks is not None and messages is None and tools is None
+                else None,
+            )
+
+        codec = self._codec(target_format)
+
+        def render():
+            result = {}
+            for kind, values in (("messages", messages), ("tools", tools), ("chunks", chunks)):
+                if values is not None:
+                    result[kind] = getattr(codec, f"decode_{kind}")(values, profile, **parameters)
+            return result
+
+        return codec.translate(
+            render,
+            SemanticLossContext(input_format, target_format, origin_source, "decoder"),
+            draft_key="chunks"
+            if chunks is not None and messages is None and tools is None
+            else None,
+        )
 
     def convert(
         self,
@@ -303,10 +479,18 @@ class MyCodec:
         """
         intermediate = self.encode(messages, tools, input_format=input_format, chunks=chunks)
         return self.decode(
-            **intermediate, target_format=target_format, profile=profile, **parameters
+            messages=intermediate.messages,
+            tools=intermediate.tools,
+            chunks=intermediate["chunks"] if intermediate.stream is not None else None,
+            target_format=target_format,
+            profile=profile,
+            input_format=input_format,
+            **parameters,
         )
 
-    def request(self, intermediate: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
+    def request(
+        self, intermediate: ProtocolMiddleWare | dict, profile: ResolvedProfile, **parameters: Any
+    ) -> dict:
         """Build a native SDK request from encoded messages and optional tools.
 
         Args:
@@ -319,12 +503,19 @@ class MyCodec:
 
         Use prepare to supply a complete unencoded generation call.
         """
-        return self._codec(profile.protocol).request(
-            intermediate["messages"], intermediate.get("tools"), profile, **parameters
+        if isinstance(intermediate, ProtocolMiddleWare):
+            messages, tools = intermediate.messages or [], intermediate.tools
+        else:
+            messages, tools = intermediate["messages"], intermediate.get("tools")
+        source = messages[0].get("protocol") if messages else None
+        target = self._codec(profile.protocol)
+        return target.translate(
+            lambda: target.request(messages, tools, profile, **parameters),
+            SemanticLossContext(source, profile.protocol, "input", "request"),
         )
 
 
 for _protocol in BUILTIN_CODECS:
     if sdk_available(_protocol):
-        MyCodec.register(builtin_codec(_protocol)())
+        MyCodec.register(builtin_codec(_protocol))
 del _protocol

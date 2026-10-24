@@ -366,7 +366,8 @@ Encoder / Decoder 只读取并构造标准协议及 Profile 明确声明的已�
 
 标准签名、redacted_thinking、encrypted_content 按对应协议明确处理，不能转换成其他协议的原生签名，
 也不通过隐藏记录保存供后续恢复。不能表达的媒体或会改变工具约束的已知 SDK 限制会在请求前报错。
-Chat / Ollama 无法原生读取 URL 文档时保留文本引用，不隐式下载文件。
+audio / file / 文档与用户 metadata 不在支持集合，编码时静默丢弃。图片不能变为文本引用；
+目标无法表达支持值时进入默认 raise、ignore 或双向 hook，见[语义损失指南](../guides/semantic-loss.md)。
 
 支持状态与值一起覆盖，例如禁用 reasoning：
 

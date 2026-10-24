@@ -1,22 +1,21 @@
 """anthropic: native input to intermediate."""
 
-from copy import deepcopy
 from typing import Any
 
 from anthropic.types import MessageParam, ToolParam
 
-from my_llm.codec.anthropic.utils.content import CITATION_FIELDS, native_block
+from my_llm.codec.anthropic.utils.content import native_block
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.shared.conversion import (
     _MISSING,
     dictionary_views,
-    encode_functions,
     mapping_list,
     select,
 )
 from my_llm.codec.shared.stream import BlockRef, encode_batch, metadata, record
-from my_llm.exceptions import ResponseFailedError
+from my_llm.exceptions import MessageValidationError, ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
+from my_llm.semantic_loss import originated
 
 PROTOCOL = "anthropic"
 REASONS = {
@@ -35,6 +34,38 @@ class AnthropicEncoder(BaseEncoder):
     protocol = PROTOCOL
     message_type = MessageParam
     tool_type = ToolParam
+
+    def _validation_messages(self, messages: list) -> list:
+        result = []
+        for message in messages:
+            content = message.get("content")
+            if isinstance(content, list):
+                projected = []
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    value = native_block(block)
+                    if value is None or (
+                        value.get("type") == "image" and message.get("role") != "user"
+                    ):
+                        continue
+                    if value.get("type") == "thinking" and not value.get("signature"):
+                        if not isinstance(value.get("thinking"), str):
+                            raise MessageValidationError("thinking must be a string")
+                        # A signature is a target replay constraint, not a reason
+                        # to reject supported source reasoning during SDK checks.
+                        continue
+                    projected.append(value)
+                content = projected
+            result.append({"role": message.get("role"), "content": content})
+        return result
+
+    def _validation_tools(self, tools: list) -> list:
+        return [
+            select(tool, "name", "description", "input_schema", "strict")
+            for tool in tools
+            if "input_schema" in tool
+        ]
 
     def match_item(self, item: dict) -> bool:
         if "input_schema" in item:
@@ -85,51 +116,55 @@ class AnthropicEncoder(BaseEncoder):
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for message in messages:
+        for index, message in enumerate(messages):
+            path = f"$.messages[{index}].content"
             value = message.get("content")
             content = (
-                [{"type": "text", "text": value}]
+                [originated({"type": "text", "text": value}, path, value)]
                 if isinstance(value, str)
                 else [
                     block
-                    for item in dictionary_views(value or [])
-                    if (block := native_block(item)) is not None
+                    for part_index, item in enumerate(dictionary_views(value or []))
+                    if (block := native_block(item, path=f"{path}[{part_index}]")) is not None
                 ]
             )
             result.append({"protocol": PROTOCOL, "role": message.get("role"), "content": content})
+        for message in result:
+            if message.get("role") != "user":
+                message["content"] = [
+                    block for block in message["content"] if block.get("type") != "image"
+                ]
         return result
 
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        return encode_functions(
-            tools,
-            lambda tool: (
-                [
-                    {
-                        **select(tool, "name", "description", "strict"),
-                        **(
-                            {
-                                "cache_control": None
-                                if tool["cache_control"] is None
-                                else select(tool["cache_control"], "type", "ttl")
-                            }
-                            if "cache_control" in tool
-                            else {}
-                        ),
-                        "parameters": tool.get("input_schema", {}),
-                    }
+        return [
+            {
+                "functions": [
+                    originated(
+                        {
+                            **select(tool, "name", "description", "strict"),
+                            "parameters": originated(
+                                tool.get("input_schema", {}),
+                                f"$.tools[{index}].input_schema",
+                                tool.get("input_schema", {}),
+                            ),
+                        },
+                        f"$.tools[{index}]",
+                        tool,
+                    )
                 ]
-                if "input_schema" in tool
-                else None
-            ),
-        )
+            }
+            for index, tool in enumerate(tools)
+            if "input_schema" in tool
+        ]
 
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for event in chunks:
+        for event_index, event in enumerate(chunks):
             if event.get("type") == "error" or event.get("error"):
                 raise ResponseFailedError(
                     "provider generation failed", details=event.get("error", event)
@@ -140,37 +175,26 @@ class AnthropicEncoder(BaseEncoder):
             if kind == "message_start":
                 message = event["message"]
                 ops.append(metadata(self._metadata(message)))
-                if message.get("usage") and (
-                    profile is None or profile.get("usage_mode") != "none"
-                ):
+                if message.get("usage") is not None:
                     ops.append({"type": "usage", "usage": message["usage"]})
             elif kind == "content_block_start":
                 block = native_block(event["content_block"])
-                if block is None:
+                if block is None or block["type"] not in (
+                    "text",
+                    "thinking",
+                    "redacted_thinking",
+                    "tool_use",
+                ):
                     continue
-                if profile is not None and block["type"] in ("text", "thinking"):
-                    field = "text" if block["type"] == "text" else "thinking"
-                    name = "content" if field == "text" else "reasoning_content"
-                    if profile.parameter(name, "output") is None:
-                        block[field] = ""
                 ops.append(
                     {
                         "type": "block_set",
                         "ref": BlockRef("content", index),
-                        "block": deepcopy(block),
+                        "block": block,
                     }
                 )
             elif kind == "content_block_delta":
                 delta = event["delta"]
-                if delta.get("type") == "citations_delta":
-                    ops.append(
-                        {
-                            "type": "block_annotation",
-                            "ref": BlockRef("content", index),
-                            "field": "citations",
-                            "value": deepcopy(select(delta["citation"], *CITATION_FIELDS)),
-                        }
-                    )
                 field = {
                     "text_delta": "text",
                     "thinking_delta": "thinking",
@@ -198,7 +222,7 @@ class AnthropicEncoder(BaseEncoder):
                                 "kind": {"arguments": "tool_use", "signature": "thinking"}.get(
                                     field, field
                                 ),
-                                "value": deepcopy(value),
+                                "value": value,
                             }
                         )
             elif kind == "content_block_stop":
@@ -217,12 +241,31 @@ class AnthropicEncoder(BaseEncoder):
                             }
                         )
                     )
-                if event.get("usage") and (profile is None or profile.get("usage_mode") != "none"):
+                if event.get("usage") is not None:
                     ops.append({"type": "usage", "usage": event["usage"]})
             elif kind == "message_stop":
                 ops.append({"type": "finish"})
             if not ops:
                 continue
+            for operation_index, operation in enumerate(ops):
+                event_path = f"$.chunks[{parameters.get('chunk_offset', 0) + event_index}]"
+                if "block" in operation and not hasattr(operation["block"], "origin_path"):
+                    operation["block"] = originated(operation["block"], event_path, event)
+                origin_path, origin_value = event_path, event
+                if operation.get("type") == "block_set":
+                    operation["block"] = originated(
+                        operation["block"],
+                        event_path + ".content_block",
+                        event.get("content_block", event),
+                    )
+                elif operation.get("type") == "block_delta":
+                    field = operation.get("field")
+                    native_field = "partial_json" if field == "arguments" else field
+                    origin_path, origin_value = (
+                        event_path + f".delta.{native_field}",
+                        operation.get("value"),
+                    )
+                ops[operation_index] = originated(operation, origin_path, origin_value)
             result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
         return result
 

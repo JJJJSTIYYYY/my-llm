@@ -8,11 +8,13 @@ def render(source, target, incoming):
     codec = MyCodec()
     state = StreamState("demo")
     output = []
-    for event in incoming:
-        chunks = codec.encode(chunks=[event], input_format=source)["chunks"]
+    for index, event in enumerate(incoming):
+        chunks = codec.encode(chunks=[event], input_format=source, chunk_offset=index)["chunks"]
         converted = codec.decode(
             chunks=state.feed(chunks),
             target_format=target,
+            input_format=source,
+            origin_source="output",
             sequence_number=state.sequence_number,
             **state.metadata,
         )["chunks"]
@@ -22,6 +24,8 @@ def render(source, target, incoming):
         codec.decode(
             chunks=state.finish(),
             target_format=target,
+            input_format=source,
+            origin_source="output",
             sequence_number=state.sequence_number,
             **state.metadata,
         )["chunks"]

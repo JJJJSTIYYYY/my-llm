@@ -1,24 +1,24 @@
 """gemini: native input to intermediate."""
 
-from copy import deepcopy
 from typing import Any
 
 from google.genai import types
 
 from my_llm.codec.base.encoder import BaseEncoder
-from my_llm.codec.gemini.encoding.content import encode_part, json_schema
+from my_llm.codec.gemini.encoding.content import encode_part, image_part, json_schema
 from my_llm.codec.shared.conversion import (
     _MISSING,
     allocate_call_id,
     associate_tool_result,
-    encode_functions,
     mapping_list,
     select,
+    text_result,
 )
 from my_llm.codec.shared.stream import encode_batch, metadata, record
 from my_llm.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
 from my_llm.profile.types import Omit
+from my_llm.semantic_loss import originated
 
 PROTOCOL = "gemini"
 TEXT_PATH = "$.candidates[0].content.parts[0].text"
@@ -31,6 +31,54 @@ class GeminiEncoder(BaseEncoder):
     protocol = PROTOCOL
     message_type = types.Content
     tool_type = types.Tool
+
+    def _validation_messages(self, messages: list) -> list:
+        result = []
+        for message in messages:
+            parts = []
+            for part in message.get("parts", []):
+                if not isinstance(part, dict):
+                    continue
+                value = select(part, "text", "thought", "thought_signature")
+                if "function_call" in part:
+                    value["function_call"] = select(part["function_call"], "id", "name", "args")
+                if "function_response" in part:
+                    value["function_response"] = select(
+                        part["function_response"], "id", "name", "response"
+                    )
+                    if "parts" in part["function_response"]:
+                        value["function_response"]["parts"] = [
+                            image
+                            for child in part["function_response"]["parts"] or []
+                            if isinstance(child, dict) and (image := image_part(child)) is not None
+                        ]
+                    response = value["function_response"].get("response", {})
+                    if not isinstance(response, dict):
+                        value["function_response"]["response"] = {"result": text_result(response)}
+                for field in ("inline_data", "file_data"):
+                    media = part.get(field)
+                    if (
+                        message.get("role", "user") == "user"
+                        and isinstance(media, dict)
+                        and str(media.get("mime_type", "")).startswith("image/")
+                    ):
+                        value[field] = select(media, "mime_type", "data", "file_uri")
+                if value:
+                    parts.append(value)
+            result.append({**select(message, "role"), "parts": parts})
+        return result
+
+    def _validation_tools(self, tools: list) -> list:
+        return [
+            {
+                "function_declarations": [
+                    select(function, "name", "description", "parameters", "parameters_json_schema")
+                    for function in tool["function_declarations"] or []
+                ]
+            }
+            for tool in tools
+            if "function_declarations" in tool
+        ]
 
     def match_item(self, item: dict) -> bool:
         if "function_declarations" in item:
@@ -63,7 +111,7 @@ class GeminiEncoder(BaseEncoder):
                     if call is not None
                     else ""
                 )
-                block = encode_part(part, call_id)
+                block = encode_part(part, call_id, path=f"$.messages[{index}].parts[{part_index}]")
                 if block is None:
                     continue
                 if block.get("type") == "tool_use":
@@ -72,7 +120,7 @@ class GeminiEncoder(BaseEncoder):
                     block["tool_use_id"] = associate_tool_result(
                         pending, block.get("tool_use_id"), block.get("name")
                     )
-                content.append(block)
+                content.append(originated(block, f"$.messages[{index}].parts[{part_index}]", part))
             result.append(
                 {
                     "protocol": PROTOCOL,
@@ -82,33 +130,44 @@ class GeminiEncoder(BaseEncoder):
                     "content": content,
                 }
             )
+        for message in result:
+            if message.get("role") != "user":
+                message["content"] = [
+                    block for block in message["content"] if block.get("type") != "image"
+                ]
         return result
 
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        return encode_functions(
-            tools,
-            lambda tool: (
-                [
-                    {
-                        **select(f, "name", "description", "response_json_schema", "behavior"),
-                        "parameters": f["parameters_json_schema"]
-                        if "parameters_json_schema" in f
-                        else json_schema(f.get("parameters", {})),
-                    }
-                    for f in tool["function_declarations"]
-                ]
-                if "function_declarations" in tool
-                else None
-            ),
-        )
+        result = []
+        for index, tool in enumerate(tools):
+            functions = []
+            for function_index, function in enumerate(tool.get("function_declarations") or []):
+                path = f"$.tools[{index}].function_declarations[{function_index}]"
+                value = select(function, "name", "description")
+                if function.get("parameters_json_schema") is not None:
+                    value["parameters"] = originated(
+                        function["parameters_json_schema"],
+                        f"{path}.parameters_json_schema",
+                        function["parameters_json_schema"],
+                    )
+                elif function.get("parameters") is not None:
+                    value["parameters"] = originated(
+                        json_schema(function["parameters"]),
+                        f"{path}.parameters",
+                        function["parameters"],
+                    )
+                functions.append(originated(value, path, function))
+            if functions:
+                result.append({"functions": functions})
+        return result
 
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for event in chunks:
+        for event_index, event in enumerate(chunks):
             if event.get("type") == "error" or event.get("error"):
                 raise ResponseFailedError(
                     "provider generation failed", details=event.get("error", event)
@@ -143,9 +202,7 @@ class GeminiEncoder(BaseEncoder):
                     }
                 )
             ]
-            if event.get("usage_metadata") is not None and (
-                profile is None or profile.get("usage_mode") != "none"
-            ):
+            if event.get("usage_metadata") is not None:
                 ops.append({"type": "usage", "usage": event["usage_metadata"]})
             seen_text = set()
             has_parts = False
@@ -156,9 +213,9 @@ class GeminiEncoder(BaseEncoder):
                 # Append each part explicitly, including empty signed text parts.
                 native_parts = candidate.get("content", {}).get("parts", [])
                 has_parts = has_parts or bool(native_parts)
-                for part in native_parts:
+                for part_index, part in enumerate(native_parts):
                     block = encode_part(part, "")
-                    if block is not None:
+                    if block is not None and block["type"] in ("text", "thinking", "tool_use"):
                         # A standard text path uses each native part's thought flag.
                         # An overridden path addresses one exact SDK-root parameter.
                         if block["type"] in ("text", "thinking"):
@@ -166,12 +223,18 @@ class GeminiEncoder(BaseEncoder):
                             seen_text.add(name)
                             if profile is not None:
                                 parameter = profile.parameter(name, "output")
-                                if parameter is None or parameter.path != TEXT_PATH:
+                                if parameter is not None and parameter.path != TEXT_PATH:
                                     continue
-                        for key in ("input", "content", "part_metadata"):
-                            if key in block:
-                                block[key] = deepcopy(block[key])
-                        ops.append({"type": "block_append", "block": block})
+                        ops.append(
+                            {
+                                "type": "block_append",
+                                "block": originated(
+                                    block,
+                                    f"$.chunks[{parameters.get('chunk_offset', 0) + event_index}].candidates[0].content.parts[{part_index}]",
+                                    part,
+                                ),
+                            }
+                        )
                 reason = candidate.get("finish_reason")
                 if reason not in (None, "FINISH_REASON_UNSPECIFIED"):
                     if reason not in ("STOP", "MAX_TOKENS"):
@@ -209,9 +272,14 @@ class GeminiEncoder(BaseEncoder):
                             position,
                             {
                                 "type": "block_append",
-                                "block": {"type": kind, field: deepcopy(value)},
+                                "block": {"type": kind, field: value},
                             },
                         )
+            for operation_index, operation in enumerate(ops):
+                event_path = f"$.chunks[{parameters.get('chunk_offset', 0) + event_index}]"
+                if "block" in operation and not hasattr(operation["block"], "origin_path"):
+                    operation["block"] = originated(operation["block"], event_path, event)
+                ops[operation_index] = originated(operation, event_path, event)
             result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
         return result
 

@@ -5,16 +5,19 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, Hashable, Sequence
 from contextlib import AsyncExitStack, aclosing
 from copy import deepcopy
+from dataclasses import replace
 from typing import Any
 
 from my_llm.codec.converter import MyCodec
 from my_llm.codec.shared.conversion import _MISSING
 from my_llm.exceptions import ConfigurationError, StreamError
+from my_llm.middleware import Message, MessageEvent, Usage
 from my_llm.profile.configuration import Protocol, ReasoningEffort
 from my_llm.profile.model_profile import ModelProfile
 from my_llm.profile.provider_profile import ProviderProfile
-from my_llm.profile.resolution import resolve_profiles
+from my_llm.profile.resolution import ResolvedProfile, resolve_profiles
 from my_llm.profile.types import Attribute, omit
+from my_llm.semantic_loss import LossPolicy, SemanticLossHook
 from my_llm.stream._state import StreamState
 from my_llm.stream.message_stream import MessageStream
 
@@ -27,12 +30,19 @@ class MyLLM:
         model: Model identity and overrides for provider defaults.
         stdio_protocol: Protocol used by both messages and tools, and by results.
             If None, the first generation must uniquely identify a protocol.
+            Set "middleware" explicitly for typed Message/FunctionTool input and
+            AssistantMessage/MessageEvent output; this format is never inferred.
+        semantic_loss_protocol: How supported fields that the target cannot express
+            are handled: "raise", "ignore", or "hook".
+        input_semantic_loss_hook: Synchronous hook for the complete request draft.
+        output_semantic_loss_hook: Synchronous hook for response drafts. Hooks receive
+            the draft, grouped losses and context, and modify the draft in place.
 
     Attributes:
         provider: Copy of the supplied provider profile.
         model: Copy of the supplied model profile.
         resolved_profile: Read-only configuration snapshot for this instance.
-        stdio_protocol: Selected input/output protocol, or None before inference.
+        stdio_protocol: Read-only input/output protocol, or None before inference.
         codec: Converter available for the registered protocols.
         client_parameters: Prepared connection settings; treat as read-only.
 
@@ -53,22 +63,64 @@ class MyLLM:
         provider: ProviderProfile,
         model: ModelProfile,
         stdio_protocol: Protocol | None = None,
+        semantic_loss_protocol: LossPolicy = "raise",
+        input_semantic_loss_hook: SemanticLossHook | None = None,
+        output_semantic_loss_hook: SemanticLossHook | None = None,
     ) -> None:
         """Create an instance from profiles; see the class for argument contracts."""
-        self.codec = MyCodec()
+        self.codec = MyCodec(
+            semantic_loss_protocol=semantic_loss_protocol,
+            input_semantic_loss_hook=input_semantic_loss_hook,
+            output_semantic_loss_hook=output_semantic_loss_hook,
+        )
         if stdio_protocol is not None and (
-            not isinstance(stdio_protocol, str) or stdio_protocol not in self.codec.codecs
+            not isinstance(stdio_protocol, str)
+            or stdio_protocol != "middleware"
+            and stdio_protocol not in self.codec.codecs
         ):
             raise ConfigurationError(f"unsupported stdio_protocol: {stdio_protocol!r}")
-        self.resolved_profile = resolve_profiles(provider, model)
+        self._resolved_profile = resolve_profiles(provider, model, defaults_for=self.codec.defaults)
         self.codec.validate_profile(self.resolved_profile)
         self.client_parameters = self.codec.client_parameters(self.resolved_profile)
         self.provider = deepcopy(provider)
         self.model = deepcopy(model)
-        self.stdio_protocol = stdio_protocol
+        self._stdio_protocol = stdio_protocol
+        self._last_usage: Usage | None = None
         self._clients: dict[Hashable, Any] = {}
         self._client_resources = AsyncExitStack()
         self._closed = False
+
+    @property
+    def resolved_profile(self) -> ResolvedProfile:
+        """Read-only snapshot binding this instance's upstream protocol and model."""
+        return self._resolved_profile
+
+    @property
+    def stdio_protocol(self) -> Protocol | None:
+        """The fixed input/output protocol, selected explicitly or on first use."""
+        return self._stdio_protocol
+
+    def set_semantic_loss_policy(
+        self,
+        *,
+        semantic_loss_protocol: LossPolicy = "raise",
+        input_semantic_loss_hook: SemanticLossHook | None = None,
+        output_semantic_loss_hook: SemanticLossHook | None = None,
+    ) -> None:
+        """Replace this instance's semantic-loss policy and direction-specific hooks."""
+        self.codec.set_semantic_loss_policy(
+            semantic_loss_protocol=semantic_loss_protocol,
+            input_semantic_loss_hook=input_semantic_loss_hook,
+            output_semantic_loss_hook=output_semantic_loss_hook,
+        )
+
+    def get_last_usage(self) -> Usage | None:
+        """Return independent counters from the last completed streaming call.
+
+        Unreported fields are None. Non-streaming calls do not expose usage.
+        A stream must finish successfully before replacing the previous record.
+        """
+        return replace(self._last_usage) if self._last_usage is not None else None
 
     def _check_open(self) -> None:
         if self._closed:
@@ -122,7 +174,7 @@ class MyLLM:
                 instance unbound.
         """
         if self.stdio_protocol is None:
-            self.stdio_protocol = self.codec.bind_input(
+            self._stdio_protocol = self.codec.bind_input(
                 {"messages": messages_or_tools, "tools": omit}, None
             )
         return self.stdio_protocol
@@ -139,15 +191,17 @@ class MyLLM:
         extra_headers: Any = None,
         extra_body: Any = None,
         previous_response_id: Any = None,
-    ) -> MessageStream | dict | list:
+    ) -> MessageStream | dict | list | Message:
         """Generate a completed message or a closable asynchronous event stream.
 
         Args:
             messages: Nonempty history in this instance's input/output protocol.
                 Items may be dictionaries or supported official SDK models.
+                With stdio_protocol="middleware", pass Message models instead.
             stream: If True, return a MessageStream to consume with ``async with``.
             tools: Tool declarations in the same protocol. None or omit leaves them
                 out; an empty list sends an empty tool list. Tools are not executed.
+                Middleware I/O accepts FunctionTool models.
             max_tokens: Positive output limit. If absent, inherit the profile default;
                 None is an explicit value and omit removes the configured target key.
             reasoning: Enable reasoning with medium effort when no effort is given.
@@ -164,13 +218,17 @@ class MyLLM:
             A protocol-native assistant message dictionary, or output items list for
             openai_responses. With stream=True, a MessageStream yielding dictionaries
             in the same protocol; its result becomes available after exhaustion.
+            Middleware I/O returns an AssistantMessage; streaming yields MessageEvent
+            models and stores the completed AssistantMessage in stream.result.
 
         Raises:
             RuntimeError: This instance is closed.
             MessageValidationError: Input or tool-call/result associations are invalid,
                 or the input/output protocol cannot be inferred uniquely.
             ConfigurationError: A generation option is invalid or conflicts.
-            UnsupportedCapabilityError: The requested capability is unavailable.
+            UnsupportedCapabilityError: A generation control is unavailable.
+            SemanticLossError: A supported value cannot be represented by the target
+                protocol and the active loss policy is "raise".
             StreamError: The response fails or ends without a valid completion.
 
         SDK errors retain their original types. Input histories and mutable options
@@ -190,7 +248,7 @@ class MyLLM:
             previous_response_id=previous_response_id,
         )
         protocol = self.codec.bind_input(inputs, self.stdio_protocol)
-        self.stdio_protocol = protocol
+        self._stdio_protocol = protocol
         profile = self.resolved_profile
         prepared = self.codec.prepare(
             inputs, profile, input_format=protocol, client=self.client_parameters
@@ -205,10 +263,15 @@ class MyLLM:
                 pass
         return result.result
 
-    def _render(self, events: list[dict], state: StreamState, protocol: Protocol) -> list[dict]:
+    def _render(
+        self, events: list[dict], state: StreamState, protocol: Protocol
+    ) -> list[dict | MessageEvent]:
         output = self.codec.decode(
             chunks=events,
             target_format=protocol,
+            input_format=self.resolved_profile.protocol,
+            origin_source="output",
+            semantic_profile=self.resolved_profile,
             sequence_number=state.sequence_number,
             **state.metadata,
         )["chunks"]
@@ -217,25 +280,44 @@ class MyLLM:
 
     async def _stream(
         self, prepared: dict, state: StreamState, stdio_protocol: Protocol
-    ) -> AsyncGenerator[dict, None]:
+    ) -> AsyncGenerator[dict | MessageEvent, None]:
         profile = self.resolved_profile
+        streaming = prepared["local"]["stream"]
         try:
             client = self._get_client(prepared)
             async with self.codec.upstream(client, prepared["request"], profile) as upstream:
+                chunk_offset = 0
                 async for event in upstream:
                     encoded = self.codec.encode(
-                        chunks=[event], input_format=profile.protocol, profile=profile
+                        chunks=[event],
+                        input_format=profile.protocol,
+                        profile=profile,
+                        chunk_offset=chunk_offset,
                     )["chunks"]
-                    for output in self._render(state.feed(encoded), state, stdio_protocol):
-                        yield output
+                    chunk_offset += 1
+                    emitted = state.feed(encoded)
+                    if streaming:
+                        for output in self._render(emitted, state, stdio_protocol):
+                            yield output
                 final = state.finish()
-                converted = self.codec.result(final[-1]["messages"], target_format=stdio_protocol)
-                for output in self._render(final, state, stdio_protocol):
-                    yield output
+                converted = self.codec.result(
+                    final[-1]["messages"],
+                    target_format=stdio_protocol,
+                    input_format=profile.protocol,
+                    origin_source="output",
+                    semantic_profile=profile,
+                )
+                if streaming:
+                    for output in self._render(final, state, stdio_protocol):
+                        yield output
             state.result = converted
+            self._last_usage = Usage.from_record(state.usage) if streaming else None
         except StreamError as exc:
             exc.partial_message = self.codec.result(
-                state.messages(partial=True), target_format=stdio_protocol
+                state.messages(partial=True),
+                target_format=stdio_protocol,
+                input_format=profile.protocol,
+                origin_source="output",
             )
             raise
 
@@ -246,8 +328,11 @@ async def generate(
     model: ModelProfile | str,
     messages: Sequence[Any],
     stdio_protocol: Protocol | None = None,
+    semantic_loss_protocol: LossPolicy = "raise",
+    input_semantic_loss_hook: SemanticLossHook | None = None,
+    output_semantic_loss_hook: SemanticLossHook | None = None,
     **parameters: Any,
-) -> MessageStream | dict | list:
+) -> MessageStream | dict | list | Message:
     """Generate once with an automatically managed temporary MyLLM instance.
 
     Args:
@@ -256,6 +341,10 @@ async def generate(
             it does not look up the provider's model catalogue.
         messages: History in the selected input/output protocol.
         stdio_protocol: Input/output protocol, or None for unique inference.
+            Typed middleware input requires explicit "middleware".
+        semantic_loss_protocol: "raise", "ignore", or "hook" for semantic loss.
+        input_semantic_loss_hook: Optional request draft hook for the "hook" policy.
+        output_semantic_loss_hook: Optional response draft hook for the "hook" policy.
         **parameters: Generation options accepted by MyLLM.generate, including
             stream, tools, max_tokens, reasoning and extra_body.
 
@@ -276,7 +365,14 @@ async def generate(
     )
     async with AsyncExitStack() as resources:
         llm = await resources.enter_async_context(
-            MyLLM(provider=provider, model=selected, stdio_protocol=stdio_protocol)
+            MyLLM(
+                provider=provider,
+                model=selected,
+                stdio_protocol=stdio_protocol,
+                semantic_loss_protocol=semantic_loss_protocol,
+                input_semantic_loss_hook=input_semantic_loss_hook,
+                output_semantic_loss_hook=output_semantic_loss_hook,
+            )
         )
         result = await llm.generate(messages=messages, **parameters)
         if isinstance(result, MessageStream):

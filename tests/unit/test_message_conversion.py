@@ -102,7 +102,7 @@ def test_base64_images_survive_every_conversion(source, target):
     )
 
 
-def test_chat_image_detail_moves_to_responses_field():
+def test_chat_image_detail_is_not_part_of_the_supported_field_set():
     incoming = [
         {
             "role": "user",
@@ -118,5 +118,5 @@ def test_chat_image_detail_moves_to_responses_field():
         incoming, input_format="openai_chat", target_format="openai_responses"
     )["messages"]
     assert result[0]["content"] == [
-        {"type": "input_image", "image_url": "https://example.test/p.png", "detail": "low"}
+        {"type": "input_image", "image_url": "https://example.test/p.png", "detail": "auto"}
     ]

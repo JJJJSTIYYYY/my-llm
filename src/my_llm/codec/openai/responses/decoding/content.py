@@ -1,117 +1,67 @@
-"""openai/responses decoding: content, fields and tool helpers."""
+"""Render the supported Responses text, images and reasoning fields."""
 
+import json
 from typing import Any
 
-from my_llm.codec.shared.conversion import project_block, select, text_result
-
-FIELDS = {
-    "text": ("type", "text"),
-    "image": ("type", "source", "detail"),
-    "document": ("type", "source"),
-    "tool_use": ("type", "id", "name", "input"),
-    "tool_result": ("type", "tool_use_id", "name", "content"),
-    "refusal": ("type", "refusal"),
-}
+from my_llm.codec.shared.conversion import select, text_result
+from my_llm.semantic_loss import originated, report_loss
 
 
-def render_content(content: list[dict], *, role: str = "user") -> Any:
+def _tool_output(value: Any) -> Any:
+    """Render object results accepted by the public decoder as native text."""
+    return json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else value
+
+
+def render_content(content: list[dict], *, role: str = "user") -> list[dict]:
     result = []
     for block in content:
         kind = block.get("type")
-        if kind in ("thinking", "redacted_thinking", "tool_use", "tool_result"):
-            continue
         if kind == "text":
-            value = {
-                "type": "output_text" if role == "assistant" else "input_text",
-                "text": block.get("text", ""),
-            }
-            if role == "assistant":
-                value["annotations"] = [
-                    select(
-                        item,
-                        "type",
-                        "file_id",
-                        "index",
-                        "filename",
-                        "start_index",
-                        "end_index",
-                        "title",
-                        "url",
-                        "container_id",
-                    )
-                    for item in block.get("annotations", [])
-                ]
-                value["logprobs"] = [
-                    select(item, "token", "logprob", "bytes")
-                    | (
-                        {
-                            "top_logprobs": [
-                                select(child, "token", "logprob", "bytes")
-                                for child in item["top_logprobs"]
-                            ]
-                        }
-                        if "top_logprobs" in item
-                        else {}
-                    )
-                    for item in block.get("logprobs", [])
-                ]
-        elif kind == "refusal":
-            value = (
-                {"type": "refusal", "refusal": block.get("refusal", "")}
-                if role == "assistant"
-                else {"type": "input_text", "text": block.get("refusal", "")}
+            result.append(
+                {
+                    "type": "output_text" if role == "assistant" else "input_text",
+                    "text": block.get("text", ""),
+                    **({"annotations": [], "logprobs": []} if role == "assistant" else {}),
+                }
             )
         elif kind == "image":
+            if role == "assistant":
+                report_loss(block, "Responses assistant output cannot represent images")
+                continue
             source = block.get("source", {})
             uri = source.get("url")
             if source.get("type") == "base64":
                 uri = f"data:{source['media_type']};base64,{source['data']}"
-            detail = {"detail": block.get("detail", "auto")}
-            value = {
-                "type": "input_image",
-                **(
-                    {"file_id": source["file_id"]}
-                    if source.get("type") == "file"
-                    else {"image_url": uri}
-                ),
-                **detail,
-            }
-        elif kind == "document":
-            source = block.get("source", {})
-            file = (
-                {"file_id": source["file_id"]}
-                if source.get("type") == "file"
-                else {"file_url": source["url"]}
-                if "url" in source
-                else {
-                    "file_data": f"data:{source.get('media_type', 'application/pdf')};base64,{source.get('data', '')}"
-                }
-            )
-            value = {
-                "type": "input_file",
-                **select(block, "filename"),
-                **file,
-            }
-        else:
-            continue
-        result.append(value)
+            result.append({"type": "input_image", "image_url": uri, "detail": "auto"})
     return result
 
 
 def foreign_block(block: dict) -> dict | None:
-    if block.get("type") == "tool_result":
+    kind = block.get("type")
+    if kind == "tool_result":
         value = block.get("content")
-        if isinstance(value, list):
-            parts = [
-                projected for child in value if (projected := foreign_block(child)) is not None
-            ]
-            output = parts
-        else:
-            output = text_result(value)
         return {
             **select(block, "type", "tool_use_id", "name"),
-            "content": output,
+            "content": [
+                projected for child in value if (projected := foreign_block(child)) is not None
+            ]
+            if isinstance(value, list)
+            else text_result(value),
         }
-    return project_block(
-        block, FIELDS, text_fields={"thinking": "thinking"}, omitted=("redacted_thinking",)
-    )
+    if kind == "redacted_thinking":
+        report_loss(block, "Responses cannot represent opaque reasoning from another protocol")
+        return None
+    if kind == "thinking" and block.get("protocol") == "openai_responses":
+        return block
+    if kind in ("thinking", "text", "tool_use") and any(
+        block.get(key) for key in ("signature", "encrypted_content")
+    ):
+        report_loss(block, "Responses cannot preserve another protocol's reasoning signature")
+    if kind == "thinking":
+        value = select(block, "type", "thinking", "summary")
+        return (
+            originated(value, block.origin_path, block.origin_value)
+            if hasattr(block, "origin_path")
+            else value
+        )
+    return block if kind in ("text", "image", "thinking", "tool_use") else None

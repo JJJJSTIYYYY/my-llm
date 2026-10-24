@@ -30,6 +30,12 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
         validate_request(protocol, json.loads(request.content))
         events = stream_events(protocol, tool=True)
         if protocol == "gemini":
+            # This success matrix uses the common supported subset. Native
+            # signed replay and default signature-loss rejection have dedicated tests.
+            for event in events:
+                for candidate in event.get("candidates", []):
+                    for part in candidate.get("content", {}).get("parts", []):
+                        part.pop("thought_signature", None)
             aliases = {
                 "response_id": "responseId",
                 "function_call": "functionCall",
@@ -147,7 +153,7 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
         ]
         assert calls
         if stdio != "gemini":
-            assert calls[0]["thoughtSignature"] == "skip_thought_signature_validator"
+            assert "thoughtSignature" not in calls[0]
     else:
         assert requests[0].headers["Authorization"] == "Bearer local-test"
         assert body["options"]["num_predict"] == 2048

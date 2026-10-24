@@ -45,7 +45,13 @@ async def test_previous_response_id_allows_external_tool_results(monkeypatch):
     with pytest.raises(MessageValidationError):
         await llm.generate(messages=result)
     await llm.generate(messages=result, previous_response_id="resp_previous")
-    assert client.requests[0]["input"] == result
+    assert client.requests[0]["input"] == [
+        {
+            "type": "function_call_output",
+            "call_id": "server_call",
+            "output": [{"type": "input_text", "text": "ok"}],
+        }
+    ]
     assert client.requests[0]["previous_response_id"] == "resp_previous"
 
 

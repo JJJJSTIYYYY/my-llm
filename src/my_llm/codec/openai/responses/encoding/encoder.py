@@ -1,6 +1,5 @@
 """openai/responses: native input to intermediate."""
 
-from copy import deepcopy
 from typing import Any
 
 from openai.types.responses import ResponseInputItemParam, ToolParam
@@ -10,19 +9,21 @@ from my_llm.codec.openai.responses.encoding.content import (
     encode_content,
     tool_operations,
 )
-from my_llm.codec.openai.responses.utils.metadata import response_parameters
 from my_llm.codec.shared.conversion import (
     arguments,
-    dictionary_views,
-    encode_functions,
     mapping_list,
     select,
+    tool_result_content,
 )
 from my_llm.codec.shared.stream import BlockRef, encode_batch, metadata, record
 from my_llm.exceptions import ResponseFailedError, ResponseIncompleteError
 from my_llm.profile.resolution import ResolvedProfile
+from my_llm.semantic_loss import originated
 
 PROTOCOL = "openai_responses"
+TOOL_RESULT_PARTS = frozenset(
+    ("input_text", "input_image", "input_file", "input_audio", "output_text", "text", "refusal")
+)
 
 
 class ResponsesEncoder(BaseEncoder):
@@ -32,6 +33,66 @@ class ResponsesEncoder(BaseEncoder):
     protocol = PROTOCOL
     message_type = ResponseInputItemParam
     tool_type = ToolParam
+
+    def _validation_messages(self, messages: list) -> list:
+        result = []
+        for message in messages:
+            kind = message.get("type", "message")
+            if kind == "message":
+                value = select(message, "type", "role", "id", "status")
+                content = message.get("content")
+                value["content"] = (
+                    [
+                        {
+                            **select(block, "type", "text", "image_url"),
+                            **({"annotations": []} if block.get("type") == "output_text" else {}),
+                            **({"detail": "auto"} if block.get("type") == "input_image" else {}),
+                        }
+                        for block in content
+                        if isinstance(block, dict)
+                        and (
+                            block.get("type") in ("input_text", "output_text")
+                            or (
+                                block.get("type") == "input_image" and message.get("role") == "user"
+                            )
+                        )
+                    ]
+                    if isinstance(content, list)
+                    else content
+                )
+            elif kind == "function_call":
+                value = select(message, "type", "id", "call_id", "name", "arguments", "status")
+            elif kind == "function_call_output":
+                value = select(message, "type", "id", "call_id", "status")
+                output = tool_result_content(message.get("output"), native_types=TOOL_RESULT_PARTS)
+                value["output"] = (
+                    [
+                        select(block, "type", "text", "image_url")
+                        for block in output
+                        if isinstance(block, dict)
+                        and block.get("type") in ("input_text", "input_image")
+                    ]
+                    if isinstance(output, list)
+                    else output
+                )
+            elif kind == "reasoning":
+                value = select(message, "type", "id", "encrypted_content", "status")
+                value["summary"] = [
+                    select(part, "type", "text")
+                    for part in message.get("summary", [])
+                    if isinstance(part, dict) and part.get("type") == "summary_text"
+                ]
+            else:
+                continue
+            result.append(value)
+        return result
+
+    def _validation_tools(self, tools: list) -> list:
+        return [
+            select(tool, "type", "name", "description", "parameters", "strict")
+            for tool in tools
+            if tool.get("type") == "function"
+        ]
 
     def match_item(self, item: dict) -> bool:
         kind = item.get("type")
@@ -77,7 +138,8 @@ class ResponsesEncoder(BaseEncoder):
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for item in messages:
+        for index, item in enumerate(messages):
+            path = f"$.messages[{index}]"
             kind = item.get("type", "message")
             role = item.get("role", "assistant") if kind == "message" else "assistant"
             if kind == "function_call":
@@ -93,18 +155,23 @@ class ResponsesEncoder(BaseEncoder):
                 ]
             elif kind == "function_call_output":
                 role = "user"
+                output = tool_result_content(item.get("output"), native_types=TOOL_RESULT_PARTS)
                 content = [
                     {
                         "type": "tool_result",
                         "tool_use_id": item.get("call_id"),
-                        "content": encode_content(item["output"])
-                        if isinstance(item.get("output"), list)
-                        else item.get("output"),
+                        "content": encode_content(output, path=f"{path}.output")
+                        if isinstance(output, list)
+                        else output,
                         **select(item, "id", "status"),
                     }
                 ]
             elif kind == "reasoning":
-                summary = [select(part, "type", "text") for part in item.get("summary", [])]
+                summary = [
+                    select(part, "type", "text")
+                    for part in item.get("summary", [])
+                    if part.get("type") == "summary_text"
+                ]
                 content = [
                     {
                         "type": "thinking",
@@ -115,45 +182,72 @@ class ResponsesEncoder(BaseEncoder):
                 ]
             elif kind == "message":
                 content = [
-                    {
-                        **block,
-                        **({"item_id": item["id"]} if "id" in item else {}),
-                        **({"item_status": item["status"]} if "status" in item else {}),
-                    }
-                    for block in encode_content(item.get("content"))
+                    originated(
+                        {
+                            **block,
+                            **({"item_id": item["id"]} if "id" in item else {}),
+                            **({"item_status": item["status"]} if "status" in item else {}),
+                        },
+                        block.origin_path,
+                        block.origin_value,
+                    )
+                    for block in encode_content(item.get("content"), path=f"{path}.content")
                 ]
-            elif kind == "item_reference":
-                content = [{"type": "item_reference", **select(item, "id")}]
             else:
                 continue
+            if kind != "message":
+                content = [originated(block, path, item) for block in content]
             result.append(
                 {
                     "protocol": PROTOCOL,
-                    "coalesce": kind != "item_reference",
+                    "coalesce": True,
                     "role": role,
                     "content": content,
                     **(select(item, "id", "status") if kind == "message" else {}),
                 }
             )
+        for message in result:
+            if message.get("role") != "user":
+                message["content"] = [
+                    block for block in message["content"] if block.get("type") != "image"
+                ]
         return result
 
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        return encode_functions(
-            tools,
-            lambda tool: (
-                [select(tool, "name", "description", "parameters", "strict")]
-                if tool.get("type") == "function"
-                else None
-            ),
-        )
+        return [
+            {
+                "functions": [
+                    originated(
+                        {
+                            **select(tool, "name", "description", "strict"),
+                            **(
+                                {
+                                    "parameters": originated(
+                                        tool["parameters"],
+                                        f"$.tools[{index}].parameters",
+                                        tool["parameters"],
+                                    )
+                                }
+                                if isinstance(tool.get("parameters"), dict)
+                                else {}
+                            ),
+                        },
+                        f"$.tools[{index}]",
+                        tool,
+                    )
+                ]
+            }
+            for index, tool in enumerate(tools)
+            if tool.get("type") == "function"
+        ]
 
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for event in chunks:
+        for event_index, event in enumerate(chunks):
             kind = event.get("type")
             if kind in ("response.failed", "response.incomplete", "error") or event.get("error"):
                 error = (
@@ -199,41 +293,25 @@ class ResponsesEncoder(BaseEncoder):
                 kind == "response.output_item.done"
                 and event.get("item", {}).get("type") == "function_call"
             ):
-                message = next(dictionary_views(self._messages([event["item"]])))
+                message = self._messages([event["item"]])[0]
                 block = message["content"][0]
                 ops.append(
                     {
                         "type": "block_set",
                         "ref": BlockRef("tool_use", index),
-                        "block": deepcopy(block),
+                        "block": block,
                     }
                 )
             elif kind in ("response.content_part.added", "response.content_part.done"):
                 part = event.get("part", {})
-                if part.get("type") in ("output_text", "refusal"):
+                if part.get("type") == "output_text":
                     ops.append(
                         {
                             "type": "block_set",
-                            "ref": BlockRef(
-                                "refusal" if part["type"] == "refusal" else "text",
-                                index,
-                                event.get("content_index", 0),
-                            ),
-                            "block": self._output_block(
-                                deepcopy(encode_content([part])[0]), profile
-                            ),
+                            "ref": BlockRef("text", index, event.get("content_index", 0)),
+                            "block": encode_content([part])[0],
                         }
                     )
-            elif kind == "response.refusal.delta":
-                ops.append(
-                    {
-                        "type": "block_delta",
-                        "ref": BlockRef("refusal", index, event.get("content_index", 0)),
-                        "kind": "refusal",
-                        "field": "refusal",
-                        "value": event["delta"],
-                    }
-                )
             elif kind in (
                 "response.reasoning_summary_part.added",
                 "response.reasoning_summary_part.done",
@@ -243,14 +321,11 @@ class ResponsesEncoder(BaseEncoder):
                     {
                         "type": "block_set",
                         "ref": BlockRef("thinking", index, event.get("summary_index", 0)),
-                        "block": self._output_block(
-                            {
-                                "type": "thinking",
-                                "thinking": part.get("text", ""),
-                                "summary": [select(part, "type", "text")],
-                            },
-                            profile,
-                        ),
+                        "block": {
+                            "type": "thinking",
+                            "thinking": part.get("text", ""),
+                            "summary": [select(part, "type", "text")],
+                        },
                     }
                 )
             elif kind == "response.completed":
@@ -268,7 +343,10 @@ class ResponsesEncoder(BaseEncoder):
                                 }
                             }
                         ),
-                        self._snapshot(output, profile),
+                        self._snapshot(
+                            output,
+                            path=f"$.chunks[{parameters.get('chunk_offset', 0) + event_index}].response.output",
+                        ),
                         {
                             "type": "finish",
                             "reason": "tool_calls"
@@ -278,9 +356,7 @@ class ResponsesEncoder(BaseEncoder):
                         },
                     ]
                 )
-                if response.get("usage") is not None and (
-                    profile is None or profile.get("usage_mode") != "none"
-                ):
+                if response.get("usage") is not None:
                     ops.append({"type": "usage", "usage": response["usage"]})
             for name, event_type, block_kind in (
                 ("content", "response.output_text.delta", "text"),
@@ -305,7 +381,7 @@ class ResponsesEncoder(BaseEncoder):
                             ),
                             "kind": block_kind,
                             "field": "text" if block_kind == "text" else "thinking",
-                            "value": deepcopy(value),
+                            "value": value,
                         }
                     )
             if "output_index" in event:
@@ -326,6 +402,22 @@ class ResponsesEncoder(BaseEncoder):
                         0,
                         metadata(header, path=("response_items", str(index))),
                     )
+            for operation_index, operation in enumerate(ops):
+                event_path = f"$.chunks[{parameters.get('chunk_offset', 0) + event_index}]"
+                if "block" in operation and not hasattr(operation["block"], "origin_path"):
+                    operation["block"] = originated(operation["block"], event_path, event)
+                origin_path, origin_value = event_path, event
+                if operation.get("type") == "block_delta":
+                    origin_path, origin_value = event_path + ".delta", operation.get("value")
+                elif operation.get("type") == "block_set" and "part" in event:
+                    operation["block"] = originated(
+                        operation["block"], event_path + ".part", event["part"]
+                    )
+                elif operation.get("type") == "block_set" and "item" in event:
+                    operation["block"] = originated(
+                        operation["block"], event_path + ".item", event["item"]
+                    )
+                ops[operation_index] = originated(operation, origin_path, origin_value)
             result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
         return result
 
@@ -355,16 +447,12 @@ class ResponsesEncoder(BaseEncoder):
             if isinstance(item.get(key), str)
         }
 
-    def _output_block(self, block: dict, profile: ResolvedProfile | None) -> dict:
-        """Suppress disabled visible fields in an owned block, retaining native metadata."""
-        name = {"text": "content", "thinking": "reasoning_content"}.get(block["type"])
-        if name is not None and profile is not None and profile.parameter(name, "output") is None:
-            block["text" if name == "content" else "thinking"] = ""
-            if "summary" in block:
-                block["summary"] = [{**part, "text": ""} for part in block["summary"]]
-        return block
-
-    def _snapshot(self, output: list, profile: ResolvedProfile | None = None) -> dict:
+    def _snapshot(
+        self,
+        output: list,
+        *,
+        path: str = "$.response.output",
+    ) -> dict:
         """Address recognized final blocks with their live item/part coordinates."""
         blocks = []
         for index, item in enumerate(output):
@@ -372,27 +460,37 @@ class ResponsesEncoder(BaseEncoder):
             if not encoded:
                 continue
             message = encoded[0]
-            for part, block in enumerate(message.get("content", [])):
-                block = self._output_block(deepcopy(block), profile)
+            for part, block in enumerate(message["content"]):
                 kind = block["type"]
+                origin_path = f"{path}[{index}]"
                 if kind == "thinking":
                     for summary_index, summary in enumerate(block.get("summary") or [{}]):
                         blocks.append(
                             {
                                 "ref": BlockRef(kind, index, summary_index),
-                                "block": {
-                                    **block,
-                                    "thinking": summary.get("text", ""),
-                                    "summary": [summary] if summary else [],
-                                },
+                                "block": originated(
+                                    {
+                                        **block,
+                                        "thinking": summary.get("text", ""),
+                                        "summary": [summary] if summary else [],
+                                    },
+                                    origin_path,
+                                    item,
+                                ),
                             }
                         )
                 else:
-                    blocks.append({"ref": BlockRef(kind, index, part), "block": block})
+                    origin_value = item
+                    if item.get("type") == "message":
+                        origin_path += block.origin_path.removeprefix("$.messages[0]")
+                        origin_value = block.origin_value
+                    blocks.append(
+                        {
+                            "ref": BlockRef(kind, index, part),
+                            "block": originated(block, origin_path, origin_value),
+                        }
+                    )
         return {"type": "snapshot", "blocks": blocks}
 
     def _response_metadata(self, response: dict) -> list[dict]:
-        return [
-            metadata(self._metadata(response)),
-            metadata(response_parameters(response), path=("response_parameters",)),
-        ]
+        return [metadata(self._metadata(response))]

@@ -1,18 +1,16 @@
 """gemini: intermediate to native output."""
 
-from copy import deepcopy
 from typing import Any
 
 from google.genai import types
 from google.genai.models import AsyncModels
 
 from my_llm.codec.base.decoder import BaseDecoder
-from my_llm.codec.gemini.decoding.content import decode_part, foreign_block
+from my_llm.codec.gemini.decoding.content import decode_part
 from my_llm.codec.shared.conversion import (
-    blocks,
+    capture,
     coalesce_messages,
     decode_functions,
-    project_message,
     select,
     select_present,
     source_protocol,
@@ -22,6 +20,7 @@ from my_llm.codec.shared.stream import counts, events
 from my_llm.codec.shared.transport import parameter_types
 from my_llm.exceptions import ConfigurationError, UnsupportedCapabilityError
 from my_llm.profile.resolution import ResolvedProfile, client_parameters, validate_max_tokens
+from my_llm.semantic_loss import report_loss
 
 PROTECTED = {
     "model",
@@ -72,7 +71,11 @@ class GeminiDecoder(BaseDecoder):
         validate_max_tokens(config.get("max_output_tokens"))
         if config.get("candidate_count") not in (None, 1):
             raise UnsupportedCapabilityError("only one generated candidate is supported")
-        thinking = types.GenerateContentConfig(**config).thinking_config
+        # Tool declarations were validated separately in native_request. Validate
+        # remaining public config fields without rebuilding every tool schema.
+        thinking = types.GenerateContentConfig(
+            **{key: value for key, value in config.items() if key != "tools"}
+        ).thinking_config
         if thinking is not None and thinking.thinking_budget == 0 and thinking.include_thoughts:
             raise ConfigurationError("reasoning conflicts with a zero Gemini thinking budget")
         return request
@@ -133,10 +136,8 @@ class GeminiDecoder(BaseDecoder):
                 if block.get("type") == "tool_use":
                     names[block["id"]] = block["name"]
             foreign = source_protocol(message) != PROTOCOL
-            if foreign:
-                message = project_message(message, foreign_block)
             parts = []
-            for block in blocks(message.get("content")):
+            for block in message["content"]:
                 if block.get("type") == "tool_result":
                     if not block.get("name"):
                         block = {
@@ -145,12 +146,13 @@ class GeminiDecoder(BaseDecoder):
                                 "type",
                                 "tool_use_id",
                                 "content",
-                                "thought_signature",
-                                "part_metadata",
+                                "signature",
                             ),
                             "name": names.get(block["tool_use_id"]),
                         }
-                parts.append(decode_part(block, foreign=foreign))
+                part = decode_part(block, foreign=foreign)
+                if part is not None:
+                    parts.append(part)
             result.append(
                 {
                     "role": "model" if message["role"] == "assistant" else message["role"],
@@ -168,9 +170,11 @@ class GeminiDecoder(BaseDecoder):
                 {
                     "function_declarations": [
                         {
-                            **select_present(f, "name", "response_json_schema", "behavior"),
+                            **select_present(f, "name"),
                             "description": f.get("description") or "",
-                            "parameters_json_schema": f.get("parameters") or {"type": "object"},
+                            "parameters_json_schema": f["parameters"]
+                            if f.get("parameters") is not None
+                            else {"type": "object"},
                         }
                         for f in functions
                     ]
@@ -184,42 +188,65 @@ class GeminiDecoder(BaseDecoder):
         result = []
         for event in events(chunks):
             kind = event.get("type")
-            usage = self.usage(event.get("usage"))
+            if kind in ("block_start", "block_stop", "tool", "block"):
+                owner = event["block"].get("protocol")
+                native_owner = (
+                    parameters.get("source_protocol") if owner is None else owner
+                ) == PROTOCOL
             parts = []
             reason = None
-            if kind == "delta" and event.get("field") in ("text", "thinking", "refusal"):
+            if (
+                kind == "block_start"
+                and event.get("block", {}).get("type") == "thinking"
+                and not native_owner
+            ):
+                report_loss(
+                    event["block"],
+                    "Gemini cannot replay reasoning without its native thought signature",
+                )
+                continue
+            if kind == "delta" and event.get("field") in ("text", "thinking"):
+                if event["field"] == "thinking" and parameters.get("source_protocol") != PROTOCOL:
+                    continue
                 parts = [
                     {
-                        "text": deepcopy(event["value"]),
-                        **(
-                            {"thought": True}
-                            if event["field"] == "thinking"
-                            and parameters.get("source_protocol") == PROTOCOL
-                            else {}
-                        ),
+                        "text": event["value"],
+                        **({"thought": True} if event["field"] == "thinking" else {}),
                     }
                 ]
             elif kind in ("tool", "block"):
                 block = event["block"]
                 foreign = parameters.get("source_protocol") != PROTOCOL
-                if foreign:
-                    block = foreign_block(block)
-                    if block is None:
-                        continue
                 part = decode_part(block, foreign=foreign)
+                if part is None:
+                    continue
                 if "function_call" in part:
-                    part["function_call"]["args"] = deepcopy(part["function_call"]["args"])
+                    part["function_call"]["args"] = capture(part["function_call"]["args"])
                 elif "function_response" in part:
                     response = part["function_response"]
-                    response["response"] = deepcopy(response["response"])
-                if "part_metadata" in part:
-                    part["part_metadata"] = deepcopy(part["part_metadata"])
+                    response["response"] = capture(response["response"])
                 parts = [part]
             elif kind == "block_stop":
-                metadata = select(event["block"], "thought_signature", "part_metadata")
-                if metadata and parameters.get("source_protocol") == PROTOCOL:
-                    if "part_metadata" in metadata:
-                        metadata["part_metadata"] = deepcopy(metadata["part_metadata"])
+                if event["block"].get("type") == "thinking" and not native_owner:
+                    report_loss(
+                        event["block"],
+                        "Gemini cannot replay reasoning without its native thought signature",
+                    )
+                    continue
+                if (
+                    event["block"].get("type") == "thinking"
+                    and not event["block"].get("signature")
+                    and native_owner
+                ):
+                    report_loss(
+                        event["block"], "Gemini reasoning requires a native thought signature"
+                    )
+                metadata = (
+                    {"thought_signature": event["block"]["signature"]}
+                    if "signature" in event["block"]
+                    else {}
+                )
+                if metadata and native_owner:
                     parts = [
                         {
                             "text": "",
@@ -250,8 +277,6 @@ class GeminiDecoder(BaseDecoder):
                         }
                     ],
                 }
-                if kind == "finish" and usage is not None:
-                    value["usage_metadata"] = usage
                 result.append(value)
         return result
 

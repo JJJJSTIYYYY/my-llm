@@ -4,12 +4,17 @@ Official native schemas and lifecycle assertions are checked independently in
 test_protocol_conformance.py; unknown fields must not enter translated output.
 """
 
-import json
 from copy import deepcopy
 
 import pytest
 
-from my_llm import IncompleteStreamError, MyCodec, ResponseFailedError, ResponseIncompleteError
+from my_llm import (
+    IncompleteStreamError,
+    MyCodec,
+    ResponseFailedError,
+    ResponseIncompleteError,
+    SemanticLossError,
+)
 from my_llm.stream._state import StreamState
 from tests.helpers.protocols import PROTOCOLS, stream_events
 from tests.helpers.streaming import render
@@ -21,6 +26,11 @@ from tests.helpers.streaming import render
 def test_native_streams_convert_to_complete_target_streams(source, target, tool):
     incoming = stream_events(source, tool=tool)
     before = deepcopy(incoming)
+    if source == "gemini" and target != "gemini" and tool:
+        with pytest.raises(SemanticLossError, match="signature"):
+            render(source, target, incoming)
+        assert incoming == before
+        return
     output, state = render(source, target, incoming)
     assert incoming == before
     assert state.finished
@@ -28,13 +38,13 @@ def test_native_streams_convert_to_complete_target_streams(source, target, tool)
     reconstructed = StreamState("demo")
     reconstructed.feed(normalized)
     reconstructed.finish()
-    messages = MyCodec().decode(reconstructed.messages(), target_format="openai_chat")["messages"]
-    assert "Hello" in str(messages[0]["content"])
-    calls = [c for m in messages for c in m.get("tool_calls", [])]
+    content = [block for message in reconstructed.messages() for block in message["content"]]
+    assert "Hello" in "".join(block.get("text", "") for block in content)
+    calls = [block for block in content if block["type"] == "tool_use"]
     assert bool(calls) is tool
     if tool:
-        assert calls[0]["function"]["name"] == "weather"
-        assert json.loads(calls[0]["function"]["arguments"]) == {"city": "上海"}
+        assert calls[0]["name"] == "weather"
+        assert calls[0]["input"] == {"city": "上海"}
     if target == "openai_responses":
         assert [e["sequence_number"] for e in output] == list(range(len(output)))
         assert output[0]["type"] == "response.created"
@@ -53,7 +63,7 @@ def test_native_stream_conversion_does_not_reuse_previous_call_state(protocol):
         converted = converter.convert(
             chunks=incoming, input_format=protocol, target_format=protocol
         )["chunks"]
-        _, state = render(protocol, "openai_chat", converted)
+        _, state = render(protocol, protocol, converted)
         content = state.messages()[0]["content"]
         assert any(block["type"] == "tool_use" for block in content) is tool
         assert "Hello" in str(content)
@@ -102,7 +112,7 @@ def test_function_argument_fragments_are_not_emitted():
 def test_gemini_thought_signature_and_anthropic_signature_survive_stream_collection():
     _, gemini = render("gemini", "gemini", stream_events("gemini", tool=True))
     block = next(b for m in gemini.messages() for b in m["content"] if b.get("type") == "tool_use")
-    assert block["thought_signature"] == "c2lnbmVk"
+    assert block["signature"] == "c2lnbmVk"
     incoming = stream_events("anthropic")
     incoming[1]["content_block"] = {"type": "thinking", "thinking": "", "signature": ""}
     incoming[2]["delta"] = {"type": "thinking_delta", "thinking": "Hello"}
@@ -118,7 +128,7 @@ def test_gemini_thought_signature_and_anthropic_signature_survive_stream_collect
     assert anthropic.messages()[0]["content"][0]["signature"] == "signed"
 
 
-def test_distinct_gemini_signatures_stay_on_their_original_parts():
+def test_gemini_signatures_on_ordinary_text_are_outside_the_supported_set():
     incoming = [
         {
             "candidates": [
@@ -137,7 +147,7 @@ def test_distinct_gemini_signatures_stay_on_their_original_parts():
     ]
     _, state = render("gemini", "gemini", incoming)
     message = MyCodec().decode(state.messages(), target_format="gemini")["messages"][0]
-    assert message["parts"] == incoming[0]["candidates"][0]["content"]["parts"]
+    assert message["parts"] == [{"text": "first"}, {"text": "second"}]
 
 
 @pytest.mark.parametrize("source", PROTOCOLS)
@@ -145,13 +155,17 @@ def test_distinct_gemini_signatures_stay_on_their_original_parts():
 def test_standalone_converter_handles_complete_stream_batches(source, target):
     codec = MyCodec()
     incoming = stream_events(source, tool=True)
+    if source == "gemini" and target != "gemini":
+        with pytest.raises(SemanticLossError, match="signature"):
+            codec.convert(chunks=incoming, input_format=source, target_format=target)
+        return
     result = codec.convert(chunks=incoming, input_format=source, target_format=target)["chunks"]
     state = StreamState("demo")
     state.feed(codec.encode(chunks=result, input_format=target)["chunks"])
     state.finish()
-    chat = codec.decode(state.messages(), target_format="openai_chat")["messages"]
-    assert "Hello" in str(chat)
-    assert chat[0]["tool_calls"][0]["function"]["name"] == "weather"
+    content = [block for message in state.messages() for block in message["content"]]
+    assert "Hello" in "".join(block.get("text", "") for block in content)
+    assert next(block for block in content if block["type"] == "tool_use")["name"] == "weather"
     # Reusing the same converter retains no state from the prior batch.
     second = codec.convert(chunks=stream_events(target), input_format=target, target_format=target)[
         "chunks"
@@ -168,7 +182,7 @@ def test_responses_completed_output_matches_emitted_item_ids_and_content():
     output, _ = render("openai_chat", "openai_responses", stream_events("openai_chat", tool=True))
     done = [event["item"] for event in output if event["type"] == "response.output_item.done"]
     assert output[-1]["response"]["output"] == done
-    assert done[0]["content"][0]["annotations"] == []
+    assert done[0]["content"][0].get("annotations", []) == []
     assert any(event["type"] == "response.content_part.done" for event in output)
 
 

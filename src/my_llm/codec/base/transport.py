@@ -10,8 +10,8 @@ class BaseTransport(ABC):
     """Abstract SDK client and response lifecycle interface for custom protocols.
 
     Implement create_client and upstream, overriding close_client if required by
-    the SDK. Declare empty __slots__; instances retain no clients or request state.
-    Callers own created clients and must close them after response contexts exit.
+    the SDK. Each codec owns its transport; callers own created clients and must
+    close them after response contexts exit.
     """
 
     __slots__ = ()

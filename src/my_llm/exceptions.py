@@ -3,7 +3,10 @@
 Official SDK transport and HTTP errors retain their original types.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from my_llm.semantic_loss import SemanticLossContext, SemanticLossGroup
 
 
 class MyLLMError(Exception):
@@ -24,6 +27,21 @@ class UnsupportedCapabilityError(ConfigurationError):
 
 class MessageValidationError(ConfigurationError):
     """A message/tool is invalid or cannot be converted to the selected API."""
+
+
+class SemanticLossError(MyLLMError):
+    """Supported values cannot be expressed; draft is complete and mutable."""
+
+    def __init__(
+        self,
+        draft: object,
+        losses: "SemanticLossGroup",
+        context: "SemanticLossContext | None" = None,
+    ) -> None:
+        super().__init__("; ".join(f"{item.origin_path}: {item.reason}" for item in losses.items))
+        self.draft = draft
+        self.losses = losses
+        self.context = context
 
 
 class StreamError(MyLLMError):

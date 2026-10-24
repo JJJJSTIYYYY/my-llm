@@ -1,6 +1,5 @@
 """ollama: native input to intermediate."""
 
-from copy import deepcopy
 from typing import Any
 
 from ollama import Message, Tool
@@ -12,13 +11,14 @@ from my_llm.codec.shared.conversion import (
     allocate_call_id,
     associate_tool_result,
     blocks,
-    encode_functions,
     mapping_list,
     select,
+    text_result,
 )
 from my_llm.codec.shared.stream import BlockRef, encode_batch, metadata, record
 from my_llm.exceptions import ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
+from my_llm.semantic_loss import originated
 
 PROTOCOL = "ollama"
 
@@ -33,6 +33,37 @@ class OllamaEncoder(BaseEncoder):
 
     def validate_values(self, values: list, schema: Any, *, filtered: bool = False) -> None:
         validate_ollama_values(values, schema, filtered=filtered)
+
+    def _validation_messages(self, messages: list) -> list:
+        result = []
+        for message in messages:
+            value = select(
+                message, "role", "content", "thinking", "images", "tool_name", "tool_call_id"
+            )
+            if message.get("role") == "tool" and not isinstance(
+                message.get("content"), (str, type(None))
+            ):
+                value["content"] = text_result(message.get("content"))
+            if message.get("role") not in ("user", "tool"):
+                value.pop("images", None)
+            if message.get("tool_calls") is not None:
+                value["tool_calls"] = [
+                    {"function": select(call.get("function", {}), "name", "arguments", "index")}
+                    for call in message["tool_calls"]
+                    if isinstance(call, dict)
+                ]
+            result.append(value)
+        return result
+
+    def _validation_tools(self, tools: list) -> list:
+        return [
+            {
+                "type": "function",
+                "function": select(tool.get("function", {}), "name", "description", "parameters"),
+            }
+            for tool in tools
+            if tool.get("type") == "function"
+        ]
 
     def match_item(self, item: dict) -> bool:
         if item.get("type") == "function":
@@ -66,21 +97,43 @@ class OllamaEncoder(BaseEncoder):
             if call.get("id")
         }
         for index, message in enumerate(messages):
-            content = blocks(message.get("content"))
-            content.extend(
-                {
-                    "type": "image",
-                    "source": {"type": "base64", "media_type": media_type(image), "data": image},
-                }
-                for native_image in (message.get("images") or [])
-                for image in [image_data(native_image)]
-            )
+            native_content = message.get("content")
+            if message.get("role") == "tool" and not isinstance(native_content, (str, type(None))):
+                native_content = text_result(native_content)
+            content = [
+                originated(block, f"$.messages[{index}].content", message.get("content"))
+                for block in blocks(native_content)
+            ]
+            for image_index, native_image in enumerate(message.get("images") or []):
+                image = image_data(native_image)
+                content.append(
+                    originated(
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type(image),
+                                "data": image,
+                            },
+                        },
+                        f"$.messages[{index}].images[{image_index}]",
+                        native_image,
+                    )
+                )
             if message.get("thinking"):
-                content.append({"type": "thinking", "thinking": message["thinking"]})
+                content.append(
+                    originated(
+                        {"type": "thinking", "thinking": message["thinking"]},
+                        f"$.messages[{index}].thinking",
+                        message["thinking"],
+                    )
+                )
             for call_index, call in enumerate(message.get("tool_calls") or []):
                 call_id = call.get("id") or allocate_call_id(used_ids, f"call_{index}_{call_index}")
                 block = tool_block(call, call_id=call_id)
-                content.append(block)
+                content.append(
+                    originated(block, f"$.messages[{index}].tool_calls[{call_index}]", call)
+                )
                 pending.append(block)
             role = message.get("role")
             if role == "tool":
@@ -91,30 +144,53 @@ class OllamaEncoder(BaseEncoder):
                         "type": "tool_result",
                         "tool_use_id": call_id,
                         "name": name,
-                        "content": message.get("content"),
+                        "content": content if message.get("images") else native_content,
                     }
                 ]
                 role = "user"
             result.append({"protocol": PROTOCOL, "role": role, "content": content})
+        for message in result:
+            if message.get("role") != "user":
+                message["content"] = [
+                    block for block in message["content"] if block.get("type") != "image"
+                ]
         return result
 
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        return encode_functions(
-            tools,
-            lambda tool: (
-                [select(tool["function"], "name", "description", "parameters")]
-                if tool.get("type") == "function" and "function" in tool
-                else None
-            ),
-        )
+        return [
+            {
+                "functions": [
+                    originated(
+                        {
+                            **select(tool["function"], "name", "description"),
+                            **(
+                                {
+                                    "parameters": originated(
+                                        tool["function"]["parameters"],
+                                        f"$.tools[{index}].function.parameters",
+                                        tool["function"]["parameters"],
+                                    )
+                                }
+                                if isinstance(tool["function"].get("parameters"), dict)
+                                else {}
+                            ),
+                        },
+                        f"$.tools[{index}].function",
+                        tool["function"],
+                    )
+                ]
+            }
+            for index, tool in enumerate(tools)
+            if tool.get("type") == "function" and isinstance(tool.get("function"), dict)
+        ]
 
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for event in chunks:
+        for event_index, event in enumerate(chunks):
             if event.get("type") == "error" or event.get("error"):
                 raise ResponseFailedError(
                     "provider generation failed", details=event.get("error", event)
@@ -143,22 +219,35 @@ class OllamaEncoder(BaseEncoder):
                             "ref": BlockRef(kind),
                             "field": kind,
                             "kind": kind,
-                            "value": deepcopy(value),
+                            "value": value,
                         }
                     )
             for call in message.get("tool_calls") or []:
                 block = tool_block(call)
-                block["input"] = deepcopy(block["input"])
                 ops.append({"type": "block_append", "block": block})
             if event.get("done"):
-                if profile is None or profile.get("usage_mode") != "none":
-                    ops.append(
-                        {
-                            "type": "usage",
-                            "usage": select(event, "prompt_eval_count", "eval_count"),
-                        }
-                    )
+                ops.append(
+                    {
+                        "type": "usage",
+                        "usage": select(event, "prompt_eval_count", "eval_count"),
+                    }
+                )
                 ops.append({"type": "finish", "reason": event.get("done_reason", "stop")})
+            for operation_index, operation in enumerate(ops):
+                event_path = f"$.chunks[{parameters.get('chunk_offset', 0) + event_index}]"
+                if "block" in operation and not hasattr(operation["block"], "origin_path"):
+                    operation["block"] = originated(operation["block"], event_path, event)
+                origin_path, origin_value = event_path, event
+                if operation.get("type") == "block_delta" and operation.get("field") in (
+                    "text",
+                    "thinking",
+                ):
+                    name = "content" if operation["field"] == "text" else "reasoning_content"
+                    native_field = "content" if name == "content" else "thinking"
+                    binding = profile.parameter(name, "output") if profile is not None else None
+                    suffix = binding.path[1:] if binding is not None else f".message.{native_field}"
+                    origin_path, origin_value = event_path + suffix, operation.get("value")
+                ops[operation_index] = originated(operation, origin_path, origin_value)
             result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
         return result
 

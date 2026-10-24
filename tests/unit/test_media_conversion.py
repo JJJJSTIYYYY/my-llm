@@ -1,4 +1,4 @@
-"""OpenAI media conversion preserves native fields and shared source semantics."""
+"""Image sources are supported; file references and image hints are discarded."""
 
 from copy import deepcopy
 
@@ -11,7 +11,7 @@ from my_llm import MyCodec
 @pytest.mark.parametrize(
     "uri", ["https://example.test/image.png", "data:image/png;base64,aW1hZ2U="]
 )
-def test_responses_image_detail_moves_to_chat_field(uri, detail):
+def test_responses_image_hint_is_discarded_while_image_source_is_preserved(uri, detail):
     incoming = [
         {
             "role": "user",
@@ -24,7 +24,7 @@ def test_responses_image_detail_moves_to_chat_field(uri, detail):
     assert result == [
         {
             "role": "user",
-            "content": [{"type": "image_url", "image_url": {"url": uri, "detail": detail}}],
+            "content": [{"type": "image_url", "image_url": {"url": uri}}],
         }
     ]
 
@@ -52,12 +52,12 @@ def test_openai_images_encode_equivalent_remote_and_inline_sources(protocol, uri
     incoming = [{"role": "user", "content": [block]}]
     before = deepcopy(incoming)
     result = MyCodec().encode(incoming, input_format=protocol)["messages"]
-    assert result[0]["content"] == [{"type": "image", "source": source, "detail": "high"}]
+    assert result[0]["content"] == [{"type": "image", "source": source}]
     assert incoming == before
 
 
 @pytest.mark.parametrize("protocol", ["openai_chat", "openai_responses"])
-def test_openai_files_encode_equivalent_inline_sources(protocol):
+def test_openai_files_are_discarded_even_when_the_native_protocol_supports_them(protocol):
     uri = "data:application/pdf;base64,cGRm"
     block = (
         {"type": "file", "file": {"file_data": uri}}
@@ -67,12 +67,7 @@ def test_openai_files_encode_equivalent_inline_sources(protocol):
     result = MyCodec().encode([{"role": "user", "content": [block]}], input_format=protocol)[
         "messages"
     ]
-    assert result[0]["content"] == [
-        {
-            "type": "document",
-            "source": {"type": "base64", "media_type": "application/pdf", "data": "cGRm"},
-        }
-    ]
+    assert result[0]["content"] == []
 
 
 @pytest.mark.parametrize(
@@ -83,22 +78,13 @@ def test_openai_files_encode_equivalent_inline_sources(protocol):
         ("openai_responses", {"type": "input_image", "file_id": "file_123", "detail": "high"}),
     ],
 )
-def test_file_id_only_media_stays_native(protocol, block):
+def test_file_id_media_is_discarded_because_images_support_urls_or_base64(protocol, block):
     incoming = [{"role": "user", "content": [{**block, "vendor": {"nested": [1, None]}}]}]
     original = deepcopy(incoming)
     codec = MyCodec()
     intermediate = codec.encode(incoming, input_format=protocol)
-    normalized = intermediate["messages"][0]["content"][0]
-    assert normalized == {
-        "type": "image" if block["type"] == "input_image" else "document",
-        "source": {"type": "file", "file_id": "file_123"},
-        **({"detail": "high"} if block["type"] == "input_image" else {}),
-    }
-    assert codec.decode(**intermediate, target_format=protocol)["messages"] == [
-        {
-            "role": "user",
-            "content": [block],
-            **({"type": "message"} if protocol == "openai_responses" else {}),
-        }
-    ]
+    assert intermediate["messages"][0]["content"] == []
+    translated = codec.decode(**intermediate, target_format=protocol)["messages"]
+    assert "file_123" not in str(translated)
+    assert "vendor" not in str(translated)
     assert incoming == original

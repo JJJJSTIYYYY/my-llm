@@ -1,5 +1,25 @@
 # generate 性能测试
 
+## 中间协议直接输入输出
+
+```sh
+uv run --no-sync python -m tests.performance.middleware --iterations 15 --warmup 2 --concurrency 4 --json /tmp/middleware-io.json
+```
+
+同一源码中比较原生 stdio 与 `stdio_protocol="middleware"`：五种上游分别覆盖聚合和流式，
+共十组成对场景，按 N/M、M/N 交替顺序采样。输入包含相同历史、图片、工具 Schema、调用、
+结果和原生思维；中间夹具在计时外生成并移除 encoder 来源引用，模拟直接构造模型的调用者。
+每一对必须发出完全相同的 SDK 请求字节，响应字节及 HTTP 分块一致。
+结果分别按公开格式提取文本、思维和工具参数验证；事件数量因输出格式不同而分别记录。
+
+计时包括公开 generate 调用、输入检查与隔离、真实 SDK 解析、完整消费、响应关闭和结果读取。
+夹具构造、断言、实例构造/关闭不计时。内存和缓存探测单独执行，四路响应屏障证明真实请求重叠。
+预热后的 tracemalloc 数值包含结果和 HTTP 观测，不含夹具及客户端构造，不是进程 RSS。
+此对照衡量直接中间输入输出的调用成本，不包含应用先从原生协议转成中间模型的成本，
+也不表示网络请求或模型推理会获得相同比例的提速。
+
+运行记录及原始样本见[直接中间协议验收与性能](../audits/middleware-io-2026-10-24.md)。
+
 从项目根目录运行：
 
 ```sh
@@ -8,7 +28,7 @@ uv run --no-sync python -m tests.performance --json /tmp/my-llm-performance.json
 
 测试真实 `MyLLM.generate()` 调用及官方 SDK。HTTPX MockTransport 立即返回预先构建的内存字节流，
 没有 socket 连接、网络等待、模型推理或模拟 sleep。保留 SDK 请求序列化、SSE / NDJSON 解析、
-协议转换、流状态累积、工具 JSON 拼接、响应关闭和结果复制的实际执行成本。
+协议转换、流状态累积、工具 JSON 拼接、响应关闭和结果交付的实际执行成本。
 
 ## 计时边界
 
@@ -17,7 +37,7 @@ uv run --no-sync python -m tests.performance --json /tmp/my-llm-performance.json
 | total_ms | 调用 generate 前，到完整结果返回；stream=True 时包含所有事件消费、响应清理与读取 stream.result。 |
 | cpu_ms | 同一范围的进程 CPU 时间。 |
 | prepare_ms | 仅流式：调用 generate 前，到 await generate 返回 MessageStream。此时 SDK 请求尚未执行。 |
-| first_event_ms | 仅流式：调用 generate 前，到收到第一个输出事件，包含准备阶段；首事件可能是元数据，不能当作首文本 token。 |
+| first_event_ms | 仅流式：调用 generate 前，到收到第一个公开输出事件，包含准备阶段；不表示网络侧首 token。 |
 | cold | 在新 MyLLM 实例上的首次调用，包含 generate 内部的 SDK 客户端延迟创建。 |
 | warm | 完成 cold 和额外预热后，在同一实例上复用客户端的测量样本。 |
 
@@ -29,6 +49,8 @@ MyLLM 构造、实例最终关闭、负载 / 响应字节准备及验证断言�
 控制台给出 cold、warm 中位数、P95、CPU 中位数与串行 requests/s。
 JSON 同时保存每个样本、流句柄 / 首事件时间、实际请求 / 响应字节数、事件 / HTTP 分块数、
 负载规模、Git 版本和工作区状态、Python / 平台及各 SDK 版本。
+本轮 `MessageStream.result` 按 hook 身份约定返回最终 draft 本身；旧版读取会复制。计时包含各版实际结果交付成本，
+不将这一行为变化归因于缓存加速。
 P95 使用 nearest-rank；requests/s 是样本数除以样本总耗时，不是并发吞吐。
 
 ## 复杂负载与覆盖
@@ -36,7 +58,7 @@ P95 使用 nearest-rank；requests/s 是样本数除以样本总耗时，不是�
 默认运行 60 个场景：
 
 - native：五协议分别使用自己的复杂原生请求，覆盖流式与聚合，共 10 个场景。
-- cross：五种上游 × 五种输入输出协议，覆盖流式与聚合，共 50 个场景；采用各协议都能表达的请求特性。
+- cross：五种上游 × 五种输入输出协议，覆盖流式与聚合，共 50 个场景；请求和响应采用各协议都能表达的文本、图片与工具特性，不含跨协议思维链。
 
 请求和响应由测试独立编写，不使用 MyCodec 生成原生预期。每种输入按其 stdio 协议构建，
 响应按上游协议构建。先使用固定协议 Schema 和官方 SDK 类型验证，再检查实际 SDK 发出的请求，
@@ -49,14 +71,17 @@ P95 使用 nearest-rank；requests/s 是样本数除以样本总耗时，不是�
 
 | 协议 | 额外复杂路径 |
 | --- | --- |
-| Chat | developer / 消息 name、内联 PDF、交错工具参数增量、独立 usage 尾块。 |
-| Responses | developer、内联 PDF、reasoning summary / encrypted_content、多项生命周期、交错工具增量与终态快照。 |
-| Anthropic | 文本文档、cache_control、thinking / signature / redacted_thinking 历史、引用注释增量。 |
-| Gemini | 内联文档、带签名的 thought / function call、多 part 输出、缓存及思考用量。 |
+| Chat | developer、交错上游工具参数增量、独立 usage 尾块。 |
+| Responses | developer、reasoning summary / encrypted_content、多项生命周期、交错上游工具增量与终态快照。 |
+| Anthropic | thinking / signature / redacted_thinking 历史、上游工具参数增量。 |
+| Gemini | 带签名的 thought、多 part 输出、缓存及思考用量。 |
 | Ollama | 原生 images / thinking、无 ID 的历史工具配对、对象工具参数和 NDJSON。 |
 
 签名与加密字段使用离线测试值，只验证结构和回放路径。没有统一的“最复杂合法请求”上限：
 长度及可组合能力受具体模型限制；这里提供覆盖复杂路径、可以继续放大的压力负载。
+负载不包含 audio、file、文档、消息 metadata、引用与 cache_control；它们已不属于固定支持集合。
+工具调用参数仍在上游分片传输，公开流的完整工具调用只在结束时输出，usage 只记录。
+语义损失及 hook 行为由契约测试覆盖，避免把有损与无损调用混为同一项性能比较。
 
 ## 调整规模
 
@@ -122,8 +147,13 @@ python -m tests.performance.request_chain --iterations 9 --json /tmp/after.json
 
 脚本记录运行时源码和基准脚本 SHA256、Git revision、Python / 平台 / SDK 版本及原始样本。
 运行两版时保持负载、解释器和依赖相同，避免并行运行测试或其他 CPU 密集任务。
-比较时先核对请求字节数、响应字节数、输出事件和 HTTP 分块一致，再检查 P50/P95、准备耗时、
-并发批次耗时、内存及缓存；少量噪声场景需要交替复测确认。
+比较工具强制核对负载、响应字节和 HTTP 分块的 SHA256，以及解释器、SDK、规模、采样数和完整基准代码指纹。
+请求规范化可能改变发送字节；工具调用集中输出和 usage 过滤会改变公开事件数，这两项单独报告。
+随后检查 P50/P95、准备耗时、并发批次耗时、内存及缓存；少量噪声场景需要交替复测确认。
+
+```sh
+python -m tests.performance.compare /tmp/before.json /tmp/after.json --json /tmp/comparison.json
+```
 可运行的无网络准备示例见 [request_pipeline.py](../../examples/request_pipeline.py)。
 
 本轮改造的完整数据、原生交替复测和尾部诊断见
@@ -131,3 +161,8 @@ python -m tests.performance.request_chain --iterations 9 --json /tmp/after.json
 实例构造可单独用 `python -m tests.performance.construction --json /tmp/construction.json` 测量；
 Responses 收集尾部定位使用 `python -m tests.performance.gc_diagnostic /tmp/responses-gc.json`，
 保留 GC、单独登记回收停顿，诊断数据不替换无回调计时。
+
+固定中间协议和双向语义损失后的首次对照见[2026-10-24 验收与性能报告](../audits/protocol-middleware-2026-10-24.md)。
+后续冗余清理、边界复核及清理阶段的复测见[同日清理报告](../audits/code-cleanup-2026-10-24.md)。
+需求反向验收补漏后的最新源码和复测见[需求全量验收复核](../audits/requirements-acceptance-2026-10-24.md)。
+其后的缓存命中检查与同负载优化试验见[Schema 缓存检查记录](../audits/schema-cache-2026-10-24.md)。

@@ -9,7 +9,7 @@ from my_llm import (
     BaseTransport,
     MessageValidationError,
     MyCodec,
-    UnsupportedCapabilityError,
+    SemanticLossError,
 )
 from my_llm.codec.openai.chat.codec import ChatCompletionsCodec
 from my_llm.codec.openai.chat.decoding.decoder import ChatCompletionsDecoder
@@ -50,7 +50,7 @@ def test_abstract_contract_cannot_be_instantiated():
 def test_codec_requires_conversion_directions_and_transport(missing):
     bindings = {
         "protocol_or_api_style": "openai_chat",
-        "defaults": ChatCompletionsCodec.defaults,
+        "defaults": ChatCompletionsCodec().defaults,
         "encoder": ChatCompletionsEncoder(),
         "decoder": ChatCompletionsDecoder(),
         "transport": ChatCompletionsTransport(),
@@ -111,8 +111,11 @@ def test_codec_delegates_configuration_validation_to_decoder(profile_factory):
 
     class Codec(ChatCompletionsCodec):
         __slots__ = ()
-        decoder = Decoder()
-        transport = Transport()
+
+        def __init__(self):
+            super().__init__()
+            self.decoder = Decoder()
+            self.transport = Transport()
 
     Codec().validate_profile(profile)
     assert calls == [("decoder", profile)]
@@ -197,7 +200,10 @@ def test_request_pipeline_decodes_once_before_native_assembly(profile_factory, t
 
     class RecordingCodec(ChatCompletionsCodec):
         __slots__ = ()
-        decoder = RecordingDecoder()
+
+        def __init__(self):
+            super().__init__()
+            self.decoder = RecordingDecoder()
 
     RecordingCodec().request(
         intermediate["messages"], intermediate.get("tools"), profile, max_tokens=42
@@ -211,7 +217,7 @@ def test_request_pipeline_decodes_once_before_native_assembly(profile_factory, t
 
 
 def test_decoder_checks_native_tool_capability(profile_factory):
-    with pytest.raises(UnsupportedCapabilityError, match="function calling"):
+    with pytest.raises(SemanticLossError, match="function calling"):
         ChatCompletionsDecoder().native_request({"messages": [], "tools": [{}]}, profile_factory())
 
 

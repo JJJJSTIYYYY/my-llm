@@ -104,33 +104,42 @@ def test_public_conversions_do_not_expose_cached_terminal_material(source, targe
     assert state.messages() == expected, f"{source} -> {target}: chunks exposed cache"
 
 
-def test_nested_annotations_leave_previous_materialized_version_unchanged():
+def test_replacing_tool_arguments_leaves_previous_materialized_version_unchanged():
     state = StreamState("demo")
-    ref = BlockRef("text")
-    block = {"type": "text", "text": "", "citations": [{"title": "first"}]}
+    ref = BlockRef("tool")
+    block = {
+        "type": "tool_use",
+        "id": "call_1",
+        "name": "lookup",
+        "input": {"items": [{"title": "first"}]},
+    }
     state.feed([{"type": "block_set", "ref": ref, "block": block}])
-    block["citations"][0]["title"] = "external mutation"
+    block["input"]["items"][0]["title"] = "external mutation"
     previous = state._blocks[0].materialize()
     before = deepcopy(previous)
     state.feed(
         [
             {
-                "type": "block_annotation",
+                "type": "block_set",
                 "ref": ref,
-                "field": "citations",
-                "value": {"title": "second"},
+                "block": {
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "lookup",
+                    "input": {"items": [{"title": "second"}]},
+                },
             },
-            {"type": "block_delta", "ref": ref, "kind": "text", "field": "text", "value": "next"},
-            {"type": "finish", "reason": "stop"},
+            {"type": "finish", "reason": "tool_calls"},
         ]
     )
     state.finish()
     assert previous == before
     assert state.messages()[0]["content"] == [
         {
-            "type": "text",
-            "text": "next",
-            "citations": [{"title": "first"}, {"title": "second"}],
+            "type": "tool_use",
+            "id": "call_1",
+            "name": "lookup",
+            "input": {"items": [{"title": "second"}]},
         }
     ]
 

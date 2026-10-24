@@ -56,7 +56,8 @@ async def test_lazy_generation_captures_history_and_request_options(monkeypatch)
     assert client.requests[0]["extra_body"]["nested"]["value"] == "original"
     result = stream.result
     result["content"] = "changed"
-    assert stream.result["content"] == "ok"
+    assert stream.result is result
+    assert stream.result["content"] == "changed"
 
 
 def test_converter_never_mutates_input_or_profile():

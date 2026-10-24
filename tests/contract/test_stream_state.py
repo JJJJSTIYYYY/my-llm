@@ -9,11 +9,11 @@ from copy import deepcopy
 
 import pytest
 
-from my_llm import IncompleteStreamError, MessageValidationError, MyCodec
+from my_llm import IncompleteStreamError, MessageValidationError, MyCodec, SemanticLossError
 from my_llm.codec.shared.stream import metadata
 from my_llm.stream._state import StreamState
 from tests.helpers.protocols import PROTOCOLS, chat_event, response_completed, stream_events
-from tests.helpers.sdk import EVENT_TYPES, assert_native
+from tests.helpers.sdk import EVENT_TYPES, assert_native, assert_output_native
 from tests.helpers.streaming import render
 
 
@@ -49,10 +49,11 @@ def test_metadata_operation_survives_json_round_trip_and_captures_each_update():
     assert state.metadata["session"] == {"items": [{"value": 1}]}
 
 
-def validate_events(protocol, events):
+def validate_events(protocol, events, *, output=False):
     for event in events:
         schema = EVENT_TYPES[protocol]
-        assert_native(event, schema[event["type"]] if isinstance(schema, dict) else schema)
+        check = assert_output_native if output else assert_native
+        check(event, schema[event["type"]] if isinstance(schema, dict) else schema)
 
 
 def response_message(index, texts):
@@ -133,8 +134,13 @@ def test_accumulation_survives_json_round_trips_and_batch_boundaries(source, bat
         ]
         emitted.extend(state.feed(json.loads(json.dumps(encoded))))
     emitted.extend(state.finish())
+    if source == "gemini":
+        with pytest.raises(SemanticLossError, match="signature"):
+            codec.decode(chunks=emitted, target_format="anthropic")
+        assert native == before
+        return
     output = codec.decode(chunks=emitted, target_format="anthropic")["chunks"]
-    validate_events("anthropic", output)
+    validate_events("anthropic", output, output=True)
     reconstructed = StreamState("demo")
     reconstructed.feed(codec.encode(chunks=output, input_format="anthropic")["chunks"])
     reconstructed.finish()
@@ -180,24 +186,23 @@ def test_text_and_tool_results_do_not_depend_on_fragment_partition(parts):
     assert replayed.messages() == state.messages()
 
 
-def test_equal_text_keeps_citations_on_its_own_item_and_part():
+def test_equal_text_keeps_its_own_item_and_part_while_citations_are_discarded():
     incoming = response_text_events(
         [response_message(0, ["same", "same"]), response_message(1, ["same"])]
     )
     validate_events("openai_responses", incoming)
     output, state = render("openai_responses", "openai_responses", incoming)
-    validate_events("openai_responses", output)
+    validate_events("openai_responses", output, output=True)
     done = [event["item"] for event in output if event["type"] == "response.output_item.done"]
-    assert [part["annotations"][0]["title"] for item in done for part in item["content"]] == [
-        "citation_0_0",
-        "citation_0_1",
-        "citation_1_0",
-    ]
+    assert [part["text"] for item in done for part in item["content"]] == ["same", "same", "same"]
+    assert all(not part.get("annotations") for item in done for part in item["content"])
     assert done == output[-1]["response"]["output"]
-    assert (
-        MyCodec().decode(state.messages(), target_format="openai_responses")["messages"]
-        == incoming[-1]["response"]["output"]
-    )
+    collected = MyCodec().decode(state.messages(), target_format="openai_responses")["messages"]
+    assert [part["text"] for item in collected for part in item["content"]] == [
+        "same",
+        "same",
+        "same",
+    ]
 
 
 @pytest.mark.parametrize("live_text", ["", "A", "AB"])
@@ -271,7 +276,7 @@ def test_empty_thinking_and_redacted_blocks_keep_order_and_signatures():
     )
     validate_events("anthropic", incoming)
     output, state = render("anthropic", "anthropic", incoming)
-    validate_events("anthropic", output)
+    validate_events("anthropic", output, output=True)
     starts = [
         event["content_block"]["type"] for event in output if event["type"] == "content_block_start"
     ]
@@ -312,7 +317,7 @@ def test_tool_and_following_text_wait_for_success_and_keep_source_order(target):
         assert state.feed(codec.encode(chunks=[event], input_format="anthropic")["chunks"]) == []
     final = state.finish()
     output = codec.decode(chunks=final, target_format=target)["chunks"]
-    validate_events(target, output)
+    validate_events(target, output, output=True)
     assert [entry["block"]["type"] for entry in final[-1]["output_blocks"]] == ["tool_use", "text"]
     reconstructed = StreamState("demo")
     reconstructed.feed(codec.encode(chunks=output, input_format=target)["chunks"])
@@ -355,17 +360,20 @@ def test_signed_empty_gemini_parts_are_not_dropped_or_merged(thinking):
     ]
     validate_events("gemini", incoming)
     output, state = render("gemini", "gemini", incoming)
-    validate_events("gemini", output)
+    validate_events("gemini", output, output=True)
     streamed = [
         part
         for event in output
         for candidate in event["candidates"]
         for part in candidate["content"]["parts"]
     ]
-    assert streamed == parts
-    assert (
-        MyCodec().decode(state.messages(), target_format="gemini")["messages"][0]["parts"] == parts
-    )
+    collected = MyCodec().decode(state.messages(), target_format="gemini")["messages"][0]["parts"]
+    if thinking:
+        assert streamed == parts
+        assert collected == parts
+    else:
+        assert all("thought_signature" not in part for part in [*streamed, *collected])
+        assert not any(part.get("text") for part in [*streamed, *collected])
 
 
 def test_reasoning_summary_parts_use_their_native_summary_indexes():
@@ -397,7 +405,7 @@ def test_reasoning_summary_parts_use_their_native_summary_indexes():
         event["sequence_number"] = sequence
     validate_events("openai_responses", incoming)
     output, state = render("openai_responses", "openai_responses", incoming)
-    validate_events("openai_responses", output)
+    validate_events("openai_responses", output, output=True)
     done = [event["item"] for event in output if event["type"] == "response.output_item.done"]
     assert done == [item]
     assert [

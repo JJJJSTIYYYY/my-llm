@@ -1,6 +1,5 @@
 """ollama: intermediate to native output."""
 
-from copy import deepcopy
 from typing import Any
 
 from ollama import Image, Message, Options, Tool
@@ -11,23 +10,23 @@ from my_llm.codec.ollama.decoding.content import (
     chat_call,
     foreign_block,
     function_tool,
+    tool_text,
 )
 from my_llm.codec.ollama.utils.schema import REQUEST_SCHEMA, validate_ollama_values
 from my_llm.codec.shared.conversion import (
-    blocks,
+    capture,
     coalesce_messages,
     decode_functions,
-    project_message,
     read,
     source_protocol,
     text,
-    text_result,
 )
 from my_llm.codec.shared.options import PreparedOptions, validate_request_options
 from my_llm.codec.shared.stream import counts, events
-from my_llm.exceptions import ConfigurationError, MessageValidationError, UnsupportedCapabilityError
+from my_llm.exceptions import ConfigurationError, UnsupportedCapabilityError
 from my_llm.profile.configuration import merge_dicts
 from my_llm.profile.resolution import ResolvedProfile, client_parameters
+from my_llm.semantic_loss import report_loss
 
 PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response_id"}
 
@@ -38,15 +37,19 @@ def validate_schema(parameters: dict) -> dict:
         parsed = Tool(function={"name": "schema_check", "parameters": parameters}).model_dump(
             exclude_none=True
         )["function"]["parameters"]
-    except (ValidationError, KeyError) as exc:
-        raise UnsupportedCapabilityError(
-            "installed Ollama SDK cannot represent the tool parameter schema"
-        ) from exc
+    except (ValidationError, KeyError):
+        report_loss(parameters, "installed Ollama SDK cannot represent the tool parameter schema")
+        return {"type": "object"}
 
     def preserves(expected, actual):
         if isinstance(expected, dict):
-            return isinstance(actual, dict) and all(
-                key in actual and preserves(value, actual[key]) for key, value in expected.items()
+            return (
+                isinstance(actual, dict)
+                and not ("type" not in expected and "type" in actual)
+                and all(
+                    key in actual and preserves(value, actual[key])
+                    for key, value in expected.items()
+                )
             )
         if isinstance(expected, list):
             return (
@@ -57,9 +60,10 @@ def validate_schema(parameters: dict) -> dict:
         return expected == actual
 
     if not preserves(parameters, parsed):
-        raise UnsupportedCapabilityError(
-            "installed Ollama SDK would discard tool parameter schema constraints"
+        report_loss(
+            parameters, "installed Ollama SDK would discard tool parameter schema constraints"
         )
+        return parsed
     return parameters
 
 
@@ -117,7 +121,7 @@ class OllamaDecoder(BaseDecoder):
     def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
         for tool in tools:
             if "parameters" in tool.get("function", {}):
-                validate_schema(tool["function"]["parameters"])
+                tool["function"]["parameters"] = validate_schema(tool["function"]["parameters"])
         return super().filter_tools(tools, profile)
 
     def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
@@ -180,16 +184,18 @@ class OllamaDecoder(BaseDecoder):
         result = []
         names = {}
         for message in coalesce_messages(messages):
-            content = message.get("content", [])
+            content = message["content"]
             for block in content:
                 if block.get("type") == "tool_use":
                     names[block["id"]] = block["name"]
-            if source_protocol(message) != PROTOCOL:
-                message = project_message(message, foreign_block)
-                content = message["content"]
-            else:
-                # Public calls own independently mutable arguments.
-                content = blocks(content)
+            context_owner = source_protocol(message)
+            content = []
+            for block in message["content"]:
+                owner = block.get("protocol")
+                if (context_owner if owner is None else owner) != PROTOCOL:
+                    block = foreign_block(block)
+                if block is not None:
+                    content.append(block)
             calls = []
             images = []
             reasoning = ""
@@ -204,7 +210,7 @@ class OllamaDecoder(BaseDecoder):
                         {
                             "role": "tool",
                             "tool_name": block.get("name") or names.get(block["tool_use_id"]),
-                            "content": text_result(block.get("content")),
+                            "content": tool_text(block),
                         }
                     )
                 elif kind == "thinking":
@@ -212,7 +218,8 @@ class OllamaDecoder(BaseDecoder):
                 elif kind == "image":
                     source = block.get("source", {})
                     if source.get("type") != "base64":
-                        raise MessageValidationError("Ollama images require base64 data")
+                        report_loss(block, "Ollama images require base64 data")
+                        continue
                     images.append(source.get("data"))
             if len(content) != len(results) or not results:
                 value = {
@@ -224,7 +231,14 @@ class OllamaDecoder(BaseDecoder):
                 if images:
                     value["images"] = images
                 if reasoning:
-                    value["thinking"] = reasoning
+                    if profile is not None and not profile.get(
+                        "replay_reasoning_content_when_tool_calls", False
+                    ):
+                        for block in content:
+                            if block.get("type") == "thinking" and block.get("thinking"):
+                                report_loss(block, "Ollama profile cannot replay thinking")
+                    else:
+                        value["thinking"] = reasoning
                 result.append(value)
             result.extend(results)
         if profile is not None and profile.get("replay_reasoning_content_when_tool_calls", False):
@@ -237,32 +251,49 @@ class OllamaDecoder(BaseDecoder):
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        return decode_functions(
-            tools,
-            lambda functions: [function_tool(function) for function in functions],
-        )
+        def wrap(functions):
+            result = []
+            for function in functions:
+                tool = function_tool(function)
+                tool["function"]["parameters"] = validate_schema(tool["function"]["parameters"])
+                result.append(tool)
+            return result
+
+        return decode_functions(tools, wrap)
 
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
+        tool_chunk = None
         for event in events(chunks):
             kind = event.get("type")
-            usage = self.usage(event.get("usage"))
+            if kind in ("block_start", "block_stop", "tool", "block"):
+                owner = event["block"].get("protocol")
+                native_owner = (
+                    parameters.get("source_protocol") if owner is None else owner
+                ) == PROTOCOL
             message = {"role": "assistant", "content": ""}
-            if kind == "delta":
-                field = {"text": "content", "thinking": "thinking", "refusal": "content"}.get(
-                    event.get("field")
+            if kind == "delta" and event["field"] in ("text", "thinking"):
+                field = {"text": "content", "thinking": "thinking"}[event["field"]]
+                message[field] = event["value"]
+            elif kind == "block_stop" and not native_owner:
+                foreign_block(event["block"])
+                continue
+            elif kind == "block" and event.get("block", {}).get("type") == "redacted_thinking":
+                report_loss(
+                    event["block"], "Ollama cannot represent opaque reasoning from another protocol"
                 )
-                if field is None:
-                    continue
-                message[field] = deepcopy(event["value"])
+                continue
             elif kind == "tool":
                 block = event["block"]
-                if parameters.get("source_protocol") != PROTOCOL:
+                if not native_owner:
                     block = foreign_block(block)
                 call = chat_call(block)
-                call["function"]["arguments"] = deepcopy(call["function"]["arguments"])
+                call["function"]["arguments"] = capture(call["function"]["arguments"])
+                if tool_chunk is not None:
+                    tool_chunk["message"]["tool_calls"].append({"function": call["function"]})
+                    continue
                 message["tool_calls"] = [{"function": call["function"]}]
             elif kind != "finish":
                 continue
@@ -275,8 +306,9 @@ class OllamaDecoder(BaseDecoder):
                 value["done_reason"] = (
                     "stop" if event["reason"] == "tool_calls" else event["reason"]
                 )
-                value.update(usage or {})
             result.append(value)
+            if kind == "tool":
+                tool_chunk = value
         return result
 
     def usage(self, value: dict | None) -> dict | None:

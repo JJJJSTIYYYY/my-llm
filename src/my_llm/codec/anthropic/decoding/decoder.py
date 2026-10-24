@@ -1,6 +1,5 @@
 """anthropic: intermediate to native output."""
 
-from copy import deepcopy
 from typing import Any
 
 from anthropic.resources.messages import AsyncMessages
@@ -14,15 +13,12 @@ from anthropic.types import (
 from pydantic import ValidationError
 
 from my_llm.codec.anthropic.decoding.content import foreign_block
-from my_llm.codec.anthropic.utils.content import CITATION_FIELDS, native_block
+from my_llm.codec.anthropic.utils.content import native_block
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.shared.conversion import (
-    blocks,
+    capture,
     coalesce_messages,
     decode_functions,
-    json_arguments,
-    project_message,
-    select,
     select_present,
     source_protocol,
 )
@@ -31,6 +27,7 @@ from my_llm.codec.shared.stream import counts, events
 from my_llm.codec.shared.transport import _plan, adapter, parameter_types
 from my_llm.exceptions import ConfigurationError, MessageValidationError, ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
+from my_llm.semantic_loss import report_loss
 
 PROTECTED = {"model", "stream", "messages", "input", "tools", "system", "previous_response_id"}
 
@@ -68,7 +65,7 @@ class AnthropicDecoder(BaseDecoder):
             # InputSchema is an open JSON Schema, not just the SDK TypedDict's
             # named type/properties/required fields. Keep its application keys.
             if "input_schema" in original:
-                filtered["input_schema"] = deepcopy(original["input_schema"])
+                filtered["input_schema"] = capture(original["input_schema"])
         return result
 
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
@@ -158,13 +155,20 @@ class AnthropicDecoder(BaseDecoder):
     ) -> list[dict]:
         result = []
         for message in coalesce_messages(messages):
-            if source_protocol(message) != PROTOCOL:
-                message = project_message(message, foreign_block)
-            content = [
-                value
-                for block in blocks(message.get("content"))
-                if (value := native_block(block)) is not None
-            ]
+            context_owner = source_protocol(message)
+            content = []
+            for block in message["content"]:
+                owner = block.get("protocol")
+                if (context_owner if owner is None else owner) != PROTOCOL:
+                    block = foreign_block(block)
+                    if block is None:
+                        continue
+                if block.get("type") == "thinking" and not block.get("signature"):
+                    report_loss(block, "Anthropic reasoning requires a native signature")
+                    continue
+                value = native_block(block)
+                if value is not None:
+                    content.append(value)
             result.append({"role": message["role"], "content": content})
         return result
 
@@ -176,16 +180,9 @@ class AnthropicDecoder(BaseDecoder):
             lambda functions: [
                 {
                     **select_present(f, "name", "description", "strict"),
-                    **(
-                        {
-                            "cache_control": None
-                            if f["cache_control"] is None
-                            else select(f["cache_control"], "type", "ttl")
-                        }
-                        if "cache_control" in f
-                        else {}
-                    ),
-                    "input_schema": f.get("parameters") or {"type": "object"},
+                    "input_schema": f["parameters"]
+                    if f.get("parameters") is not None
+                    else {"type": "object"},
                 }
                 for f in functions
             ],
@@ -197,7 +194,11 @@ class AnthropicDecoder(BaseDecoder):
         result = []
         for event in events(chunks):
             kind = event.get("type")
-            usage = self.usage(event.get("usage"))
+            if kind in ("block_start", "block_stop", "tool", "block"):
+                owner = event["block"].get("protocol")
+                native_owner = (
+                    parameters.get("source_protocol") if owner is None else owner
+                ) == PROTOCOL
             index = event.get("index", 0)
             if kind == "start":
                 result.append(
@@ -211,51 +212,51 @@ class AnthropicDecoder(BaseDecoder):
                             "content": [],
                             "stop_reason": None,
                             "stop_sequence": None,
-                            "usage": {"input_tokens": 0, "output_tokens": 0, **(usage or {})},
                         },
                     }
                 )
             elif kind == "block_start":
                 block = event["block"]
+                if block.get("type") == "thinking" and not native_owner:
+                    report_loss(
+                        block, "Anthropic cannot replay reasoning without its native signature"
+                    )
+                    continue
                 result.append(
                     {
                         "type": "content_block_start",
                         "index": index,
                         "content_block": {"type": "thinking", "thinking": "", "signature": ""}
-                        if block["type"] == "thinking"
-                        and parameters.get("source_protocol") == PROTOCOL
+                        if block["type"] == "thinking" and native_owner
                         else {"type": "text", "text": ""},
                     }
                 )
             elif kind == "delta":
-                field = {"text": "text", "thinking": "thinking", "refusal": "text"}.get(
-                    event.get("field")
-                )
+                field = {"text": "text", "thinking": "thinking"}.get(event.get("field"))
                 if field is None:
                     continue
                 if field == "thinking" and parameters.get("source_protocol") != PROTOCOL:
-                    field = "text"
+                    continue
                 value = {
                     "type": "content_block_delta",
                     "index": index,
-                    "delta": {"type": f"{field}_delta", field: deepcopy(event["value"])},
+                    "delta": {"type": f"{field}_delta", field: event["value"]},
                 }
                 result.append(value)
-            elif kind == "block_annotation":
-                if event["field"] == "citations" and parameters.get("source_protocol") == PROTOCOL:
-                    result.append(
-                        {
-                            "type": "content_block_delta",
-                            "index": index,
-                            "delta": {
-                                "type": "citations_delta",
-                                "citation": select(event["value"], *CITATION_FIELDS),
-                            },
-                        }
-                    )
             elif kind == "block_stop":
+                if event["block"].get("type") == "thinking":
+                    if not native_owner:
+                        report_loss(
+                            event["block"],
+                            "Anthropic cannot replay reasoning without its native signature",
+                        )
+                        continue
+                    if not event["block"].get("signature"):
+                        report_loss(
+                            event["block"], "Anthropic reasoning requires a native signature"
+                        )
                 signature = event["block"].get("signature")
-                if signature and parameters.get("source_protocol") == PROTOCOL:
+                if signature and native_owner:
                     result.append(
                         {
                             "type": "content_block_delta",
@@ -265,30 +266,23 @@ class AnthropicDecoder(BaseDecoder):
                     )
                 result.append({"type": "content_block_stop", "index": index})
             elif kind == "tool":
-                block = native_block(event["block"])
-                if parameters.get("source_protocol") != PROTOCOL:
+                block = event["block"]
+                if not native_owner:
                     block = foreign_block(block)
+                block = native_block(block)
                 result.extend(
                     [
                         {
                             "type": "content_block_start",
                             "index": index,
-                            "content_block": {**block, "input": {}},
-                        },
-                        {
-                            "type": "content_block_delta",
-                            "index": index,
-                            "delta": {
-                                "type": "input_json_delta",
-                                "partial_json": json_arguments(block["input"]),
-                            },
+                            "content_block": capture(block),
                         },
                         {"type": "content_block_stop", "index": index},
                     ]
                 )
             elif kind == "block":
                 block = event["block"]
-                if parameters.get("source_protocol") != PROTOCOL:
+                if not native_owner:
                     block = foreign_block(block)
                     if block is None:
                         continue
@@ -297,7 +291,7 @@ class AnthropicDecoder(BaseDecoder):
                         {
                             "type": "content_block_start",
                             "index": index,
-                            "content_block": deepcopy(native_block(block)),
+                            "content_block": capture(native_block(block)),
                         },
                         {"type": "content_block_stop", "index": index},
                     ]
@@ -318,7 +312,6 @@ class AnthropicDecoder(BaseDecoder):
                         {
                             "type": "message_delta",
                             "delta": {"stop_reason": reason, "stop_sequence": stop_sequence},
-                            "usage": usage or {"output_tokens": 0},
                         },
                         {"type": "message_stop"},
                     ]

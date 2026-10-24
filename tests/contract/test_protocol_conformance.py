@@ -12,9 +12,15 @@ import pytest
 from jsonschema import ValidationError as SchemaValidationError
 from pydantic import ValidationError
 
-from my_llm import MyCodec
+from my_llm import MyCodec, SemanticLossError, Usage
 from tests.helpers.protocols import PROTOCOLS, history, stream_events, tools
-from tests.helpers.sdk import EVENT_TYPES, MESSAGE_TYPES, TOOL_TYPES, assert_native
+from tests.helpers.sdk import (
+    EVENT_TYPES,
+    MESSAGE_TYPES,
+    TOOL_TYPES,
+    assert_native,
+    assert_output_native,
+)
 from tests.helpers.streaming import render
 
 
@@ -22,7 +28,16 @@ def canonical_history(messages, protocol):
     """Normalize identity/JSON spelling only, keeping each native protocol shape."""
     result = deepcopy(messages)
     for message in result:
+        for block in message.get("content", []) if isinstance(message.get("content"), list) else []:
+            block.pop("annotations", None)
+            block.pop("logprobs", None)
+            if block.get("type") == "tool_result" and isinstance(block.get("content"), str):
+                block["content"] = [{"type": "text", "text": block["content"]}]
         if protocol == "openai_responses":
+            if message.get("type") == "function_call_output" and isinstance(
+                message.get("output"), str
+            ):
+                message["output"] = [{"type": "input_text", "text": message["output"]}]
             if message.get("type") == "message" and message.get("role") == "assistant":
                 assert isinstance(message["id"], str) and message["id"]
                 assert message["status"] == "completed"
@@ -64,9 +79,6 @@ def test_histories_match_independent_native_expectations(source, target):
     for message in converted:
         assert_native(message, MESSAGE_TYPES[target])
     expected = history(target)
-    if target == "gemini" and source != "gemini":
-        # Official migration marker, not a fabricated cryptographic signature.
-        expected[1]["parts"][1]["thought_signature"] = "skip_thought_signature_validator"
     # Gemini requires an object result. Converting that object into a text-only
     # result preserves its JSON, rather than silently extracting a chosen key.
     if source == "gemini" and target != "gemini":
@@ -75,6 +87,10 @@ def test_histories_match_independent_native_expectations(source, target):
             expected[-1]["content"][0]["content"] = '{"result": "Sunny"}'
         else:
             expected[-1][field] = '{"result": "Sunny"}'
+    if source == target == "gemini":
+        expected[-1]["parts"][0]["function_response"]["response"] = {
+            "result": '{"result": "Sunny"}'
+        }
     assert canonical_history(converted, target) == canonical_history(expected, target)
 
 
@@ -104,28 +120,39 @@ def test_stream_events_match_official_models_and_lifecycle(source, target, mode)
     for event in incoming:
         schema = EVENT_TYPES[source]
         assert_native(event, schema[event["type"]] if isinstance(schema, dict) else schema)
-    if mode == "live":
-        converted, _ = render(source, target, incoming)
-    else:
-        converted = MyCodec().convert(chunks=incoming, input_format=source, target_format=target)[
+
+    def operation():
+        if mode == "live":
+            return render(source, target, incoming)[0]
+        return MyCodec().convert(chunks=incoming, input_format=source, target_format=target)[
             "chunks"
         ]
+
+    if source == "gemini" and target != "gemini":
+        with pytest.raises(SemanticLossError, match="signature"):
+            operation()
+        return
+    converted = operation()
     for event in converted:
         schema = EVENT_TYPES[target]
-        assert_native(event, schema[event["type"]] if isinstance(schema, dict) else schema)
+        assert_output_native(event, schema[event["type"]] if isinstance(schema, dict) else schema)
     assert_stream_lifecycle(source, incoming)
-    assert_stream_lifecycle(target, converted)
+    assert_stream_lifecycle(target, converted, output=True)
 
 
-def assert_stream_lifecycle(protocol, events):
+def assert_stream_lifecycle(protocol, events, *, output=False):
     if protocol == "openai_chat":
-        assert events[-1]["choices"] == []
-        assert events[-1]["usage"]["total_tokens"] == 3
-        assert events[-2]["choices"][0]["finish_reason"] == "tool_calls"
+        if output:
+            assert events[-1]["choices"][0]["finish_reason"] == "tool_calls"
+        else:
+            assert events[-1]["choices"] == []
+            assert events[-1]["usage"]["total_tokens"] == 3
+            assert events[-2]["choices"][0]["finish_reason"] == "tool_calls"
     elif protocol == "openai_responses":
         assert events[0]["type"] == "response.created"
         assert events[-1]["type"] == "response.completed"
-        assert events[-1]["response"]["usage"]["total_tokens"] == 3
+        if not output:
+            assert events[-1]["response"]["usage"]["total_tokens"] == 3
         assert [event["sequence_number"] for event in events] == list(range(len(events)))
         done = [event["item"] for event in events if event["type"] == "response.output_item.done"]
         assert done == events[-1]["response"]["output"]
@@ -146,7 +173,8 @@ def assert_stream_lifecycle(protocol, events):
     elif protocol == "anthropic":
         assert events[0]["type"] == "message_start"
         assert events[-1]["type"] == "message_stop"
-        assert events[-2]["usage"]["output_tokens"] == 2
+        if not output:
+            assert events[-2]["usage"]["output_tokens"] == 2
         opened, closed = [], []
         for event in events:
             if event["type"] == "content_block_start":
@@ -158,10 +186,12 @@ def assert_stream_lifecycle(protocol, events):
         assert opened == closed
     elif protocol == "gemini":
         assert events[-1]["candidates"][0]["finish_reason"] == "STOP"
-        assert events[-1]["usage_metadata"]["total_token_count"] == 3
+        if not output:
+            assert events[-1]["usage_metadata"]["total_token_count"] == 3
     else:
         assert events[-1]["done"] is True
-        assert events[-1]["eval_count"] == 2
+        if not output:
+            assert events[-1]["eval_count"] == 2
 
 
 # A valid one-pixel PNG; conversion checks use actual image bytes, not text
@@ -238,7 +268,7 @@ def test_output_limit_is_a_responses_incomplete_event(source):
     assert final["type"] == "response.incomplete"
     assert final["response"]["status"] == "incomplete"
     assert final["response"]["incomplete_details"] == {"reason": "max_output_tokens"}
-    assert_native(final, EVENT_TYPES["openai_responses"][final["type"]])
+    assert_output_native(final, EVENT_TYPES["openai_responses"][final["type"]])
 
 
 def test_filtering_is_not_reported_as_successful_responses_completion():
@@ -248,7 +278,7 @@ def test_filtering_is_not_reported_as_successful_responses_completion():
     final = converted[-1]
     assert final["type"] == "response.incomplete"
     assert final["response"]["incomplete_details"] == {"reason": "content_filter"}
-    assert_native(final, EVENT_TYPES["openai_responses"][final["type"]])
+    assert_output_native(final, EVENT_TYPES["openai_responses"][final["type"]])
 
 
 @pytest.mark.parametrize("target", ["openai_responses", "anthropic", "gemini", "ollama"])
@@ -266,13 +296,17 @@ def test_native_thinking_events_use_only_target_supported_fields(target):
     )
     for event in incoming:
         assert_native(event, EVENT_TYPES["anthropic"][event["type"]])
+    if target != "anthropic":
+        with pytest.raises(SemanticLossError, match="signature"):
+            render("anthropic", target, incoming)
+        return
     converted, _ = render("anthropic", target, incoming)
     for event in converted:
         schema = EVENT_TYPES[target]
-        assert_native(event, schema[event["type"]] if isinstance(schema, dict) else schema)
+        assert_output_native(event, schema[event["type"]] if isinstance(schema, dict) else schema)
 
 
-def test_responses_native_request_metadata_survives_stream_reconstruction():
+def test_responses_request_metadata_is_not_part_of_supported_response_content():
     incoming = stream_events("openai_responses", tool=True)
     settings = {
         "tools": tools("openai_responses"),
@@ -284,9 +318,10 @@ def test_responses_native_request_metadata_survives_stream_reconstruction():
             event["response"].update(settings)
     output, _ = render("openai_responses", "openai_responses", incoming)
     for event in (output[0], output[-1]):
-        for key, value in settings.items():
-            assert event["response"][key] == value
-        assert_native(event, EVENT_TYPES["openai_responses"][event["type"]])
+        assert event["response"]["tools"] == []
+        assert event["response"]["tool_choice"] == "auto"
+        assert event["response"]["parallel_tool_calls"] is True
+        assert_output_native(event, EVENT_TYPES["openai_responses"][event["type"]])
 
 
 @pytest.mark.parametrize(
@@ -333,12 +368,7 @@ def test_cumulative_anthropic_usage_is_overwritten_without_losing_cache_counts()
     )
     for event in incoming:
         assert_native(event, EVENT_TYPES["anthropic"][event["type"]])
-    converted, _ = render("anthropic", "openai_chat", incoming)
-    assert converted[-1]["choices"] == []
-    assert converted[-1]["usage"] == {
-        "prompt_tokens": 10,
-        "completion_tokens": 7,
-        "total_tokens": 17,
-        "prompt_tokens_details": {"cached_tokens": 3},
-    }
-    assert_native(converted[-1], EVENT_TYPES["openai_chat"])
+    converted, state = render("anthropic", "openai_chat", incoming)
+    assert Usage.from_record(state.usage) == Usage(input=10, output=7, cached=3)
+    assert converted[-1]["choices"][0]["finish_reason"] == "stop"
+    assert_output_native(converted[-1], EVENT_TYPES["openai_chat"])

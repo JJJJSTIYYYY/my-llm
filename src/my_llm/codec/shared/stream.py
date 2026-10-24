@@ -4,7 +4,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from typing import NamedTuple
 
-from my_llm.codec.shared.conversion import dictionaries
+from my_llm.codec.shared.conversion import dictionary_views
 
 
 class BlockRef(NamedTuple):
@@ -47,7 +47,7 @@ def operations(value: dict) -> list[dict]:
 
 
 def events(chunks: list):
-    for chunk in dictionaries(chunks):
+    for chunk in dictionary_views(chunks):
         if is_batch(chunk):
             yield from events(operations(chunk))
         else:

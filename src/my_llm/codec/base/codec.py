@@ -1,25 +1,59 @@
-"""Symmetric stateless protocol conversion facade."""
+"""Instance-owned protocol components and semantic-loss policy boundary."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import Any, final
 
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.base.transport import BaseTransport
+from my_llm.exceptions import SemanticLossError
+from my_llm.middleware import FunctionTool, Message, StreamBatch
 from my_llm.profile.configuration import Protocol, ProtocolDefaults
 from my_llm.profile.resolution import ResolvedProfile
+from my_llm.semantic_loss import BaseSemanticLossAdaptor, SemanticLossContext, collect_losses
 
 
 class BaseCodec(ABC):
     """Abstract protocol extension with encoder, decoder, transport and defaults.
 
-    Implement the abstract properties and declare empty __slots__, then register
-    an instance with MyCodec.register. Public conversion methods accept lists and
-    an optional ResolvedProfile; None selects standard protocol behavior.
-    Encoding returns intermediate dictionaries; decoding returns native values.
+    Register a zero-argument factory with MyCodec.register. Each factory call must
+    create an independent codec, encoder, decoder and transport. MyCodec injects
+    its instance-owned adaptor; components may retain instance-local state.
+    Encoding returns the finite middleware models; decoding returns native values.
+    An optional ResolvedProfile supplies standard field routes and compatibility
+    settings. It cannot expand the supported middleware fields.
     """
 
-    __slots__ = ()
+    __slots__ = ("semantic_loss_adaptor",)
+
+    def __init__(self, semantic_loss_adaptor: BaseSemanticLossAdaptor | None = None) -> None:
+        self.semantic_loss_adaptor = (
+            BaseSemanticLossAdaptor() if semantic_loss_adaptor is None else semantic_loss_adaptor
+        )
+
+    def translate(
+        self,
+        operation: Callable[[], Any],
+        context: SemanticLossContext,
+        *,
+        draft_key: str | None = None,
+    ):
+        """Resolve losses only after the full request or output draft exists."""
+        draft = None
+        completed = False
+        try:
+            with collect_losses(context) as (losses, owner):
+                draft = operation()
+                completed = True
+                if owner:
+                    losses.complete(draft[draft_key] if draft_key is not None else draft)
+                return draft
+        except SemanticLossError as error:
+            result = self.semantic_loss_adaptor.handle(error)
+            if draft_key is None:
+                return result
+            return draft if completed else {draft_key: result}
 
     @property
     @abstractmethod
@@ -71,13 +105,16 @@ class BaseCodec(ABC):
         This method performs no network I/O.
         """
         self.validate_profile(profile)
-        return self.decoder.request(messages, tools, profile, **parameters)
+        return self.translate(
+            lambda: self.decoder.request(messages, tools, profile, **parameters),
+            SemanticLossContext(None, self.protocol_or_api_style, "input", "request"),
+        )
 
     @final
     def encode_messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict[str, Any]]:
-        """Return intermediate messages from native values using optional profile overrides."""
+    ) -> list[Message]:
+        """Return supported middleware messages from native values."""
         return self.encoder.messages(messages, profile, **parameters)
 
     @final
@@ -85,13 +122,16 @@ class BaseCodec(ABC):
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict[str, Any]]:
         """Return native message dictionaries from intermediate messages."""
-        return self.decoder.messages(messages, profile, **parameters)
+        return self.translate(
+            lambda: self.decoder.messages(messages, profile, **parameters),
+            SemanticLossContext(None, self.protocol_or_api_style),
+        )
 
     @final
     def encode_tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict[str, Any]]:
-        """Return intermediate tool declarations from native tool values."""
+    ) -> list[FunctionTool]:
+        """Return supported middleware function declarations from native tools."""
         return self.encoder.tools(tools, profile, **parameters)
 
     @final
@@ -99,13 +139,16 @@ class BaseCodec(ABC):
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict[str, Any]]:
         """Return native tool declarations from intermediate tools."""
-        return self.decoder.tools(tools, profile, **parameters)
+        return self.translate(
+            lambda: self.decoder.tools(tools, profile, **parameters),
+            SemanticLossContext(None, self.protocol_or_api_style),
+        )
 
     @final
     def encode_chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
-    ) -> list[dict[str, Any]]:
-        """Return intermediate events from the supplied native event list."""
+    ) -> list[StreamBatch]:
+        """Return finite middleware operation batches from native stream events."""
         return self.encoder.chunks(chunks, profile, **parameters)
 
     @final
@@ -113,7 +156,10 @@ class BaseCodec(ABC):
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict[str, Any]]:
         """Return native event dictionaries from the supplied intermediate events."""
-        return self.decoder.chunks(chunks, profile, **parameters)
+        return self.translate(
+            lambda: self.decoder.chunks(chunks, profile, **parameters),
+            SemanticLossContext(None, self.protocol_or_api_style),
+        )
 
     @final
     def match_protocol(self, messages_or_tools: list[Any]) -> str | None:

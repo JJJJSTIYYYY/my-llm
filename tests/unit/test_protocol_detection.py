@@ -36,7 +36,7 @@ def test_complete_native_history_identifies_one_protocol(protocol):
 def test_non_unique_protocol_has_no_registration_order_fallback(values):
     codec = MyCodec()
     assert codec.match_protocol(values) is None
-    codec.codecs = dict(reversed(codec.codecs.items()))
+    codec.codecs = dict(reversed(list(codec.codecs.items())))
     assert codec.match_protocol(values) is None
 
 

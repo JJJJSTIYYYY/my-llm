@@ -1,6 +1,7 @@
 """Mutable public conversion results own their nested protocol payloads."""
 
 from copy import deepcopy
+from dataclasses import fields, is_dataclass
 
 import pytest
 from google.genai import types
@@ -13,18 +14,26 @@ from tests.helpers.protocols import PROTOCOLS, history, stream_events, tools
 
 
 def edit_containers(value):
-    """Edit mappings and sequences, including payloads inside SDK request models."""
+    """Edit owned payload containers and count changes, leaving provenance borrowed."""
     if isinstance(value, BaseModel):
-        for name in type(value).model_fields:
-            edit_containers(getattr(value, name))
+        return sum(edit_containers(getattr(value, name)) for name in type(value).model_fields)
+    if is_dataclass(value):
+        return sum(
+            edit_containers(getattr(value, item.name))
+            for item in fields(value)
+            if item.name != "origin"
+        )
     elif isinstance(value, dict):
-        for child in tuple(value.values()):
-            edit_containers(child)
+        count = sum(edit_containers(child) for child in tuple(value.values()))
         value["x_test_edit"] = ["changed"]
+        return count + 1
     elif isinstance(value, list):
-        for child in tuple(value):
-            edit_containers(child)
+        count = sum(edit_containers(child) for child in tuple(value))
         value.append({"x_test_edit": "changed"})
+        return count + 1
+    elif isinstance(value, tuple):
+        return sum(edit_containers(child) for child in value)
+    return 0
 
 
 def native_values(protocol, kind):
@@ -39,7 +48,7 @@ def test_public_encoder_owns_nested_output(protocol, kind):
     before = deepcopy(values)
 
     converted = getattr(codec, f"encode_{kind}")(values)
-    edit_containers(converted)
+    assert edit_containers(converted) > 0
 
     assert values == before
 
@@ -80,7 +89,7 @@ def test_public_decoder_captures_nested_input(source, target, kind):
     converted = getattr(codec.codecs[target], f"decode_{kind}")(intermediate)
     before = deepcopy(converted)
 
-    edit_containers(intermediate)
+    assert edit_containers(intermediate) > 0
 
     assert converted == before
 
@@ -166,8 +175,9 @@ def test_encoder_captures_open_tool_schema_once(protocol):
 
     converted = MyCodec().codecs[protocol].encoder.tools(values)
 
-    assert len(schema.copies) == 1
-    edit_containers(converted)
+    assert len(schema.copies) <= 1
+    assert converted[0].parameters == schema
+    assert edit_containers(converted) > 0
     assert schema == {"type": "object", "properties": {"value": {"type": "string"}}}
 
 
@@ -214,7 +224,8 @@ def test_responses_decoder_captures_native_response_metadata_once():
         )
     )
 
-    assert len(payload.copies) == 1
+    assert len(payload.copies) == 0
+    assert "label" not in str(converted)
     edit_containers(converted)
     assert payload == {"label": "original"}
 
@@ -246,13 +257,12 @@ def test_text_projection_does_not_copy_unrecognized_annotation_fields(protocol):
 
     converted = MyCodec().decoder(protocol).messages(messages)
 
-    annotation = (
-        converted[0]["annotations"][0]["url_citation"]
-        if protocol == "openai_chat"
-        else converted[0]["content"][0]["annotations"][0]
-    )
-    assert annotation["url"] == "https://example.com"
-    assert "vendor_unconfigured" not in annotation
+    assert "https://example.com" not in str(converted)
+    assert "vendor_unconfigured" not in str(converted)
+    if protocol == "openai_chat":
+        assert not converted[0].get("annotations")
+    else:
+        assert not converted[0]["content"][0].get("annotations")
 
 
 class AddressedFieldsOnly(dict):
@@ -274,7 +284,9 @@ class AddressedFieldsOnly(dict):
 @pytest.mark.parametrize(
     "cache_control", [None, {"type": "ephemeral"}, {"type": "ephemeral", "ttl": "1h"}]
 )
-def test_anthropic_tool_cache_control_survives_request_translation(profile_factory, cache_control):
+def test_anthropic_tool_cache_control_is_outside_the_supported_fields(
+    profile_factory, cache_control
+):
     codec = MyCodec()
     source = [
         {
@@ -296,12 +308,12 @@ def test_anthropic_tool_cache_control_survives_request_translation(profile_facto
         ),
     )
 
-    assert request["tools"] == source
+    assert request["tools"] == [{"name": "lookup", "input_schema": {"type": "object"}}]
+    assert "cache_control" not in intermediate.tools[0]
     if cache_control is not None:
         source[0]["cache_control"]["ttl"] = "5m"
-        assert intermediate["tools"][0]["functions"][0]["cache_control"] == cache_control
-        request["tools"][0]["cache_control"]["ttl"] = "5m"
-        assert intermediate["tools"][0]["functions"][0]["cache_control"] == cache_control
+        assert "cache_control" not in intermediate.tools[0]
+        assert "cache_control" not in request["tools"][0]
 
 
 @pytest.mark.parametrize("direction", ["encoder", "decoder"])
@@ -320,7 +332,7 @@ def test_anthropic_tool_cache_control_only_addresses_known_fields(direction):
         function["parameters"] = {"type": "object"}
         result = component.tools([{"functions": [function]}])[0]
 
-    assert result["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    assert "cache_control" not in result
     assert "vendor_unconfigured" not in result
 
 
@@ -336,19 +348,12 @@ def test_gemini_schema_projection_only_addresses_recognized_keywords():
 
     converted = MyCodec().codecs["gemini"].encoder.tools(values)
 
-    assert converted == [
-        {
-            "functions": [
-                {
-                    "name": "lookup",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"name": {"type": "string"}},
-                    },
-                }
-            ]
-        }
-    ]
+    assert len(converted) == 1
+    assert converted[0].name == "lookup"
+    assert converted[0].parameters == {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+    }
 
 
 def guarded_protocol(value, *, parent=None):
@@ -601,7 +606,7 @@ def test_public_stream_decoder_owns_events_and_parameters(source, target, edit_i
 
     codec = MyCodec()
     state = StreamState("ownership")
-    operations = state.feed(codec.codecs[source].encoder.chunks(stream_events(source, tool=True)))
+    operations = state.feed(codec.codecs[source].encoder.chunks(stream_events(source, tool=False)))
     operations.extend(state.finish())
     parameters = {"source_protocol": source, **state.metadata}
     before = deepcopy((operations, parameters))

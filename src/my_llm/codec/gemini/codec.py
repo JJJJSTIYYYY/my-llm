@@ -1,4 +1,6 @@
-"""Stateless gemini protocol facade."""
+"""Instance-owned gemini protocol facade."""
+
+from copy import deepcopy
 
 from my_llm.codec.base.codec import BaseCodec
 from my_llm.codec.gemini.decoding.decoder import GeminiDecoder
@@ -15,9 +17,9 @@ class GeminiCodec(BaseCodec):
     conversion interface. Requires the google-genai optional dependency.
     """
 
-    __slots__ = ()
+    __slots__ = ("encoder", "decoder", "transport", "_defaults")
     protocol_or_api_style = "gemini"
-    defaults = ProtocolDefaults(
+    _DEFAULTS = ProtocolDefaults(
         replay_reasoning_content_when_tool_calls=Config(default_value=True),
         max_tokens=Parameter(path="$.config.max_output_tokens", default_value=omit),
         content=Parameter(
@@ -38,6 +40,14 @@ class GeminiCodec(BaseCodec):
             default_value=omit,
         ),
     )
-    encoder = GeminiEncoder()
-    decoder = GeminiDecoder()
-    transport = GeminiTransport()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._defaults = deepcopy(self._DEFAULTS)
+        self.encoder = GeminiEncoder()
+        self.decoder = GeminiDecoder()
+        self.transport = GeminiTransport()
+
+    @property
+    def defaults(self) -> ProtocolDefaults:
+        return self._defaults

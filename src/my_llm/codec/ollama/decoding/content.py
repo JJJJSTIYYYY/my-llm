@@ -1,36 +1,40 @@
-"""ollama decoding: content, fields and tool helpers."""
+"""Render supported Ollama content and report media and opaque reasoning loss."""
 
-from my_llm.codec.shared.conversion import project_block, select, select_present, unsupported
-
-FIELDS = {
-    "text": ("type", "text"),
-    "image": ("type", "source", "detail"),
-    "document": ("type", "source"),
-    "tool_use": ("type", "id", "name", "input"),
-    "tool_result": ("type", "tool_use_id", "name", "content"),
-    "thinking": ("type", "thinking"),
-}
+from my_llm.codec.shared.conversion import select, select_present, text_result
+from my_llm.semantic_loss import report_loss
 
 
 def foreign_block(block: dict) -> dict | None:
-    if block.get("type") in ("image", "document"):
-        source = block.get("source", {})
-        if source.get("type") == "url":
-            return {"type": "text", "text": source["url"]}
-        if block["type"] == "document":
-            return unsupported(block)
-    return project_block(
-        block, FIELDS, text_fields={"refusal": "refusal"}, omitted=("redacted_thinking",)
-    )
+    kind = block.get("type")
+    if kind == "image" and block.get("source", {}).get("type") != "base64":
+        report_loss(block, "Ollama images require base64 data")
+        return None
+    if kind == "redacted_thinking":
+        report_loss(block, "Ollama cannot represent opaque reasoning from another protocol")
+        return None
+    if kind in ("thinking", "text", "tool_use") and any(
+        block.get(key) for key in ("signature", "encrypted_content")
+    ):
+        report_loss(block, "Ollama cannot preserve another protocol's reasoning signature")
+    return block if kind in ("text", "image", "tool_use", "tool_result", "thinking") else None
+
+
+def tool_text(block: dict) -> str:
+    content = block.get("content")
+    if isinstance(content, list):
+        retained = []
+        for child in content:
+            if child.get("type") == "image":
+                report_loss(child, "Ollama tool results cannot represent images")
+            elif child.get("type") == "text":
+                retained.append(child)
+        return text_result(retained)
+    return text_result(content)
 
 
 def chat_call(block: dict) -> dict:
     return {
-        "function": {
-            **select(block, "index"),
-            "name": block["name"],
-            "arguments": block["input"],
-        }
+        "function": {**select(block, "index"), "name": block["name"], "arguments": block["input"]}
     }
 
 
@@ -39,6 +43,8 @@ def function_tool(function: dict) -> dict:
         "type": "function",
         "function": {
             **select_present(function, "name", "description"),
-            "parameters": function.get("parameters") or {"type": "object"},
+            "parameters": function["parameters"]
+            if function.get("parameters") is not None
+            else {"type": "object"},
         },
     }

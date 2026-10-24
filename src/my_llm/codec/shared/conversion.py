@@ -57,6 +57,11 @@ class _ModelView(dict):
         self._raw = {}
         self._values = {}
 
+    @property
+    def origin_value(self):
+        """The original SDK object, without enumerating unsupported fields."""
+        return self.model
+
     def _field(self, key):
         value = self._raw.get(key, _UNREAD)
         if value is _UNREAD:
@@ -142,7 +147,8 @@ def dictionaries(values: Any) -> list[dict[str, Any]]:
 def coalesce_messages(messages: list) -> list[dict]:
     """Combine consecutive Responses fragments from one assistant history turn."""
     result = []
-    for message in dictionary_views(messages):
+    combined = False
+    for message in messages:
         if (
             result
             and message.get("coalesce")
@@ -150,25 +156,16 @@ def coalesce_messages(messages: list) -> list[dict]:
             and message.get("role") == result[-1].get("role") == "assistant"
             and source_protocol(message) == source_protocol(result[-1])
         ):
-            result[-1] = {
-                **{
-                    key: result[-1][key]
-                    for key in (
-                        "protocol",
-                        "coalesce",
-                        "role",
-                        "name",
-                        "id",
-                        "status",
-                        "annotations",
-                        "audio",
-                    )
-                    if key in result[-1]
-                },
-                "content": [*result[-1]["content"], *message.get("content", [])],
-            }
+            if not combined:
+                result[-1] = {
+                    **select(result[-1], "protocol", "coalesce", "role", "name", "id", "status"),
+                    "content": list(result[-1]["content"]),
+                }
+                combined = True
+            result[-1]["content"].extend(message["content"])
         else:
             result.append(message)
+            combined = False
     return result
 
 
@@ -211,11 +208,6 @@ def arguments(value: Any) -> dict:
 
 def json_arguments(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
-
-
-def tool_output(value: Any) -> Any:
-    """Native object results become JSON text where the protocol requires text."""
-    return json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else value
 
 
 def source_protocol(value: dict) -> str | None:
@@ -276,39 +268,20 @@ def select(value: dict, *fields: str) -> dict:
 
 
 def select_present(value: dict, *fields: str) -> dict:
-    return {key: child for key, child in select(value, *fields).items() if child is not None}
+    return {
+        key: child
+        for key in fields
+        if (child := value.get(key, _MISSING)) is not _MISSING and child is not None
+    }
 
 
 def project_message(message: dict, project, *, fields: tuple[str, ...] = ("role",)) -> dict:
     content = []
-    for block in blocks(message.get("content")):
+    for block in message["content"]:
         rendered = project(block)
         if rendered is not None:
             content.append(rendered)
     return {**select(message, *fields, "protocol"), "content": content}
-
-
-def unsupported(block: dict):
-    raise UnsupportedCapabilityError(
-        f"target protocol cannot represent content type {block.get('type')!r}"
-    )
-
-
-def project_block(
-    block: dict, fields: dict, *, text_fields: dict | None = None, omitted: tuple = ()
-):
-    """Apply the target's declared field projection and visible-text fallbacks."""
-    kind = block.get("type")
-    if kind in omitted:
-        return None
-    if kind in (text_fields or {}):
-        return {"type": "text", "text": block.get(text_fields[kind], "")}
-    if kind not in fields:
-        return unsupported(block)
-    value = select(block, *(key for key in fields[kind] if key != "source"))
-    if "source" in fields[kind] and "source" in block:
-        value["source"] = select(block["source"], "type", "url", "media_type", "data", "file_id")
-    return value
 
 
 def text_result(value) -> str:
@@ -324,12 +297,22 @@ def text_result(value) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def tool_result_content(value: Any, *, native_types: frozenset[str]) -> Any:
+    """Serialize application data; let source codecs project native content lists."""
+    if isinstance(value, dict) or (
+        isinstance(value, list)
+        and not any(isinstance(part, dict) and part.get("type") in native_types for part in value)
+    ):
+        return json.dumps(value, ensure_ascii=False)
+    return value
+
+
 def encode_functions(tools, unwrap) -> list[dict]:
     result = []
     for tool in tools:
         functions = unwrap(tool)
         if functions is None:
-            raise UnsupportedCapabilityError("tool type is not supported by the selected protocol")
+            continue
         result.append({FUNCTIONS: functions})
     return result
 

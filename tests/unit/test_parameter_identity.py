@@ -255,7 +255,9 @@ def test_supports_requires_a_real_boolean(value):
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 @pytest.mark.parametrize("name,kind", [("content", "text"), ("reasoning_content", "thinking")])
-def test_unsupported_output_parameter_skips_present_native_payload(protocol, name, kind):
+def test_unsupported_output_parameter_is_preserved_by_encoder_and_lost_in_decoder(
+    protocol, name, kind
+):
     from my_llm import MyCodec
 
     profile = resolve_profiles(
@@ -273,13 +275,21 @@ def test_unsupported_output_parameter_skips_present_native_payload(protocol, nam
     operations = [
         event for batch in codec.encoder.chunks([event], profile) for event in batch["events"]
     ]
-    assert not any(
+    assert any(
         event["type"] == "block_delta"
         and event.get("field") == kind
         or event["type"] == "block_append"
         and event["block"]["type"] == kind
         for event in operations
     )
+    from my_llm import SemanticLossError
+
+    with pytest.raises(SemanticLossError, match="profile disables supported"):
+        codec.decoder.chunks(
+            [{"type": "delta", "field": kind, "value": "disabled"}],
+            semantic_profile=profile,
+            source_protocol=protocol,
+        )
 
 
 @pytest.mark.parametrize("name,kind", [("content", "text"), ("reasoning_content", "thinking")])
@@ -309,7 +319,11 @@ def test_anthropic_initial_block_cannot_restore_unsupported_output(name, kind):
     state.feed(MyCodec().codecs["anthropic"].encoder.chunks(incoming, profile))
     state.finish()
     result = state.messages()[0]["content"][0]
-    assert result.get(kind, "") == ""
+    assert result.get(kind, "") == "disabled"
+    from my_llm import SemanticLossError
+
+    with pytest.raises(SemanticLossError, match="profile disables supported"):
+        MyCodec().result(state.messages(), target_format="anthropic", semantic_profile=profile)
     if kind == "thinking":
         assert result["signature"] == "native-signature"
     assert incoming == before
@@ -366,9 +380,15 @@ def test_responses_final_snapshot_cannot_restore_unsupported_output(name):
     blocks = [block for message in state.messages() for block in message["content"]]
     text = next(block for block in blocks if block["type"] == "text")
     reasoning = next(block for block in blocks if block["type"] == "thinking")
-    assert text["text"] == ("" if name == "content" else "answer")
-    assert reasoning["thinking"] == ("" if name == "reasoning_content" else "thought")
-    assert reasoning["summary"][0]["text"] == ("" if name == "reasoning_content" else "thought")
+    assert text["text"] == "answer"
+    assert reasoning["thinking"] == "thought"
+    assert reasoning["summary"][0]["text"] == "thought"
+    from my_llm import SemanticLossError
+
+    with pytest.raises(SemanticLossError, match="profile disables supported"):
+        MyCodec().result(
+            state.messages(), target_format="openai_responses", semantic_profile=profile
+        )
     assert reasoning["encrypted_content"] == "opaque-reasoning"
     assert next(block for block in blocks if block["type"] == "tool_use")["id"] == "call_1"
     assert incoming == before

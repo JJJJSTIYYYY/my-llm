@@ -1,4 +1,6 @@
-"""Stateless openai_responses protocol facade."""
+"""Instance-owned openai_responses protocol facade."""
+
+from copy import deepcopy
 
 from my_llm.codec.base.codec import BaseCodec
 from my_llm.codec.openai.responses.decoding.decoder import ResponsesDecoder
@@ -15,9 +17,9 @@ class ResponsesCodec(BaseCodec):
     BaseCodec conversion interface. Requires the openai optional dependency.
     """
 
-    __slots__ = ()
+    __slots__ = ("encoder", "decoder", "transport", "_defaults")
     protocol_or_api_style = "openai_responses"
-    defaults = ProtocolDefaults(
+    _DEFAULTS = ProtocolDefaults(
         replay_reasoning_content_when_tool_calls=Config(default_value=True),
         max_tokens=Parameter(path="$.max_output_tokens", default_value=omit),
         content=Parameter(path="$.delta", default_value=omit),
@@ -28,6 +30,14 @@ class ResponsesCodec(BaseCodec):
         ),
         reasoning_effort=Parameter(supports=True, path="$.reasoning.effort", default_value=omit),
     )
-    encoder = ResponsesEncoder()
-    decoder = ResponsesDecoder()
-    transport = ResponsesTransport()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._defaults = deepcopy(self._DEFAULTS)
+        self.encoder = ResponsesEncoder()
+        self.decoder = ResponsesDecoder()
+        self.transport = ResponsesTransport()
+
+    @property
+    def defaults(self) -> ProtocolDefaults:
+        return self._defaults

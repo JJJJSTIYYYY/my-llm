@@ -8,6 +8,7 @@ from my_llm import (
     ConfigurationError,
     ModelProfile,
     ProviderProfile,
+    SemanticLossError,
     UnsupportedCapabilityError,
     omit,
 )
@@ -235,6 +236,18 @@ def test_reasoning_replay_only_pads_tool_calls_when_thinking(
         ),
         ModelProfile(model=Attribute(default_value="demo")),
     )
+    if visible and not replay:
+        with pytest.raises(SemanticLossError) as captured:
+            MyCodec().convert(
+                [message],
+                input_format="openai_chat",
+                target_format=protocol,
+                profile=profile,
+                reasoning=thinking,
+            )
+        assert captured.value.losses.items[0].origin_path == "$.messages[0].reasoning_content"
+        assert captured.value.draft["messages"][0]["content"] == "hello"
+        return
     result = MyCodec().convert(
         [message],
         input_format="openai_chat",

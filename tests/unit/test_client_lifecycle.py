@@ -49,7 +49,10 @@ async def test_llm_uses_the_transport_composed_by_its_codec():
 
     class Codec(ChatCompletionsCodec):
         __slots__ = ()
-        transport = Transport()
+
+        def __init__(self):
+            super().__init__()
+            self.transport = Transport()
 
     async with make_llm() as llm:
         codec = Codec()

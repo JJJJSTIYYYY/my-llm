@@ -11,7 +11,7 @@ def encode_request(profile, messages=None, tools=None, *, tools_format="openai_c
         messages or [{"role": "user", "content": "x"}], input_format="openai_chat"
     )
     if tools is not None and not isinstance(tools, Omit):
-        intermediate.update(codec.encode(tools=tools, input_format=tools_format))
+        intermediate.tools = codec.encode(tools=tools, input_format=tools_format).tools
     return codec.request(intermediate, profile, **parameters)
 
 

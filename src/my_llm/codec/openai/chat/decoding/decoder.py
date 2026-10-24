@@ -1,6 +1,5 @@
 """openai/chat: intermediate to native output."""
 
-from copy import deepcopy
 from typing import Any
 
 from openai.resources.chat.completions import AsyncCompletions
@@ -11,18 +10,14 @@ from my_llm.codec.openai.chat.decoding.content import (
     chat_call,
     foreign_block,
     render_content,
+    tool_text,
 )
-from my_llm.codec.openai.chat.utils.content import annotations as render_annotations
-from my_llm.codec.openai.chat.utils.content import text_blocks
 from my_llm.codec.shared.conversion import (
-    blocks,
     coalesce_messages,
     decode_functions,
-    project_message,
     select,
     select_present,
     source_protocol,
-    tool_output,
 )
 from my_llm.codec.shared.options import (
     PreparedOptions,
@@ -38,6 +33,7 @@ from my_llm.exceptions import (
 )
 from my_llm.profile.configuration import merge_dicts
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
+from my_llm.semantic_loss import report_loss
 
 PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response_id"}
 
@@ -151,54 +147,43 @@ class ChatCompletionsDecoder(BaseDecoder):
     ) -> list[dict]:
         result = []
         for message in coalesce_messages(messages):
-            if source_protocol(message) != PROTOCOL:
-                message = project_message(message, foreign_block)
-            content = blocks(message.get("content"))
+            context_owner = source_protocol(message)
+            content = []
+            for block in message["content"]:
+                owner = block.get("protocol")
+                if (context_owner if owner is None else owner) != PROTOCOL:
+                    block = foreign_block(block)
+                if block is not None:
+                    content.append(block)
             tool_results = [b for b in content if b.get("type") == "tool_result"]
             other = [b for b in content if b.get("type") != "tool_result"]
             if other or not tool_results:
                 value = {
                     **select(message, "role", "name"),
-                    **(
-                        {
-                            "audio": select(
-                                message["audio"], "id", "expires_at", "data", "transcript"
-                            )
-                        }
-                        if message.get("audio") is not None
-                        else {}
-                    ),
-                    "content": render_content(
-                        [b for b in other if b.get("type") != "refusal"], role=message["role"]
-                    ),
+                    "content": render_content(other, role=message["role"]),
                 }
-                refusals = [b.get("refusal", "") for b in other if b.get("type") == "refusal"]
-                if refusals:
-                    value["refusal"] = "".join(refusals)
                 calls = [chat_call(b) for b in other if b.get("type") == "tool_use"]
                 if calls:
                     value["tool_calls"] = calls
-                citations = render_annotations(
-                    [
-                        *message.get("annotations", []),
-                        *(annotation for b in other for annotation in b.get("annotations", [])),
-                    ]
-                )
-                if citations:
-                    value["annotations"] = citations
                 reasoning = "".join(
                     b.get("thinking", "") for b in other if b.get("type") == "thinking"
                 )
                 if reasoning:
-                    value["reasoning_content"] = reasoning
+                    if profile is not None and (
+                        not profile.get("replay_reasoning_content_when_tool_calls", False)
+                        or profile.parameter("reasoning_content", "output") is None
+                    ):
+                        for block in other:
+                            if block.get("type") == "thinking" and block.get("thinking"):
+                                report_loss(block, "Chat profile cannot replay reasoning_content")
+                    else:
+                        value["reasoning_content"] = reasoning
                 result.append(value)
             result.extend(
                 {
                     "role": "tool",
                     "tool_call_id": b["tool_use_id"],
-                    "content": text_blocks(b["content"])
-                    if isinstance(b.get("content"), list)
-                    else tool_output(b.get("content")),
+                    "content": tool_text(b),
                 }
                 for b in tool_results
             )
@@ -227,28 +212,48 @@ class ChatCompletionsDecoder(BaseDecoder):
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
+        tool_chunk = None
         for event in events(chunks):
             kind = event.get("type")
-            usage = self.usage(event.get("usage"))
+            if kind in ("block_start", "block_stop", "tool", "block"):
+                owner = event["block"].get("protocol")
+                native_owner = (
+                    parameters.get("source_protocol") if owner is None else owner
+                ) == PROTOCOL
             delta = {}
             finish = None
             if kind == "start":
                 delta = {"role": "assistant"}
-            elif kind == "delta":
+            elif kind == "delta" and event["field"] in ("text", "thinking"):
                 field = {
                     "text": "content",
                     "thinking": "reasoning_content",
-                    "refusal": "refusal",
-                }.get(event["field"])
-                if event["field"] == "thinking" and parameters.get("source_protocol") != PROTOCOL:
-                    field = "content"
-                if field:
-                    delta = {field: deepcopy(event["value"])}
+                }[event["field"]]
+                if (
+                    event["field"] == "thinking"
+                    and profile is not None
+                    and profile.parameter("reasoning_content", "output") is None
+                ):
+                    report_loss(event, "Chat profile cannot express reasoning_content")
+                    continue
+                delta = {field: event["value"]}
+            elif kind == "block_stop" and not native_owner:
+                foreign_block(event["block"])
+                continue
+            elif kind == "block" and event.get("block", {}).get("type") == "redacted_thinking":
+                report_loss(
+                    event["block"], "Chat cannot represent opaque reasoning from another protocol"
+                )
+                continue
             elif kind == "tool":
                 block = event["block"]
-                if parameters.get("source_protocol") != PROTOCOL:
+                if not native_owner:
                     block = foreign_block(block)
-                delta = {"tool_calls": [{**chat_call(block), "index": event.get("tool_index", 0)}]}
+                call = {**chat_call(block), "index": event.get("tool_index", 0)}
+                if tool_chunk is not None:
+                    tool_chunk["choices"][0]["delta"]["tool_calls"].append(call)
+                    continue
+                delta = {"tool_calls": [call]}
             elif kind == "finish":
                 finish = event["reason"]
                 if finish not in (
@@ -268,10 +273,9 @@ class ChatCompletionsDecoder(BaseDecoder):
                 "object": "chat.completion.chunk",
                 "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
             }
-            value["usage"] = None
             result.append(value)
-            if kind == "finish" and usage is not None:
-                result.append({**value, "choices": [], "usage": usage})
+            if kind == "tool":
+                tool_chunk = value
         return result
 
     def usage(self, value: dict | None) -> dict | None:

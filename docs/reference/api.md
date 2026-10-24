@@ -59,7 +59,7 @@ async def session():
 
 | 参数 | 默认值 | 含义 |
 | --- | --- | --- |
-| `messages` | 必填 | 非空、同协议的历史序列；元素可为字典或支持的官方 SDK 模型 |
+| `messages` | 必填 | 非空、同协议的历史序列；元素可为字典或支持的官方 SDK 模型；middleware stdio 使用具体 `Message` 模型 |
 | `stream` | `False` | `False` 等待完整结果；`True` 返回 `MessageStream` |
 | `tools` | `omit` | 同协议工具声明；`None` / `omit` 不发送，`[]` 发送空列表 |
 | `max_tokens` | 继承配置 | 正整数输出上限；显式 `None` 保留为空值，`omit` 删除本次请求的目标参数；目标 API 仍可要求有效数值 |
@@ -83,8 +83,13 @@ async def session():
 | `anthropic` | Messages role/content / tools | assistant role/content 字典 | Messages 事件字典 |
 | `gemini` | Content role/parts / tools | model role/parts 字典 | GenerateContentResponse 字典 |
 | `ollama` | Chat role/content / tools | assistant 消息字典 | ChatResponse 字典 |
+| `middleware` | `Message` / `FunctionTool` 具体模型 | `AssistantMessage` | `MessageEvent` 具体模型 |
 
-非流式结果直接是消息或 items；完成原因与用量通过各协议标准流事件提供。
+`middleware` 是必须显式指定的 stdio 名称，不注册新协议组件，也不能作为上游协议。
+其模型列表、工具回合、事件字段和错误契约见[直接使用中间协议](../guides/middleware-io.md)。
+
+非流式结果直接是消息或 items。流式完成原因通过原生终态事件或中间 `finish` 事件提供，
+用量只通过 `get_last_usage()` 获取。
 保存历史时，Responses 使用 `history.extend(result)`，其他协议使用 `history.append(result)`。
 同一历史中的消息与工具必须遵循所选协议。
 
@@ -149,7 +154,7 @@ async def print_stream(llm, prompt):
 | 接口 | 含义 |
 | --- | --- |
 | `async for event in stream` | 按所选协议产生事件字典；流只能消费一次，同一流不能并发消费 |
-| `stream.result` | 成功完整消费后的标准消息或 items；此前、提前关闭或失败时为 `None`；每次读取返回独立副本 |
+| `stream.result` | 成功完整消费后的标准消息或 items；此前、提前关闭或失败时为 `None`；重复读取返回本次最终 draft 本身，与其他调用隔离 |
 | `await stream.aclose()` | 关闭响应并执行清理回调，返回 `None`；可在开始消费前调用，也可重复调用 |
 | `stream.add_close_callback(callback)` | 登记无参数异步清理函数，关闭时按登记逆序各执行一次；关闭后登记抛出 `RuntimeError` |
 | `async with stream` | 离开上下文时关闭流，适用于提前退出、异常和取消 |
@@ -261,9 +266,11 @@ Provider 与 Model 共享以下覆盖项，均默认 `None`，表示继承：
 
 ### `resolve_profiles` 与 `ResolvedProfile`
 
-`resolve_profiles(provider, model) -> ResolvedProfile` 按协议默认值、Provider、Model 顺序解析，
+`resolve_profiles(provider, model, *, defaults_for=None) -> ResolvedProfile` 按协议默认值、Provider、Model 顺序解析，
 返回独立配置快照。无效声明或值抛出 `ConfigurationError`，不可用协议抛出 `UnsupportedProviderError`。
 直接集成时再调用 `MyCodec.validate_profile(resolved)` 检查协议约束；MyLLM 自动完成这些检查。
+`defaults_for(protocol)` 可提供已有实例的 ProtocolDefaults；MyLLM 使用自身 MyCodec.defaults，
+与后续验证和请求共用同一个协议组件实例。省略时独立创建所选注册 codec 读取默认声明。
 
 | 属性 / 方法 | 含义 |
 | --- | --- |
@@ -330,9 +337,19 @@ async def add_round_trip(provider, model_id):
 Gemini / Ollama 的无 ID 调用与结果须保持历史顺序与名称对应。
 `previous_response_id` 用于 Responses 上游时，可仅发送新增消息或结果，并引用服务端已有的调用。
 
+## 语义损失与 usage
+
+`MyLLM` 构造接收 `semantic_loss_protocol="raise" | "ignore" | "hook"` 及
+`input_semantic_loss_hook` / `output_semantic_loss_hook`，实例上可用同名参数调用
+`set_semantic_loss_policy()` 二次设置。hook 同步接收 `(draft, losses, context)` 并原位修改，
+具体值和示例见[迁移指南](../guides/semantic-loss.md)。
+
+流事件过滤接口返回的 usage；成功结束后调用 `get_last_usage()` 获取独立的 `Usage`。
+未报告字段为 `None`，非流式结果不含 usage。并发时该接口代表最后完成的流式调用。
+
 ## `MyCodec` 协议转换
 
-`MyCodec()` 创建转换器，不发送请求。协议名必须已注册；官方协议需要安装对应 SDK 可选依赖。
+`MyCodec(semantic_loss_protocol="raise", input_semantic_loss_hook=None, output_semantic_loss_hook=None)` 创建转换器，不发送请求。协议名必须已注册；官方协议需要安装对应 SDK 可选依赖。
 转换调用不修改原始业务输入。
 
 ```python
@@ -352,7 +369,7 @@ assert converted["messages"] == [{"role": "user", "parts": [{"text": "Hello"}]}]
 | 方法 | 输入与返回 |
 | --- | --- |
 | `convert(messages=None, tools=None, *, input_format, target_format, profile=None, chunks=None, **parameters)` | 标准协议直接转换为目标标准协议 |
-| `encode(messages=None, tools=None, *, input_format, profile=None, chunks=None, **parameters)` | 将标准值转换为供后续转换接口使用的中间值 |
+| `encode(messages=None, tools=None, *, input_format, profile=None, chunks=None, **parameters)` | 将标准值转换为具体的 ProtocolMiddleWare 及其类型化模型 |
 | `decode(messages=None, tools=None, *, target_format, profile=None, chunks=None, **parameters)` | 将中间值转换为目标标准值 |
 | `result(messages, *, target_format)` | 将中间消息列表转换为完整结果：单个消息字典，或 Responses items 列表 |
 
@@ -363,18 +380,21 @@ assert converted["messages"] == [{"role": "user", "parts": [{"text": "Hello"}]}]
 
 `convert(chunks=完整事件列表, ...)` 支持离线转换完整响应流。
 实时响应请使用 `MyLLM.generate(stream=True)`；转换器不记住前一次调用的流片段。
-中间值用于转换接口之间传递，应用对话历史使用标准协议值。
+中间模型也可作为应用对话历史：显式设置 `stdio_protocol="middleware"`，然后将
+`ProtocolMiddleWare.messages` / `.tools` 属性直接传给生成方法。`decode()` / `result()`
+输出到 `target_format="middleware"` 时还须提供原生来源 `input_format`；无需目标 decoder。
 
 ### 验证、注册和高级调用
 
 | 方法 / 属性 | 契约 |
 | --- | --- |
 | `codecs` | 构造时可用的协议名到 BaseCodec 的映射，按只读使用 |
-| `MyCodec.register(codec)` | 注册 BaseCodec；须早于使用它的 MyCodec / MyLLM 创建；重名或无效实现抛出 `ConfigurationError` |
+| `MyCodec.register(CodecFactory)` | 注册返回独立 BaseCodec 及组件的零参数工厂；须早于使用它的 MyCodec / MyLLM 创建；重名或无效实现抛出 `ConfigurationError` |
 | `match_protocol(messages_or_tools)` | 整批输入唯一匹配时返回协议名，否则为 `None` |
 | `validate_input(protocol, messages, tools=None)` | 验证指定协议的输入，失败抛出 `MessageValidationError` |
 | `validate_profile(profile)` | 验证已解析配置的协议约束，失败抛出配置或能力异常 |
 | `decoder(protocol)` / `transport(protocol)` | 获取指定协议的 BaseDecoder / BaseTransport |
+| `defaults(protocol)` | 只读借用本实例所选协议的 ProtocolDefaults，供配置解析使用 |
 | `bind_input(inputs, protocol)` | 返回显式协议或从 messages/tools 唯一推断；推断时更新传入字典的这两个值；不记住协议 |
 | `client_parameters(profile)` | 返回连接参数字典 |
 | `prepare(inputs, profile, *, input_format, client)` | 准备完整调用，返回 `client`、`request`、`local` 三个字典；inputs 需包含 messages、tools、stream 和使用的生成选项 |
@@ -438,7 +458,8 @@ BaseTransport 的 `create_client(parameters)` 返回调用者拥有的 SDK 客�
 | `MyLLMError` | `Exception` | 库异常基类 |
 | `ConfigurationError` | `MyLLMError`、`ValueError` | 无效配置、路径或生成选项 |
 | `UnsupportedProviderError` | `ConfigurationError` | 协议不可用或不能用于生成 |
-| `UnsupportedCapabilityError` | `ConfigurationError` | 模型能力不支持，或目标协议无法表达必要内容或约束 |
+| `UnsupportedCapabilityError` | `ConfigurationError` | 生成控制或 SDK 配置能力不支持 |
+| `SemanticLossError` | `MyLLMError` | 固定支持字段无法表达；包含完整 draft、损失集合与方向上下文 |
 | `MessageValidationError` | `ConfigurationError` | 输入格式、协议推断或工具调用与结果关联错误 |
 | `StreamError` | `MyLLMError` | 流式或非流式响应失败 |
 | `IncompleteStreamError` | `StreamError` | 响应未完整结束 |

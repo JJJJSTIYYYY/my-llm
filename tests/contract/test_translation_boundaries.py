@@ -9,7 +9,7 @@ from copy import deepcopy
 
 import pytest
 
-from my_llm import MyCodec, UnsupportedCapabilityError
+from my_llm import MyCodec, SemanticLossError
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import PROTOCOLS, history, stream_events, tools
 
@@ -133,11 +133,27 @@ def test_open_tool_arguments_and_json_schema_keep_arbitrary_nested_keys(source, 
     native_messages = codec.convert([call], input_format="openai_chat", target_format=source)[
         "messages"
     ]
-    native_tools = codec.convert(
-        tools=declaration, input_format="openai_chat", target_format=source
-    )["tools"]
+    native_tools = (
+        deepcopy(declaration)
+        if source == "ollama"
+        else codec.convert(tools=declaration, input_format="openai_chat", target_format=source)[
+            "tools"
+        ]
+    )
     original = deepcopy((native_messages, native_tools))
 
+    if target == "ollama":
+        with pytest.raises(SemanticLossError) as captured:
+            codec.convert(native_messages, native_tools, input_format=source, target_format=target)
+        assert captured.value.losses.items[0].origin_value["vendor_schema_keyword"] == APPLICATION
+        converted = captured.value.draft
+        normalized = codec.encode(**converted, input_format=target)
+        content = [block for message in normalized["messages"] for block in message["content"]]
+        assert (
+            next(block for block in content if block["type"] == "tool_use")["input"] == APPLICATION
+        )
+        assert (native_messages, native_tools) == original
+        return
     converted = codec.convert(
         native_messages, native_tools, input_format=source, target_format=target
     )
@@ -150,7 +166,7 @@ def test_open_tool_arguments_and_json_schema_keep_arbitrary_nested_keys(source, 
 
 
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_unknown_intermediate_blocks_are_rejected_instead_of_becoming_opaque_content(target):
+def test_unknown_intermediate_blocks_are_discarded_without_changing_supported_text(target):
     values = [
         {
             "role": "user",
@@ -161,8 +177,10 @@ def test_unknown_intermediate_blocks_are_rejected_instead_of_becoming_opaque_con
         }
     ]
     before = deepcopy(values)
-    with pytest.raises(UnsupportedCapabilityError, match="content type"):
-        MyCodec().decode(values, target_format=target)
+    result = MyCodec().decode(values, target_format=target)
+    assert "known" in str(result)
+    assert "vendor_future" not in str(result)
+    assert_no_unknown(result)
     assert values == before
 
 
@@ -291,7 +309,8 @@ def test_direct_responses_intermediate_annotations_are_filtered_in_every_event()
     output = MyCodec().decode(chunks=chunks, target_format="openai_responses")["chunks"]
 
     assert_no_unknown(output)
-    assert "cite" in str(output)
+    assert "cite" not in str(output)
+    assert "https://example.invalid" not in str(output)
     assert chunks == original
 
 
@@ -312,9 +331,7 @@ def test_direct_anthropic_intermediate_citations_filter_unknown_fields():
     )["chunks"]
 
     assert_no_unknown(output)
-    assert output[0]["delta"]["citation"] == {
-        key: value for key, value in citation.items() if key != UNKNOWN
-    }
+    assert output == []
     assert chunks == before
 
 
@@ -366,6 +383,14 @@ def test_open_tool_result_objects_preserve_application_keys_in_all_targets(targe
     codec = MyCodec()
 
     converted = codec.convert(incoming, input_format="gemini", target_format=target)["messages"]
+    if target == "gemini":
+        # The SDK requires an object envelope around the canonical text result.
+        # Decoding text as JSON would guess an application type and add work.
+        native_response = converted[-1]["parts"][0]["function_response"]["response"]
+        assert set(native_response) == {"result"}
+        assert json.loads(native_response["result"]) == APPLICATION
+        assert incoming == original
+        return
     intermediate = codec.encode(converted, input_format=target)["messages"]
     result = next(
         block
@@ -373,9 +398,8 @@ def test_open_tool_result_objects_preserve_application_keys_in_all_targets(targe
         for block in message["content"]
         if block["type"] == "tool_result"
     )["content"]
-    if isinstance(result, str):
-        result = json.loads(result)
-    assert result == APPLICATION
+    assert all(block["type"] == "text" for block in result)
+    assert json.loads("".join(block["text"] for block in result)) == APPLICATION
     assert incoming == original
 
 
@@ -433,7 +457,7 @@ def test_chat_tool_result_text_blocks_are_protocol_structures_not_open_payloads(
     assert incoming == original
 
 
-def test_gemini_part_metadata_is_open_but_part_siblings_are_protocol_fields():
+def test_gemini_part_metadata_and_unknown_siblings_are_discarded():
     from google.genai import types
 
     from tests.helpers.sdk import assert_native
@@ -450,18 +474,18 @@ def test_gemini_part_metadata_is_open_but_part_siblings_are_protocol_fields():
     encoded = codec.encode(incoming, input_format="gemini")
     result = codec.decode(**encoded, target_format="gemini")["messages"]
 
-    assert encoded["messages"][0]["content"][0]["part_metadata"] == payload
+    assert "part_metadata" not in encoded["messages"][0]["content"][0]
     assert UNKNOWN not in encoded["messages"][0]
     assert UNKNOWN not in encoded["messages"][0]["content"][0]
-    assert result == clean
+    assert result == [{"role": "user", "parts": [{"text": "known"}]}]
     assert_native(result[0], types.Content)
     assert incoming == original
-    result[0]["parts"][0]["part_metadata"][UNKNOWN]["source"]["nested"].append(2)
+    result[0]["parts"][0]["text"] = "changed"
     assert incoming == original
 
 
 @pytest.mark.parametrize("behavior", ["BLOCKING", "NON_BLOCKING"])
-def test_gemini_function_response_schema_is_open_and_behavior_is_explicit(behavior):
+def test_gemini_function_response_schema_and_behavior_are_outside_supported_tools(behavior):
     from google.genai import types
 
     from tests.helpers.sdk import assert_native
@@ -495,16 +519,24 @@ def test_gemini_function_response_schema_is_open_and_behavior_is_explicit(behavi
     result = codec.decode(**encoded, target_format="gemini")["tools"]
 
     function = encoded["tools"][0]["functions"][0]
-    assert function["response_json_schema"] == schema
-    assert function["behavior"] == behavior
+    assert "response_json_schema" not in function
+    assert "behavior" not in function
     assert UNKNOWN not in encoded["tools"][0]
     assert UNKNOWN not in function
-    assert result == clean
+    assert result == [
+        {
+            "function_declarations": [
+                {
+                    "name": "f",
+                    "description": "Function",
+                    "parameters_json_schema": {"type": "object"},
+                }
+            ]
+        }
+    ]
     assert_native(result[0], types.Tool)
     assert incoming == original
-    result[0]["function_declarations"][0]["response_json_schema"]["vendor_schema_keyword"][UNKNOWN][
-        "nested"
-    ].append(2)
+    result[0]["function_declarations"][0]["parameters_json_schema"]["type"] = "array"
     assert incoming == original
 
 

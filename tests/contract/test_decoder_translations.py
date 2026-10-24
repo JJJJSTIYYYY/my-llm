@@ -149,7 +149,9 @@ def test_encoder_missing_text_uses_default_at_standard_and_custom_paths(
         ("reasoning_content", "thinking"),
     ],
 )
-def test_encoder_text_omit_skips_existing_payload(protocol, semantic, field, profile_factory):
+def test_encoder_keeps_supported_text_when_a_binding_is_omitted(
+    protocol, semantic, field, profile_factory
+):
     from my_llm.profile.types import omit
 
     overrides = {semantic: omit}
@@ -161,7 +163,7 @@ def test_encoder_text_omit_skips_existing_payload(protocol, semantic, field, pro
     )[0]
     operations = [op for batch in codec.encoder.chunks([event], profile) for op in batch["events"]]
 
-    assert not any(
+    assert any(
         op["type"] == "block_delta"
         and op.get("field") == field
         or op["type"] == "block_append"

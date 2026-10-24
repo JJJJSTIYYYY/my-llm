@@ -1,7 +1,7 @@
 # 项目架构与职责边界
 
-2026-10-21 更新。一次 `generate(messages=..., stream=True, max_tokens=1024)` 将完整调用参数
-打包为字典，连同已解析 Profile 进入 Codec。Encoder 验证输入协议并生成中间字典；
+2026-10-24 更新。一次 `generate(messages=..., stream=True, max_tokens=1024)` 将完整调用参数
+打包为字典，连同已解析 Profile 进入 Codec。Encoder 先投影支持字段、验证输入协议并生成类型化中间协议；
 Decoder 应用参数路径、默认值、覆盖规则及目标 SDK Schema，输出三个明确的目的地：
 
 ```python
@@ -21,19 +21,22 @@ Transport 只把最终字典交给官方 SDK，并管理客户端和本次响应
 ```text
 src/my_llm/
 ├── invoke.py                   # 完整输入打包、客户端缓存、输出流编排
-├── registry.py                 # 协议注册和实例注册快照
+├── registry.py                 # 协议工厂注册与实例快照
+├── middleware.py               # SDK 无关的固定 ProtocolMiddleWare
+├── semantic_loss.py            # 调用独立损失收集与实例策略
 ├── profile/                    # 配置分层、声明分类、校验及实例快照
 ├── stream/                     # 请求独立的累积状态、结果及关闭回调
 └── codec/
     ├── converter.py            # MyCodec，输入绑定与完整请求准备路由
     ├── base/
-    │   ├── codec.py            # 组合三个无状态组件，提供离线转换入口
-    │   ├── encoder.py          # 完整调用 → 已验证输入及中间字典
-    │   ├── decoder.py          # 中间字典 → client / request / local
+    │   ├── codec.py            # 管理实例组件和损失 adaptor，提供翻译入口
+    │   ├── encoder.py          # 完整调用 → 已验证输入及中间协议
+    │   ├── decoder.py          # 中间协议 → client / request / local
     │   └── transport.py        # 官方 SDK 构造、执行及响应资源管理
     ├── shared/
     │   ├── conversion.py       # 字段视图与转换辅助
     │   ├── options.py          # 请求选项、参数路径及优先级
+    │   ├── output.py           # 原生与中间输出共用的能力过滤
     │   ├── stream.py           # 流操作、块身份及用量
     │   └── transport.py        # 共享 Schema 规则、历史验证及流资源辅助
     └── <protocol>/             # codec、transport、encoding、decoding、按需 utils
@@ -48,9 +51,12 @@ src/my_llm/
 | MyCodec | 注册快照、输入协议绑定、prepare 路由；不保存调用数据。 |
 | Profile / resolve_profiles | 分层合并、声明分类、通用字段验证、连接参数解析及独立配置快照。 |
 | MyLLM | 固定实例配置、已准备连接字典、延迟客户端缓存、生成和输出编排。 |
-| StreamState / MessageStream | 每次请求独立的响应状态、事件、结果副本和清理回调。 |
+| StreamState / MessageStream | 每次请求独立的响应状态、事件、最终结果 draft 和清理回调。 |
 
-四个协议组件保持空 `__slots__`，不保存 Profile、客户端、历史或流状态。
+注册表保存工厂，codec 及其组件按实例按需创建；允许实例状态，不跨实例共享组件。
+MyLLM 的 Profile 解析从本实例 MyCodec 获取协议默认声明，后续验证和请求复用同一个 codec。
+`BaseCodec` 同时管理 `BaseSemanticLossAdaptor`，支持值无法表达时在完整 draft 上执行 raise / ignore / hook。
+模型与边界详见[中间协议](protocol-middleware.md)。
 Encoder / Decoder 不创建 SDK 客户端，也不相互导入。官方类型与方法签名可用于静态 Schema 分析；
 实际 SDK 构造和调用只发生在 Transport。双向共用辅助放在本协议 utils 中。
 包初始化文件只导出接口；公共执行逻辑不按具体协议名分支。
@@ -81,6 +87,11 @@ Encoder / Decoder 不创建 SDK 客户端，也不相互导入。官方类型与
 绑定与准备没有 await；准备完成后修改调用方历史、body、headers 不会改变待消费请求。
 同协议和跨协议均经过 Encoder / Decoder；收集式调用消费同一个 MessageStream。
 
+显式 `stdio_protocol="middleware"` 使用公开具体模型，不参与协议推断：请求略过输入 Encoder，
+直接进入同一个上游 Decoder.prepare；返回由上游 Encoder / StreamState 生成
+AssistantMessage / MessageEvent，略过 stdio Decoder。该 stdio 名称不注册协议组件。
+模型和公开事件字段见[直接使用中间协议](../guides/middleware-io.md)。
+
 `MyCodec.request(intermediate, profile, **parameters)` 保留为离线构造原生 SDK 请求的便利入口，
 与完整 prepare 共用 Decoder.request。它返回裸请求字典，不创建客户端。
 `Decoder.native_request` 用于已有原生字典的独立过滤验证，也不执行 SDK。
@@ -110,7 +121,8 @@ Ollama 的逐请求 headers 绑定在 SDK 客户端上，由 request_client 创�
 
 输入验证使用只读投影；Encoder 捕获已识别的中间值，不复制未知字段。
 Decoder.request 调用只读私有翻译钩子，将借入的中间叶交给最终 Schema 边界一次捕获；
-离线公开 messages / tools 仍返回独立副本。流事件在借入可变数据处捕获，结果读取仍返回独立副本。
+离线公开 messages / tools 捕获独立 payload；流事件在借入可变数据处捕获。
+MessageStream.result 返回本调用最终 draft 本身，保证 output hook 的原位对象身份；get_last_usage 返回独立副本。
 
 根 Schema 计划委派 message_path / tool_path 叶，由 filter_messages / filter_tools 过滤一次；
 Anthropic 的开放 input_schema 再委派为应用数据，只复制完整 JSON Schema 一次。

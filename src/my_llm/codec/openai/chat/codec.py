@@ -1,4 +1,6 @@
-"""Stateless openai_chat protocol facade."""
+"""Instance-owned openai_chat protocol facade."""
+
+from copy import deepcopy
 
 from my_llm.codec.base.codec import BaseCodec
 from my_llm.codec.openai.chat.decoding.decoder import ChatCompletionsDecoder
@@ -15,9 +17,9 @@ class ChatCompletionsCodec(BaseCodec):
     BaseCodec conversion interface. Requires the openai optional dependency.
     """
 
-    __slots__ = ()
+    __slots__ = ("encoder", "decoder", "transport", "_defaults")
     protocol_or_api_style = "openai_chat"
-    defaults = ProtocolDefaults(
+    _DEFAULTS = ProtocolDefaults(
         replay_reasoning_content_when_tool_calls=Config(default_value=True),
         max_tokens=Parameter(path="$.max_completion_tokens", default_value=omit),
         content=Parameter(path="$.choices[0].delta.content", default_value=omit),
@@ -31,6 +33,14 @@ class ChatCompletionsCodec(BaseCodec):
         ),
         reasoning_effort=Parameter(supports=False, path="$.reasoning_effort", default_value=omit),
     )
-    encoder = ChatCompletionsEncoder()
-    decoder = ChatCompletionsDecoder()
-    transport = ChatCompletionsTransport()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._defaults = deepcopy(self._DEFAULTS)
+        self.encoder = ChatCompletionsEncoder()
+        self.decoder = ChatCompletionsDecoder()
+        self.transport = ChatCompletionsTransport()
+
+    @property
+    def defaults(self) -> ProtocolDefaults:
+        return self._defaults

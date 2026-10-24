@@ -1,4 +1,6 @@
-"""Stateless ollama protocol facade."""
+"""Instance-owned ollama protocol facade."""
+
+from copy import deepcopy
 
 from my_llm.codec.base.codec import BaseCodec
 from my_llm.codec.ollama.decoding.decoder import OllamaDecoder
@@ -15,9 +17,9 @@ class OllamaCodec(BaseCodec):
     conversion interface. Requires the ollama optional dependency.
     """
 
-    __slots__ = ()
+    __slots__ = ("encoder", "decoder", "transport", "_defaults")
     protocol_or_api_style = "ollama"
-    defaults = ProtocolDefaults(
+    _DEFAULTS = ProtocolDefaults(
         replay_reasoning_content_when_tool_calls=Config(default_value=True),
         api_key=Parameter(
             path="$.extra_headers.Authorization",
@@ -29,6 +31,14 @@ class OllamaCodec(BaseCodec):
         reasoning_enable=Parameter(path="$.think", default_value=True),
         reasoning_effort=Parameter(supports=False, path="$.think", default_value=omit),
     )
-    encoder = OllamaEncoder()
-    decoder = OllamaDecoder()
-    transport = OllamaTransport()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._defaults = deepcopy(self._DEFAULTS)
+        self.encoder = OllamaEncoder()
+        self.decoder = OllamaDecoder()
+        self.transport = OllamaTransport()
+
+    @property
+    def defaults(self) -> ProtocolDefaults:
+        return self._defaults

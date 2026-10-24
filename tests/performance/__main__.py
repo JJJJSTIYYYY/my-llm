@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import hashlib
 import json
 import platform
 import subprocess
@@ -13,6 +14,7 @@ from pathlib import Path
 
 from my_llm import __version__
 from tests.helpers.protocols import PROTOCOLS
+from tests.performance.fingerprint import harness, source
 from tests.performance.runner import benchmark
 from tests.performance.workloads import Size, build
 
@@ -57,6 +59,9 @@ async def run(options):
         ).stdout
     )
     report = {
+        "source_sha256": source(),
+        "harness_sha256": harness(),
+        "driver_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "created_at_utc": datetime.now(UTC).isoformat(),
         "python": sys.version,
         "platform": platform.platform(),

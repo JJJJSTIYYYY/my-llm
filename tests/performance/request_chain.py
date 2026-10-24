@@ -7,7 +7,6 @@ PYTHONPATH can select a saved source tree without changing this harness.
 import argparse
 import asyncio
 import gc
-import hashlib
 import json
 import platform
 import subprocess
@@ -19,10 +18,10 @@ from pathlib import Path
 from statistics import median
 from time import perf_counter_ns
 
-import my_llm
 from my_llm import MyLLM
 from my_llm.codec.shared import transport as schema
 from tests.helpers.protocols import PROTOCOLS
+from tests.performance.fingerprint import harness, source
 from tests.performance.runner import benchmark, measure
 from tests.performance.transport import Body, LocalSDK, wire_frames
 from tests.performance.validation import validate_exchange, validate_result
@@ -161,12 +160,10 @@ async def run(options):
         "python": sys.version,
         "platform": platform.platform(),
         "git_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-        "source_sha256": hashlib.sha256(
-            b"".join(
-                path.read_bytes() for path in sorted(Path(my_llm.__file__).parent.rglob("*.py"))
-            )
-        ).hexdigest(),
-        "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "source_sha256": source(),
+        "harness_sha256": harness(),
+        "fingerprint_definition": "SHA256 of sorted relative paths + NUL + file bytes + NUL; runtime includes my_llm Python sources; harness includes measuring code, fixtures, helpers and pinned schemas",
+        "workload_definition": "native supported text/image/tool history and signed reasoning; cross-protocol intersection without reasoning; excludes unsupported file/audio/metadata/citations",
         "versions": {
             name: version(name)
             for name in ("openai", "anthropic", "google-genai", "ollama", "httpx", "pydantic")

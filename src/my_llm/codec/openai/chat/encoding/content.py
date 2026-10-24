@@ -4,39 +4,26 @@ from typing import Any
 
 from my_llm.codec.shared.conversion import arguments, blocks, select, uri_source
 from my_llm.codec.shared.stream import BlockRef
+from my_llm.semantic_loss import originated
 
 
-def encode_content(content: Any) -> list[dict]:
+def encode_content(content: Any, *, path: str = "$.content") -> list[dict]:
     result = []
-    for block in blocks(content):
+    for index, block in enumerate(blocks(content)):
         kind = block.get("type")
-        if kind in ("text", "refusal"):
-            result.append(select(block, "type", "text" if kind == "text" else "refusal"))
-        elif kind == "input_audio":
-            result.append(
-                {
-                    "type": kind,
-                    "input_audio": select(block.get("input_audio", {}), "data", "format"),
-                }
-            )
-        elif kind in ("image_url", "file"):
-            file = block.get("file", {}) if kind == "file" else {}
-            image = block.get("image_url", {}) if kind == "image_url" else {}
+        if kind == "text":
+            value = select(block, "type", "text")
+        elif kind == "image_url":
+            image = block.get("image_url", {})
             uri = image.get("url") if isinstance(image, dict) else image
-            if kind == "file":
-                uri = file.get("file_data", file.get("file_url"))
-            if isinstance(uri, str):
-                source = uri_source(uri)
-            elif file.get("file_id"):
-                source = {"type": "file", "file_id": file["file_id"]}
-            else:
+            if not isinstance(uri, str):
                 continue
-            value = {"type": "image" if kind == "image_url" else "document", "source": source}
-            if isinstance(image, dict) and "detail" in image:
-                value["detail"] = image["detail"]
-            if "filename" in file:
-                value["filename"] = file["filename"]
-            result.append(value)
+            value = {"type": "image", "source": uri_source(uri)}
+        else:
+            continue
+        result.append(
+            originated(value, path if isinstance(content, str) else f"{path}[{index}]", block)
+        )
     return result
 
 
@@ -59,7 +46,7 @@ def tool_operations(ref: BlockRef, call: dict) -> list[dict]:
     if fn.get("name"):
         block["name"] = fn["name"]
     result = [{"type": "block_update", "ref": ref, "block": block}]
-    if "arguments" in fn:
+    if fn.get("arguments") is not None:
         result.append(
             {
                 "type": "block_delta",

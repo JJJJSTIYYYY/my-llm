@@ -28,13 +28,15 @@ Encoder 无状态，只翻译本次传入事件中已识别的字段。内部批
 | --- | --- |
 | block_set | 按源引用创建或以完整内容替换一个块，例如 Anthropic 的开始块、Responses 的完成块。 |
 | block_update | 按源引用更新块元数据，例如工具名称与 ID。 |
-| block_delta | 向已引用的块追加 text、thinking、refusal、签名或 arguments 片段；是否发布文本由块的文本字段决定。 |
-| block_annotation | 向引用块的列表字段追加注释，保留到最终内容；需要时在块生命周期内发布。 |
+| block_delta | 向已引用的块追加 text、thinking、签名或 arguments 片段；是否发布文本由块的文本字段决定。 |
 | start | 源协议显式开始响应；在增量前生成目标开始帧。 |
 | block_append | 追加独立完整块，不携带源引用，例如 GenerateContent Part、Ollama 完整工具调用。 |
 | block_stop | 源协议关闭指定块。 |
 | snapshot | 保存已识别的终态块，并使用与实时操作一致的源引用协调每个块；不附加原始消息。 |
 | metadata / usage / reason / finish | 更新已识别的响应级信息并标记协议终态；未知原生事件不透传。 |
+
+上表就是状态机接受的全部操作：五种协议的 Encoder 只产出这些类型，其他操作（例如引用注释）
+既不产生也不处理，收到未知类型会直接报错。因此增加响应语义时需要同时修改 Encoder 与状态机。
 
 metadata 操作统一使用 `{"type": "metadata", "values": {...}, "path": (...)}`。
 原生 Encoder 只将显式提取的已识别值放入 values，并完成 ID、模型名和停止原因等字段的归一化。

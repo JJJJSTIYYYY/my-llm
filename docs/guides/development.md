@@ -27,7 +27,7 @@
 - __init__.py 只保留说明、导入与 __all__，不放业务代码。
 
 新增模块应以职责命名；同协议双向共用辅助放在协议根目录。只有职责确实形成多个模块时才增加目录，不为短小辅助函数单独建包。
-新增协议依据[接入协议指南](adding-protocol.md)实现四个基类的契约并调用 MyCodec.register(codec)。
+新增协议依据[接入协议指南](adding-protocol.md)实现四个基类的契约并调用 `MyCodec.register(factory)` 注册零参数工厂。
 Protocol 使用 str，新增协议不修改公共入口、枚举、默认值表或公共编排。
 Decoder._messages / _tools 与公开 messages / tools 均返回普通 list，不添加恢复分组。
 
@@ -55,6 +55,8 @@ conftest.py 只注册 pytest fixture；通用测试辅助代码使用 tests.help
 | helpers/streaming.py | 离线完整流的累积与渲染辅助。 |
 | helpers/schema.py | 固定官方 Schema 的读取和校验。 |
 | helpers/sdk.py | 原生 SDK 类型及未消费字段校验。 |
+| helpers/profiles.py | 按各协议默认声明构造显式 Profile 覆盖。 |
+| helpers/tool_results.py | 独立编写的原生工具结果样例与期望文本提取。 |
 | helpers/ | 提供独立协议样例、SDK 本地响应及测试共用辅助；不通过隐藏恢复记录判定翻译结果。 |
 
 测试模块之间不相互导入，避免依赖收集顺序。只供本文件使用的小型辅助函数可留在测试文件中。
@@ -81,52 +83,13 @@ uv run --no-sync python examples/local_demo.py
 并核对顶层公开导出；不要以测试通过代替对纯结构变更的直接检查。
 发行步骤见[构建指南](building.md)。
 
-## 历史验收：2026-10-17 首轮目录整理
+## 历史验收记录（2026-10-17 ～ 10-18）
 
-对照整理前的工作区快照，148 个运行时模块除导入外的 AST 及导入绑定一致，
-22 个既有包接口的导出保持一致；24 个迁移的测试辅助定义未改写，
-82 个协议参考文件逐字节相同。依赖声明及锁文件保持原值，
-构建配置仅将源码包的文档范围改为整个 docs 目录。
+以下三轮目录调整的结论只对应当时的布局与测试数，不作为当前实现约束；
+当前结构见[架构文档](../design/architecture.md)，近期验收见[审计与验证记录](../README.md#审计与验证记录)。
 
-完整测试为 **915 passed**，包括新增的直接实现导入和测试收集独立性约束；
-Ruff 检查与 182 个 Python 文件的格式检查、全部 Markdown 本地链接、
-协议模板校验和离线示例均通过。wheel / sdist 构建与 Twine 严格检查通过，
-并在隔离进程从 wheel 成功导入全部 148 个运行时模块。
-
-## 历史验收：2026-10-17 协议目录分层
-
-当时五种协议的 encoding / decoding 按职责分组；该布局后由 2026-10-18 的收敛调整替代。
-82 个模块移入 messages、tools、stream，以及 decoding/request。
-encoding 顶层仅保留 __init__.py、encoder.py、matching.py，
-decoding 顶层仅保留 __init__.py、decoder.py；没有保留旧路径的转发模块。
-
-与分层前快照相比，原有 148 个运行时模块除导入外的 AST 和导入绑定一致；
-35 个新增分组初始化文件仅含说明。公开入口、构建配置、依赖和锁文件不变，
-82 个协议参考文件逐字节相同。
-
-完整测试仍为 **915 passed**；发行包测试新增完整运行时文件清单比对，
-覆盖新增分组及其初始化文件。Ruff 与 217 个 Python 文件的格式检查、
-Markdown 本地链接、协议模板校验、离线示例、wheel / sdist 构建、Twine 严格检查通过；
-隔离进程从 wheel 成功导入全部 183 个运行时模块。
-
-## 历史验收：2026-10-18 codec 收敛与抽象契约
-
-本轮记录早于请求校验统一移入 Transport 的调整；当前 Decoder 不再承担下述能力检查。
-当前固定流程与组件边界见[架构文档](../design/architecture.md)和[接入协议指南](adding-protocol.md)。
-
-codec 的 Python 文件由 171 个收敛为 63 个，其中五协议的 encoding / decoding
-从 142 个文件收敛为 34 个。转换方法直接实现在类中，内容辅助与 SDK 资源管理按职责保留，
-不再为单个方法建立 messages / tools / stream / request 分组包。
-
-BaseCodec 的两个方向都成为必需的抽象属性；BaseEncoder 固定整批匹配，
-BaseDecoder 固定能力检查、消息解码、工具解码与请求组装。
-新协议仅实现对应原生接口并注册，无需改写公共编排或依赖另一协议的转换器。
-自定义实现的接口调整和旧内部路径迁移见[接入协议指南](adding-protocol.md)。
-
-与整理前快照逐项核对，115 个转换方法及辅助函数的执行体在更新调用引用后 AST 一致，
-五个 SDK transport 文件逐字节一致；原有顶层公开导出与全部协议参考文件未变。
-流状态、字段语义、原生参数和资源清理算法保持原有行为。
-
-完整测试 **933 passed**，覆盖五协议任意组合、真实 SDK 的本地传输与并发隔离，
-并新增缺失抽象接口、Decoder 直接接收中间态、只转换一次、None / 空工具列表区别和方向依赖检查。
-Ruff、格式、Markdown 链接、24 个 Schema / 59 个模板 / 90 帧事件校验及离线示例通过。
+| 轮次 | 主要变更 | 当时核对结论 |
+| --- | --- | --- |
+| 2026-10-17 首轮目录整理 | 148 个运行时模块、22 个包接口 | 除导入外 AST 与导入绑定一致，82 个协议参考文件逐字节相同；**915 passed** |
+| 2026-10-17 协议目录分层 | 82 个模块移入 messages / tools / stream / decoding-request | AST 与绑定一致，公开入口与构建配置不变；**915 passed**，wheel 可导入 183 个模块 |
+| 2026-10-18 codec 收敛 | codec 文件 171 → 63，encoding / decoding 142 → 34 | 115 个函数体 AST 一致，五个 transport 逐字节一致；**933 passed** |

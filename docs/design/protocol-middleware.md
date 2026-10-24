@@ -11,16 +11,16 @@ Chat、Responses、Anthropic 保留，Gemini、Ollama 静默丢弃。
 
 | 模型 | 字段与含义 |
 | --- | --- |
-| `ProtocolMiddleWare` | `messages`、`tools`、`stream`、`usage`；未提供的集合为 `None`，显式空集合保留 |
+| `ProtocolMiddleWare` | `messages`、`tools`、`stream`、`usage`；未提供的集合为 `None`，显式空集合保留；字典索引时流集合的键为 `chunks` |
 | `UserMessage` | `role=user`、有序 `content: TextContent / ImageContent`、可选 `name` |
 | `InstructionMessage` | `role=system / developer`、有序文本；保留已有系统指令行为 |
 | `AssistantMessage` | `role=assistant`、有序文本 / 思维 / 工具调用；工具调用不混入正文 |
 | `ToolMessage` | `call_id`、可选 `name`；以有序 `ToolResult` 块保存文本 / 图片并与调用关联 |
-| `TextContent` | `type=text`、`text: str` |
+| `TextContent` | `type=text`、`text: str`；可选 `item_id`、`item_status`（Responses 输出项身份） |
 | `ImageContent` | `type=image`、`source: ImageSource` |
 | `ImageSource` | `type=url / base64`，对应 `url` 或 `data` 与 `media_type`；不下载 URL |
-| `ReasoningContent` | `type=thinking`、`reasoning: str`、`mark=raw / summary / encrypted`；可选 signature、encrypted_content、同协议回放所需 id；opaque 字段带所属协议 |
-| `ToolCall` | `type=tool_use`、`call_id`、`name`、`arguments: JsonObject`；可选同协议签名 |
+| `ReasoningContent` | `type=thinking`、`reasoning: str`、`mark=raw / summary / encrypted`；可选 signature、encrypted_content、summary、同协议回放所需 id、`status`；opaque 字段带所属协议 |
+| `ToolCall` | `type=tool_use`、`call_id`、`name`、`arguments: JsonObject`；可选同协议签名、`item_id`、`status` |
 | `ToolResult` | `call_id`、可选 name、有序 `TextContent / ImageContent` |
 | `FunctionTool` | `name`、可选 `description`、完整 `parameters: JsonObject`、可选 `strict`；JSON Schema 内应用字段保持原样 |
 | `AssistantMessageChunk` | 明确的流操作种类、块引用 / 顺序、文本或思维增量、完整块 / 终态快照；原生工具参数碎片只在内部累积 |
@@ -28,6 +28,10 @@ Chat、Responses、Anthropic 保留，Gemini、Ollama 静默丢弃。
 | `StreamBatch` | `protocol` 与有序操作；保留响应 id、模型、终止原因等流控制数据，不支持用户 metadata |
 | `Usage` | `input / output / total / cached / reasoning: int \| None`；缺失不填零；各上游附加计数由 encoder 归入对应总量 |
 | `Origin` | 支持值的原始位置与只读来源引用，只用于错误定位；不枚举未知字段，不写入 SDK / 用户 payload |
+
+消息模型还带可选 `protocol`、`id`、`status` 与 `coalesce`（Responses 合并已识别内容）；
+`ReasoningContent.redacted` 为真时投影为原生 redacted_thinking。内容、消息与工具模型另带
+只用于错误定位的 `origin`，它不写入 wire；`Usage`、`StreamBatch`、`MessageEvent` 等容器没有该字段。
 
 图片仅支持用户消息和工具结果。工具结果中的对象 / 数组可以序列化为文本；图片不能
 序列化成工具文本。audio、file、refusal、citations、用户 metadata、cache_control 等

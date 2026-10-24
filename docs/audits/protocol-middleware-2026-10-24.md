@@ -4,7 +4,7 @@
 
 日期：2026-10-24。需求来源为根目录 `my-llm-refactor-requirements.md`。
 重构前版本 `9a61f5183cd3a424dfb6cfe2eb5754524333c02e`；已逐字节核对独立基线快照的 84 个源码文件与该提交一致。
-本次变更保留在工作区，需求原文件没有修改。
+本次变更保留在工作区；当时需求原文件未修改，`strict` 的冲突表述按用户确认口径覆盖（原文其后已对齐）。
 
 ## 需求选择与交付
 
@@ -14,8 +14,8 @@
 
 | 需求 | 实现及直接验证 |
 | --- | --- |
-| C1 固定支持集合 | `middleware.py` 的具体模型；`test_semantic_loss.py` 检查根与子模型、开放 JSON Schema 所有权；`test_native_refactor.py` 覆盖五协议支持字段与未支持字段投影 |
-| C2 工厂与实例 | `registry.py` 只保存工厂；MyCodec 保存工厂快照、按需创建本实例组件；`test_runtime_refactor.py` / `test_protocol_registration.py` 检查组件和可变 defaults 不共享、拒绝 singleton 工厂、二次设置隔离 |
+| C1 固定支持集合 | 中间协议模块（当时为 `middleware.py`，现为 `middleware/`）的具体模型；`test_semantic_loss.py` 检查根与子模型、开放 JSON Schema 所有权；`test_native_refactor.py` 覆盖五协议支持字段与未支持字段投影 |
+| C2 工厂与实例 | 注册表（当时为 `registry.py`，现为 `basic/protocols.py`）只保存工厂；MyCodec 保存工厂快照、按需创建本实例组件；`test_runtime_refactor.py` / `test_protocol_registration.py` 检查组件和可变 defaults 不共享、拒绝 singleton 工厂、二次设置隔离 |
 | C3 丢弃与报错 | 原生 encoder 只投影固定支持字段，再校验支持结构；decoder 使用 report_loss；工具图片不再变 JSON 文本，外来思维不再混正文 |
 | C4 完整 draft / 定位 | 调用独立 ContextVar 收集器；消息与工具全部译完再抛；测试检查多损失、完整尾部、原始 dict / SDK 对象身份及 Responses 终态流位置，不复制或遍历未知来源字段 |
 | C5 三策略与 hook | BaseCodec 管理 BaseSemanticLossAdaptor；默认 raise、无记录 ignore、按方向 hook；测试空 hook、原地搬图片、返回值忽略、用户抛错、重入及最终 MyLLM 结果对象身份 |

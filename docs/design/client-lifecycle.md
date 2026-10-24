@@ -33,7 +33,8 @@ MyLLM 在构造时完成 Profile 解析、Decoder.validate_profile 和 Decoder.c
 MyLLM 根据 local.client_key 缓存客户端，Transport.create_client(client参数字典) 只负责 SDK 构造。
 Transport.upstream(client, request) 执行最终请求；close_client 默认 await client.close()。
 Encoder 验证输入，Decoder 负责请求参数、Schema 过滤和原生验证；Transport 不接收 Profile 或原始控制项。
-所有组件无状态，配置与客户端属于 MyLLM，消息仍经过 Encoder → 中间态 → Decoder。
+组件不保存调用数据；协议默认声明、损失策略引用等实例状态只属于该 MyLLM 的 codec，
+不跨实例共享。配置与客户端属于 MyLLM，消息仍经过 Encoder → 中间态 → Decoder。
 
 | 协议 | SDK 客户端 | 实例关闭 | 单次请求关闭 |
 | --- | --- | --- | --- |

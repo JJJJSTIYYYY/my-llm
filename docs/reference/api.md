@@ -115,10 +115,11 @@ async def ask_once(provider, model_id):
     )
 ```
 
-签名为 `generate(*, provider, model, messages, stdio_protocol=None, **parameters)`。
+签名为 `generate(*, provider, model, messages, stdio_protocol=None, semantic_loss_protocol="raise", input_semantic_loss_hook=None, output_semantic_loss_hook=None, **parameters)`。
 `provider` 与实例入口相同；`model` 可为 `ModelProfile` 或非空模型 ID 字符串。
 字符串直接作为模型 ID，不查找 Provider 的模型目录。
-`parameters` 接收 `MyLLM.generate` 的其他生成选项，返回值和异常约定相同。
+`semantic_loss_protocol` 与两个 hook 的含义同 `MyLLM` 构造参数；`parameters` 接收
+`MyLLM.generate` 的其他生成选项。返回值和异常约定相同。
 
 非流式调用结束后自动释放资源。返回流时，必须消费或显式关闭该流，以释放本次调用的资源。
 

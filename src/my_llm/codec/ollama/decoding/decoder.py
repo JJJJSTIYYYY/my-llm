@@ -182,7 +182,13 @@ class OllamaDecoder(BaseDecoder):
     ) -> list[dict]:
         result = []
         names = {}
-        for message in coalesce_messages(messages):
+        for index, message in enumerate(coalesce_messages(messages)):
+            if message.get("name") is not None:
+                report_loss(
+                    message["name"],
+                    "Ollama cannot represent message names",
+                    path=f"{getattr(message, 'origin_path', f'$.messages[{index}]')}.name",
+                )
             content = message["content"]
             for block in content:
                 if block.get("type") == "tool_use":

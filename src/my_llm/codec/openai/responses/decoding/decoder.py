@@ -95,7 +95,13 @@ class ResponsesDecoder(BaseDecoder):
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for message in dictionaries(messages):
+        for index, message in enumerate(dictionaries(messages)):
+            if message.get("name") is not None:
+                report_loss(
+                    message["name"],
+                    "Responses cannot represent message names",
+                    path=f"{getattr(message, 'origin_path', f'$.messages[{index}]')}.name",
+                )
             group_start = len(result)
             context_owner = source_protocol(message)
             content = []

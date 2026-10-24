@@ -1,5 +1,7 @@
 # 重构代码清理与职责复核
 
+> 本文记录当时源码快照的测量结果。原始 JSON 日志已清理，保留结果汇总、测量条件与复测方法；不能再据本文逐样本复算，也不将历史结果视为当前工作区实测。
+
 日期：2026-10-24。范围为本次重构后的全部 `src/my_llm`，对照实际调用链检查生产引用、
 数据所有权、私有方法输入与原生协议边界。
 
@@ -118,12 +120,7 @@ Gemini 原生从约 **95.8 ms** 降到 **31.4 ms**，交替复测约降低 **67.
 1 万片段合并的单独诊断中位数从 **98.374 ms** 到 **2.360 ms**，只用于验证二次复制问题；
 它不等于完整请求链路的加速倍数。
 
-## 原始数据与复现
-
-- [本次清理前后完整比较](data/protocol-cleanup-2026-10-24-comparison.json)、[相对最初重构前](data/protocol-cleanup-2026-10-24-original-comparison.json)。
-- [清理后 60 场景](data/protocol-cleanup-2026-10-24-after.json)、[清理前 60 场景](data/protocol-middleware-2026-10-24-after.json)、[最初基线](data/protocol-middleware-2026-10-24-before.json)。
-- [清理后构造](data/protocol-cleanup-2026-10-24-construction-after.json)、[清理前构造](data/protocol-middleware-2026-10-24-construction-after.json)。
-- 原生交替复测：[A1](data/protocol-cleanup-2026-10-24-native-before-1.json)、[B1](data/protocol-cleanup-2026-10-24-native-after-1.json)、[B2](data/protocol-cleanup-2026-10-24-native-after-2.json)、[A2](data/protocol-cleanup-2026-10-24-native-before-2.json)。
+## 复测方法
 
 沿用[性能指南](../guides/performance.md)及[原始测量条件](protocol-middleware-2026-10-24.md#测量条件)。
 两份源码使用同一套当前 tests / SDK，分别以 `PYTHONPATH` 选择 `src`。不要与测试或剖析同时计时。

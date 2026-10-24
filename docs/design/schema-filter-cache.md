@@ -481,6 +481,6 @@ root callbacks: structured_copy structured_projection structured_score
 | SDK 字段只在本次转换中缓存 | 所有权测试覆盖重复取值、缺失与显式 None、存在性检查不包装子树，以及下一次转换读取更新值。 |
 | 消息/工具只投影一次且钩子仍执行 | [原生请求边界测试](../../tests/unit/test_native_request_boundary.py)覆盖嵌套路径、覆盖钩子、未知字段不读取及副本隔离。 |
 
-性能对照见[内部优化记录](../audits/performance-optimization-2026-10-19.md)，
-本轮回退定位和修复验证见[性能回退修复报告](../audits/performance-regression-2026-10-20.md)，
+缓存策略与同负载试验见[Schema 缓存检查记录](../audits/schema-cache-2026-10-24.md)，
+复制清理与性能对照见[代码清理报告](../audits/code-cleanup-2026-10-24.md)，
 职责边界见[项目架构](architecture.md#数据所有权与缓存)。

@@ -129,7 +129,7 @@ def test_build_contains_runtime_modules_and_source_tests(tmp_path, version_overr
             "docs/reference/configuration.md",
             "docs/README.md",
             "docs/design/architecture.md",
-            "docs/audits/protocol-fixes-2026-10-17.md",
+            "docs/audits/middleware-io-2026-10-24.md",
             "docs/guides/development.md",
             "tests/helpers/protocols.py",
             "tests/helpers/sdk.py",

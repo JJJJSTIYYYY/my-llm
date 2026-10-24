@@ -33,6 +33,9 @@ Chat、Responses、Anthropic 保留，Gemini、Ollama 静默丢弃。
 序列化成工具文本。audio、file、refusal、citations、用户 metadata、cache_control 等
 不在支持集合的结构在 encoder 投影时静默删除，随后仅验证支持结构。
 
+`ReasoningContent.mark` 在中间投影中显式保留。原生解析未提供标记时，根据摘要、密文及
+思维内容推导；显式标记不被重新推导覆盖。该标记仅属于中间协议，不写入原生 SDK 字段。
+
 ## 翻译与错误边界
 
 encoder 只读取源协议，不接收目标协议。decoder 只实现自己的目标表达规则；
@@ -56,6 +59,9 @@ Chat reasoning 进入 `reasoning_content`，Responses 进入 reasoning item，Ol
 `thinking`。Anthropic / Gemini 对历史思维所需签名不能伪造。工具图片只有 Responses /
 Anthropic 原生表达；其余目标报告损失。兼容开关和能力声明阻止已识别支持字段表达时，
 同样报告损失。目标 Schema 无法保持工具参数约束时报告对应工具定义损失。
+
+消息 `name` 属于支持字段。Responses、Anthropic、Gemini、Ollama 无法表达消息名称时报告
+损失；Chat 保留名称，除非 Profile 禁用 `supports_message_name`，此时也报告损失。
 
 ## 生命周期与缓存
 

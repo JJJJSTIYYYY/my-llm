@@ -17,7 +17,10 @@ from my_llm import (
     ToolResult,
     UserMessage,
 )
+from my_llm.middleware.models import content_from_wire
+from my_llm.middleware.protocol import generation_input
 from my_llm.profile.types import omit
+from tests.helpers.profiles import config
 
 
 def picture_history():
@@ -66,6 +69,173 @@ def complete_inputs(messages):
         extra_body=None,
         previous_response_id=None,
     )
+
+
+@pytest.mark.parametrize("target", ["openai_responses", "anthropic", "gemini", "ollama"])
+def test_message_name_loss_keeps_all_positions_and_complete_draft(target):
+    messages = [
+        {"role": "user", "name": "alice", "content": "first"},
+        {"role": "user", "name": "bob", "content": "complete tail"},
+    ]
+    before = deepcopy(messages)
+    with pytest.raises(SemanticLossError) as caught:
+        MyCodec().convert(messages, input_format="openai_chat", target_format=target)
+    error = caught.value
+    assert [item.origin_path for item in error.losses] == [
+        "$.messages[0].name",
+        "$.messages[1].name",
+    ]
+    assert [item.origin_value for item in error.losses] == ["alice", "bob"]
+    assert "complete tail" in str(error.draft)
+    assert "alice" not in str(error.draft)
+    assert messages == before
+
+
+@pytest.mark.parametrize(
+    "target", ["openai_chat", "openai_responses", "anthropic", "gemini", "ollama"]
+)
+@pytest.mark.parametrize("policy", ["raise", "ignore", "hook"])
+def test_message_name_request_policies_use_complete_sdk_draft(profile_factory, target, policy):
+    observed = []
+
+    def hook(draft, losses, context):
+        assert context.stage == "request"
+        assert context.source_protocol == "openai_chat"
+        assert context.target_protocol == target
+        assert context.origin_source == losses.origin_source == "input"
+        assert [(item.origin_path, item.origin_value) for item in losses] == [
+            ("$.messages[0].name", "alice")
+        ]
+        assert draft["model"]
+        assert "complete tail" in str(draft)
+        draft["hook_handled_name"] = True
+        observed.append(draft)
+
+    codec = MyCodec(policy, input_semantic_loss_hook=hook)
+    profile = profile_factory(target, supports_message_name=config(False))
+    messages = [
+        {"role": "user", "name": "alice", "content": "first"},
+        {"role": "user", "content": "complete tail"},
+    ]
+    before = deepcopy(messages)
+
+    def prepare():
+        return codec.prepare(
+            {**complete_inputs(messages), "max_tokens": 128},
+            profile,
+            input_format="openai_chat",
+            client={},
+        )
+
+    if policy == "raise":
+        with pytest.raises(SemanticLossError) as caught:
+            prepare()
+        assert caught.value.draft["model"]
+        assert "complete tail" in str(caught.value.draft)
+        assert len(caught.value.losses) == 1
+    else:
+        prepared = prepare()
+        assert "alice" not in str(prepared["request"])
+        if policy == "hook":
+            assert observed[0] is prepared["request"]
+            assert prepared["request"]["hook_handled_name"] is True
+        else:
+            assert observed == []
+    assert messages == before
+
+
+def test_chat_supported_message_name_is_preserved_without_loss():
+    messages = [{"role": "user", "name": "alice", "content": "hi"}]
+    assert (
+        MyCodec().convert(messages, input_format="openai_chat", target_format="openai_chat")[
+            "messages"
+        ]
+        == messages
+    )
+
+
+@pytest.mark.parametrize("target", ["openai_responses", "anthropic", "gemini", "ollama"])
+def test_named_typed_output_uses_output_hook_with_final_result_identity(target):
+    observed = []
+
+    def output_hook(draft, losses, context):
+        assert context.origin_source == losses.origin_source == "output"
+        assert [(item.origin_path, item.origin_value) for item in losses] == [
+            ("$.messages[0].name", "assistant_name")
+        ]
+        observed.append(draft)
+
+    codec = MyCodec(
+        "hook",
+        input_semantic_loss_hook=lambda *args: pytest.fail("input hook called for output"),
+        output_semantic_loss_hook=output_hook,
+    )
+    message = AssistantMessage("assistant", [TextContent("answer")], name="assistant_name")
+    result = codec.result([message], input_format="openai_chat", target_format=target)
+    assert result is observed[0]
+    assert "answer" in str(result)
+    assert message.name == "assistant_name"
+
+
+def test_chat_disabled_name_reports_loss_in_offline_and_native_request_paths(profile_factory):
+    codec = MyCodec()
+    profile = profile_factory("openai_chat", supports_message_name=config(False))
+    messages = [{"role": "user", "name": "alice", "content": "hi"}]
+    middle = codec.encode(messages, input_format="openai_chat")
+    with pytest.raises(SemanticLossError) as converted:
+        codec.decode(**middle, target_format="openai_chat", profile=profile)
+    assert converted.value.losses.items[0].origin_value == "alice"
+    assert "name" not in converted.value.draft["messages"][0]
+    with pytest.raises(SemanticLossError) as native:
+        codec.decoder("openai_chat").native_request({"messages": messages}, profile)
+    assert native.value.losses.items[0].origin_path == "$.messages[0].name"
+    assert "name" not in native.value.draft["messages"][0]
+    assert messages[0]["name"] == "alice"
+
+
+@pytest.mark.parametrize("mark", ["raw", "summary", "encrypted"])
+def test_reasoning_mark_survives_typed_input_and_wire_roundtrips(mark):
+    part = ReasoningContent(reasoning="reason", mark=mark)
+    middle = generation_input([AssistantMessage("assistant", [part])], None)
+    wire = middle.to_wire()["messages"][0]["content"][0]
+    assert wire["mark"] == mark
+    restored = content_from_wire(wire)
+    assert restored.mark == mark
+    assert restored.reasoning == part.reasoning
+    assert restored.to_wire() == wire
+
+
+@pytest.mark.parametrize(
+    "wire,mark",
+    [
+        ({"type": "thinking", "thinking": "raw"}, "raw"),
+        ({"type": "thinking", "summary": [{"type": "summary_text", "text": "summary"}]}, "summary"),
+        ({"type": "thinking", "encrypted_content": "opaque"}, "encrypted"),
+        ({"type": "redacted_thinking", "data": "opaque"}, "encrypted"),
+    ],
+)
+def test_native_reasoning_still_infers_mark_without_an_explicit_middle_mark(wire, mark):
+    assert content_from_wire(wire).mark == mark
+
+
+def test_reasoning_mark_reaches_decoder_without_becoming_a_native_field(monkeypatch):
+    codec = MyCodec()
+    decoder = codec.decoder("openai_responses")
+    original = type(decoder)._messages
+    observed = []
+
+    def decode(self, values, profile=None, **parameters):
+        observed.append(values[0]["content"][0]["mark"])
+        return original(self, values, profile, **parameters)
+
+    monkeypatch.setattr(type(decoder), "_messages", decode)
+    result = codec.decode(
+        messages=[AssistantMessage("assistant", [ReasoningContent("summary", mark="summary")])],
+        target_format="openai_responses",
+    )
+    assert observed == ["summary"]
+    assert result["messages"][0]["summary"] == [{"type": "summary_text", "text": "summary"}]
+    assert "mark" not in result["messages"][0]
 
 
 def test_midpoint_is_concrete_and_models_have_independent_application_values():

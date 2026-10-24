@@ -154,7 +154,13 @@ class AnthropicDecoder(BaseDecoder):
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for message in coalesce_messages(messages):
+        for index, message in enumerate(coalesce_messages(messages)):
+            if message.get("name") is not None:
+                report_loss(
+                    message["name"],
+                    "Anthropic cannot represent message names",
+                    path=f"{getattr(message, 'origin_path', f'$.messages[{index}]')}.name",
+                )
             context_owner = source_protocol(message)
             content = []
             for block in message["content"]:

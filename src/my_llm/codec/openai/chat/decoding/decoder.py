@@ -67,8 +67,14 @@ class ChatCompletionsDecoder(BaseDecoder):
 
     def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
         result = super().filter_messages(messages, profile, **parameters)
-        for original, value in zip(messages, result):
+        for index, (original, value) in enumerate(zip(messages, result)):
             if not profile.get("supports_message_name", True):
+                if original.get("name") is not None:
+                    report_loss(
+                        original["name"],
+                        "Chat profile cannot represent message names",
+                        path=f"$.messages[{index}].name",
+                    )
                 value.pop("name", None)
             if (
                 value.get("role") == "assistant"
@@ -146,7 +152,14 @@ class ChatCompletionsDecoder(BaseDecoder):
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for message in coalesce_messages(messages):
+        name_supported = profile is None or profile.get("supports_message_name", True)
+        for index, message in enumerate(coalesce_messages(messages)):
+            if message.get("name") is not None and not name_supported:
+                report_loss(
+                    message["name"],
+                    "Chat profile cannot represent message names",
+                    path=f"{getattr(message, 'origin_path', f'$.messages[{index}]')}.name",
+                )
             context_owner = source_protocol(message)
             content = []
             for block in message["content"]:
@@ -162,6 +175,8 @@ class ChatCompletionsDecoder(BaseDecoder):
                     **select(message, "role", "name"),
                     "content": render_content(other, role=message["role"]),
                 }
+                if not name_supported:
+                    value.pop("name", None)
                 calls = [chat_call(b) for b in other if b.get("type") == "tool_use"]
                 if calls:
                     value["tool_calls"] = calls

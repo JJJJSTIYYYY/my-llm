@@ -1,5 +1,7 @@
 # 中间协议重构验收与性能对照
 
+> 本文记录当时源码快照的测量结果。原始 JSON 日志已清理，保留结果汇总、测量条件与复测方法；不能再据本文逐样本复算，也不将历史结果视为当前工作区实测。
+
 日期：2026-10-24。需求来源为根目录 `my-llm-refactor-requirements.md`。
 重构前版本 `9a61f5183cd3a424dfb6cfe2eb5754524333c02e`；已逐字节核对独立基线快照的 84 个源码文件与该提交一致。
 本次变更保留在工作区，需求原文件没有修改。
@@ -115,13 +117,7 @@ Gemini 目标还需恢复 SDK 所需的响应对象。诊断显示输入准备�
 保留内存来自单独 tracemalloc 探针的 100 实例总量除以 100，单位为十进制 KB，不是 RSS。
 按需 codec 工厂、独立可变 defaults 与 adaptor 增加了实例成本；没有构造 SDK 客户端。
 
-## 原始数据与复现
-
-- [完整比较、构造与 ABBA 汇总](data/protocol-middleware-2026-10-24-comparison.json)。
-- [60 场景基线](data/protocol-middleware-2026-10-24-before.json)、[60 场景重构后](data/protocol-middleware-2026-10-24-after.json)。
-- [构造基线](data/protocol-middleware-2026-10-24-construction-before.json)、[构造重构后](data/protocol-middleware-2026-10-24-construction-after.json)。
-- ABBA：[A1](data/protocol-middleware-2026-10-24-native-before-1.json)、[B1](data/protocol-middleware-2026-10-24-native-after-1.json)、[B2](data/protocol-middleware-2026-10-24-native-after-2.json)、[A2](data/protocol-middleware-2026-10-24-native-before-2.json)。
-- [旧原始负载基线](data/protocol-middleware-2026-10-24-original-before.json)仅为历史参考，不参与上面的匹配比较。
+## 复测方法
 
 在修改运行时源码前保留 before/src；两份源码使用同一份当前 tests 和 Schema，以及同一解释器。
 从仓库根目录运行，依次完成前后测量，避免与测试 / profiling 并行：

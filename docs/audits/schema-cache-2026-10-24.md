@@ -1,5 +1,7 @@
 # Schema 缓存检查与优化试验
 
+> 本文记录当时源码快照的测量结果。原始 JSON 日志已清理，保留结果汇总、测量条件与复测方法；不能再据本文逐样本复算，也不将历史结果视为当前工作区实测。
+
 日期：2026-10-24。基线为[需求验收完成](requirements-acceptance-2026-10-24.md)的源码，
 本轮重新测量两版，没有使用历史时延样本代替 before。
 
@@ -49,8 +51,7 @@ Profiling 中 `_plan` / `_SchemaKey` 查找成本很小，较多成本来自官�
 | Ollama | 53,492 B | 952,738 B |
 
 部分局部校验耗时下降，但这些临时分配不值得保留，因此没有将批量校验写入运行时。
-诊断数据、局部过滤样本及两个诊断脚本原文见
-[diagnostics.json](data/schema-cache-2026-10-24-diagnostics.json)。局部微测不能代表完整请求加速。
+上表保留当时的诊断汇总。局部微测不能代表完整请求加速。
 
 ## 验证
 
@@ -91,13 +92,6 @@ harness SHA256：`f8d5ab40e9184751af15e49c0acd0c08528a43cbf503706b34cfd5516a584f
 原生 ABBA 每版每场景共 62 个样本，场景 P50 变化的中位数为 **−0.15%**，单场景为 −0.85% 至 +0.53%。
 顺序矩阵与交替复测未给出一致、实际可观的整体加速。候选额外分支不值得为了局部微测保留。
 这些结果只覆盖本地官方 SDK 调用链，不包含真实网络或模型推理，也不代表任意工作负载的统计保证。
-
-原始数据：
-
-- [before 完整矩阵](data/schema-cache-2026-10-24-before.json)、[候选 after 完整矩阵](data/schema-cache-2026-10-24-after.json)。
-- [正式比较与原生 ABBA 汇总](data/schema-cache-2026-10-24-comparison.json)。
-- 原生交替：[before 1](data/schema-cache-2026-10-24-native-before-1.json)、[after 1](data/schema-cache-2026-10-24-native-after-1.json)、[after 2](data/schema-cache-2026-10-24-native-after-2.json)、[before 2](data/schema-cache-2026-10-24-native-before-2.json)。
-- [局部过滤、批量校验、原始诊断脚本与候选补丁](data/schema-cache-2026-10-24-diagnostics.json)。
 
 ## 复测入口
 

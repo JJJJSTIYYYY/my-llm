@@ -1,6 +1,7 @@
 """Native protocol shapes, checked independently against official SDK schemas.
 
-Sources and scope are recorded in docs/audits/protocol-conformance.md.
+Sources and scope are recorded in docs/reference/schema/README.md and
+docs/design/protocol-middleware.md.
 Unknown/vendor fields must be ignored; SDK parsing alone
 is not proof of conformance because several SDKs allow or ignore extra keys.
 """

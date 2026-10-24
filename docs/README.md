@@ -6,7 +6,7 @@
 - [中间协议与语义损失迁移](guides/semantic-loss.md)：固定支持集合、默认损失错误、双向 hook、私有 usage 与工厂注册。
 - [API 使用指南](reference/api.md)：调用、流式消费、工具回合和独立格式转换。
 - [配置参考](reference/configuration.md)：ProviderProfile、ModelProfile 与覆盖规则。
-- [SenseNova 接入与端到端测试](guides/sensenova.md)：三种协议九条路径的真实服务验证。
+- [SenseNova 接入与端到端测试](guides/sensenova.md)：三种上游、四种输入/输出格式的真实服务验证与失败说明。
 - [五协议请求与返回模板](reference/schema/README.md)：固定来源的 Schema、请求、返回及流事件。
 
 ## 开发与设计
@@ -30,22 +30,8 @@
 - [重构代码清理与职责复核](audits/code-cleanup-2026-10-24.md)：重复复制、死路径、确定输入边界、原生差异归属及清理后复测。
 - [中间协议重构验收与性能对照](audits/protocol-middleware-2026-10-24.md)：C1–C10、缓存隔离、60 场景、构造与原生 ABBA；明确记录性能回退。
 
-- [完整请求链路重构与同负载对照](audits/request-chain-refactor-2026-10-21.md)：Codec 完整输入、三个目的地、60 场景时间／内存／缓存与并发、原生 ABBA 和 GC 长测。
-
-- [新协议缓存通用性与策略审计](audits/cache-audit-2026-10-20.md)：独立协议验证、统一缓存键、有界 LRU、批量计划复用与前后基准。
-- [Parameter / Config 重构性能复测](audits/parameter-config-performance-2026-10-20.md)：同源码基线重测、完整矩阵、原生交替确认、实例构造和 GC 诊断。
-- [当前性能回退定位与修复](audits/performance-regression-2026-10-20.md)：删除前提交、本轮修复前后对照、实际冗余原因与原始样本。
-- [Profile 重构后的性能复测](audits/performance-retest-2026-10-20.md)：此前清理的完整矩阵与原始样本；两份源码均已删除未知字段保留。
-- [2026-10-20 执行路径与抽象契约审计](audits/request-path-audit-2026-10-20.md)：共同调用链、必要差异、冗余清理和新增协议约束。
-
-- [历史性能复测](audits/performance-retest-2026-10-19.md)：当时的五协议矩阵、同进程对照及 GC 耗时观察。
-- [历史仓库清理与架构复核](audits/architecture-audit-2026-10-18.md)：当时的约束、清理范围和验证依据。
-- [最初重构需求对照](audits/refactor-requirements-2026-10-17.md)：历史逐项核对与后续设计调整。
-- [官方协议审计](audits/protocol-audit-2026-10-17.md)及[修复验收](audits/protocol-fixes-2026-10-17.md)。
-- [协议定义与测试预期复核](audits/protocol-conformance.md)。
-- [并发与资源生命周期验证](audits/concurrency.md)。
-
 reference 保存接口、配置与协议模板；guides 保存操作步骤；design 保存实现约束；
-audits 保存带有范围和验证依据的审计记录。审计和开发规范中的历史验收对应当时的
+audits 仅保留最近五轮性能报告，原始 JSON 日志已清理。报告保留测量条件、结果汇总和复测方法，
+不再提供逐样本复算所需的原始数据。审计和开发规范中的历史验收对应当时的
 目录、接口和测试快照；当前结构与契约以 design 和 guides 的当前说明为准，
 验证结果以实际测试输出为准。

@@ -130,6 +130,7 @@ class ReasoningContent(ProtocolValue):
             value["status"] = self.status
         if self.opaque_protocol is not None:
             value["protocol"] = self.opaque_protocol
+        value["mark"] = self.mark
         return _located(value, self.origin)
 
 
@@ -232,9 +233,13 @@ def content_from_wire(
         )
         return ReasoningContent(
             reasoning=reasoning,
-            mark="encrypted"
-            if kind == "redacted_thinking" or encrypted is not None and not reasoning
-            else ("summary" if summary is not None else "raw"),
+            mark=value["mark"]
+            if "mark" in value
+            else (
+                "encrypted"
+                if kind == "redacted_thinking" or encrypted is not None and not reasoning
+                else ("summary" if summary is not None else "raw")
+            ),
             signature=value.get("signature"),
             encrypted_content=encrypted,
             opaque_protocol=value.get("protocol", protocol),

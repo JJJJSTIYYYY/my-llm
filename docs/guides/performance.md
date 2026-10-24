@@ -18,7 +18,7 @@ uv run --no-sync python -m tests.performance.middleware --iterations 15 --warmup
 此对照衡量直接中间输入输出的调用成本，不包含应用先从原生协议转成中间模型的成本，
 也不表示网络请求或模型推理会获得相同比例的提速。
 
-运行记录及原始样本见[直接中间协议验收与性能](../audits/middleware-io-2026-10-24.md)。
+运行条件、结果汇总与限制见[直接中间协议验收与性能](../audits/middleware-io-2026-10-24.md)。
 
 从项目根目录运行：
 
@@ -109,16 +109,9 @@ uv run --no-sync pytest -q tests/performance
 [transport.py](../../tests/performance/transport.py)、[runner.py](../../tests/performance/runner.py)
 和[测试](../../tests/performance/test_generate.py)。
 
-删除未知字段保留前的提交、本轮修复前后对照及原始样本，见
-[2026-10-20 性能回退定位](../audits/performance-regression-2026-10-20.md)。
-此前 Profile 重构后的测量单独保留在[同日早先复测](../audits/performance-retest-2026-10-20.md)。
-五协议调用链、必要差异和抽象契约复核见[当前执行路径审计](../audits/request-path-audit-2026-10-20.md)。
-
-内部复制、Schema 计划与终态复用的历史实现及同负载对照结果，见
-[优化记录](../audits/performance-optimization-2026-10-19.md)。
-历史 extra="allow" 实现阶段的完整矩阵及同进程随机交替对照，见
-[性能复测](../audits/performance-retest-2026-10-19.md)。该记录不代表当前支持未声明协议字段透传。
-
+历史报告只保留最近五轮的结果汇总，原始 JSON 日志已清理。新测量请将输出保存到 `/tmp`
+等本机目录；需要逐样本比较时，应另外保存对应源码快照和两版结果文件。
+当前调用链与组件契约见[架构说明](../design/architecture.md)。
 
 ## 请求链路的时间、内存、缓存与并发对照
 
@@ -156,8 +149,6 @@ python -m tests.performance.compare /tmp/before.json /tmp/after.json --json /tmp
 ```
 可运行的无网络准备示例见 [request_pipeline.py](../../examples/request_pipeline.py)。
 
-本轮改造的完整数据、原生交替复测和尾部诊断见
-[2026-10-21 请求链路重构对照](../audits/request-chain-refactor-2026-10-21.md)。
 实例构造可单独用 `python -m tests.performance.construction --json /tmp/construction.json` 测量；
 Responses 收集尾部定位使用 `python -m tests.performance.gc_diagnostic /tmp/responses-gc.json`，
 保留 GC、单独登记回收停顿，诊断数据不替换无回调计时。

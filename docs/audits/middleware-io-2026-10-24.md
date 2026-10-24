@@ -1,5 +1,7 @@
 # 中间协议公开入口验收与性能
 
+> 本文记录当时源码快照的测量结果。原始 JSON 日志已清理，保留结果汇总、测量条件与复测方法；不能再据本文逐样本复算，也不将历史结果视为当前工作区实测。
+
 ## 交付范围与证据
 
 2026-10-24，在此前重构和缓存审计的工作区上增加中间模型直接输入输出。没有修改五种原生协议实现、
@@ -15,7 +17,7 @@ SDK transport 或既有缓存策略。本文比较同一版本的原生 stdio �
 | 返回跳过目标 decoder | 上游 encoder 和既有 StreamState 累积；返回 AssistantMessage，流式为 MessageEvent | 同十场景将 Decoder.messages / chunks / result 替换为失败函数仍成功 |
 | 保持工具、用量和资源语义 | 成功 EOF 后完整调用集中交付，无参数碎片或公开 usage；异常提供具体 partial_message | 五上游提前关闭和截断、取消、同实例真实重叠并发、顶层一次性 helper |
 | 保持数据与损失策略 | 输入 JSON 在 SDK 边界捕获；Origin 指向调用者模型；raise / ignore / hook 与原位 draft 身份保留 | 五上游准备后修改工具 Schema / 调用参数 / 结果文本、三种双向损失策略和独立结果断言 |
-| 补充性能测试 | 五种上游聚合/流式成对采样、独立内存/缓存及四路屏障并发 | [可复现驱动](../../tests/performance/middleware.py)、[原始样本](data/middleware-io-2026-10-24.json) |
+| 补充性能测试 | 五种上游聚合/流式成对采样、独立内存/缓存及四路屏障并发 | [可复现驱动](../../tests/performance/middleware.py) |
 
 公开的 `MessageEvent` 描述状态机累积后的事件，不暴露原生工具参数操作。
 输出能力过滤从 BaseDecoder 移至 `codec/shared/output.py`，由原生 decoder 与中间输出共用；
@@ -27,11 +29,11 @@ SDK transport 或既有缓存策略。本文比较同一版本的原生 stdio �
 ## 同负载方法
 
 ```sh
-.venv/bin/python -m tests.performance.middleware --iterations 15 --warmup 2 --concurrency 4 --json docs/audits/data/middleware-io-2026-10-24.json
+.venv/bin/python -m tests.performance.middleware --iterations 15 --warmup 2 --concurrency 4 --json /tmp/middleware-io.json
 ```
 
 Python 3.12.12、macOS arm64。SDK 版本：openai 2.54.0、anthropic 0.125.0、google-genai 1.75.0、
-ollama 0.6.3、httpx 0.28.1、pydantic 2.14.1；原始 JSON 保存完整环境信息。
+ollama 0.6.3、httpx 0.28.1、pydantic 2.14.1。以上为测量时的环境版本。
 
 - 同一进程、同一源码，N/M、M/N 交替顺序，分别预热两次、采样十五次。
 - 默认复杂负载：12 轮历史、12 工具、每轮 4 调用、2048 字符输入、8192 字符输出、3 层 Schema、8 条嵌套记录。
@@ -43,7 +45,7 @@ ollama 0.6.3、httpx 0.28.1、pydantic 2.14.1；原始 JSON 保存完整环境�
 
 运行时源码 SHA256：`0fe6641b397409db7811f8b988a264a7fa7afbc17dc858d80ed392804a8ea38e`。
 基准公共代码/夹具 SHA256：`4dcf2cef97addd19f52211fa19588c9c3f21af3e62cd075dd5f12847112e22fd`。
-驱动自身 SHA256 及逐次 CPU / prepare / first_event / event_count 样本也在原始 JSON 中。
+本文保留运行时与公共基准代码摘要，逐次 CPU / prepare / first_event / event_count 样本已清理。
 
 ## 结果
 
@@ -67,7 +69,7 @@ ollama 0.6.3、httpx 0.28.1、pydantic 2.14.1；原始 JSON 保存完整环境�
 
 **P95 未全部改善。** Chat 两种模式和 Gemini 聚合出现中间路径长样本。
 十五样本的 nearest-rank P95 就是最大样本，因此尾延迟证据有限；未将这些长样本归因于缓存或其他机制，
-不能据此声称稳定的尾延迟提升。原始异常样本全部保留，未剔除。
+不能据此声称稳定的尾延迟提升。测量时未剔除异常样本；当前仅保留统计汇总。
 
 两种返回格式事件数不同：Chat 89/94、Responses 132/118、Anthropic 124/118、Gemini 135/330、
 Ollama 110/118（原生/中间）。两边均完整消费，并验证全部正文、思维与工具参数；
@@ -81,7 +83,7 @@ Ollama 110/118（原生/中间）。两边均完整消费，并验证全部正�
 | Gemini | 5.845 / 3.266 | 18.887 / 8.573 |
 | Ollama | 6.852 / 6.852 | 12.066 / 12.066 |
 
-上表为聚合场景、十进制 MB；流式及全部精确字节见 JSON。除 Gemini 明显下降外，其余内存近似不变，
+上表为聚合场景、十进制 MB；此处只保留聚合内存探针汇总。除 Gemini 明显下降外，其余内存近似不变，
 Responses 和 Anthropic 的部分探针略增，不把它们描述为全面内存改善。
 
 二十次预热缓存探针均无新增 miss，所有并发探针 `peak_active=4`。

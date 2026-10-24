@@ -198,7 +198,9 @@ def test_redacted_anthropic_block_survives_collected_and_streamed_output():
         {"type": "message_stop"},
     ]
     output, state = render("anthropic", "anthropic", incoming)
-    assert state.messages()[0]["content"] == [{"type": "redacted_thinking", "data": "opaque"}]
+    assert state.messages()[0]["content"] == [
+        {"type": "redacted_thinking", "data": "opaque", "mark": "encrypted"}
+    ]
     block_event = next(e for e in output if e["type"] == "content_block_start")
     assert block_event["content_block"] == {"type": "redacted_thinking", "data": "opaque"}
 

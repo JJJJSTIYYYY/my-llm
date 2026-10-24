@@ -291,6 +291,7 @@ def test_empty_thinking_and_redacted_blocks_keep_order_and_signatures():
         "type": "thinking",
         "thinking": "",
         "signature": "signed",
+        "mark": "raw",
     }
     reconstructed = StreamState("demo")
     reconstructed.feed(MyCodec().encode(chunks=output, input_format="anthropic")["chunks"])

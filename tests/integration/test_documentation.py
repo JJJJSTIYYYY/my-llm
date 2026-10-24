@@ -58,6 +58,117 @@ def test_offline_request_pipeline_example():
     assert prepared["request"]["model"] == "example-model"
 
 
+@pytest.mark.parametrize("stdio", ["openai_chat", "openai_responses", "anthropic", "middleware"])
+@pytest.mark.parametrize("case", ["text_collected", "text_stream", "tool_roundtrip"])
+async def test_sensenova_example_scenarios_with_local_sdk(monkeypatch, stdio, case):
+    import runpy
+
+    example = runpy.run_path(str(ROOT / "examples/sensenova_e2e.py"))
+    clients, requests = [], []
+
+    def handler(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        has_result = any(message["role"] == "tool" for message in body["messages"])
+        if body.get("tools") and not has_result:
+            events = [
+                chat_event(
+                    calls=[
+                        {
+                            "index": 0,
+                            "id": "call_add",
+                            "type": "function",
+                            "function": {"name": "add", "arguments": '{"a":19,"b":23}'},
+                        }
+                    ]
+                ),
+                chat_event(finish="tool_calls"),
+            ]
+        else:
+            events = [
+                chat_event(content="42" if has_result else "SENSENOVA_OK"),
+                chat_event(finish="stop"),
+            ]
+        return httpx.Response(200, text=sse(events), headers={"Content-Type": "text/event-stream"})
+
+    def factory(**kwargs):
+        client = AsyncOpenAI(
+            **kwargs, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        )
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
+    async with MyLLM(
+        provider=example["provider"]("openai_chat", "local-example-key"),
+        model=ModelProfile(
+            model=Attribute(default_value="local-example"),
+            supports_function_calling=Config(default_value=True),
+        ),
+        stdio_protocol=stdio,
+    ) as llm:
+        result = await example["scenario"](llm, stdio, case)
+    assert result["requests"] == len(requests) == (2 if case == "tool_roundtrip" else 1)
+    assert result["text"] == ("42" if case == "tool_roundtrip" else "SENSENOVA_OK")
+    assert len(clients) == 1 and clients[0].is_closed()
+
+
+@pytest.mark.parametrize("succeeds", [False, True])
+async def test_sensenova_retry_preserves_passed_rows_and_failure_history(
+    monkeypatch, tmp_path, succeeds
+):
+    import runpy
+    from types import SimpleNamespace
+
+    example = runpy.run_path(str(ROOT / "examples/sensenova_e2e.py"))
+    completed = {
+        "upstream": "openai_chat",
+        "stdio": "middleware",
+        "case": "text_collected",
+        "status": "passed",
+    }
+    failed = {
+        **completed,
+        "case": "text_stream",
+        "status": "failed",
+        "error_type": "RateLimitError",
+        "error": "rpm exhausted",
+    }
+    report = tmp_path / "results.json"
+    report.write_text(json.dumps({"model": "local-example", "results": [completed, failed]}))
+    calls = []
+
+    async def scenario(llm, stdio, case, *, request_interval):
+        calls.append(case)
+        assert stdio == llm.stdio_protocol == "middleware"
+        assert request_interval == 0
+        assert llm.codec.semantic_loss_adaptor.semantic_loss_protocol == "ignore"
+        if not succeeds:
+            raise RuntimeError("failure with local-example-key")
+        return {"text": "SENSENOVA_OK", "events": 2, "requests": 1}
+
+    monkeypatch.setitem(example["run"].__globals__, "scenario", scenario)
+    has_failure = await example["run"](
+        SimpleNamespace(
+            model="local-example",
+            upstream=["openai_chat"],
+            stdio=["middleware"],
+            report=report,
+            retry_failed=True,
+            request_interval=0,
+            semantic_loss_protocol="ignore",
+        ),
+        "local-example-key",
+    )
+    assert has_failure is not succeeds
+    results = json.loads(report.read_text())["results"]
+    assert calls == ["text_stream"]
+    assert results[0] == completed
+    assert results[1]["status"] == ("passed" if succeeds else "failed")
+    assert results[1]["previous_attempts"] == [failed]
+    assert "local-example-key" not in report.read_text()
+
+
 def api_example(name):
     for source in python_blocks(ROOT / "docs/reference/api.md"):
         tree = ast.parse(source)

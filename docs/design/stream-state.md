@@ -103,4 +103,5 @@ metadata 契约测试覆盖嵌套路径更新、完整子树替换、显式 None
 独立第六协议在自己的 Encoder 中声明 trace 字段并交给自己的 Decoder 输出，
 无需改共享状态机即可增加已识别的响应元数据，同时跳过未配置的相邻字段。
 
-完整修复及最新 Schema 复核见[五协议验收记录](../audits/protocol-fixes-2026-10-17.md)。
+原生结构及验证来源见[协议模板](../reference/schema/README.md)，
+当前支持集合与损失约定见[中间协议契约](protocol-middleware.md)。

@@ -1,5 +1,7 @@
 # 需求全量验收复核
 
+> 本文记录当时源码快照的测量结果。原始 JSON 日志已清理，保留结果汇总、测量条件与复测方法；不能再据本文逐样本复算，也不将历史结果视为当前工作区实测。
+
 日期：2026-10-24。逐条对照根目录 `my-llm-refactor-requirements.md`，独立检查实际调用路径，
 补充反例测试后重新运行完整测试。需求原文件保持原样。
 
@@ -116,11 +118,7 @@ Origin 只引用原始对象；未知字段不会因此被枚举、复制、翻�
 | gemini | 0.1300 | 0.1290 | 16.28 | 16.28 |
 | ollama | 0.1200 | 0.1179 | 14.60 | 14.60 |
 
-原始数据与可复现比较：
-
-- [最终60场景](data/requirements-acceptance-2026-10-24-after.json)、[最终构造](data/requirements-acceptance-2026-10-24-construction-after.json)。
-- [相对上一轮清理](data/requirements-acceptance-2026-10-24-comparison.json)、[相对最初重构前](data/requirements-acceptance-2026-10-24-original-comparison.json)。
-- 基线：[上一轮](data/protocol-cleanup-2026-10-24-after.json)、[最初重构前](data/protocol-middleware-2026-10-24-before.json)。
+复测方法：
 
 沿用[性能指南](../guides/performance.md)的源码快照选择方式：
 
@@ -130,7 +128,7 @@ PYTHONPATH=/tmp/after/src python -m tests.performance.construction --iterations 
 python -m tests.performance.compare /tmp/before.json /tmp/after.json --construction-before /tmp/construction-before.json --construction-after /tmp/construction-after.json --json /tmp/comparison.json
 ```
 
-每个报告保存 runtime / harness 指纹；最终 after 源码摘要与本文及当前工作区一致。
+每个报告保存 runtime / harness 指纹；最终 after 源码摘要对应本文记录的冻结快照。
 
 
 原先[重构验收记录](protocol-middleware-2026-10-24.md)和[清理复核记录](code-cleanup-2026-10-24.md)

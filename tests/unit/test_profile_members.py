@@ -17,7 +17,7 @@ from my_llm import (
     ProviderProfile,
     omit,
 )
-from my_llm.registry import codec_for
+from my_llm.basic.protocols import codec_for
 from tests.helpers.protocols import PROTOCOLS
 
 type Label = Attribute[str] | None

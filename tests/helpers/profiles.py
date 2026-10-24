@@ -4,7 +4,7 @@ from dataclasses import replace
 from typing import Any
 
 from my_llm import Config, Parameter
-from my_llm.registry import codec_for
+from my_llm.basic.protocols import codec_for
 
 _MISSING = object()
 

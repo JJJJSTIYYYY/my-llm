@@ -274,7 +274,7 @@ async def test_llm_delivers_the_exact_result_draft_modified_by_output_hook(monke
 
 
 def test_codec_handles_an_explicit_complete_error_from_custom_decoder():
-    from my_llm.semantic_loss import SemanticLossContext, SemanticLossGroup, SemanticLossItem
+    from my_llm.basic.semantic_loss import SemanticLossContext, SemanticLossGroup, SemanticLossItem
 
     draft = [{"content": "complete"}]
     context = SemanticLossContext("custom", "openai_chat", "output")

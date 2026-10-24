@@ -1,7 +1,16 @@
-"""Built-in codec locations and optional SDK requirements."""
+"""Protocol registration, built-in factories and optional SDK discovery."""
 
+from __future__ import annotations
+
+from collections.abc import Callable
 from importlib import import_module
 from importlib.util import find_spec
+from typing import TYPE_CHECKING
+
+from my_llm.basic.exceptions import ConfigurationError, UnsupportedProviderError
+
+if TYPE_CHECKING:
+    from my_llm.codec.base.codec import BaseCodec
 
 # protocol: (module, class, SDK import, installation extra)
 BUILTIN_CODECS = {
@@ -11,6 +20,8 @@ BUILTIN_CODECS = {
     "gemini": ("gemini.codec", "GeminiCodec", "google.genai", "google-genai"),
     "ollama": ("ollama.codec", "OllamaCodec", "ollama", "ollama"),
 }
+
+_CODECS: dict[str, Callable[[], BaseCodec]] = {}
 
 
 def sdk_available(protocol: str) -> bool:
@@ -44,3 +55,24 @@ def __getattr__(name: str):
         if name == class_name:
             return builtin_codec(protocol)
     raise AttributeError(f"module 'my_llm.codec' has no attribute {name!r}")
+
+
+def register_codec(factory: Callable[[], BaseCodec], *, protocol: str) -> None:
+    """Store a constructor already validated by MyCodec.register."""
+    if protocol in _CODECS:
+        raise ConfigurationError(f"protocol is already registered: {protocol!r}")
+    _CODECS[protocol] = factory
+
+
+def registered_codec_factories() -> dict[str, Callable[[], BaseCodec]]:
+    """Return a registration snapshot containing constructors only."""
+    return _CODECS.copy()
+
+
+def codec_for(protocol: str) -> BaseCodec:
+    try:
+        factory = _CODECS[protocol]
+    except (KeyError, TypeError) as exc:
+        require_sdk(protocol)
+        raise UnsupportedProviderError(f"unsupported protocol: {protocol!r}") from exc
+    return factory()

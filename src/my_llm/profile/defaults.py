@@ -4,8 +4,8 @@ from copy import deepcopy
 from dataclasses import fields
 from typing import Any
 
+from my_llm.basic.protocols import codec_for
 from my_llm.profile.configuration import Protocol
-from my_llm.registry import codec_for
 
 
 def protocol_defaults(protocol: Protocol) -> dict[str, Any]:

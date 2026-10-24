@@ -3,7 +3,7 @@
 import re
 from functools import lru_cache
 
-from my_llm.exceptions import ConfigurationError
+from my_llm.basic.exceptions import ConfigurationError
 
 _PATH = re.compile(r"([A-Za-z_][A-Za-z_0-9-]*)(?:\[(\d+)\])?")
 

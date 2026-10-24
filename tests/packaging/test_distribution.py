@@ -50,21 +50,36 @@ def test_build_contains_runtime_modules_and_source_tests(tmp_path, version_overr
             for name in names
             if name.startswith("my_llm/") and (name.endswith(".py") or name.endswith("/py.typed"))
         } == expected_runtime
-        assert "my_llm/invoke.py" in names
+        assert "my_llm/runtime/llm.py" in names
         assert "my_llm/_version.py" in names
+        assert {name for name in names if name.count("/") == 1 and name.endswith(".py")} == {
+            "my_llm/__init__.py",
+            "my_llm/_version.py",
+        }
+        assert "my_llm/basic/protocols.py" in names
+        assert "my_llm/basic/semantic_loss.py" in names
         assert "my_llm/codec/openai/responses/decoding/__init__.py" in names
         for protocol in ("anthropic", "gemini", "ollama"):
             assert f"my_llm/codec/{protocol}/__init__.py" in names
         assert not any(name.startswith("my_llm/types/") for name in names)
-        assert "my_llm/exceptions.py" in names
-        assert "my_llm/stream/message_stream.py" in names
-        assert "my_llm/stream/_state.py" in names
+        assert "my_llm/basic/exceptions.py" in names
+        assert "my_llm/runtime/message_stream.py" in names
+        assert "my_llm/runtime/state.py" in names
         assert "my_llm/codec/base/codec.py" in names
         assert "my_llm/codec/base/encoder.py" in names
         assert "my_llm/codec/base/decoder.py" in names
         assert "my_llm/codec/shared/conversion.py" in names
         assert "my_llm/codec/shared/stream.py" in names
-        assert "my_llm/codec/shared/transport.py" in names
+        assert "my_llm/codec/shared/transport.py" not in names
+        assert "my_llm/codec/shared/schema.py" in names
+        assert "my_llm/basic/data.py" in names
+        for module in ("__init__", "models", "stream", "protocol"):
+            assert f"my_llm/middleware/{module}.py" in names
+        assert "my_llm/middleware.py" not in names
+        assert "my_llm/codec/anthropic/content.py" in names
+        assert "my_llm/codec/ollama/schema.py" in names
+        for protocol in ("anthropic", "ollama"):
+            assert not any(name.startswith(f"my_llm/codec/{protocol}/utils/") for name in names)
         assert "my_llm/profile/configuration.py" in names
         assert "my_llm/profile/resolution.py" in names
         assert not any(name.startswith("my_llm/codec/utils/") for name in names)
@@ -106,7 +121,7 @@ def test_build_contains_runtime_modules_and_source_tests(tmp_path, version_overr
     with tarfile.open(source / f"dist/my_llm_py-{expected_version}.tar.gz") as archive:
         names = archive.getnames()
         for name in (
-            "src/my_llm/invoke.py",
+            "src/my_llm/runtime/llm.py",
             "src/my_llm/_version.py",
             "src/my_llm/py.typed",
             "tests/integration/test_sdk_transport.py",

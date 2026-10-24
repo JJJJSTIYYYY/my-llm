@@ -2,8 +2,8 @@
 
 from typing import Any
 
+from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.shared.conversion import json_arguments, text_result
-from my_llm.semantic_loss import report_loss
 
 
 def render_content(content: list[dict], *, role: str = "user") -> Any:

@@ -6,7 +6,7 @@ from copy import deepcopy
 import pytest
 
 from my_llm import MyCodec
-from my_llm.exceptions import SemanticLossError
+from my_llm.basic.exceptions import SemanticLossError
 from tests.helpers.protocols import PROTOCOLS
 from tests.helpers.tool_results import application_result_history, native_result_text
 

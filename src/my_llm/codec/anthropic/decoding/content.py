@@ -1,7 +1,7 @@
 """Project supported Anthropic content and report unrepresentable reasoning."""
 
+from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.shared.conversion import select, text_result
-from my_llm.semantic_loss import report_loss
 
 
 def foreign_block(block: dict) -> dict | None:

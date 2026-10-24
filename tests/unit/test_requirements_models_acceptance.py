@@ -3,7 +3,7 @@
 import pytest
 
 from my_llm import MyCodec, ToolCall
-from my_llm.stream._state import StreamState
+from my_llm.runtime.state import StreamState
 from tests.helpers.protocols import PROTOCOLS, chat_event
 
 

@@ -4,14 +4,15 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any, final
 
+from my_llm.basic.exceptions import SemanticLossError
+from my_llm.basic.semantic_loss import BaseSemanticLossAdaptor, SemanticLossContext, collect_losses
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.base.transport import BaseTransport
-from my_llm.exceptions import SemanticLossError
-from my_llm.middleware import FunctionTool, Message, StreamBatch
+from my_llm.middleware.models import FunctionTool, Message
+from my_llm.middleware.stream import StreamBatch
 from my_llm.profile.configuration import Protocol, ProtocolDefaults
 from my_llm.profile.resolution import ResolvedProfile
-from my_llm.semantic_loss import BaseSemanticLossAdaptor, SemanticLossContext, collect_losses
 
 
 class BaseCodec(ABC):

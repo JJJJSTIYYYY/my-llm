@@ -5,6 +5,9 @@ from typing import Any
 from openai.resources.responses import AsyncResponses
 from openai.types.responses import ResponseInputItemParam, ToolParam
 
+from my_llm.basic.data import dictionaries
+from my_llm.basic.exceptions import ConfigurationError, ResponseFailedError
+from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.openai.responses.decoding.content import (
     _tool_output,
@@ -13,19 +16,16 @@ from my_llm.codec.openai.responses.decoding.content import (
 )
 from my_llm.codec.shared.conversion import (
     decode_functions,
-    dictionaries,
     json_arguments,
     select,
     select_present,
     source_protocol,
 )
 from my_llm.codec.shared.options import PreparedOptions, validate_request_options
+from my_llm.codec.shared.schema import parameter_types
 from my_llm.codec.shared.stream import counts, events
-from my_llm.codec.shared.transport import parameter_types
-from my_llm.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
 from my_llm.profile.types import Omit
-from my_llm.semantic_loss import report_loss
 
 PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response_id"}
 

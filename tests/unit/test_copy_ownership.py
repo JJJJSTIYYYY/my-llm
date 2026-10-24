@@ -496,7 +496,8 @@ def test_decoder_only_addresses_recognized_fields(source, target, kind):
 
 
 def test_sdk_view_caches_fields_without_building_children_on_presence_checks(monkeypatch):
-    from my_llm.codec.shared import conversion
+    from my_llm.basic import data
+    from my_llm.codec.shared.conversion import select
 
     reads = {"children": 0, "optional": 0, "missing": 0}
     wrapped = []
@@ -513,7 +514,7 @@ def test_sdk_view_caches_fields_without_building_children_on_presence_checks(mon
                 reads[key] += 1
             return super().__getattribute__(key)
 
-    original_view = conversion._view
+    original_view = data._view
 
     def track_view(value):
         if isinstance(value, (BaseModel, list)):
@@ -521,8 +522,8 @@ def test_sdk_view_caches_fields_without_building_children_on_presence_checks(mon
         return original_view(value)
 
     event = Event(children=[Child(text="first"), Child(text="second")])
-    monkeypatch.setattr(conversion, "_view", track_view)
-    view = conversion.dictionaries([event])[0]
+    monkeypatch.setattr(data, "_view", track_view)
+    view = data.dictionaries([event])[0]
     assert len(wrapped) == 1
 
     assert "children" in view
@@ -530,7 +531,7 @@ def test_sdk_view_caches_fields_without_building_children_on_presence_checks(mon
     assert len(wrapped) == 1
     children = view.get("children")
     assert view["children"] is children
-    assert conversion.select(view, "children")["children"] is children
+    assert select(view, "children")["children"] is children
     assert len(wrapped) == 4  # One event, one list and its two child models.
     assert reads["children"] == 1
 
@@ -546,7 +547,8 @@ def test_sdk_view_caches_fields_without_building_children_on_presence_checks(mon
 
 
 def test_sdk_view_keeps_explicit_null_and_non_null_defaults():
-    from my_llm.codec.shared.conversion import dictionaries, select
+    from my_llm.basic.data import dictionaries
+    from my_llm.codec.shared.conversion import select
 
     class Event(BaseModel):
         optional: str | None = None
@@ -602,7 +604,7 @@ def test_public_stream_encoder_owns_events(protocol, edit_input):
 @pytest.mark.parametrize("target", PROTOCOLS)
 @pytest.mark.parametrize("edit_input", [False, True])
 def test_public_stream_decoder_owns_events_and_parameters(source, target, edit_input):
-    from my_llm.stream._state import StreamState
+    from my_llm.runtime.state import StreamState
 
     codec = MyCodec()
     state = StreamState("ownership")
@@ -755,7 +757,7 @@ def test_stream_hooks_capture_recognized_mutable_leaves(
 def test_translated_json_capture_preserves_aliases_cycles_and_custom_copy_semantics():
     from dataclasses import dataclass
 
-    from my_llm.codec.shared.conversion import capture
+    from my_llm.basic.data import capture
 
     @dataclass
     class CustomValue:

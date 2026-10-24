@@ -5,9 +5,9 @@ from typing import Any
 from ollama import AsyncClient, Image, Message, Options
 from pydantic import ValidationError
 
-from my_llm.codec.shared.conversion import read
-from my_llm.codec.shared.transport import parameter_types, projected, validate_values
-from my_llm.exceptions import MessageValidationError
+from my_llm.basic.data import read
+from my_llm.basic.exceptions import MessageValidationError
+from my_llm.codec.shared.schema import parameter_types, projected, validate_values
 
 REQUEST_SCHEMA = {**parameter_types(AsyncClient.chat), "options": Options}
 

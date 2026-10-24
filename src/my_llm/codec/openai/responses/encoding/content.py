@@ -2,9 +2,9 @@
 
 from typing import Any
 
+from my_llm.basic.semantic_loss import originated
 from my_llm.codec.shared.conversion import blocks, select, uri_source
 from my_llm.codec.shared.stream import BlockRef
-from my_llm.semantic_loss import originated
 
 
 def encode_content(content: Any, *, path: str = "$.content") -> list[dict]:

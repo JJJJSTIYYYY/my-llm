@@ -1,7 +1,7 @@
 """Render complete native streams through request-local accumulation."""
 
 from my_llm import MyCodec
-from my_llm.stream._state import StreamState
+from my_llm.runtime.state import StreamState
 
 
 def render(source, target, incoming):

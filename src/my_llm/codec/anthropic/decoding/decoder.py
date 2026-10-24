@@ -12,22 +12,22 @@ from anthropic.types import (
 )
 from pydantic import ValidationError
 
+from my_llm.basic.data import capture
+from my_llm.basic.exceptions import ConfigurationError, MessageValidationError, ResponseFailedError
+from my_llm.basic.semantic_loss import report_loss
+from my_llm.codec.anthropic.content import native_block
 from my_llm.codec.anthropic.decoding.content import foreign_block
-from my_llm.codec.anthropic.utils.content import native_block
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.shared.conversion import (
-    capture,
     coalesce_messages,
     decode_functions,
     select_present,
     source_protocol,
 )
 from my_llm.codec.shared.options import PreparedOptions, validate_request_options
+from my_llm.codec.shared.schema import _plan, adapter, parameter_types
 from my_llm.codec.shared.stream import counts, events
-from my_llm.codec.shared.transport import _plan, adapter, parameter_types
-from my_llm.exceptions import ConfigurationError, MessageValidationError, ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
-from my_llm.semantic_loss import report_loss
 
 PROTECTED = {"model", "stream", "messages", "input", "tools", "system", "previous_response_id"}
 

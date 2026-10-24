@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
-from my_llm.exceptions import ConfigurationError
+from my_llm.basic.exceptions import ConfigurationError
 from my_llm.profile.configuration import OverridableProfile
 from my_llm.profile.types import Attribute, Config, Omit
 

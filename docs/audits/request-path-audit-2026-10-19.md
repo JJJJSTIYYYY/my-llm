@@ -33,7 +33,7 @@ MyLLM.generate
   → 输出 Decoder.chunks / messages / result → MessageStream / 最终结果
 ```
 
-入口见 [invoke.py:96](../../src/my_llm/invoke.py#L96)，固定请求阶段见
+入口见 [invoke.py:96](../../src/my_llm/runtime/llm.py#L96)，固定请求阶段见
 [BaseCodec.request:48](../../src/my_llm/codec/base/codec.py#L48)、
 [BaseDecoder.request:22](../../src/my_llm/codec/base/decoder.py#L22)、
 [BaseTransport.request:101](../../src/my_llm/codec/base/transport.py#L101)。
@@ -57,22 +57,22 @@ stream=False 同样消费这条流执行链，不存在单独的非流式 SDK �
 
 | 公共位置 | 当前触发者与条件 | 代码依据 | 判断 |
 | --- | --- | --- | --- |
-| BaseTransport.validate_parameters；validate_history | Responses 接受 previous_response_id，并允许工具结果引用服务端历史中的调用 | [公共参数检查:89](../../src/my_llm/codec/base/transport.py#L89)、[历史检查:125](../../src/my_llm/codec/shared/transport.py#L125)、[Responses 声明:33](../../src/my_llm/codec/openai/responses/transport.py#L33) | 能力分派合理；不过公共 API / 基类确实保留了这一目前专属的参数。 |
+| BaseTransport.validate_parameters；validate_history | Responses 接受 previous_response_id，并允许工具结果引用服务端历史中的调用 | [公共参数检查:89](../../src/my_llm/codec/base/transport.py#L89)、[历史检查:125](../../src/my_llm/codec/shared/conversion.py#L125)、[Responses 声明:33](../../src/my_llm/codec/openai/responses/transport.py#L33) | 能力分派合理；不过公共 API / 基类确实保留了这一目前专属的参数。 |
 | coalesce_groups | Responses 来源的相邻 assistant items 合并为一个 assistant 分组 | [合并条件:173](../../src/my_llm/codec/shared/conversion.py#L173)、[唯一标记生产者:132](../../src/my_llm/codec/openai/responses/encoding/encoder.py#L132) | 通用分组机制合理；Chat、Anthropic、Gemini、Ollama Decoder 均消费它。 |
 | BaseTransport._parent | Gemini 的 tool_path=(config, tools) 触发嵌套遍历 | [公共路径解析:137](../../src/my_llm/codec/base/transport.py#L137)、[Gemini 路径声明:63](../../src/my_llm/codec/gemini/transport.py#L63) | 通用路径算法合理。 |
-| StreamState._snapshot；messages | Responses 的终态 snapshot 校验并补齐最终块，最终消息走快照返回 | [快照处理:172](../../src/my_llm/stream/_state.py#L172)、[消息返回:297](../../src/my_llm/stream/_state.py#L297)、[快照生产者:372](../../src/my_llm/codec/openai/responses/encoding/encoder.py#L372) | 必要的终态协调，不应为消除单协议调用而复制累积器。 |
-| StreamState._metadata | Responses 声明 merge=[response_items] | [通用合并:133](../../src/my_llm/stream/_state.py#L133)、[操作生产者:341](../../src/my_llm/codec/openai/responses/encoding/encoder.py#L341) | 合并字段由原生 Encoder 声明，公共层不理解原生字段。 |
-| StreamState._update_block | Chat 声明 merge=[function] | [通用合并:202](../../src/my_llm/stream/_state.py#L202)、[操作生产者:90](../../src/my_llm/codec/openai/chat/encoding/content.py#L90) | 同上，属于通用块更新。 |
-| StreamState._begin | Responses 显式产生 start 操作 | [处理:143](../../src/my_llm/stream/_state.py#L143)、[生产者:180](../../src/my_llm/codec/openai/responses/encoding/encoder.py#L180) | 操作模型的正常子集。其他协议也通过公共 _start 产生输出开始事件。 |
-| StreamState._stop_block | Anthropic 显式产生块停止操作 | [处理:222](../../src/my_llm/stream/_state.py#L222)、[生产者:182](../../src/my_llm/codec/anthropic/encoding/encoder.py#L182) | 对应原生块生命周期。 |
-| StreamState._annotation | Anthropic citations_delta 产生引用注释操作 | [处理:153](../../src/my_llm/stream/_state.py#L153)、[生产者:152](../../src/my_llm/codec/anthropic/encoding/encoder.py#L152) | 保证注释与正确块关联，属于共享状态能力。 |
-| StreamState._reason 的非 finish 路径 | Anthropic 在 message_delta 更新原因，直到 message_stop 才终结 | [处理:146](../../src/my_llm/stream/_state.py#L146)、[生产者:183](../../src/my_llm/codec/anthropic/encoding/encoder.py#L183) | 必须保留原因与终态的区别。 |
+| StreamState._snapshot；messages | Responses 的终态 snapshot 校验并补齐最终块，最终消息走快照返回 | [快照处理:172](../../src/my_llm/runtime/state.py#L172)、[消息返回:297](../../src/my_llm/runtime/state.py#L297)、[快照生产者:372](../../src/my_llm/codec/openai/responses/encoding/encoder.py#L372) | 必要的终态协调，不应为消除单协议调用而复制累积器。 |
+| StreamState._metadata | Responses 声明 merge=[response_items] | [通用合并:133](../../src/my_llm/runtime/state.py#L133)、[操作生产者:341](../../src/my_llm/codec/openai/responses/encoding/encoder.py#L341) | 合并字段由原生 Encoder 声明，公共层不理解原生字段。 |
+| StreamState._update_block | Chat 声明 merge=[function] | [通用合并:202](../../src/my_llm/runtime/state.py#L202)、[操作生产者:90](../../src/my_llm/codec/openai/chat/encoding/content.py#L90) | 同上，属于通用块更新。 |
+| StreamState._begin | Responses 显式产生 start 操作 | [处理:143](../../src/my_llm/runtime/state.py#L143)、[生产者:180](../../src/my_llm/codec/openai/responses/encoding/encoder.py#L180) | 操作模型的正常子集。其他协议也通过公共 _start 产生输出开始事件。 |
+| StreamState._stop_block | Anthropic 显式产生块停止操作 | [处理:222](../../src/my_llm/runtime/state.py#L222)、[生产者:182](../../src/my_llm/codec/anthropic/encoding/encoder.py#L182) | 对应原生块生命周期。 |
+| StreamState._annotation | Anthropic citations_delta 产生引用注释操作 | [处理:153](../../src/my_llm/runtime/state.py#L153)、[生产者:152](../../src/my_llm/codec/anthropic/encoding/encoder.py#L152) | 保证注释与正确块关联，属于共享状态能力。 |
+| StreamState._reason 的非 finish 路径 | Anthropic 在 message_delta 更新原因，直到 message_stop 才终结 | [处理:146](../../src/my_llm/runtime/state.py#L146)、[生产者:183](../../src/my_llm/codec/anthropic/encoding/encoder.py#L183) | 必须保留原因与终态的区别。 |
 
 因此，“公共层无协议名判断”成立，但“公共函数所有分支都至少由两个协议执行”不成立。
 现有 [AST 边界检查](../../tests/contract/test_codec_boundaries.py#L32)主要检查协议名称字面量，
 不能单独证明不存在由能力标记、字段路径或操作类型形成的单协议路径。
 
-另外，[StreamState._delta:217](../../src/my_llm/stream/_state.py#L217)读取 event.extras，
+另外，[StreamState._delta:217](../../src/my_llm/runtime/state.py#L217)读取 event.extras，
 但当前 src 和 tests 没有任何操作生产者写入这个键，在五条路径中实际执行 update({})。
 这是可清理的闲置入口，没有证据表明它造成现有功能错误。
 

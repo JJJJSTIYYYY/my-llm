@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict
 from typing_extensions import TypedDict
 
 from my_llm import MyCodec, UnsupportedCapabilityError
-from my_llm.codec.shared import transport
+from my_llm.codec.shared import schema as schema_plans
 from tests.helpers.protocols import PROTOCOLS, history, tools
 
 
@@ -47,39 +47,43 @@ class Recursive(BaseModel):
 
 def test_cached_plan_filters_without_reanalyzing_types(monkeypatch):
     value = {"content": [{"type": "text", "text": "hello", "vendor": True}]}
-    assert transport.supported(value, Envelope) == {"content": [{"type": "text", "text": "hello"}]}
-    plan = transport._plan(Envelope)
+    assert schema_plans.supported(value, Envelope) == {
+        "content": [{"type": "text", "text": "hello"}]
+    }
+    plan = schema_plans._plan(Envelope)
 
     def unexpected(*args, **kwargs):
         pytest.fail("a cached filtering plan must not inspect annotations again")
 
-    monkeypatch.setattr(transport, "get_origin", unexpected)
-    monkeypatch.setattr(transport, "get_args", unexpected)
-    monkeypatch.setattr(transport, "get_type_hints", unexpected)
-    assert transport._plan(Envelope) is plan
-    assert transport.supported(
+    monkeypatch.setattr(schema_plans, "get_origin", unexpected)
+    monkeypatch.setattr(schema_plans, "get_args", unexpected)
+    monkeypatch.setattr(schema_plans, "get_type_hints", unexpected)
+    assert schema_plans._plan(Envelope) is plan
+    assert schema_plans.supported(
         {"content": [{"type": "image", "url": "image.png", "vendor": 1}]}, Envelope
     ) == {"content": [{"type": "image", "url": "image.png"}]}
-    assert transport.projected(value, Envelope) == {"content": [{"type": "text", "text": "hello"}]}
+    assert schema_plans.projected(value, Envelope) == {
+        "content": [{"type": "text", "text": "hello"}]
+    }
 
 
 def test_union_literal_discriminator_takes_precedence_over_shared_fields():
-    assert transport.supported(
+    assert schema_plans.supported(
         {"type": "image", "url": "image.png", "text": "vendor field"}, Text | Image
     ) == {"type": "image", "url": "image.png"}
 
 
 def test_union_uses_highest_declared_field_score_and_first_candidate_on_ties():
-    assert transport.supported({"common": "a", "right": "b"}, Left | Right) == {
+    assert schema_plans.supported({"common": "a", "right": "b"}, Left | Right) == {
         "common": "a",
         "right": "b",
     }
     value = {"common": "a", "left": "b", "right": "c"}
-    assert transport.supported(value, Left | Right) == {"common": "a", "left": "b"}
-    assert transport.supported(value, Right | Left) == {"common": "a", "right": "c"}
+    assert schema_plans.supported(value, Left | Right) == {"common": "a", "left": "b"}
+    assert schema_plans.supported(value, Right | Left) == {"common": "a", "right": "c"}
 
 
-@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+@pytest.mark.parametrize("operation", [schema_plans.supported, schema_plans.projected])
 def test_literal_pruning_keeps_overlapping_and_unrestricted_union_candidates(operation):
     class Broad(TypedDict):
         type: Literal["text", "image"]
@@ -103,7 +107,7 @@ def test_literal_pruning_keeps_overlapping_and_unrestricted_union_candidates(ope
     assert operation({"text": "answer"}, Broad | Narrow) == {"text": "answer"}
 
 
-@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+@pytest.mark.parametrize("operation", [schema_plans.supported, schema_plans.projected])
 def test_literal_pruning_combines_declared_discriminators_without_reading_unknowns(operation):
     class User(TypedDict):
         type: Literal["message"]
@@ -133,7 +137,7 @@ def test_literal_pruning_combines_declared_discriminators_without_reading_unknow
         operation({"type": "message", "role": "vendor", "text": "answer"}, User | Assistant)
 
 
-@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+@pytest.mark.parametrize("operation", [schema_plans.supported, schema_plans.projected])
 def test_explicit_union_discriminator_does_not_score_every_sdk_variant(operation):
     variants = [
         TypedDict(f"Variant{index}", {"type": Literal[f"variant_{index}"], "text": str})
@@ -156,7 +160,7 @@ def test_explicit_union_discriminator_does_not_score_every_sdk_variant(operation
     assert value.reads <= 3, "an explicit discriminator must prune unrelated variants"
 
 
-@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+@pytest.mark.parametrize("operation", [schema_plans.supported, schema_plans.projected])
 def test_literal_routing_keeps_sdk_model_defaults_none_and_recursive_content(operation):
     class Leaf(BaseModel):
         type: Literal["leaf"] = "leaf"
@@ -180,7 +184,7 @@ def test_literal_routing_keeps_sdk_model_defaults_none_and_recursive_content(ope
     ) == {"type": "branch", "children": [{"type": "leaf", "text": None}]}
 
 
-@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+@pytest.mark.parametrize("operation", [schema_plans.supported, schema_plans.projected])
 def test_unhashable_discriminator_values_keep_union_rejection(operation):
     with pytest.raises(UnsupportedCapabilityError, match="target SDK"):
         operation({"type": [], "text": "answer"}, Text | Image)
@@ -188,20 +192,20 @@ def test_unhashable_discriminator_values_keep_union_rejection(operation):
 
 def test_cache_distinguishes_nested_union_order_and_reuses_equivalent_generics():
     value = [{"common": "a", "left": "b", "right": "c"}]
-    assert transport.supported(value, list[Left | Right]) == [{"common": "a", "left": "b"}]
-    assert transport.supported(value, list[Right | Left]) == [{"common": "a", "right": "c"}]
-    assert transport._plan(list[Left | Right]) is transport._plan(list[Left | Right])
+    assert schema_plans.supported(value, list[Left | Right]) == [{"common": "a", "left": "b"}]
+    assert schema_plans.supported(value, list[Right | Left]) == [{"common": "a", "right": "c"}]
+    assert schema_plans._plan(list[Left | Right]) is schema_plans._plan(list[Left | Right])
 
 
 def test_union_rejects_values_no_candidate_represents():
     with pytest.raises(UnsupportedCapabilityError, match="target SDK"):
-        transport.supported({"unexpected": True}, int | str)
+        schema_plans.supported({"unexpected": True}, int | str)
 
 
 def test_optional_and_wrapped_schemas_keep_existing_filtering_semantics():
-    assert transport.supported(None, Text | None) is None
-    assert transport.supported(None, int | str) is None
-    assert transport.supported(
+    assert schema_plans.supported(None, Text | None) is None
+    assert schema_plans.supported(None, int | str) is None
+    assert schema_plans.supported(
         {"type": "text", "text": "hello", "vendor": True},
         Annotated[Text | None, "optional native block"],
     ) == {"type": "text", "text": "hello"}
@@ -210,51 +214,53 @@ def test_optional_and_wrapped_schemas_keep_existing_filtering_semantics():
 def test_annotations_with_unhashable_metadata_remain_supported():
     schema = Annotated[Text, {"description": ["native block"]}]
     value = {"type": "text", "text": "hello", "vendor": True}
-    assert transport.supported(value, schema) == {"type": "text", "text": "hello"}
-    assert transport._plan(schema) is transport._plan(schema)
+    assert schema_plans.supported(value, schema) == {"type": "text", "text": "hello"}
+    assert schema_plans._plan(schema) is schema_plans._plan(schema)
 
 
 def test_unhashable_annotations_share_validation_and_path_cache_rules():
     schema = Annotated[Text, {"description": ["independent protocol block"]}]
     value = {"type": "text", "text": "hello"}
-    validator = transport.adapter(schema)
-    assert validator is transport.adapter(schema)
+    validator = schema_plans.adapter(schema)
+    assert validator is schema_plans.adapter(schema)
     assert validator.validate_python(value) == value
-    assert transport.declared_path(schema, ("text",))
-    assert not transport.declared_path(schema, ("vendor",))
+    assert schema_plans.declared_path(schema, ("text",))
+    assert not schema_plans.declared_path(schema, ("vendor",))
 
 
 def test_validator_cache_keeps_union_declaration_order():
-    first = transport.adapter(Left | Right)
-    second = transport.adapter(Right | Left)
+    first = schema_plans.adapter(Left | Right)
+    second = schema_plans.adapter(Right | Left)
     assert first is not second
-    assert transport.adapter(Left | Right) is first
+    assert schema_plans.adapter(Left | Right) is first
 
 
 def test_distinct_protocol_types_with_identical_names_do_not_share_rules():
     first = TypedDict("NativeMessage", {"actor": str, "utterance": str})
     second = TypedDict("NativeMessage", {"sender": str, "payload": str})
     value = {"actor": "human", "utterance": "first", "sender": "bot", "payload": "second"}
-    assert transport.supported(value, first) == {"actor": "human", "utterance": "first"}
-    assert transport.supported(value, second) == {"sender": "bot", "payload": "second"}
-    assert transport._plan(first) is not transport._plan(second)
-    assert transport.adapter(first) is not transport.adapter(second)
+    assert schema_plans.supported(value, first) == {"actor": "human", "utterance": "first"}
+    assert schema_plans.supported(value, second) == {"sender": "bot", "payload": "second"}
+    assert schema_plans._plan(first) is not schema_plans._plan(second)
+    assert schema_plans.adapter(first) is not schema_plans.adapter(second)
 
 
 def test_dynamic_protocol_types_evict_cached_rules_without_changing_results():
-    caches = (transport.fields, transport._cached_adapter, transport._compiled_plan)
+    caches = (schema_plans.fields, schema_plans._cached_adapter, schema_plans._compiled_plan)
     assert all(cache.cache_info().maxsize == 512 for cache in caches)
     first = TypedDict("FirstDynamicProtocol", {"body": str})
-    original_plan = transport._plan(first)
-    original_adapter = transport.adapter(first)
+    original_plan = schema_plans._plan(first)
+    original_adapter = schema_plans.adapter(first)
     for index in range(513):
         schema = TypedDict(f"DynamicProtocol{index}", {"body": str})
-        assert transport.supported({"body": "hello", "vendor": True}, schema) == {"body": "hello"}
-        transport.adapter(schema)
+        assert schema_plans.supported({"body": "hello", "vendor": True}, schema) == {
+            "body": "hello"
+        }
+        schema_plans.adapter(schema)
     assert all(cache.cache_info().currsize <= 512 for cache in caches)
-    assert transport._plan(first) is not original_plan
-    assert transport.adapter(first) is not original_adapter
-    assert transport.supported({"body": "new request", "vendor": True}, first) == {
+    assert schema_plans._plan(first) is not original_plan
+    assert schema_plans.adapter(first) is not original_adapter
+    assert schema_plans.supported({"body": "new request", "vendor": True}, first) == {
         "body": "new request"
     }
 
@@ -262,7 +268,7 @@ def test_dynamic_protocol_types_evict_cached_rules_without_changing_results():
 @pytest.mark.parametrize("schema", [list[Text], tuple[Text, ...], Iterable[Text]])
 def test_collection_plans_filter_list_items(schema):
     value = [{"type": "text", "text": "hello", "vendor": True}]
-    assert transport.supported(value, schema) == [{"type": "text", "text": "hello"}]
+    assert schema_plans.supported(value, schema) == [{"type": "text", "text": "hello"}]
     assert value[0]["vendor"] is True
 
 
@@ -272,19 +278,19 @@ def test_recursive_pydantic_plan_filters_nested_fields():
         "vendor": True,
         "children": [{"name": "child", "vendor": True, "children": []}],
     }
-    assert transport.supported(value, Recursive) == {
+    assert schema_plans.supported(value, Recursive) == {
         "name": "root",
         "children": [{"name": "child", "children": []}],
     }
     model = Recursive(name="root", children=[Recursive(name="child")])
-    copied = transport.supported(model, Recursive)
+    copied = schema_plans.supported(model, Recursive)
     assert copied == model.model_dump(mode="json", exclude_none=True)
     copied["children"][0]["name"] = "changed"
     assert model.children[0].name == "child"
 
 
 @pytest.mark.parametrize("extra", [None, "ignore", "forbid", "allow"])
-@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+@pytest.mark.parametrize("operation", [schema_plans.supported, schema_plans.projected])
 def test_pydantic_protocol_structures_filter_unknown_keys_regardless_of_extra_policy(
     extra, operation
 ):
@@ -317,27 +323,27 @@ def test_cached_model_handles_later_optional_fields_and_open_dictionary_keys(mon
         content: str
         metadata: dict[str, Any] | None = None
 
-    assert transport.supported({"content": "first"}, Message) == {"content": "first"}
-    plan = transport._plan(Message)
+    assert schema_plans.supported({"content": "first"}, Message) == {"content": "first"}
+    plan = schema_plans._plan(Message)
 
     def unexpected(*args, **kwargs):
         pytest.fail("a cached model must not inspect annotations again")
 
-    monkeypatch.setattr(transport, "fields", unexpected)
-    monkeypatch.setattr(transport, "get_origin", unexpected)
-    monkeypatch.setattr(transport, "get_args", unexpected)
+    monkeypatch.setattr(schema_plans, "fields", unexpected)
+    monkeypatch.setattr(schema_plans, "get_origin", unexpected)
+    monkeypatch.setattr(schema_plans, "get_args", unexpected)
     value = {"content": "second", "metadata": {"new_key": [{"value": 1}]}, "vendor": True}
-    copied = transport.supported(value, Message)
-    projected = transport.projected(value, Message)
+    copied = schema_plans.supported(value, Message)
+    projected = schema_plans.projected(value, Message)
     expected = {"content": "second", "metadata": value["metadata"]}
     assert copied == projected == expected
-    assert transport._plan(Message) is plan
+    assert schema_plans._plan(Message) is plan
     assert projected["metadata"] is value["metadata"]
     copied["metadata"]["new_key"][0]["value"] = 2
     assert value["metadata"]["new_key"][0]["value"] == 1
 
 
-@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+@pytest.mark.parametrize("operation", [schema_plans.supported, schema_plans.projected])
 def test_recursive_models_filter_unknown_protocol_fields_at_every_level(operation):
     class Node(BaseModel):
         model_config = ConfigDict(extra="allow")
@@ -364,12 +370,12 @@ def test_open_json_and_mutable_payloads_remain_complete_and_isolated():
         "application": [{"type": "image", "unknown_protocol_field": True}],
     }
     value = {"content": [], "metadata": payload}
-    filtered = transport.supported(value, Envelope)
+    filtered = schema_plans.supported(value, Envelope)
     assert filtered == value
     filtered["metadata"]["application"][0]["unknown_protocol_field"] = False
     assert payload["application"][0]["unknown_protocol_field"] is True
     next_value = {"content": [], "metadata": {"different": [1]}}
-    assert transport.supported(next_value, Envelope) == next_value
+    assert schema_plans.supported(next_value, Envelope) == next_value
 
 
 def test_read_only_projection_borrows_application_payload_without_copying():
@@ -383,7 +389,7 @@ def test_read_only_projection_borrows_application_payload_without_copying():
         "metadata": payload,
         "vendor": "drop",
     }
-    projected = transport.projected(value, Envelope)
+    projected = schema_plans.projected(value, Envelope)
     assert projected == {
         "content": [{"type": "image", "url": "image.png"}],
         "metadata": payload,
@@ -400,20 +406,22 @@ def test_projection_and_copy_use_the_same_union_selection(schema):
     value = {"common": "a", "left": "b", "right": "c"}
     if schema == list[Left | Right]:
         value = [value]
-    assert transport.projected(value, schema) == transport.supported(value, schema)
+    assert schema_plans.projected(value, schema) == schema_plans.supported(value, schema)
 
 
 def test_projection_handles_optional_annotated_and_recursive_models():
-    assert transport.projected(None, Annotated[Text | None, "block"]) is None
+    assert schema_plans.projected(None, Annotated[Text | None, "block"]) is None
     value = {"name": "root", "children": [{"name": "child", "children": [], "vendor": True}]}
-    assert transport.projected(value, Recursive) == transport.supported(value, Recursive)
+    assert schema_plans.projected(value, Recursive) == schema_plans.supported(value, Recursive)
     model = Recursive(name="root", children=[Recursive(name="child")])
     before = model.model_dump()
-    assert transport.projected(model, Recursive) == model.model_dump(mode="json", exclude_none=True)
+    assert schema_plans.projected(model, Recursive) == model.model_dump(
+        mode="json", exclude_none=True
+    )
     assert model.model_dump() == before
 
 
-@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+@pytest.mark.parametrize("operation", [schema_plans.supported, schema_plans.projected])
 def test_cached_plan_does_not_keep_request_payload_alive(operation):
     class Payload(dict):
         pass
@@ -437,7 +445,7 @@ def test_official_sdk_plans_preserve_native_fields_and_prune_protocol_extensions
         original = deepcopy(values)
         for value in values:
             value["vendor_extension"] = {"nested": [1, None]}
-        assert [transport.supported(value, schema) for value in values] == original
+        assert [schema_plans.supported(value, schema) for value in values] == original
         assert all("vendor_extension" in value for value in values)
 
 
@@ -468,9 +476,9 @@ def test_official_sdk_validation_and_serialization_do_not_mutate_projected_input
         (declarations, bound.tool_type),
     ]:
         original = deepcopy(values)
-        validator = transport.adapter(schema)
+        validator = schema_plans.adapter(schema)
         for value in values:
-            projected = transport.projected(value, schema)
+            projected = schema_plans.projected(value, schema)
             before_validation = deepcopy(projected)
             parsed = validator.validate_python(projected)
             validator.dump_json(parsed, warnings="error")
@@ -478,7 +486,7 @@ def test_official_sdk_validation_and_serialization_do_not_mutate_projected_input
             if isinstance(schema, type) and issubclass(schema, BaseModel):
                 model = schema.model_validate(projected)
                 before_model_validation = model.model_dump()
-                projected_model = transport.projected(model, schema)
+                projected_model = schema_plans.projected(model, schema)
                 assert isinstance(projected_model, dict)
                 parsed_model = validator.validate_python(projected_model)
                 validator.dump_json(parsed_model, warnings="error")
@@ -486,7 +494,7 @@ def test_official_sdk_validation_and_serialization_do_not_mutate_projected_input
         assert values == original
 
 
-@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+@pytest.mark.parametrize("operation", [schema_plans.supported, schema_plans.projected])
 def test_sdk_model_instances_cannot_bypass_nested_structure_filtering(operation):
     class Nested(BaseModel):
         model_config = ConfigDict(extra="allow")
@@ -512,7 +520,7 @@ def test_sdk_model_instances_cannot_bypass_nested_structure_filtering(operation)
     assert model.model_dump(mode="json", exclude_none=True) == before
 
 
-@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+@pytest.mark.parametrize("operation", [schema_plans.supported, schema_plans.projected])
 def test_protocol_projection_never_enumerates_unknown_dictionary_fields(operation):
     class AddressedDict(dict):
         def __iter__(self):
@@ -535,7 +543,7 @@ def test_protocol_projection_never_enumerates_unknown_dictionary_fields(operatio
     assert operation(value, Envelope) == {"content": [{"type": "image", "url": "image.png"}]}
 
 
-@pytest.mark.parametrize("operation", [transport.supported, transport.projected])
+@pytest.mark.parametrize("operation", [schema_plans.supported, schema_plans.projected])
 def test_sdk_models_are_addressed_without_dumping_extensions_and_keep_explicit_none(operation):
     class Message(BaseModel):
         model_config = ConfigDict(extra="allow")
@@ -559,23 +567,23 @@ def test_delegated_paths_isolate_plan_caches_and_same_type_at_different_position
 
     first_path = (("first", "application"),)
     second_path = (("second", "application"),)
-    plan = transport._plan(Pair, first_path)
-    assert transport._plan(Pair, first_path) is plan
-    assert transport._plan(Pair, second_path) is not plan
-    assert transport._plan(Pair) is not plan
+    plan = schema_plans._plan(Pair, first_path)
+    assert schema_plans._plan(Pair, first_path) is plan
+    assert schema_plans._plan(Pair, second_path) is not plan
+    assert schema_plans._plan(Pair) is not plan
     value = {
         "first": {"application": {"nested": [1]}},
         "second": {"application": {"nested": [2]}},
     }
 
-    first = transport.supported(value, Pair, delegated_paths=first_path)
+    first = schema_plans.supported(value, Pair, delegated_paths=first_path)
     assert first["first"] is not value["first"]
     assert first["first"]["application"] is value["first"]["application"]
     assert first["second"]["application"] is not value["second"]["application"]
-    second = transport.supported(value, Pair, delegated_paths=second_path)
+    second = schema_plans.supported(value, Pair, delegated_paths=second_path)
     assert second["first"]["application"] is not value["first"]["application"]
     assert second["second"]["application"] is value["second"]["application"]
-    ordinary = transport.supported(value, Pair)
+    ordinary = schema_plans.supported(value, Pair)
     ordinary["first"]["application"]["nested"].append(3)
     ordinary["second"]["application"]["nested"].append(4)
     assert value["first"]["application"]["nested"] == [1]
@@ -594,13 +602,13 @@ def test_delegated_paths_are_consumed_at_the_correct_recursive_position():
             "child": {"application": {"nested": [3]}},
         },
     }
-    actual = transport.supported(value, Node, delegated_paths=(("child", "application"),))
+    actual = schema_plans.supported(value, Node, delegated_paths=(("child", "application"),))
 
     assert actual["application"] is not value["application"]
     assert actual["child"] is not value["child"]
     assert actual["child"]["application"] is value["child"]["application"]
     assert actual["child"]["child"]["application"] is not value["child"]["child"]["application"]
-    ordinary = transport.supported(value, Node)
+    ordinary = schema_plans.supported(value, Node)
     assert ordinary["child"]["application"] is not value["child"]["application"]
 
 
@@ -608,6 +616,6 @@ def test_whole_delegated_transport_leaf_needs_no_filter_plan(monkeypatch):
     def unexpected(*args, **kwargs):
         pytest.fail("a whole delegated leaf must reach its owner without a second plan")
 
-    monkeypatch.setattr(transport, "_plan", unexpected)
+    monkeypatch.setattr(schema_plans, "_plan", unexpected)
     value = [{"type": "text", "text": "answer"}]
-    assert transport.supported(value, list[Text], delegated_paths=((),)) is value
+    assert schema_plans.supported(value, list[Text], delegated_paths=((),)) is value

@@ -22,7 +22,7 @@ from tests.helpers.requests import encode_request
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_profile_fixes_names_and_sources_across_every_layer(protocol):
-    from my_llm.registry import codec_for
+    from my_llm.basic.protocols import codec_for
 
     provider = ProviderProfile(
         protocol=Config(default_value=protocol),
@@ -297,7 +297,7 @@ def test_anthropic_initial_block_cannot_restore_unsupported_output(name, kind):
     from copy import deepcopy
 
     from my_llm import MyCodec
-    from my_llm.stream._state import StreamState
+    from my_llm.runtime.state import StreamState
 
     profile = resolve_profiles(
         ProviderProfile(protocol=Config(default_value="anthropic")),
@@ -334,7 +334,7 @@ def test_responses_final_snapshot_cannot_restore_unsupported_output(name):
     from copy import deepcopy
 
     from my_llm import MyCodec
-    from my_llm.stream._state import StreamState
+    from my_llm.runtime.state import StreamState
     from tests.helpers.protocols import response_completed
 
     profile = resolve_profiles(

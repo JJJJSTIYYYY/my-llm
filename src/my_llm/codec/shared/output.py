@@ -1,7 +1,7 @@
 """Output capability filtering shared by native and intermediate delivery."""
 
+from my_llm.basic.semantic_loss import originated, report_loss
 from my_llm.profile.resolution import ResolvedProfile
-from my_llm.semantic_loss import originated, report_loss
 
 
 def _filters_output(profile: ResolvedProfile | None) -> bool:

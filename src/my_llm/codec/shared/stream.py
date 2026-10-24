@@ -4,7 +4,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from typing import NamedTuple
 
-from my_llm.codec.shared.conversion import dictionary_views
+from my_llm.basic.data import dictionary_views
 
 
 class BlockRef(NamedTuple):

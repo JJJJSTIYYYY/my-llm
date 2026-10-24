@@ -4,7 +4,14 @@ from abc import ABC, abstractmethod
 from functools import wraps
 from typing import Any, final
 
-from my_llm.codec.shared.conversion import capture
+from my_llm.basic.data import capture
+from my_llm.basic.exceptions import (
+    ConfigurationError,
+    MessageValidationError,
+    UnsupportedCapabilityError,
+)
+from my_llm.basic.semantic_loss import SemanticLossContext, collect_losses, report_loss
+from my_llm.codec.shared.conversion import validate_history
 from my_llm.codec.shared.options import (
     PreparedOptions,
     request_parameters,
@@ -12,21 +19,18 @@ from my_llm.codec.shared.options import (
     set_path,
 )
 from my_llm.codec.shared.output import output_chunks, output_messages
-from my_llm.codec.shared.transport import (
+from my_llm.codec.shared.schema import (
     _MISSING,
     _plan,
     declared_path,
     path_item,
     supported,
-    validate_history,
     validate_values,
 )
-from my_llm.exceptions import ConfigurationError, MessageValidationError, UnsupportedCapabilityError
-from my_llm.middleware import wire_values
+from my_llm.middleware.protocol import wire_values
 from my_llm.profile.paths import path_keys
 from my_llm.profile.resolution import ResolvedProfile, client_parameters
 from my_llm.profile.types import Omit
-from my_llm.semantic_loss import SemanticLossContext, collect_losses, report_loss
 
 
 def _collect_translation(method):

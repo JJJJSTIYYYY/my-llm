@@ -208,14 +208,39 @@ def test_profiles_do_not_depend_on_codec_or_execution_implementations():
     for path in (ROOT / "profile").rglob("*.py"):
         for node in ast.walk(ast.parse(path.read_text())):
             for module in imported_modules(node):
-                assert not module.startswith(("my_llm.codec", "my_llm.invoke", "my_llm.stream")), (
+                assert not module.startswith(("my_llm.codec", "my_llm.runtime")), (
                     path,
                     module,
                 )
 
 
+@pytest.mark.parametrize(
+    ("paths", "forbidden"),
+    [
+        (
+            tuple((ROOT / "middleware").glob("*.py")),
+            ("my_llm.codec", "my_llm.runtime"),
+        ),
+        (
+            (ROOT / "basic/data.py",),
+            (
+                "my_llm.codec",
+                "my_llm.middleware",
+                "my_llm.profile",
+                "my_llm.runtime",
+            ),
+        ),
+    ],
+)
+def test_protocol_models_and_data_views_do_not_depend_on_higher_layers(paths, forbidden):
+    for path in paths:
+        for node in ast.walk(ast.parse(path.read_text())):
+            for module in imported_modules(node):
+                assert not module.startswith(forbidden), (path, module)
+
+
 def test_invoke_only_accesses_its_own_private_attributes():
-    path = ROOT / "invoke.py"
+    path = ROOT / "runtime/llm.py"
     for node in ast.walk(ast.parse(path.read_text())):
         if isinstance(node, ast.Attribute) and node.attr.startswith("_"):
             assert isinstance(node.value, ast.Name) and node.value.id == "self", (

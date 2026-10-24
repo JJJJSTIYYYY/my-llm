@@ -5,7 +5,7 @@ import json
 import pytest
 
 from my_llm import MyCodec, SemanticLossError
-from my_llm.semantic_loss import SemanticLossContext, collect_losses, report_loss
+from my_llm.basic.semantic_loss import SemanticLossContext, collect_losses, report_loss
 
 
 def test_serialized_tool_result_borrows_its_source_without_copying_it():

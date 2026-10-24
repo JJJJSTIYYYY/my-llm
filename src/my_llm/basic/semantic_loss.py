@@ -8,7 +8,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Literal
 
-from my_llm.exceptions import ConfigurationError, SemanticLossError
+from my_llm.basic.exceptions import ConfigurationError, SemanticLossError
 
 type LossDirection = Literal["input", "output"]
 type LossPolicy = Literal["raise", "ignore", "hook"]
@@ -55,7 +55,7 @@ class Originated(dict):
         self.origin_value = getattr(origin_value, "origin_value", origin_value)
 
     def __deepcopy__(self, memo):
-        from my_llm.codec.shared.conversion import capture
+        from my_llm.basic.data import capture
 
         result = Originated({}, self.origin_path, self.origin_value)
         memo[id(self)] = result

@@ -3,8 +3,8 @@
 import json
 from typing import Any
 
+from my_llm.basic.semantic_loss import originated, report_loss
 from my_llm.codec.shared.conversion import select, text_result
-from my_llm.semantic_loss import originated, report_loss
 
 
 def _tool_output(value: Any) -> Any:

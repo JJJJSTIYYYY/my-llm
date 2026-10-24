@@ -4,9 +4,11 @@ from typing import Any
 
 from ollama import Message, Tool
 
+from my_llm.basic.exceptions import ResponseFailedError
+from my_llm.basic.semantic_loss import originated
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.ollama.encoding.content import image_data, media_type, tool_block
-from my_llm.codec.ollama.utils.schema import validate_ollama_values
+from my_llm.codec.ollama.schema import validate_ollama_values
 from my_llm.codec.shared.conversion import (
     allocate_call_id,
     associate_tool_result,
@@ -16,9 +18,7 @@ from my_llm.codec.shared.conversion import (
     text_result,
 )
 from my_llm.codec.shared.stream import BlockRef, encode_batch, metadata, record
-from my_llm.exceptions import ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
-from my_llm.semantic_loss import originated
 
 PROTOCOL = "ollama"
 

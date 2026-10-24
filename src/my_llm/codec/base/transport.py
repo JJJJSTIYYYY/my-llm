@@ -1,8 +1,8 @@
 """Official SDK construction and response resource ownership only."""
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from typing import Any
 
 
@@ -43,3 +43,16 @@ class BaseTransport(ABC):
         exit or failure, and leaves client ownership with the caller.
         """
         ...
+
+
+@asynccontextmanager
+async def owned_stream(
+    create: Callable[[], Awaitable[Any]],
+    *,
+    close_stream: str = "close",
+) -> AsyncIterator[Any]:
+    """Close one response stream without closing its borrowed SDK client."""
+    async with AsyncExitStack() as resources:
+        upstream = await create()
+        resources.push_async_callback(getattr(upstream, close_stream))
+        yield upstream

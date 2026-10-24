@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from my_llm.exceptions import ConfigurationError
+from my_llm.basic.exceptions import ConfigurationError
 from my_llm.profile.base import Profile
 from my_llm.profile.types import Config, Omit, Parameter, omit, set_attr
 

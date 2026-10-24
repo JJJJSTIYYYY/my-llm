@@ -20,26 +20,37 @@ Transport 只把最终字典交给官方 SDK，并管理客户端和本次响应
 
 ```text
 src/my_llm/
-├── invoke.py                   # 完整输入打包、客户端缓存、输出流编排
-├── registry.py                 # 协议工厂注册与实例快照
-├── middleware.py               # SDK 无关的固定 ProtocolMiddleWare
-├── semantic_loss.py            # 调用独立损失收集与实例策略
+├── __init__.py                 # 统一公开导出
+├── _version.py                 # 构建与发行版本
+├── py.typed                    # 类型标记
+├── basic/                      # 配置、模型与运行时共用的基础能力
+│   ├── data.py                 # 数据捕获与 SDK 字段只读视图
+│   ├── exceptions.py           # 统一异常
+│   ├── semantic_loss.py        # 调用独立损失收集与实例策略
+│   └── protocols.py            # 协议注册、工厂快照与可选 SDK 发现
+├── middleware/                 # SDK 无关的固定中间协议
+│   ├── models.py               # 消息、内容、工具及其 wire 投影
+│   ├── stream.py               # 流操作、公开事件、条目身份与用量
+│   └── protocol.py             # 完整容器与类型化生成输入校验
 ├── profile/                    # 配置分层、声明分类、校验及实例快照
-├── stream/                     # 请求独立的累积状态、结果及关闭回调
+├── runtime/                    # 生成编排、客户端与响应流生命周期
+│   ├── llm.py                  # MyLLM / generate、客户端缓存、流编排
+│   ├── message_stream.py       # 公开异步流与关闭回调
+│   └── state.py                # 本次请求的块累积、事件与终态
 └── codec/
     ├── converter.py            # MyCodec，输入绑定与完整请求准备路由
     ├── base/
     │   ├── codec.py            # 管理实例组件和损失 adaptor，提供翻译入口
     │   ├── encoder.py          # 完整调用 → 已验证输入及中间协议
     │   ├── decoder.py          # 中间协议 → client / request / local
-    │   └── transport.py        # 官方 SDK 构造、执行及响应资源管理
+    │   └── transport.py        # SDK 执行契约及共用响应关闭辅助
     ├── shared/
-    │   ├── conversion.py       # 字段视图与转换辅助
+    │   ├── conversion.py       # 消息、媒体、工具转换及历史关联验证
     │   ├── options.py          # 请求选项、参数路径及优先级
     │   ├── output.py           # 原生与中间输出共用的能力过滤
     │   ├── stream.py           # 流操作、块身份及用量
-    │   └── transport.py        # 共享 Schema 规则、历史验证及流资源辅助
-    └── <protocol>/             # codec、transport、encoding、decoding、按需 utils
+    │   └── schema.py           # SDK 类型分析、Schema 计划缓存、过滤与验证
+    └── <protocol>/             # codec、transport、encoding、decoding 及按需共享模块
 ```
 
 | 组件 | 职责 |
@@ -58,8 +69,16 @@ MyLLM 的 Profile 解析从本实例 MyCodec 获取协议默认声明，后续�
 `BaseCodec` 同时管理 `BaseSemanticLossAdaptor`，支持值无法表达时在完整 draft 上执行 raise / ignore / hook。
 模型与边界详见[中间协议](protocol-middleware.md)。
 Encoder / Decoder 不创建 SDK 客户端，也不相互导入。官方类型与方法签名可用于静态 Schema 分析；
-实际 SDK 构造和调用只发生在 Transport。双向共用辅助放在本协议 utils 中。
+实际 SDK 构造和调用只发生在 Transport。双向共用辅助按职责放在协议根目录，
+例如 anthropic/content.py、ollama/schema.py；单个模块不额外套 utils 目录。
 包初始化文件只导出接口；公共执行逻辑不按具体协议名分支。
+
+目录按责任边界分组，不按方法数量拆分。中间协议只设三个实现模块；消息模型与 wire
+解析相邻，流模型与事件投影相邻，完整输入校验与容器相邻。MyLLM、MyCodec、各协议
+Encoder / Decoder 的完整调用流程仍集中在所属类中。初始化文件仅重导出；运行时内部
+直接导入定义模块。`from my_llm import ...` 和 `from my_llm.middleware import ...`
+继续提供同一组协议模型。顶层仅保留导出、版本与类型标记；
+基础能力在 basic，执行编排与流状态在 runtime。迁移后的内部路径不保留转发文件。
 
 ## 请求与返回路径
 
@@ -129,7 +148,7 @@ Anthropic 的开放 input_schema 再委派为应用数据，只复制完整 JSON
 TypedDict / Pydantic 只处理声明的结构字段；开放 dict / Any 中的工具参数、结果和 Schema 约束完整保留。
 Profile 显式声明的兼容叶字段按路径处理，未知字段不会通过缓存学习或透传。
 
-复用 shared/transport.py 的有界 LRU：字段、TypeAdapter、SDK 方法参数类型、编译计划、路径声明
+复用 shared/schema.py 的有界 LRU：字段、TypeAdapter、SDK 方法参数类型、编译计划、路径声明
 各最多 512 项。缓存键及闭包只保存类型和编译规则，不保存请求数据、Profile、客户端或上次 Union 分支。
 类型分析命中后，当前请求仍逐值选择分支、过滤和验证；输入和输出的验证分别保证两个协议边界。
 详见 [Schema 过滤计划缓存](schema-filter-cache.md)。

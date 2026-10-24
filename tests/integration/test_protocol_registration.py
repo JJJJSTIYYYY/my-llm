@@ -24,9 +24,9 @@ from my_llm import (
     ProviderProfile,
     UnsupportedProviderError,
     omit,
-    registry,
     resolve_profiles,
 )
+from my_llm.basic import protocols
 from my_llm.codec.shared.conversion import (
     decode_functions,
     encode_functions,
@@ -34,7 +34,7 @@ from my_llm.codec.shared.conversion import (
     text,
 )
 from my_llm.codec.shared.stream import BlockRef, batch, events, metadata
-from my_llm.stream._state import StreamState
+from my_llm.runtime.state import StreamState
 from tests.helpers.profiles import config
 from tests.helpers.protocols import PROTOCOLS, stream_events
 
@@ -238,7 +238,7 @@ class Codec(BaseCodec):
 
 @pytest.fixture
 def registered(monkeypatch):
-    monkeypatch.setattr(registry, "_CODECS", registry.registered_codec_factories())
+    monkeypatch.setattr(protocols, "_CODECS", protocols.registered_codec_factories())
     MyCodec.register(Codec)
 
 
@@ -298,16 +298,16 @@ async def test_new_protocol_reuses_caches_with_unhashable_annotations(registered
 
 
 def test_new_protocol_queries_filter_plans_once_per_batch(registered, monkeypatch):
-    from my_llm.codec.shared import transport
+    from my_llm.codec.shared import schema
 
     calls = []
-    original = transport._SchemaKey.__init__
+    original = schema._SchemaKey.__init__
 
     def counted(self, schema):
         calls.append(schema)
         original(self, schema)
 
-    monkeypatch.setattr(transport._SchemaKey, "__init__", counted)
+    monkeypatch.setattr(schema._SchemaKey, "__init__", counted)
     provider, model = profiles()
     profile = resolve_profiles(provider, model)
     messages = [{"speaker": "user", "body": str(index), "vendor": True} for index in range(100)]
@@ -328,7 +328,7 @@ def test_builtin_fixture_protocols_cover_all_registered_protocols():
 
 
 def test_registration_adds_defaults_and_preserves_existing_converter_snapshot(monkeypatch):
-    monkeypatch.setattr(registry, "_CODECS", registry.registered_codec_factories())
+    monkeypatch.setattr(protocols, "_CODECS", protocols.registered_codec_factories())
     existing = MyCodec()
     MyCodec.register(Codec)
     assert PROTOCOL not in existing.codecs
@@ -377,7 +377,7 @@ def test_registration_requires_a_factory_returning_codecs():
 
 
 def test_registration_allows_instance_state_and_keeps_components_independent(monkeypatch):
-    monkeypatch.setattr(registry, "_CODECS", registry.registered_codec_factories())
+    monkeypatch.setattr(protocols, "_CODECS", protocols.registered_codec_factories())
 
     class StatefulEncoder(Encoder):
         def __init__(self):
@@ -403,7 +403,7 @@ def test_registration_allows_instance_state_and_keeps_components_independent(mon
 
 @pytest.mark.parametrize("component", ["codec", "encoder", "decoder", "transport"])
 def test_registration_rejects_factories_sharing_components(monkeypatch, component):
-    monkeypatch.setattr(registry, "_CODECS", registry.registered_codec_factories())
+    monkeypatch.setattr(protocols, "_CODECS", protocols.registered_codec_factories())
     shared = Codec()
 
     def factory():

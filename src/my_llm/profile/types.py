@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, fields
 from functools import lru_cache, wraps
 from typing import Any, Generic, Literal, TypeVar
 
-from my_llm.exceptions import ConfigurationError
+from my_llm.basic.exceptions import ConfigurationError
 from my_llm.profile.paths import path_keys
 
 _T = TypeVar("_T")

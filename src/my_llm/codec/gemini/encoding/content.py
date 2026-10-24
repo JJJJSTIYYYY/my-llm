@@ -3,9 +3,10 @@
 import json
 from base64 import b64encode
 
-from my_llm.codec.shared.conversion import plain, select, text_result
-from my_llm.exceptions import MessageValidationError
-from my_llm.semantic_loss import originated
+from my_llm.basic.data import plain
+from my_llm.basic.exceptions import MessageValidationError
+from my_llm.basic.semantic_loss import originated
+from my_llm.codec.shared.conversion import select, text_result
 
 TYPES = {
     name.upper(): name

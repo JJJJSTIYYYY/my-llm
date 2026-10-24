@@ -4,8 +4,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-from my_llm.codec.shared.conversion import _MISSING, plain, read
-from my_llm.exceptions import ConfigurationError, UnsupportedCapabilityError
+from my_llm.basic.data import _MISSING, plain, read
+from my_llm.basic.exceptions import ConfigurationError, UnsupportedCapabilityError
 from my_llm.profile.configuration import EFFORTS, merge_dicts
 from my_llm.profile.paths import path_keys
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens

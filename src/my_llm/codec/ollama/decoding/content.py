@@ -1,7 +1,7 @@
 """Render supported Ollama content and report media and opaque reasoning loss."""
 
+from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.shared.conversion import select, select_present, text_result
-from my_llm.semantic_loss import report_loss
 
 
 def foreign_block(block: dict) -> dict | None:

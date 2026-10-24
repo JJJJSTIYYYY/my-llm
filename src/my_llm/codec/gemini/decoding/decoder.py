@@ -5,10 +5,12 @@ from typing import Any
 from google.genai import types
 from google.genai.models import AsyncModels
 
+from my_llm.basic.data import capture
+from my_llm.basic.exceptions import ConfigurationError, UnsupportedCapabilityError
+from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.gemini.decoding.content import decode_part
 from my_llm.codec.shared.conversion import (
-    capture,
     coalesce_messages,
     decode_functions,
     select,
@@ -16,11 +18,9 @@ from my_llm.codec.shared.conversion import (
     source_protocol,
 )
 from my_llm.codec.shared.options import PreparedOptions, validate_request_options
+from my_llm.codec.shared.schema import parameter_types
 from my_llm.codec.shared.stream import counts, events
-from my_llm.codec.shared.transport import parameter_types
-from my_llm.exceptions import ConfigurationError, UnsupportedCapabilityError
 from my_llm.profile.resolution import ResolvedProfile, client_parameters, validate_max_tokens
-from my_llm.semantic_loss import report_loss
 
 PROTECTED = {
     "model",

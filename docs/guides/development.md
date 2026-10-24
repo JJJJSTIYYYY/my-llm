@@ -11,18 +11,22 @@
 
 - codec/base 的 codec.py、encoder.py、decoder.py、transport.py 定义抽象契约，模块名与五种原生实现一致。
 - 五种协议各自维护 encoding 和 decoding；转换方法直接落在 encoder.py / decoder.py。
-  内容、字段及工具翻译辅助放在本方向的 content.py，双向共用的辅助放在本协议的 utils/；生成参数映射、请求结构、验证与过滤放在 Decoder；官方 SDK 执行及资源关闭放在协议根目录的 transport.py。
+  内容、字段及工具翻译辅助放在本方向的 content.py，双向共用的辅助直接放在本协议根目录，以 content.py、schema.py 等职责命名；生成参数映射、请求结构、验证与过滤放在 Decoder；官方 SDK 执行及资源关闭放在协议根目录的 transport.py。
   BaseCodec 声明 ProtocolDefaults 并组合 encoder / decoder / transport，转换与执行组件互不导入。
   仅在存在对应职责时保留辅助模块，不为每个转换方法或短小函数建立分组包。
-- codec/shared 保存不选择厂商的公共机制；conversion.py 负责 SDK 值读取及媒体 URI 转换，
+- middleware 只设 models.py、stream.py、protocol.py 三个实现模块，分别组织消息内容与工具、流事件与用量、完整输入容器与校验；相关模型和 wire 投影放在一起。
+- basic 集中保存共用基础能力：data.py 负责数据捕获与 SDK 字段只读视图，exceptions.py 定义异常，
+  semantic_loss.py 管理损失收集与策略，protocols.py 合并协议注册、工厂快照和可选 SDK 发现。
+- codec/shared 保存不选择厂商的公共机制；conversion.py 负责消息、媒体、工具转换与历史关联验证，
+  schema.py 集中保存类型分析、编译计划与验证；响应关闭辅助随执行契约放在 codec/base/transport.py；
   options.py 负责配置路径、选项准备与校验。Decoder 每次解析一次 PreparedOptions，并输出 client / request / local 字典；连接参数在构造时准备。
 - profile/configuration.py 保存配置类型、覆盖字段与字典合并；resolution.py 负责解析、快照及校验。
-  协议默认值保存在各 Codec.defaults；profile/defaults.py 只从 registry.py 复制已注册声明。
-- stream 保存消息流生命周期与每次请求的状态；invoke.py 负责生成调用编排与 SDK 客户端复用。
+  协议默认值保存在各 Codec.defaults；profile/defaults.py 只从 basic/protocols.py 复制已注册声明。
+- runtime 的 llm.py 负责生成编排与 SDK 客户端复用，message_stream.py 和 state.py 保存响应流生命周期与请求状态。
   实例通过异步上下文或 aclose 关闭客户端；响应流按请求清理，见[生命周期设计](../design/client-lifecycle.md)。
 - __init__.py 只保留说明、导入与 __all__，不放业务代码。
 
-新增模块应以职责命名；同协议双向共用辅助放在其 utils/ 中并按内容职责命名。
+新增模块应以职责命名；同协议双向共用辅助放在协议根目录。只有职责确实形成多个模块时才增加目录，不为短小辅助函数单独建包。
 新增协议依据[接入协议指南](adding-protocol.md)实现四个基类的契约并调用 MyCodec.register(codec)。
 Protocol 使用 str，新增协议不修改公共入口、枚举、默认值表或公共编排。
 Decoder._messages / _tools 与公开 messages / tools 均返回普通 list，不添加恢复分组。

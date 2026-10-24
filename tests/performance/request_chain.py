@@ -19,7 +19,7 @@ from statistics import median
 from time import perf_counter_ns
 
 from my_llm import MyLLM
-from my_llm.codec.shared import transport as schema
+from my_llm.codec.shared import schema
 from tests.helpers.protocols import PROTOCOLS
 from tests.performance.fingerprint import harness, source
 from tests.performance.runner import benchmark, measure

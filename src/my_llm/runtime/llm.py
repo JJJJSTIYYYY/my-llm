@@ -8,18 +8,19 @@ from copy import deepcopy
 from dataclasses import replace
 from typing import Any
 
+from my_llm.basic.data import _MISSING
+from my_llm.basic.exceptions import ConfigurationError, StreamError
+from my_llm.basic.semantic_loss import LossPolicy, SemanticLossHook
 from my_llm.codec.converter import MyCodec
-from my_llm.codec.shared.conversion import _MISSING
-from my_llm.exceptions import ConfigurationError, StreamError
-from my_llm.middleware import Message, MessageEvent, Usage
+from my_llm.middleware.models import Message
+from my_llm.middleware.stream import MessageEvent, Usage
 from my_llm.profile.configuration import Protocol, ReasoningEffort
 from my_llm.profile.model_profile import ModelProfile
 from my_llm.profile.provider_profile import ProviderProfile
 from my_llm.profile.resolution import ResolvedProfile, resolve_profiles
 from my_llm.profile.types import Attribute, omit
-from my_llm.semantic_loss import LossPolicy, SemanticLossHook
-from my_llm.stream._state import StreamState
-from my_llm.stream.message_stream import MessageStream
+from my_llm.runtime.message_stream import MessageStream
+from my_llm.runtime.state import StreamState
 
 
 class MyLLM:

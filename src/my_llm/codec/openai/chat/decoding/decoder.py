@@ -5,6 +5,13 @@ from typing import Any
 from openai.resources.chat.completions import AsyncCompletions
 from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
 
+from my_llm.basic.exceptions import (
+    ConfigurationError,
+    MessageValidationError,
+    ResponseFailedError,
+    UnsupportedCapabilityError,
+)
+from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.openai.chat.decoding.content import (
     chat_call,
@@ -23,17 +30,10 @@ from my_llm.codec.shared.options import (
     PreparedOptions,
     validate_request_options,
 )
+from my_llm.codec.shared.schema import parameter_types
 from my_llm.codec.shared.stream import counts, events
-from my_llm.codec.shared.transport import parameter_types
-from my_llm.exceptions import (
-    ConfigurationError,
-    MessageValidationError,
-    ResponseFailedError,
-    UnsupportedCapabilityError,
-)
 from my_llm.profile.configuration import merge_dicts
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
-from my_llm.semantic_loss import report_loss
 
 PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response_id"}
 

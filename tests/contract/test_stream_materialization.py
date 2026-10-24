@@ -6,8 +6,8 @@ import pytest
 
 from my_llm import MessageValidationError, MyCodec
 from my_llm.codec.shared.stream import BlockRef
-from my_llm.stream import _state
-from my_llm.stream._state import StreamState
+from my_llm.runtime import state as runtime_state
+from my_llm.runtime.state import StreamState
 from tests.helpers.protocols import PROTOCOLS
 
 
@@ -42,14 +42,14 @@ def complete_tool_stream():
 
 
 def test_completed_blocks_and_arguments_are_materialized_once(monkeypatch):
-    parse = _state.arguments
+    parse = runtime_state.arguments
     parsed = []
 
     def counted(value):
         parsed.append(value)
         return parse(value)
 
-    monkeypatch.setattr(_state, "arguments", counted)
+    monkeypatch.setattr(runtime_state, "arguments", counted)
     state = StreamState("demo")
     live = state.feed(complete_tool_stream())
     closed_text = next(event["block"] for event in live if event["type"] == "block_stop")

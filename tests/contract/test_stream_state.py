@@ -11,7 +11,7 @@ import pytest
 
 from my_llm import IncompleteStreamError, MessageValidationError, MyCodec, SemanticLossError
 from my_llm.codec.shared.stream import metadata
-from my_llm.stream._state import StreamState
+from my_llm.runtime.state import StreamState
 from tests.helpers.protocols import PROTOCOLS, chat_event, response_completed, stream_events
 from tests.helpers.sdk import EVENT_TYPES, assert_native, assert_output_native
 from tests.helpers.streaming import render

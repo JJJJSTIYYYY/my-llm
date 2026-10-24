@@ -1,6 +1,6 @@
 # Schema 过滤计划：缓存中保存的对象与运行过程
 
-本文对应当前 [Schema 过滤实现](../../src/my_llm/codec/shared/transport.py)。
+本文对应当前 [Schema 过滤实现](../../src/my_llm/codec/shared/schema.py)。
 这里的“预编译”是把 SDK 的 Python 类型注解转换成可直接调用的 Python 函数图，
 在首次使用该类型时生成，随后重复执行。
 
@@ -31,7 +31,7 @@
 
 ## 2. 过滤计划相关的三份缓存
 
-这些缓存都是 [transport.py](../../src/my_llm/codec/shared/transport.py) 中的模块级函数缓存，
+这些缓存都是 [schema.py](../../src/my_llm/codec/shared/schema.py) 中的模块级函数缓存，
 由同一进程内的不同 MyLLM / Codec 实例共享。
 
 | 缓存函数 | 键 | 返回并保留的值 |
@@ -331,7 +331,7 @@ Anthropic 的开放 `input_schema` 同样委派后一次捕获，避免先按 SD
 Encoder / Decoder 对每批消息和工具只解析一次计划并复用其 apply / project 函数，
 不会为同一批中的每条数据重复创建缓存键。每条消息仍独立过滤、验证和执行必要的所有权复制。
 
-源码入口见 [generate](../../src/my_llm/invoke.py)、
+源码入口见 [generate](../../src/my_llm/runtime/llm.py)、
 [输入验证](../../src/my_llm/codec/base/encoder.py)、
 [请求边界](../../src/my_llm/codec/base/decoder.py)和
 [Codec 固定编排](../../src/my_llm/codec/base/codec.py)。
@@ -397,7 +397,7 @@ Encoder 读取 SDK 模型时，`_ModelView` 只按请求的字段名读取属性
 from typing import Any, Literal, NotRequired
 from typing_extensions import TypedDict
 
-from my_llm.codec.shared import transport
+from my_llm.codec.shared import schema
 
 
 class TextPart(TypedDict):
@@ -431,12 +431,12 @@ second = {
     "metadata": {"request_id": "R2", "new_key": {"items": [1, 2]}},
 }
 
-first_output = transport.supported(first, Message)
-first_info = transport._compiled_plan.cache_info()
-second_output = transport.supported(second, Message)
-second_info = transport._compiled_plan.cache_info()
-readonly = transport.projected(second, Message)
-plan = transport._plan(Message)
+first_output = schema.supported(first, Message)
+first_info = schema._compiled_plan.cache_info()
+second_output = schema.supported(second, Message)
+second_info = schema._compiled_plan.cache_info()
+readonly = schema.projected(second, Message)
+plan = schema._plan(Message)
 
 assert "vendor_extra" not in first_output
 assert first_output["content"] == "北京天气怎么样？"
@@ -444,13 +444,13 @@ assert second_output["content"][1]["type"] == "image"
 assert second_output["metadata"] == second["metadata"]
 assert second_output["metadata"] is not second["metadata"]
 assert readonly["metadata"] is second["metadata"]
-assert transport._plan(Message) is plan
+assert schema._plan(Message) is plan
 
 print("first:", first_output)
 print("second:", second_output)
 print("after first:", first_info)
 print("after second:", second_info)
-print("same plan:", transport._plan(Message) is plan)
+print("same plan:", schema._plan(Message) is plan)
 print("root callbacks:", plan.apply.__name__, plan.project.__name__, plan.score.__name__)
 ```
 
@@ -469,7 +469,7 @@ root callbacks: structured_copy structured_projection structured_score
 
 | 要确认的事实 | 实现或证据 |
 | --- | --- |
-| 缓存键和值的实际字段 | [transport.py](../../src/my_llm/codec/shared/transport.py) 的 `_SchemaKey`、`_FilterPlan`、`_compiled_plan`。 |
+| 缓存键和值的实际字段 | [schema.py](../../src/my_llm/codec/shared/schema.py) 的 `_SchemaKey`、`_FilterPlan`、`_compiled_plan`。 |
 | 命中后不重复分析字段类型 | [计划测试](../../tests/unit/test_schema_filter_plans.py) 把类型分析函数替换为失败函数，继续执行已缓存计划。 |
 | Union 顺序与递归类型保持正确 | 同一测试文件覆盖直接/嵌套 Union 同分顺序、Annotated 与递归模型。 |
 | Literal 索引只剪枝，不改变候选选择 | 同一测试文件覆盖共享判别值、无限制候选、多判别字段、SDK 模型及不合法判别值。 |

@@ -6,7 +6,7 @@ Official SDK transport and HTTP errors retain their original types.
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from my_llm.semantic_loss import SemanticLossContext, SemanticLossGroup
+    from my_llm.basic.semantic_loss import SemanticLossContext, SemanticLossGroup
 
 
 class MyLLMError(Exception):

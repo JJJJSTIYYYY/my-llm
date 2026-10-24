@@ -14,7 +14,7 @@ from my_llm import (
     SemanticLossError,
 )
 from my_llm.codec.gemini.encoding.content import json_schema
-from my_llm.stream._state import StreamState
+from my_llm.runtime.state import StreamState
 from tests.helpers.protocols import PROTOCOLS, response_completed, stream_events
 from tests.helpers.sdk import (
     EVENT_TYPES,

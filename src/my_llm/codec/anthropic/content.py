@@ -1,7 +1,7 @@
 """Select the fixed supported Anthropic content fields."""
 
+from my_llm.basic.semantic_loss import originated
 from my_llm.codec.shared.conversion import select, tool_result_content
-from my_llm.semantic_loss import originated
 
 FIELDS = {
     "text": ("text",),

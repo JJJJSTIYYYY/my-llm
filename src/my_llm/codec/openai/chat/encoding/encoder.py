@@ -4,6 +4,8 @@ from typing import Any
 
 from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
 
+from my_llm.basic.exceptions import ConfigurationError, ResponseFailedError
+from my_llm.basic.semantic_loss import originated
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.openai.chat.encoding.content import (
     encode_content,
@@ -16,9 +18,7 @@ from my_llm.codec.shared.conversion import (
     tool_result_content,
 )
 from my_llm.codec.shared.stream import BlockRef, encode_batch, metadata, record
-from my_llm.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
-from my_llm.semantic_loss import originated
 
 PROTOCOL = "openai_chat"
 TOOL_RESULT_PARTS = frozenset(("text", "image_url", "input_audio", "file", "refusal"))

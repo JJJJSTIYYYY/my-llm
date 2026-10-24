@@ -3,19 +3,14 @@
 from abc import ABC, abstractmethod
 from typing import Any, final
 
-from my_llm.codec.shared.conversion import dictionaries, dictionary_views, match_all
+from my_llm.basic.data import dictionaries, dictionary_views
+from my_llm.basic.exceptions import MessageValidationError
+from my_llm.codec.shared.conversion import match_all
 from my_llm.codec.shared.options import path_value
-from my_llm.codec.shared.transport import validate_values
-from my_llm.exceptions import MessageValidationError
-from my_llm.middleware import (
-    FunctionTool,
-    Message,
-    ProtocolMiddleWare,
-    StreamBatch,
-    messages_from_wire,
-    stream_from_wire,
-    tools_from_wire,
-)
+from my_llm.codec.shared.schema import validate_values
+from my_llm.middleware.models import FunctionTool, Message, messages_from_wire, tools_from_wire
+from my_llm.middleware.protocol import ProtocolMiddleWare
+from my_llm.middleware.stream import StreamBatch, stream_from_wire
 from my_llm.profile.resolution import ResolvedProfile
 from my_llm.profile.types import Omit
 

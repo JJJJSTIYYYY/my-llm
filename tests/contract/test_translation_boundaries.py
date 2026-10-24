@@ -93,7 +93,7 @@ def test_unknown_fields_do_not_leak_through_any_protocol_pair(source, target, ki
     class FixedUUID:
         hex = "deterministic"
 
-    monkeypatch.setattr("my_llm.stream._state.uuid4", FixedUUID)
+    monkeypatch.setattr("my_llm.runtime.state.uuid4", FixedUUID)
     codec = MyCodec()
     clean = {"messages": history, "tools": tools, "chunks": stream_events}[kind](source)
     incoming = add_unknown_fields(clean)

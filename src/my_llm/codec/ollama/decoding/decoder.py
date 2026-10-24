@@ -5,6 +5,9 @@ from typing import Any
 from ollama import Image, Message, Options, Tool
 from pydantic import ValidationError
 
+from my_llm.basic.data import capture, read
+from my_llm.basic.exceptions import ConfigurationError, UnsupportedCapabilityError
+from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.ollama.decoding.content import (
     chat_call,
@@ -12,21 +15,17 @@ from my_llm.codec.ollama.decoding.content import (
     function_tool,
     tool_text,
 )
-from my_llm.codec.ollama.utils.schema import REQUEST_SCHEMA, validate_ollama_values
+from my_llm.codec.ollama.schema import REQUEST_SCHEMA, validate_ollama_values
 from my_llm.codec.shared.conversion import (
-    capture,
     coalesce_messages,
     decode_functions,
-    read,
     source_protocol,
     text,
 )
 from my_llm.codec.shared.options import PreparedOptions, validate_request_options
 from my_llm.codec.shared.stream import counts, events
-from my_llm.exceptions import ConfigurationError, UnsupportedCapabilityError
 from my_llm.profile.configuration import merge_dicts
 from my_llm.profile.resolution import ResolvedProfile, client_parameters
-from my_llm.semantic_loss import report_loss
 
 PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response_id"}
 

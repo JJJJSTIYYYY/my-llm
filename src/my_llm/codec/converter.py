@@ -3,35 +3,38 @@
 from collections.abc import Callable, MutableMapping
 from typing import Any
 
-from my_llm._optional import BUILTIN_CODECS, builtin_codec, require_sdk, sdk_available
-from my_llm.codec.base.codec import BaseCodec
-from my_llm.codec.base.decoder import BaseDecoder
-from my_llm.codec.base.encoder import BaseEncoder
-from my_llm.codec.base.transport import BaseTransport
-from my_llm.codec.shared.conversion import dictionary_views
-from my_llm.codec.shared.output import output_chunks, output_messages
-from my_llm.codec.shared.stream import is_batch
-from my_llm.exceptions import ConfigurationError, MessageValidationError, UnsupportedProviderError
-from my_llm.middleware import (
-    FunctionTool,
-    Message,
-    MessageEvent,
-    ProtocolMiddleWare,
-    generation_input,
-    messages_from_wire,
-    tools_from_wire,
-    wire_values,
+from my_llm.basic.data import dictionary_views
+from my_llm.basic.exceptions import (
+    ConfigurationError,
+    MessageValidationError,
+    UnsupportedProviderError,
 )
-from my_llm.profile.configuration import Protocol, ProtocolDefaults
-from my_llm.profile.resolution import ResolvedProfile
-from my_llm.profile.types import Omit
-from my_llm.registry import register_codec, registered_codec_factories
-from my_llm.semantic_loss import (
+from my_llm.basic.protocols import (
+    BUILTIN_CODECS,
+    builtin_codec,
+    register_codec,
+    registered_codec_factories,
+    require_sdk,
+    sdk_available,
+)
+from my_llm.basic.semantic_loss import (
     BaseSemanticLossAdaptor,
     LossPolicy,
     SemanticLossContext,
     SemanticLossHook,
 )
+from my_llm.codec.base.codec import BaseCodec
+from my_llm.codec.base.decoder import BaseDecoder
+from my_llm.codec.base.encoder import BaseEncoder
+from my_llm.codec.base.transport import BaseTransport
+from my_llm.codec.shared.output import output_chunks, output_messages
+from my_llm.codec.shared.stream import is_batch
+from my_llm.middleware.models import FunctionTool, Message, messages_from_wire, tools_from_wire
+from my_llm.middleware.protocol import ProtocolMiddleWare, generation_input, wire_values
+from my_llm.middleware.stream import MessageEvent
+from my_llm.profile.configuration import Protocol, ProtocolDefaults
+from my_llm.profile.resolution import ResolvedProfile
+from my_llm.profile.types import Omit
 
 
 class _CodecInstances(MutableMapping[str, BaseCodec]):
@@ -392,7 +395,7 @@ class MyCodec:
         if chunks and all(is_batch(chunk) for chunk in chunks):
             # Complete offline streams use the same request-owned accumulation
             # as live calls, regardless of their source and target protocols.
-            from my_llm.stream._state import StreamState
+            from my_llm.runtime.state import StreamState
 
             state = StreamState(parameters.get("model", profile.model if profile else ""))
             converted_chunks = state.feed(chunks)

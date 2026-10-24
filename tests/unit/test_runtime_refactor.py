@@ -13,10 +13,10 @@ from my_llm import (
     ProviderProfile,
     SemanticLossError,
 )
-from my_llm.middleware import Usage
-from my_llm.registry import codec_for
-from my_llm.semantic_loss import SemanticLossContext, collect_losses, originated, report_loss
-from my_llm.stream._state import StreamState
+from my_llm.basic.protocols import codec_for
+from my_llm.basic.semantic_loss import SemanticLossContext, collect_losses, originated, report_loss
+from my_llm.middleware.stream import Usage
+from my_llm.runtime.state import StreamState
 from tests.helpers.protocols import PROTOCOLS, chat_event
 from tests.helpers.transport import FakeClient
 

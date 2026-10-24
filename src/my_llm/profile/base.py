@@ -7,7 +7,7 @@ from functools import lru_cache
 from types import UnionType
 from typing import Any, TypeAliasType, Union, get_args, get_origin, get_type_hints
 
-from my_llm.exceptions import ConfigurationError
+from my_llm.basic.exceptions import ConfigurationError
 from my_llm.profile.types import Attribute, Config, Omit, Parameter
 
 

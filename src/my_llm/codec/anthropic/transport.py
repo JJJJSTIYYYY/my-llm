@@ -2,8 +2,7 @@
 
 from anthropic import AsyncAnthropic
 
-from my_llm.codec.base.transport import BaseTransport
-from my_llm.codec.shared.transport import owned_stream
+from my_llm.codec.base.transport import BaseTransport, owned_stream
 
 
 class AnthropicTransport(BaseTransport):

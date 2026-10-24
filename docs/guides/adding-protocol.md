@@ -7,7 +7,7 @@ Transport 只构造／调用 SDK、关闭客户端及本次响应。四个基类
 ## 目录与实例生命周期
 
 协议包包含 codec.py、transport.py、encoding/encoder.py、decoding/decoder.py；内容辅助放在各方向 content.py，
-双向共用规则按需放在 utils/。例如 Ollama 的公开 base64 Image 验证和 SDK 方法类型分析放在 utils/schema.py。
+双向共用规则按职责直接放在协议根目录。例如 Ollama 的公开 base64 Image 验证和 SDK 方法类型分析放在 schema.py，不再为单个模块建立 utils/。
 注册工厂每次创建独立 codec 与组件，允许实例状态；不能共享 adaptor 或可变组件。初始化文件只导出接口。
 不导入其他协议实现，也不让 Encoder / Decoder 相互导入或依赖 Transport。
 官方 SDK 类型和方法签名可用于静态 Schema 分析；SDK 客户端创建和调用只能出现在 Transport。
@@ -74,7 +74,7 @@ def read_text_delta(encoder, event, profile):
     return encoder.parameter_value(event, profile, "content", "$.text")
 ```
 
-Schema 类型计划继续复用 shared/transport.py 的有界 LRU，只保存类型及编译规则。
+Schema 类型计划继续复用 shared/schema.py 的有界 LRU，只保存类型及编译规则。
 输入验证用只读 projected，最终需要独立可变数据的过滤用 supported；每份请求仍单独验证。
 JSON Schema 的应用键不能作为协议字段删除。若先委派开放叶，协议钩子必须随后建立独立副本。
 
@@ -102,7 +102,7 @@ Parameter[T] | Omit | None，分支配置声明 Config[T] | Omit | None。
 解析器自动发现继承字段并检查声明，不需要路径与默认值配对，也不需要中央参数表。
 自定义 Config 的含义由协议组件实现；所有请求 scope 的 input 参数路径和默认值由 BaseDecoder 自动应用。
 自定义 output 参数只能映射为现有中间态语义，不能扩大固定支持集合。
-支持字段无法表达时调用 my_llm.semantic_loss.report_loss(value, reason)，继续完成 draft；
+支持字段无法表达时调用 my_llm.basic.semantic_loss.report_loss(value, reason)，继续完成 draft；
 BaseDecoder 聚合损失，BaseCodec 统一执行策略，不在 encoder 报 SemanticLossError。
 SDK 根参数必须符合 SDK 调用签名，非标准字段使用 SDK 正式提供的 extra_body 等扩展入口。
 
@@ -176,7 +176,7 @@ MyCodec / MyLLM 实例保留创建时的注册快照；注册新协议后需创�
 - conversion.encode_functions / decode_functions 管理工具声明；stream 管理原生事件操作与用量计数。
 - 流控制数据只保留中间协议明确声明的 id、模型、终止与回放分组身份；不能通过 metadata 钩子扩展用户 metadata 支持。
 - options 提供参数路径操作与生成选项；BaseEncoder / BaseDecoder 固定参数读取和请求应用流程，
-  shared/transport 提供 Codec 共用的 Schema 规则和历史验证，以及 Transport 使用的响应关闭辅助。
+  shared/schema 提供 Codec 共用的 Schema 规则；shared/conversion 验证历史关联；base/transport 集中保存执行契约与共用响应关闭辅助。
 跨协议来回翻译不保证无损。不能把其他协议的密文解释为本协议的签名，也不通过隐藏记录恢复跨协议无法表达的信息。
 标准签名与密文必须在对应协议实现中明确处理。详见[翻译字段边界](../design/translation-boundaries.md)。
 

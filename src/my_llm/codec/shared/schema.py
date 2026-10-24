@@ -1,11 +1,6 @@
-"""Codec schema plans/history validation and Transport response ownership.
+"""Bounded type-only schema plans, SDK contracts and payload validation."""
 
-Only type analysis and compiled rules are shared in bounded process caches.
-Encoder validates borrowed inputs; Decoder filters owned SDK request leaves.
-"""
-
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager
+from collections.abc import Iterable, Mapping, Sequence
 from functools import lru_cache
 from inspect import Parameter, signature
 from types import UnionType
@@ -23,8 +18,8 @@ from typing import (
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from my_llm.codec.shared.conversion import capture, dictionary_views
-from my_llm.exceptions import MessageValidationError, UnsupportedCapabilityError
+from my_llm.basic.data import capture
+from my_llm.basic.exceptions import MessageValidationError, UnsupportedCapabilityError
 
 
 @lru_cache(maxsize=512)
@@ -389,52 +384,6 @@ def path_item(value, keys):
             if value is _MISSING:
                 return _MISSING
     return value
-
-
-def validate_history(messages: list[dict], *, allow_external_calls: bool = False) -> None:
-    if not messages:
-        raise MessageValidationError("messages must be non-empty")
-    calls = set()
-    used = set()
-    for message in dictionary_views(messages):
-        if message.get("role") not in ("system", "developer", "user", "assistant"):
-            raise MessageValidationError("invalid message role")
-        for block in message.get("content", []):
-            if block.get("type") == "tool_use":
-                call_id = block.get("id")
-                if not isinstance(call_id, str) or not call_id:
-                    raise MessageValidationError("tool call requires an ID")
-                if call_id in calls or call_id in used:
-                    raise MessageValidationError("duplicate tool call ID")
-                calls.add(call_id)
-            elif block.get("type") == "tool_result":
-                call_id = block.get("tool_use_id")
-                if not isinstance(call_id, str) or not call_id:
-                    raise MessageValidationError("tool result requires a matching call ID")
-                if call_id in used:
-                    raise MessageValidationError("duplicate tool result")
-                # Responses may reference calls stored in server-side history.
-                # Duplicate results are still invalid in that mode.
-                if call_id not in calls and not allow_external_calls:
-                    raise MessageValidationError("tool result refers to an unknown call ID")
-                used.add(call_id)
-    if calls - used:
-        raise MessageValidationError(
-            "tool calls require exactly one result before generating again"
-        )
-
-
-@asynccontextmanager
-async def owned_stream(
-    create: Callable[[], Awaitable[Any]],
-    *,
-    close_stream: str = "close",
-) -> AsyncIterator[Any]:
-    """Close one response stream without closing its borrowed SDK client."""
-    async with AsyncExitStack() as resources:
-        upstream = await create()
-        resources.push_async_callback(getattr(upstream, close_stream))
-        yield upstream
 
 
 def validate_values(values: list, schema: Any, *, filtered: bool = False) -> None:

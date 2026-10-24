@@ -22,8 +22,8 @@ from my_llm import (
     ProviderProfile,
     SemanticLossError,
 )
-from my_llm.middleware import Usage
-from my_llm.stream._state import StreamState
+from my_llm.middleware.stream import Usage
+from my_llm.runtime.state import StreamState
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import PROTOCOLS, history, stream_events, tools
 from tests.helpers.transport import sse

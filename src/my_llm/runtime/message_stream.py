@@ -6,8 +6,8 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack
 from typing import Any
 
-from my_llm.middleware import MessageEvent
-from my_llm.stream._state import StreamState
+from my_llm.middleware.stream import MessageEvent
+from my_llm.runtime.state import StreamState
 
 
 class MessageStream(AsyncIterator[dict[str, Any] | MessageEvent]):

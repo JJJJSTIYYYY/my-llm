@@ -1,7 +1,7 @@
 """Render supported Gemini parts without inventing thought signatures."""
 
+from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.shared.conversion import text_result
-from my_llm.semantic_loss import report_loss
 
 
 def decode_part(block: dict, *, foreign: bool = False) -> dict | None:

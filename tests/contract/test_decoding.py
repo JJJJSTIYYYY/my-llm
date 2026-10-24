@@ -15,7 +15,7 @@ from my_llm import (
     ResponseIncompleteError,
     SemanticLossError,
 )
-from my_llm.stream._state import StreamState
+from my_llm.runtime.state import StreamState
 from tests.helpers.protocols import PROTOCOLS, stream_events
 from tests.helpers.streaming import render
 

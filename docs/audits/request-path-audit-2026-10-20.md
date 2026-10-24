@@ -32,7 +32,7 @@ MyLLM.generate
       → 响应资源关闭 → 最终结果
 ```
 
-入口证据：[MyLLM.generate 与 _stream](../../src/my_llm/invoke.py)、
+入口证据：[MyLLM.generate 与 _stream](../../src/my_llm/runtime/llm.py)、
 [BaseCodec.request](../../src/my_llm/codec/base/codec.py)、
 [BaseDecoder.request](../../src/my_llm/codec/base/decoder.py)、
 [BaseTransport.request](../../src/my_llm/codec/base/transport.py)。

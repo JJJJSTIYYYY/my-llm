@@ -4,8 +4,8 @@ import asyncio
 
 import pytest
 
-from my_llm.stream._state import StreamState
-from my_llm.stream.message_stream import MessageStream
+from my_llm.runtime.message_stream import MessageStream
+from my_llm.runtime.state import StreamState
 
 
 @pytest.mark.parametrize("consume", [False, True])

@@ -261,8 +261,8 @@ Chat / Ollama 可见思考转入这一目标也有相同结构问题。
 
 ## A11：终态后的输入未受约束
 
-位置：[StreamState.feed](../../src/my_llm/stream/_state.py#L100)、
-[_reason](../../src/my_llm/stream/_state.py#L125)。
+位置：[StreamState.feed](../../src/my_llm/runtime/state.py#L100)、
+[_reason](../../src/my_llm/runtime/state.py#L125)。
 
 [本项目流状态约束](../design/stream-state.md)要求重复完成或完成后继续输入报错。
 目前只有调用 `finish()` 后的 `finished` 会拦截后续输入；收到上游终态设置

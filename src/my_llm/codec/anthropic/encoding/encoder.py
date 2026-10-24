@@ -4,18 +4,14 @@ from typing import Any
 
 from anthropic.types import MessageParam, ToolParam
 
-from my_llm.codec.anthropic.utils.content import native_block
+from my_llm.basic.data import _MISSING, dictionary_views
+from my_llm.basic.exceptions import MessageValidationError, ResponseFailedError
+from my_llm.basic.semantic_loss import originated
+from my_llm.codec.anthropic.content import native_block
 from my_llm.codec.base.encoder import BaseEncoder
-from my_llm.codec.shared.conversion import (
-    _MISSING,
-    dictionary_views,
-    mapping_list,
-    select,
-)
+from my_llm.codec.shared.conversion import mapping_list, select
 from my_llm.codec.shared.stream import BlockRef, encode_batch, metadata, record
-from my_llm.exceptions import MessageValidationError, ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
-from my_llm.semantic_loss import originated
 
 PROTOCOL = "anthropic"
 REASONS = {

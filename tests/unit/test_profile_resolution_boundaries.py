@@ -52,7 +52,7 @@ def test_llm_uses_its_own_codec_for_protocol_validation(monkeypatch):
             calls.append((self, profile))
             super().validate_profile(profile)
 
-    monkeypatch.setattr("my_llm.invoke.MyCodec", Codec)
+    monkeypatch.setattr("my_llm.runtime.llm.MyCodec", Codec)
     llm = MyLLM(
         provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
         model=ModelProfile(model=Attribute(default_value="demo")),
@@ -84,7 +84,7 @@ class SamplingDefaults(ProtocolDefaults):
 
 
 def test_inherited_protocol_defaults_are_discovered_without_a_central_table(monkeypatch):
-    from my_llm.registry import codec_for
+    from my_llm.basic.protocols import codec_for
 
     codec = codec_for("openai_chat")
     inherited = protocol_defaults("openai_chat")
@@ -103,7 +103,7 @@ def test_inherited_protocol_defaults_are_discovered_without_a_central_table(monk
 
 
 def test_inherited_protocol_none_default_and_omit_are_preserved(monkeypatch):
-    from my_llm.registry import codec_for
+    from my_llm.basic.protocols import codec_for
 
     codec = codec_for("openai_chat")
     defaults = SamplingDefaults(
@@ -125,7 +125,7 @@ def test_inherited_protocol_none_default_and_omit_are_preserved(monkeypatch):
 
 
 def test_unclassified_protocol_default_is_rejected(monkeypatch):
-    from my_llm.registry import codec_for
+    from my_llm.basic.protocols import codec_for
 
     @dataclass(frozen=True, kw_only=True)
     class BadDefaults(ProtocolDefaults):

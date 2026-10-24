@@ -4,10 +4,12 @@ from typing import Any
 
 from google.genai import types
 
+from my_llm.basic.data import _MISSING
+from my_llm.basic.exceptions import ConfigurationError, ResponseFailedError
+from my_llm.basic.semantic_loss import originated
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.gemini.encoding.content import encode_part, image_part, json_schema
 from my_llm.codec.shared.conversion import (
-    _MISSING,
     allocate_call_id,
     associate_tool_result,
     mapping_list,
@@ -15,10 +17,8 @@ from my_llm.codec.shared.conversion import (
     text_result,
 )
 from my_llm.codec.shared.stream import encode_batch, metadata, record
-from my_llm.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.profile.resolution import ResolvedProfile
 from my_llm.profile.types import Omit
-from my_llm.semantic_loss import originated
 
 PROTOCOL = "gemini"
 TEXT_PATH = "$.candidates[0].content.parts[0].text"

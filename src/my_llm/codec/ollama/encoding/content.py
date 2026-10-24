@@ -4,8 +4,8 @@ import base64
 import binascii
 from pathlib import Path
 
+from my_llm.basic.exceptions import MessageValidationError
 from my_llm.codec.shared.conversion import arguments, select
-from my_llm.exceptions import MessageValidationError
 
 
 def image_data(value) -> str:

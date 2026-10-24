@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from my_llm.exceptions import ConfigurationError
+from my_llm.basic.exceptions import ConfigurationError
 from my_llm.profile.configuration import OverridableProfile, Protocol
 from my_llm.profile.model_profile import ModelProfile
 from my_llm.profile.types import Attribute, Config, Omit, Parameter

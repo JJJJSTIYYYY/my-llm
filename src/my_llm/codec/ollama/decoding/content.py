@@ -1,7 +1,7 @@
 """Render supported Ollama content and report media and opaque reasoning loss."""
 
 from my_llm.basic.semantic_loss import report_loss
-from my_llm.codec.shared.conversion import select, select_present, text_result
+from my_llm.codec.shared.conversion import select_present, text_result
 
 
 def foreign_block(block: dict) -> dict | None:
@@ -9,7 +9,12 @@ def foreign_block(block: dict) -> dict | None:
     if kind == "image" and block.get("source", {}).get("type") != "base64":
         report_loss(block, "Ollama images require base64 data")
         return None
-    if kind == "redacted_thinking":
+    if kind == "thinking" and (
+        block.get("redacted")
+        or block.get("mark") == "encrypted"
+        and not block.get("thinking")
+        and not block.get("summary")
+    ):
         report_loss(block, "Ollama cannot represent opaque reasoning from another protocol")
         return None
     if kind in ("thinking", "text", "tool_use") and any(
@@ -33,9 +38,7 @@ def tool_text(block: dict) -> str:
 
 
 def chat_call(block: dict) -> dict:
-    return {
-        "function": {**select(block, "index"), "name": block["name"], "arguments": block["input"]}
-    }
+    return {"function": {"name": block["name"], "arguments": block["input"]}}
 
 
 def function_tool(function: dict) -> dict:

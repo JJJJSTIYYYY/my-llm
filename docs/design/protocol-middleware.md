@@ -1,44 +1,79 @@
 # 中间协议与语义损失契约
 
-本契约对应 `my-llm-refactor-requirements.md` 的 C1–C10。`strict` 按用户确认：
+本文定义中间层的固定支持集合与转换边界。`strict` 按用户确认：
 Chat、Responses、Anthropic 保留，Gemini、Ollama 静默丢弃。
 
 ## 支持集合
 
-`ProtocolMiddleWare` 是独立于 SDK 的具体类；字段是以下具体模型组成的列表，
-不是原生协议字段的并集。原生解析和输出组装可以使用临时字典，但跨 encoder / decoder
-边界传递此类及其模型。所有模型按调用创建，不进入全局缓存。
+`ProtocolMiddleWare` 及其消息、工具、结果模型独立于 SDK。模型表达固定支持语义，
+同时明确保留少量同协议回放所需的可选字段；这些字段的归属如下。
+encoder 负责原生投影，decoder 负责目标表达，Transport 只执行 SDK 调用。
+所有模型按调用创建，不进入全局缓存。
 
-| 模型 | 字段与含义 |
-| --- | --- |
-| `ProtocolMiddleWare` | `messages`、`tools`、`stream`、`usage`；未提供的集合为 `None`，显式空集合保留；字典索引时流集合的键为 `chunks` |
-| `UserMessage` | `role=user`、有序 `content: TextContent / ImageContent`、可选 `name` |
-| `InstructionMessage` | `role=system / developer`、有序文本；保留已有系统指令行为 |
-| `AssistantMessage` | `role=assistant`、有序文本 / 思维 / 工具调用；工具调用不混入正文 |
-| `ToolMessage` | `call_id`、可选 `name`；以有序 `ToolResult` 块保存文本 / 图片并与调用关联 |
-| `TextContent` | `type=text`、`text: str`；可选 `item_id`、`item_status`（Responses 输出项身份） |
-| `ImageContent` | `type=image`、`source: ImageSource` |
-| `ImageSource` | `type=url / base64`，对应 `url` 或 `data` 与 `media_type`；不下载 URL |
-| `ReasoningContent` | `type=thinking`、`reasoning: str`、`mark=raw / summary / encrypted`；可选 signature、encrypted_content、summary、同协议回放所需 id、`status`；opaque 字段带所属协议 |
-| `ToolCall` | `type=tool_use`、`call_id`、`name`、`arguments: JsonObject`；可选同协议签名、`item_id`、`status` |
-| `ToolResult` | `call_id`、可选 name、有序 `TextContent / ImageContent` |
-| `FunctionTool` | `name`、可选 `description`、完整 `parameters: JsonObject`、可选 `strict`；JSON Schema 内应用字段保持原样 |
-| `AssistantMessageChunk` | 明确的流操作种类、块引用 / 顺序、文本或思维增量、完整块 / 终态快照；原生工具参数碎片只在内部累积 |
-| `MessageEvent` | 状态机累积后的公开事件：start、block_start、delta、block_stop、block、tool、finish；工具参数始终完整，终态包含具体消息模型 |
-| `StreamBatch` | `protocol` 与有序操作；保留响应 id、模型、终止原因等流控制数据，不支持用户 metadata |
-| `Usage` | `input / output / total / cached / reasoning: int \| None`；缺失不填零；各上游附加计数由 encoder 归入对应总量 |
-| `Origin` | 支持值的原始位置与只读来源引用，只用于错误定位；不枚举未知字段，不写入 SDK / 用户 payload |
+| 模型 | 完整字段 | 语义与归属 |
+| --- | --- | --- |
+| `ProtocolMiddleWare` | `messages`、`tools`、`stream`、`usage` | 通用转换容器；未提供为 `None`，显式空集合保留；`stream` 字典投影键为 `chunks` |
+| `Message` | `role`、`content`、`name`、`protocol`、`item`、`coalesce`、`origin` | `role/content` 通用；`name` 由 Chat 表达；`protocol` 标识来源；`item` 为可选源项身份；`coalesce` 用于 Responses 项合并；`origin` 属运行时定位 |
+| `UserMessage` | 继承 `Message` 全部字段，无新增字段 | `role=user`；有序文本和图片 |
+| `InstructionMessage` | 继承 `Message` 全部字段，无新增字段 | `role=system / developer`；有序文本 |
+| `AssistantMessage` | 继承 `Message` 全部字段，无新增字段 | `role=assistant`；有序文本、思维和工具调用 |
+| `ToolMessage` | 继承 `Message` 全部字段，无新增字段 | `role=user`；用 `ToolResult` 保存工具结果；只读属性 `call_id` 从内容中读取 |
+| `ItemIdentity` | `id`、`status` | 通用的可选源项身份，当前用于 Responses 回放；两个字段均为可选字符串 |
+| `TextContent` | `text`、`origin`、`type`、`item` | 通用文本，`type=text`；`item` 当前保留 Responses 项身份 |
+| `ImageContent` | `source`、`origin`、`type`、`item` | 通用图片，`type=image`；`item` 当前保留 Responses 项身份 |
+| `ImageSource` | `type`、`url`、`data`、`media_type` | 通用；`type=url` 使用 URL，`type=base64` 使用数据与媒体类型；不下载 URL |
+| `ReasoningContent` | `reasoning`、`mark`、`signature`、`encrypted_content`、`opaque_protocol`、`item`、`origin`、`type`、`summary`、`redacted` | `reasoning/mark` 通用，`type=thinking`；`summary: list[str]` 用于 Responses 摘要；`signature` 用于 Anthropic / Gemini 回放；`encrypted_content` 用于 Responses / Anthropic 密文；`redacted` 用于 Anthropic 隐去思维；`opaque_protocol` 标识签名或密文所属协议 |
+| `ToolCall` | `call_id`、`name`、`arguments`、`signature`、`opaque_protocol`、`origin`、`type`、`item` | 通用完整调用，`type=tool_use`、`arguments: JsonObject`；`signature/opaque_protocol` 用于 Gemini 回放；`item` 当前保留 Responses 项身份 |
+| `ToolResult` | `call_id`、`content`、`name`、`origin`、`type`、`item` | 通用结果，`type=tool_result`；有序文本 / 图片；`item` 当前保留 Responses 结果项身份 |
+| `FunctionTool` | `name`、`description`、`parameters`、`strict`、`origin` | 通用函数声明；`parameters: JsonObject` 保留应用 Schema；`strict` 按上文协议集合处理 |
+| `StreamBatch` | `protocol`、`events` | encoder 到状态机的内部载体；`events: list[dict]` 是有序操作，不作为应用流事件使用 |
+| `MessageEvent` | `type`、`index`、`source_ref`、`block`、`tool_index`、`field`、`value`、`reason`、`messages` | 通用公开事件；工具调用完整，终态携带具体消息模型；各类型的有效字段见[使用指南](../guides/middleware-io.md#流式输出) |
+| `Usage` | `input`、`output`、`total`、`cached`、`reasoning` | 通用可选整数；缺失不填零；附加计数由 encoder 归入对应总量 |
+| `Origin` | `path`、`value` | 运行时错误定位；路径与来源引用按只读使用，不枚举未知字段 |
 
-消息模型还带可选 `protocol`、`id`、`status` 与 `coalesce`（Responses 合并已识别内容）；
-`ReasoningContent.redacted` 为真时投影为原生 redacted_thinking。内容、消息与工具模型另带
-只用于错误定位的 `origin`，它不写入 wire；`Usage`、`StreamBatch`、`MessageEvent` 等容器没有该字段。
+消息和所有内容块至多各有一个 `item: ItemIdentity | None`。消息级身份描述整个源消息项，
+内容级身份在合并多项为同一 assistant 回合后仍区分源项；二者不应与工具的 `call_id` 混用。
+`call_id` 关联调用和结果，`source_ref=(scope, index, part)` 定位流中的块，
+元数据中的 `response_id` 标识整个响应。它们具有不同作用域。
+Responses decoder 按内容项边界分组，内容未提供身份时使用消息身份；空消息仍可保留消息身份。
 
 图片仅支持用户消息和工具结果。工具结果中的对象 / 数组可以序列化为文本；图片不能
 序列化成工具文本。audio、file、refusal、citations、用户 metadata、cache_control 等
 不在支持集合的结构在 encoder 投影时静默删除，随后仅验证支持结构。
 
-`ReasoningContent.mark` 在中间投影中显式保留。原生解析未提供标记时，根据摘要、密文及
-思维内容推导；显式标记不被重新推导覆盖。该标记仅属于中间协议，不写入原生 SDK 字段。
+`ReasoningContent.mark=raw / summary / encrypted` 在中间投影中显式保留。
+原生 encoder 根据源语义设置标记，模型构造时补齐默认值；middleware 解析器直接读取确定的中间字段，
+不承担原生格式推断或缺失必需字段的兜底。
+隐去思维也使用同一 `type=thinking` 结构和 `redacted=True`，摘要为字符串列表；
+对应的原生块类型、摘要对象和回放格式均由各自 codec 构造。标记不写入原生 SDK 字段。
+
+## 模型投影与内部流操作
+
+具体 dataclass 是公共模型；`to_wire()` 提供转换管线使用的显式字典投影。
+保留两种表示是为了让应用使用属性和明确类型，同时让 codec 组装原生结构；
+不使用反射遍历任意字段，也不序列化 `Origin.value` 指向的原始对象。
+`origin` 不成为 wire 键，仅附在内部来源包装上用于定位错误。
+字段级往返测试覆盖全部模型字段；增加字段而未补充映射及用例时会失败。
+
+模型属性与少量 wire 键有明确映射：`ReasoningContent.reasoning → thinking`、
+`opaque_protocol → protocol`、`ToolCall.call_id → id`、`arguments → input`、
+`ToolResult.call_id → tool_use_id`；工具声明使用 `functions` 分组。
+这些键属于中间契约，不接受旧版字段别名。`JsonObject` 是 `dict[str, JsonValue]` 的类型别名，
+运行时仍使用普通字典。
+
+`StreamBatch.events` 直接承载 encoder 已构造并拥有的操作字典，不再经额外 DTO 拆解和还原。
+操作种类为 `start`、`metadata`、`usage`、`snapshot`、`reason`、`finish`、`block_set`、
+`block_append`、`block_update`、`block_delta`、`block_stop`。工具参数碎片仅在状态机内累积。
+`block_update` 保留实际补丁字段，不用完整内容模型的默认值填充。
+元数据操作只搬运 `path` 与 `values`，middleware 不识别其协议专有键，
+也不把用户提供的未知原生 metadata 纳入支持集合；可搬运哪些字段由源 encoder 决定。
+响应时间统一为通用 `created_at`，Chat decoder 在输出时映射回原生 `created`。
+
+源协议不支持的原生字段由 encoder 静默丢弃。已进入中间契约后，未知内容类型、未知操作种类、
+不支持的增量字段属于内部协议错误，抛出 `MessageValidationError`，不静默删除。
+显式投影会借用嵌套应用字典、摘要列表及内部操作，不能把 `to_wire()` 视作独立深拷贝。
+输入在准备 SDK 请求时完成隔离；公开生成结果和各公开事件拥有自己的可变数据，
+调用者修改历史或已收到的事件不会影响别的结果、事件或请求。
 
 ## 翻译与错误边界
 

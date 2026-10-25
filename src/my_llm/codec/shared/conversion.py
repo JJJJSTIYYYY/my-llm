@@ -25,7 +25,7 @@ def coalesce_messages(messages: list) -> list[dict]:
         ):
             if not combined:
                 result[-1] = {
-                    **select(result[-1], "protocol", "coalesce", "role", "name", "id", "status"),
+                    **select(result[-1], "protocol", "coalesce", "role", "name", "item"),
                     "content": list(result[-1]["content"]),
                 }
                 combined = True

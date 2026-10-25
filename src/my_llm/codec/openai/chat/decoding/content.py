@@ -28,7 +28,12 @@ def render_content(content: list[dict], *, role: str = "user") -> Any:
 
 def foreign_block(block: dict) -> dict | None:
     kind = block.get("type")
-    if kind == "redacted_thinking":
+    if kind == "thinking" and (
+        block.get("redacted")
+        or block.get("mark") == "encrypted"
+        and not block.get("thinking")
+        and not block.get("summary")
+    ):
         report_loss(block, "Chat cannot represent opaque reasoning from another protocol")
         return None
     if kind in ("thinking", "text", "tool_use"):

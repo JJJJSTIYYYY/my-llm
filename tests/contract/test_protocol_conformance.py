@@ -371,5 +371,6 @@ def test_cumulative_anthropic_usage_is_overwritten_without_losing_cache_counts()
         assert_native(event, EVENT_TYPES["anthropic"][event["type"]])
     converted, state = render("anthropic", "openai_chat", incoming)
     assert Usage.from_record(state.usage) == Usage(input=10, output=7, cached=3)
+    assert state.usage["cache_write"] == 5
     assert converted[-1]["choices"][0]["finish_reason"] == "stop"
     assert_output_native(converted[-1], EVENT_TYPES["openai_chat"])

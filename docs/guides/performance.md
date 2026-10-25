@@ -150,10 +150,19 @@ python -m tests.performance.compare /tmp/before.json /tmp/after.json --json /tmp
 可运行的无网络准备示例见 [request_pipeline.py](../../examples/request_pipeline.py)。
 
 实例构造可单独用 `python -m tests.performance.construction --json /tmp/construction.json` 测量；
-Responses 收集尾部定位使用 `python -m tests.performance.gc_diagnostic /tmp/responses-gc.json`，
-保留 GC、单独登记回收停顿，诊断数据不替换无回调计时。
+收集尾部定位可用下面的入口，原生与 middleware stdio 成对交替，排除预热后记录 GC 停顿、CPU 时间与暖缓存快照：
+
+```sh
+python -m tests.performance.gc_diagnostic /tmp/chat-gc.json --protocol openai_chat --stdio middleware --iterations 100 --warmup 10
+```
+
+`--protocol` 支持五种协议，默认 `openai_responses`；`--stdio` 选择报告关注的 `native` 或 `middleware`，
+两者仍同时测量。GC 保持原有开关与阈值；回调有额外开销，诊断数据不替换无回调计时。
+比较版本时使用相同解释器与脚本、独立进程交替运行，避免把九样本的最大值当成稳定 P95。
 
 固定中间协议和双向语义损失后的首次对照见[2026-10-24 验收与性能报告](../audits/protocol-middleware-2026-10-24.md)。
 后续冗余清理、边界复核及清理阶段的复测见[同日清理报告](../audits/code-cleanup-2026-10-24.md)。
-需求反向验收补漏后的最新源码和复测见[需求全量验收复核](../audits/requirements-acceptance-2026-10-24.md)。
+需求反向验收补漏时的源码和复测见[需求全量验收复核](../audits/requirements-acceptance-2026-10-24.md)。
 其后的缓存命中检查与同负载优化试验见[Schema 缓存检查记录](../audits/schema-cache-2026-10-24.md)。
+2026-10-25 的模型整理、十组相同字节负载对照及尾延迟限制见
+[Middleware 模型整理核对](../audits/middleware-model-2026-10-25.md#本轮验证与性能对照)。

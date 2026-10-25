@@ -8,6 +8,7 @@ import pytest
 
 from my_llm import MyLLM
 from tests.helpers.protocols import PROTOCOLS
+from tests.performance import gc_diagnostic, middleware
 from tests.performance.request_chain import probe
 from tests.performance.runner import benchmark, measure
 from tests.performance.transport import LocalSDK, wire_frames
@@ -90,3 +91,64 @@ async def test_chain_probe_measures_memory_cache_and_actual_overlap(monkeypatch,
         after = result["cache_after"][name]
         assert after["currsize"] == before["currsize"]
         assert after["misses"] == before["misses"]
+
+
+@pytest.mark.parametrize("upstream", PROTOCOLS)
+@pytest.mark.parametrize("stdio", ["native", "middleware"])
+async def test_stream_only_renders_batches_with_published_events(monkeypatch, upstream, stdio):
+    original = MyLLM._render
+
+    def render(self, events, state, protocol):
+        assert events, "empty state batches must not invoke output translation"
+        return original(self, events, state, protocol)
+
+    monkeypatch.setattr(MyLLM, "_render", render)
+    workload = build(upstream, upstream, SMALL, native=True)
+    if stdio == "middleware":
+        workload = middleware.direct_workload(workload)
+    provider, model = profiles(upstream)
+    with LocalSDK(upstream, wire_frames(upstream, workload.events, 37)) as sdk:
+        async with MyLLM(provider=provider, model=model, stdio_protocol=workload.stdio) as llm:
+            _, result = await measure(llm, workload, stream=True, parameters=controls(upstream))
+            validate_exchange(workload, workload.stdio, result, sdk)
+
+
+@pytest.mark.parametrize("stdio", ["native", "middleware"])
+async def test_gc_diagnostic_excludes_warmup_and_restores_instrumentation(
+    monkeypatch, tmp_path, stdio
+):
+    import gc
+
+    original = middleware.measure
+    callbacks = list(gc.callbacks)
+    monkeypatch.setattr(gc_diagnostic, "Size", lambda: SMALL)
+    destination = tmp_path / "gc.json"
+    report = await gc_diagnostic.run(
+        destination, protocol="openai_chat", stdio=stdio, iterations=2, warmup=1
+    )
+    assert middleware.measure is original
+    assert gc.callbacks == callbacks
+    assert len(report["gc_samples"]) == 2
+    assert len(report["gc_by_stdio"]["openai_chat"]) == 2
+    assert len(report["gc_by_stdio"]["middleware"]) == 2
+    assert report["warm"]["iterations"] == 2
+    assert report["stdio"] == ("openai_chat" if stdio == "native" else stdio)
+    for name, before in report["cache_before"].items():
+        assert report["cache_after"][name]["misses"] == before["misses"]
+    assert json.loads(destination.read_text())["source_sha256"] == report["source_sha256"]
+
+
+async def test_gc_diagnostic_restores_instrumentation_when_generation_fails(monkeypatch, tmp_path):
+    import gc
+
+    callbacks = list(gc.callbacks)
+
+    async def fail(*args, **kwargs):
+        raise RuntimeError("generation failed")
+
+    monkeypatch.setattr(gc_diagnostic, "Size", lambda: SMALL)
+    monkeypatch.setattr(middleware, "measure", fail)
+    with pytest.raises(RuntimeError, match="generation failed"):
+        await gc_diagnostic.run(tmp_path / "gc.json", iterations=2)
+    assert middleware.measure is fail
+    assert gc.callbacks == callbacks

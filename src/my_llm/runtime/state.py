@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
+from my_llm.basic.data import capture
 from my_llm.basic.exceptions import IncompleteStreamError
 from my_llm.basic.semantic_loss import Originated
 from my_llm.codec.shared.conversion import arguments, source_protocol
@@ -37,6 +37,12 @@ class BlockState:
     @property
     def text_field(self) -> str | None:
         kind = self.content.get("type")
+        if kind == "thinking" and (
+            self.content.get("redacted")
+            or self.content.get("mark") == "encrypted"
+            and not self.content.get("thinking")
+        ):
+            return None
         return kind if kind in ("text", "thinking") else None
 
     def materialize(self) -> dict:
@@ -68,7 +74,7 @@ class BlockState:
             ]
             if not content.get(name, "").startswith(previous):
                 raise IncompleteStreamError("final block contradicts already emitted text")
-        self.content = deepcopy(content)
+        self.content = capture(content)
         self.fragments.clear()
         self.argument_parts = None
         self.invalidate()
@@ -98,7 +104,7 @@ class StreamState:
         self._final_messages: list[dict] | None = None
 
     def _new_block(self, content: dict) -> BlockState:
-        block = BlockState(len(self._blocks), deepcopy(content))
+        block = BlockState(len(self._blocks), capture(content))
         self._blocks.append(block)
         if content.get("type") == "tool_use" and self._deferred_from is None:
             self._deferred_from = block.index
@@ -108,7 +114,12 @@ class StreamState:
         # JSON round trips turn the named tuple into a list.
         ref = tuple(ref)
         if ref not in self._references:
-            self._references[ref] = self._new_block({"type": kind})
+            content = {"type": kind}
+            if kind in ("text", "thinking"):
+                content[kind] = ""
+            if kind == "thinking":
+                content["mark"] = "raw"
+            self._references[ref] = self._new_block(content)
             self._references[ref].source_ref = ref
         return self._references[ref]
 
@@ -149,7 +160,7 @@ class StreamState:
             child = dict(target.get(key, {}))
             target[key] = child
             target = child
-        target.update(deepcopy(event["values"]))
+        target.update(capture(event["values"]))
         return []
 
     def _usage(self, event: dict) -> list[dict]:
@@ -157,7 +168,7 @@ class StreamState:
             return []
         update = event["usage"]
         usage = dict(self.usage or {})
-        for name in ("total", "cached", "reasoning"):
+        for name in ("total", "cached", "cache_write", "reasoning"):
             if name in update:
                 usage[name] = update[name]
         for name in ("input", "output"):
@@ -215,6 +226,8 @@ class StreamState:
         name, value = event["field"], event["value"]
         block = self._block(event["ref"], event["kind"])
         self._capture_origin(block, event)
+        if "mark" in event:
+            block.content["mark"] = event["mark"]
         block.invalidate()
         if name == "arguments":
             if block.argument_parts is None:
@@ -309,14 +322,14 @@ class StreamState:
 
     def messages(self, *, partial: bool = False) -> list[dict]:
         if self._final_messages is not None and not partial:
-            return deepcopy(self._final_messages)
+            return capture(self._final_messages)
         # Never parse unfinished tool JSON while reporting the original failure.
         content = [
             block.materialize()
             for block in self._blocks
             if not partial or block.content.get("type") != "tool_use"
         ]
-        return deepcopy(
+        return capture(
             [{"role": "assistant", "content": content, "protocol": self.source_protocol}]
         )
 

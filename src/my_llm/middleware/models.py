@@ -9,6 +9,7 @@ from dataclasses import field as dataclass_field
 from typing import Literal
 
 from my_llm.basic.data import capture
+from my_llm.basic.exceptions import MessageValidationError
 from my_llm.basic.semantic_loss import originated
 
 type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
@@ -51,6 +52,28 @@ def _located(value: dict, origin: Origin | None) -> dict:
 
 
 @dataclass(slots=True)
+class ItemIdentity:
+    """Identity of a source output item, distinct from a tool call's call_id."""
+
+    id: str | None = None
+    status: str | None = None
+
+    def to_wire(self) -> dict:
+        return {key: value for key in ("id", "status") if (value := getattr(self, key)) is not None}
+
+
+def _item(value: dict) -> ItemIdentity | None:
+    item = value.get("item")
+    return ItemIdentity(item.get("id"), item.get("status")) if item is not None else None
+
+
+def _with_item(value: dict, item: ItemIdentity | None) -> dict:
+    if item is not None:
+        value["item"] = item.to_wire()
+    return value
+
+
+@dataclass(slots=True)
 class ImageSource:
     type: Literal["url", "base64"]
     url: str | None = None
@@ -77,15 +100,10 @@ class TextContent(ProtocolValue):
     text: str
     origin: Origin | None = dataclass_field(default=None, repr=False)
     type: Literal["text"] = dataclass_field(default="text", init=False)
-    item_id: str | None = None
-    item_status: str | None = None
+    item: ItemIdentity | None = None
 
     def to_wire(self) -> dict:
-        value = {"type": "text", "text": self.text}
-        for key in ("item_id", "item_status"):
-            if (item := getattr(self, key)) is not None:
-                value[key] = item
-        return _located(value, self.origin)
+        return _located(_with_item({"type": "text", "text": self.text}, self.item), self.origin)
 
 
 @dataclass(slots=True)
@@ -93,10 +111,11 @@ class ImageContent(ProtocolValue):
     source: ImageSource
     origin: Origin | None = dataclass_field(default=None, repr=False)
     type: Literal["image"] = dataclass_field(default="image", init=False)
+    item: ItemIdentity | None = None
 
     def to_wire(self) -> dict:
         value = {"type": "image", "source": self.source.to_wire()}
-        return _located(value, self.origin)
+        return _located(_with_item(value, self.item), self.origin)
 
 
 @dataclass(slots=True)
@@ -106,32 +125,22 @@ class ReasoningContent(ProtocolValue):
     signature: str | None = None
     encrypted_content: str | None = None
     opaque_protocol: str | None = None
-    id: str | None = None
+    item: ItemIdentity | None = None
     origin: Origin | None = dataclass_field(default=None, repr=False)
     type: Literal["thinking"] = dataclass_field(default="thinking", init=False)
     summary: list[str] | None = None
     redacted: bool = False
-    status: str | None = None
 
     def to_wire(self) -> dict:
+        value = {"type": "thinking", "thinking": self.reasoning, "mark": self.mark}
+        for key in ("encrypted_content", "signature", "summary"):
+            if (child := getattr(self, key)) is not None:
+                value[key] = child
         if self.redacted:
-            value = {"type": "redacted_thinking", "data": self.encrypted_content or ""}
-        else:
-            value = {"type": "thinking", "thinking": self.reasoning}
-            if self.encrypted_content is not None:
-                value["encrypted_content"] = self.encrypted_content
-            if self.signature is not None:
-                value["signature"] = self.signature
-            if self.summary is not None:
-                value["summary"] = [{"type": "summary_text", "text": s} for s in self.summary]
-        if self.id is not None:
-            value["id"] = self.id
-        if self.status is not None:
-            value["status"] = self.status
+            value["redacted"] = True
         if self.opaque_protocol is not None:
             value["protocol"] = self.opaque_protocol
-        value["mark"] = self.mark
-        return _located(value, self.origin)
+        return _located(_with_item(value, self.item), self.origin)
 
 
 @dataclass(slots=True)
@@ -143,8 +152,7 @@ class ToolCall(ProtocolValue):
     opaque_protocol: str | None = None
     origin: Origin | None = dataclass_field(default=None, repr=False)
     type: Literal["tool_use"] = dataclass_field(default="tool_use", init=False)
-    item_id: str | None = None
-    status: str | None = None
+    item: ItemIdentity | None = None
 
     def to_wire(self) -> dict:
         value = {"type": "tool_use", "id": self.call_id, "name": self.name, "input": self.arguments}
@@ -152,10 +160,7 @@ class ToolCall(ProtocolValue):
             value["signature"] = self.signature
         if self.opaque_protocol is not None:
             value["protocol"] = self.opaque_protocol
-        for key in ("item_id", "status"):
-            if (item := getattr(self, key)) is not None:
-                value[key] = item
-        return _located(value, self.origin)
+        return _located(_with_item(value, self.item), self.origin)
 
 
 type ResultContent = TextContent | ImageContent
@@ -168,6 +173,7 @@ class ToolResult(ProtocolValue):
     name: str | None = None
     origin: Origin | None = dataclass_field(default=None, repr=False)
     type: Literal["tool_result"] = dataclass_field(default="tool_result", init=False)
+    item: ItemIdentity | None = None
 
     def to_wire(self) -> dict:
         value = {
@@ -177,7 +183,7 @@ class ToolResult(ProtocolValue):
         }
         if self.name is not None:
             value["name"] = self.name
-        return _located(value, self.origin)
+        return _located(_with_item(value, self.item), self.origin)
 
 
 type MessageContent = TextContent | ImageContent | ReasoningContent | ToolCall | ToolResult
@@ -189,85 +195,63 @@ def _result_content(value: object, path: str, protocol: str | None) -> list[Resu
     if isinstance(value, str):
         return [TextContent(value, Origin(path, value))]
     if isinstance(value, list) and all(isinstance(v, dict) and "type" in v for v in value):
-        return [
-            part
-            for index, raw in enumerate(value)
-            if isinstance(
-                part := content_from_wire(raw, f"{path}[{index}]", protocol),
-                (TextContent, ImageContent),
-            )
+        parts = [
+            content_from_wire(raw, f"{path}[{index}]", protocol) for index, raw in enumerate(value)
         ]
+        if any(not isinstance(part, (TextContent, ImageContent)) for part in parts):
+            raise MessageValidationError("middleware tool results require text or image content")
+        return parts
     # Objects and arrays of application values are supported text results.
     return [TextContent(json.dumps(value, ensure_ascii=False), Origin(path, value))]
 
 
-def content_from_wire(
-    value: dict, path: str = "$", protocol: str | None = None
-) -> MessageContent | None:
-    kind = value.get("type")
+def content_from_wire(value: dict, path: str = "$", protocol: str | None = None) -> MessageContent:
+    kind = value["type"]
     origin = Origin.from_value(value, path)
     if kind == "text":
-        return TextContent(
-            value.get("text", ""), origin, value.get("item_id"), value.get("item_status")
-        )
+        return TextContent(value["text"], origin, _item(value))
     if kind == "image":
-        source = value.get("source", {})
+        source = value["source"]
         if source.get("type") not in ("url", "base64"):
-            return None
+            raise MessageValidationError("unknown middleware image source")
         return ImageContent(
             ImageSource(
                 source["type"], source.get("url"), source.get("data"), source.get("media_type")
             ),
             origin,
+            _item(value),
         )
-    if kind in ("thinking", "redacted_thinking"):
-        summary = value.get("summary")
-        reasoning = value.get("thinking", "")
-        encrypted = (
-            value.get("data") if kind == "redacted_thinking" else value.get("encrypted_content")
-        )
-        summary_text = (
-            [item.get("text", "") for item in summary if item.get("type") == "summary_text"]
-            if isinstance(summary, list)
-            else None
-        )
+    if kind == "thinking":
         return ReasoningContent(
-            reasoning=reasoning,
-            mark=value["mark"]
-            if "mark" in value
-            else (
-                "encrypted"
-                if kind == "redacted_thinking" or encrypted is not None and not reasoning
-                else ("summary" if summary is not None else "raw")
-            ),
+            reasoning=value["thinking"],
+            mark=value["mark"],
             signature=value.get("signature"),
-            encrypted_content=encrypted,
+            encrypted_content=value.get("encrypted_content"),
             opaque_protocol=value.get("protocol", protocol),
-            id=value.get("id"),
+            item=_item(value),
             origin=origin,
-            summary=summary_text,
-            redacted=kind == "redacted_thinking",
-            status=value.get("status"),
+            summary=capture(value.get("summary")),
+            redacted=value.get("redacted", False),
         )
     if kind == "tool_use":
         return ToolCall(
-            value.get("id"),
-            value.get("name", ""),
-            capture(value.get("input", {})),
+            value["id"],
+            value["name"],
+            capture(value["input"]),
             value.get("signature"),
             value.get("protocol", protocol),
             origin,
-            value.get("item_id"),
-            value.get("status"),
+            _item(value),
         )
     if kind == "tool_result":
         return ToolResult(
-            value.get("tool_use_id"),
-            _result_content(value.get("content"), f"{origin.path}.content", protocol),
+            value["tool_use_id"],
+            _result_content(value["content"], f"{origin.path}.content", protocol),
             value.get("name"),
             origin,
+            _item(value),
         )
-    return None
+    raise MessageValidationError(f"unknown middleware content type: {kind!r}")
 
 
 @dataclass(slots=True)
@@ -276,19 +260,18 @@ class Message(ProtocolValue):
     content: list[MessageContent] = dataclass_field(default_factory=list)
     name: str | None = None
     protocol: str | None = None
-    id: str | None = None
-    status: str | None = None
+    item: ItemIdentity | None = None
     coalesce: bool = False
     origin: Origin | None = dataclass_field(default=None, repr=False)
 
     def to_wire(self) -> dict:
         result = {"role": self.role, "content": [part.to_wire() for part in self.content]}
-        for key in ("name", "protocol", "id", "status"):
+        for key in ("name", "protocol"):
             if (value := getattr(self, key)) is not None:
                 result[key] = value
         if self.coalesce:
             result["coalesce"] = True
-        return _located(result, self.origin)
+        return _located(_with_item(result, self.item), self.origin)
 
 
 class UserMessage(Message):
@@ -326,10 +309,8 @@ def messages_from_wire(values: list) -> list[Message]:
         protocol = raw.get("protocol")
         origin = Origin.from_value(raw, f"$.messages[{index}]")
         content = [
-            part
+            content_from_wire(block, f"{origin.path}.content[{offset}]", protocol)
             for offset, block in enumerate(raw["content"])
-            if (part := content_from_wire(block, f"{origin.path}.content[{offset}]", protocol))
-            is not None
         ]
         model = (
             AssistantMessage
@@ -346,8 +327,7 @@ def messages_from_wire(values: list) -> list[Message]:
                 content,
                 raw.get("name"),
                 protocol,
-                raw.get("id"),
-                raw.get("status"),
+                _item(raw),
                 bool(raw.get("coalesce")),
                 origin,
             )

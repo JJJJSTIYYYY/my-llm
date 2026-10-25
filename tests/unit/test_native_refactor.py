@@ -140,11 +140,11 @@ def test_snapshot_source_positions_do_not_shift_when_unsupported_blocks_are_drop
     ]
     encoded = MyCodec().encode(chunks=[response_completed(output)], input_format="openai_responses")
     snapshot = next(
-        event for batch in encoded.stream for event in batch.events if event.type == "snapshot"
+        event for batch in encoded.stream for event in batch.events if event["type"] == "snapshot"
     )
-    block = snapshot.blocks[0][1]
-    assert block.origin.path == "$.chunks[0].response.output[0].content[1]"
-    assert block.origin.value is part
+    block = snapshot["blocks"][0]["block"]
+    assert block.origin_path == "$.chunks[0].response.output[0].content[1]"
+    assert block.origin_value is part
 
 
 def test_loss_origin_is_the_original_sdk_object_without_copying_extensions():
@@ -457,3 +457,203 @@ def test_assistant_images_are_discarded_at_the_source_boundary(target):
     assert "answer" in str(result)
     assert "aW1hZ2U=" not in str(result)
     assert "image" not in str(result)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [[], [{"type": "output_text", "text": "one"}, {"type": "output_text", "text": "two"}]],
+)
+def test_responses_message_item_identity_survives_empty_and_multiple_parts(content):
+    native = {
+        "type": "message",
+        "role": "assistant",
+        "id": "msg_original",
+        "status": "completed",
+        "content": content,
+    }
+    codec = MyCodec()
+    encoded = codec.encode([native], input_format="openai_responses")
+    message = encoded.messages[0]
+    assert message.item.id == "msg_original"
+    assert message.item.status == "completed"
+    assert all(part.item == message.item for part in message.content)
+    restored = codec.decode(encoded.messages, target_format="openai_responses")["messages"]
+    assert len(restored) == 1
+    assert restored[0]["id"] == native["id"]
+    assert restored[0]["status"] == native["status"]
+    assert [part["text"] for part in restored[0]["content"]] == [part["text"] for part in content]
+
+
+def test_responses_nested_identity_keeps_coalesced_message_boundaries():
+    from my_llm import AssistantMessage
+
+    codec = MyCodec()
+    encoded = codec.encode(
+        [
+            {
+                "type": "message",
+                "role": "assistant",
+                "id": item_id,
+                "status": "completed",
+                "content": [{"type": "output_text", "text": text} for text in texts],
+            }
+            for item_id, texts in [("first", ["a", "b"]), ("second", ["c"])]
+        ],
+        input_format="openai_responses",
+    )
+    combined = AssistantMessage(
+        role="assistant",
+        protocol="openai_responses",
+        content=[part for message in encoded.messages for part in message.content],
+    )
+    restored = codec.decode([combined], target_format="openai_responses")["messages"]
+    assert [item["id"] for item in restored] == ["first", "second"]
+    assert [[part["text"] for part in item["content"]] for item in restored] == [["a", "b"], ["c"]]
+
+
+def test_responses_user_image_has_the_same_item_identity_as_text():
+    native = {
+        "type": "message",
+        "role": "user",
+        "id": "msg_image",
+        "status": "completed",
+        "content": [
+            {"type": "input_text", "text": "describe"},
+            {"type": "input_image", "image_url": "https://example.test/p.png"},
+        ],
+    }
+    codec = MyCodec()
+    encoded = codec.encode([native], input_format="openai_responses")
+    message = encoded.messages[0]
+    assert len(message.content) == 2
+    assert all(part.item == message.item for part in message.content)
+    restored = codec.decode(encoded.messages, target_format="openai_responses")["messages"][0]
+    assert restored["id"] == "msg_image"
+    assert restored["status"] == "completed"
+    assert [part["type"] for part in restored["content"]] == ["input_text", "input_image"]
+
+
+@pytest.mark.parametrize("output", ["42", [{"type": "input_text", "text": "42"}]])
+def test_responses_tool_result_keeps_native_item_identity_for_every_content_form(output):
+    native = [
+        {
+            "type": "function_call",
+            "id": "fc_original",
+            "status": "completed",
+            "call_id": "call_original",
+            "name": "f",
+            "arguments": "{}",
+        },
+        {
+            "type": "function_call_output",
+            "id": "output_original",
+            "status": "completed",
+            "call_id": "call_original",
+            "output": output,
+        },
+    ]
+    codec = MyCodec()
+    encoded = codec.encode(native, input_format="openai_responses")
+    restored = codec.decode(encoded.messages, target_format="openai_responses")["messages"]
+    assert [item["id"] for item in restored] == ["fc_original", "output_original"]
+    assert [item["status"] for item in restored] == ["completed", "completed"]
+    assert [item["call_id"] for item in restored] == ["call_original", "call_original"]
+    assert encoded.messages[1].content[0].item.id == "output_original"
+    assert "42" in str(restored[1]["output"])
+
+
+@pytest.mark.parametrize("summary", [[], ["one", "two"]])
+def test_responses_reasoning_uses_summary_strings_and_one_nested_item_identity(summary):
+    native = {
+        "type": "reasoning",
+        "id": "rs_original",
+        "status": "completed",
+        "summary": [{"type": "summary_text", "text": text} for text in summary],
+        "encrypted_content": "opaque",
+    }
+    codec = MyCodec()
+    encoded = codec.encode([native], input_format="openai_responses")
+    reasoning = encoded.messages[0].content[0]
+    assert reasoning.summary == summary
+    assert reasoning.mark == ("summary" if summary else "encrypted")
+    assert reasoning.to_wire()["summary"] == summary
+    assert reasoning.to_wire()["item"] == {"id": "rs_original", "status": "completed"}
+    assert codec.decode(encoded.messages, target_format="openai_responses")["messages"] == [native]
+
+
+@pytest.mark.parametrize(
+    "source,target", [("openai_responses", "openai_chat"), ("openai_chat", "openai_responses")]
+)
+def test_responses_and_chat_share_only_the_canonical_created_at_timestamp(source, target):
+    from tests.helpers.protocols import stream_events
+    from tests.helpers.streaming import render
+
+    incoming = stream_events(source)
+    for event in incoming:
+        if source == "openai_responses" and "response" in event:
+            event["response"]["created_at"] = 123456
+        elif source == "openai_chat":
+            event["created"] = 123456
+    output, state = render(source, target, incoming)
+    assert state.metadata["created_at"] == 123456
+    if target == "openai_chat":
+        assert all(event["created"] == 123456 for event in output)
+    else:
+        assert all(
+            event["response"]["created_at"] == 123456 for event in output if "response" in event
+        )
+    generated = MyCodec().decoder("openai_responses").chunks([{"type": "start"}], created=999)
+    assert generated[0]["response"]["created_at"] == 0
+
+
+def test_responses_final_snapshot_replaces_live_content_item_status():
+    from tests.helpers.protocols import response_completed, stream_events
+    from tests.helpers.streaming import render
+
+    item = {
+        "type": "message",
+        "id": "msg_original",
+        "role": "assistant",
+        "status": "completed",
+        "content": [{"type": "output_text", "text": "answer"}],
+    }
+    incoming = [
+        stream_events("openai_responses")[0],
+        {
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {**item, "status": "in_progress", "content": []},
+        },
+        {
+            "type": "response.output_text.delta",
+            "item_id": "msg_original",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": "answer",
+        },
+        response_completed([item]),
+    ]
+    output, state = render("openai_responses", "openai_responses", incoming)
+    assert output[-1]["response"]["output"][0]["id"] == "msg_original"
+    assert output[-1]["response"]["output"][0]["status"] == "completed"
+    block = state.messages()[0]["content"][0]
+    assert block["item"] == {"id": "msg_original", "status": "completed"}
+
+
+def test_responses_reasoning_delta_marks_the_first_public_block_as_summary():
+    from my_llm import MessageEvent
+    from my_llm.runtime.state import StreamState
+
+    incoming = {
+        "type": "response.reasoning_summary_text.delta",
+        "output_index": 0,
+        "summary_index": 0,
+        "delta": "summary",
+    }
+    codec = MyCodec()
+    state = StreamState("demo")
+    events = state.feed(codec.encode(chunks=[incoming], input_format="openai_responses").stream)
+    block = next(
+        MessageEvent.from_wire(event).block for event in events if event["type"] == "block_start"
+    )
+    assert block.mark == "summary"

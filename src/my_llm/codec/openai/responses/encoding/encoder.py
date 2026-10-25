@@ -142,6 +142,8 @@ class ResponsesEncoder(BaseEncoder):
             path = f"$.messages[{index}]"
             kind = item.get("type", "message")
             role = item.get("role", "assistant") if kind == "message" else "assistant"
+            identity = select(item, "id", "status")
+            item_identity = {"item": identity} if identity else {}
             if kind == "function_call":
                 content = [
                     {
@@ -149,8 +151,7 @@ class ResponsesEncoder(BaseEncoder):
                         "id": item.get("call_id"),
                         "name": item.get("name"),
                         "input": arguments(item.get("arguments", {})),
-                        **({"item_id": item["id"]} if "id" in item else {}),
-                        **select(item, "status"),
+                        **item_identity,
                     }
                 ]
             elif kind == "function_call_output":
@@ -163,21 +164,26 @@ class ResponsesEncoder(BaseEncoder):
                         "content": encode_content(output, path=f"{path}.output")
                         if isinstance(output, list)
                         else output,
-                        **select(item, "id", "status"),
+                        **item_identity,
                     }
                 ]
             elif kind == "reasoning":
                 summary = [
-                    select(part, "type", "text")
+                    part.get("text", "")
                     for part in item.get("summary", [])
                     if part.get("type") == "summary_text"
                 ]
+                reasoning = "".join(summary)
                 content = [
                     {
                         "type": "thinking",
-                        "thinking": "".join(part.get("text", "") for part in summary),
+                        "thinking": reasoning,
+                        "mark": "encrypted"
+                        if item.get("encrypted_content") is not None and not reasoning
+                        else "summary",
                         "summary": summary,
-                        **select(item, "id", "status", "encrypted_content"),
+                        **item_identity,
+                        **select(item, "encrypted_content"),
                     }
                 ]
             elif kind == "message":
@@ -185,8 +191,7 @@ class ResponsesEncoder(BaseEncoder):
                     originated(
                         {
                             **block,
-                            **({"item_id": item["id"]} if "id" in item else {}),
-                            **({"item_status": item["status"]} if "status" in item else {}),
+                            **item_identity,
                         },
                         block.origin_path,
                         block.origin_value,
@@ -203,7 +208,7 @@ class ResponsesEncoder(BaseEncoder):
                     "coalesce": True,
                     "role": role,
                     "content": content,
-                    **(select(item, "id", "status") if kind == "message" else {}),
+                    **(item_identity if kind == "message" else {}),
                 }
             )
         for message in result:
@@ -324,7 +329,8 @@ class ResponsesEncoder(BaseEncoder):
                         "block": {
                             "type": "thinking",
                             "thinking": part.get("text", ""),
-                            "summary": [select(part, "type", "text")],
+                            "mark": "summary",
+                            "summary": [part.get("text", "")],
                         },
                     }
                 )
@@ -381,6 +387,7 @@ class ResponsesEncoder(BaseEncoder):
                             ),
                             "kind": block_kind,
                             "field": "text" if block_kind == "text" else "thinking",
+                            **({"mark": "summary"} if block_kind == "thinking" else {}),
                             "value": value,
                         }
                     )
@@ -464,15 +471,15 @@ class ResponsesEncoder(BaseEncoder):
                 kind = block["type"]
                 origin_path = f"{path}[{index}]"
                 if kind == "thinking":
-                    for summary_index, summary in enumerate(block.get("summary") or [{}]):
+                    for summary_index, summary in enumerate(block["summary"] or [""]):
                         blocks.append(
                             {
                                 "ref": BlockRef(kind, index, summary_index),
                                 "block": originated(
                                     {
                                         **block,
-                                        "thinking": summary.get("text", ""),
-                                        "summary": [summary] if summary else [],
+                                        "thinking": summary,
+                                        "summary": [summary] if block["summary"] else [],
                                     },
                                     origin_path,
                                     item,

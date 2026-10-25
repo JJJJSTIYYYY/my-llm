@@ -6,6 +6,7 @@ from my_llm.middleware.models import (
     ImageContent,
     ImageSource,
     InstructionMessage,
+    ItemIdentity,
     JsonObject,
     JsonValue,
     Message,
@@ -29,8 +30,6 @@ from my_llm.middleware.protocol import (
     wire_values,
 )
 from my_llm.middleware.stream import (
-    AssistantMessageChunk,
-    ItemIdentity,
     MessageEvent,
     StreamBatch,
     Usage,
@@ -39,7 +38,6 @@ from my_llm.middleware.stream import (
 
 __all__ = [
     "AssistantMessage",
-    "AssistantMessageChunk",
     "FunctionTool",
     "ImageContent",
     "ImageSource",

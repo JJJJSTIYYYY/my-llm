@@ -4,10 +4,10 @@ from typing import Any
 
 from anthropic.types import MessageParam, ToolParam
 
-from my_llm.basic.data import _MISSING, dictionary_views
+from my_llm.basic.data import _MISSING, capture, dictionary_views
 from my_llm.basic.exceptions import MessageValidationError, ResponseFailedError
 from my_llm.basic.semantic_loss import originated
-from my_llm.codec.anthropic.content import native_block
+from my_llm.codec.anthropic.content import intermediate_block, native_block
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.shared.conversion import mapping_list, select
 from my_llm.codec.shared.stream import BlockRef, encode_batch, metadata, record
@@ -121,7 +121,7 @@ class AnthropicEncoder(BaseEncoder):
                 else [
                     block
                     for part_index, item in enumerate(dictionary_views(value or []))
-                    if (block := native_block(item, path=f"{path}[{part_index}]")) is not None
+                    if (block := intermediate_block(item, path=f"{path}[{part_index}]")) is not None
                 ]
             )
             result.append({"protocol": PROTOCOL, "role": message.get("role"), "content": content})
@@ -174,14 +174,15 @@ class AnthropicEncoder(BaseEncoder):
                 if message.get("usage") is not None:
                     ops.append({"type": "usage", "usage": message["usage"]})
             elif kind == "content_block_start":
-                block = native_block(event["content_block"])
+                block = intermediate_block(event["content_block"])
                 if block is None or block["type"] not in (
                     "text",
                     "thinking",
-                    "redacted_thinking",
                     "tool_use",
                 ):
                     continue
+                if block["type"] == "tool_use":
+                    block["input"] = capture(block["input"])
                 ops.append(
                     {
                         "type": "block_set",

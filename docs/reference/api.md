@@ -154,8 +154,8 @@ async def print_stream(llm, prompt):
 
 | 接口 | 含义 |
 | --- | --- |
-| `async for event in stream` | 按所选协议产生事件字典；流只能消费一次，同一流不能并发消费 |
-| `stream.result` | 成功完整消费后的标准消息或 items；此前、提前关闭或失败时为 `None`；重复读取返回本次最终 draft 本身，与其他调用隔离 |
+| `async for event in stream` | 按所选协议产生原生事件字典或中间 `MessageEvent`；流只能消费一次，同一流不能并发消费 |
+| `stream.result` | 成功完整消费后的标准消息、items 或中间 `AssistantMessage`；此前、提前关闭或失败时为 `None`；重复读取返回本次最终 draft 本身，与其他调用隔离 |
 | `await stream.aclose()` | 关闭响应并执行清理回调，返回 `None`；可在开始消费前调用，也可重复调用 |
 | `stream.add_close_callback(callback)` | 登记无参数异步清理函数，关闭时按登记逆序各执行一次；关闭后登记抛出 `RuntimeError` |
 | `async with stream` | 离开上下文时关闭流，适用于提前退出、异常和取消 |
@@ -163,6 +163,38 @@ async def print_stream(llm, prompt):
 文本和可见思考逐步输出；工具调用以完整参数提供，成功完成后才发布。
 提前退出或失败时，不能将部分文本视为完成的工具调用或成功结果。
 对可复用实例，关闭一个响应流不会关闭该实例。
+
+## 中间协议模型
+
+显式选择 `stdio_protocol="middleware"` 后，生成接口接收具体消息和工具模型，
+完整返回 `AssistantMessage`，流式迭代返回 `MessageEvent`。
+模型支持按字段名构造和直接读取属性；完整字段及协议归属见[中间协议契约](../design/protocol-middleware.md#支持集合)。
+
+| 类型 | 公开契约 |
+| --- | --- |
+| `Message`、`UserMessage`、`AssistantMessage`、`InstructionMessage`、`ToolMessage` | `role` 与有序 `content`；可选 `name`、来源 `protocol`、`item`、`coalesce`、`origin`；具体类型不增加字段 |
+| `TextContent` | `text`；固定 `type="text"`，可选 `item`、`origin` |
+| `ImageContent`、`ImageSource` | 图片内容的 `source`、固定 `type="image"`、可选 `item/origin`；来源的 `type="url" / "base64"` 及 `url/data/media_type`；用户消息和工具结果可使用 |
+| `ReasoningContent` | `reasoning`、`mark="raw" / "summary" / "encrypted"`；可选 `signature`、`encrypted_content`、`opaque_protocol`、`item`、`origin`、`summary: list[str]`，`redacted=False`；固定 `type="thinking"` |
+| `ToolCall` | `call_id`、`name`、完整 `arguments: JsonObject`；可选 `signature`、`opaque_protocol`、`item`、`origin`；固定 `type="tool_use"` |
+| `ToolResult` | `call_id`、有序 `content: list[ResultContent]`；可选 `name`、`item`、`origin`；固定 `type="tool_result"` |
+| `FunctionTool` | `name` 及可选 `description`、`parameters: JsonObject`、`strict`、`origin` |
+| `ItemIdentity` | 可选 `id`、`status`；保存源输出项身份，与工具的 `call_id` 和流块的 `source_ref` 分开 |
+| `Origin` | `path`、`value`；仅供错误定位，不作为 payload 字段输出 |
+| `Usage` | 可选整数 `input`、`output`、`total`、`cached`、`reasoning`；缺失为 `None` |
+| `ProtocolMiddleWare` | 可选 `messages`、`tools`、`stream`、`usage`；生成时传模型列表属性；字典投影中 `stream` 对应 `chunks` |
+| `StreamBatch` | `protocol` 和内部操作 `events: list[dict]`，供 encoder 与状态机交互；应用流使用 `MessageEvent` |
+| `MessageEvent` | `type`、可选 `index`、`source_ref`、`block`、`tool_index`、`field`、`value`、`reason`、`messages`；各事件有效字段见[流式输出](../guides/middleware-io.md#流式输出) |
+| `MessageContent`、`ResultContent` | 分别为消息支持内容的联合类型、`TextContent \| ImageContent` |
+| `JsonValue`、`JsonObject` | JSON 值和 `dict[str, JsonValue]` 类型别名，使用普通 Python 值与字典，无额外包装 |
+
+消息及所有内容块最多各有一个可选 `item: ItemIdentity`。源项合并后内容仍保留自身项身份；
+工具结果通过 `call_id` 对应调用，`ToolMessage.call_id` 是从结果内容读取的只读属性。
+显式 `mark`、摘要列表和 `redacted` 都会在中间投影中保留，原生思维格式由对应 codec 转换。
+
+`to_wire()` 提供显式投影并借用部分嵌套值；它不提供深拷贝或自动校验。
+生成请求在准备阶段隔离输入，公开结果和事件拥有自己的可变数据。
+未知原生字段由 encoder 过滤，未知中间内容、内部操作或增量字段抛出 `MessageValidationError`。
 
 ## 配置接口
 
@@ -374,8 +406,9 @@ assert converted["messages"] == [{"role": "user", "parts": [{"text": "Hello"}]}]
 | `decode(messages=None, tools=None, *, target_format, profile=None, chunks=None, **parameters)` | 将中间值转换为目标标准值 |
 | `result(messages, *, target_format)` | 将中间消息列表转换为完整结果：单个消息字典，或 Responses items 列表 |
 
-前三个方法返回字典，只包含传入的 `messages`、`tools`、`chunks` 键，各值为列表。
-参数为 `None` 时该键不出现在返回值中，空列表仍保留。
+`convert`、`decode` 返回只包含本次转换集合的字典；`encode` 返回 `ProtocolMiddleWare`，
+其 `.messages`、`.tools`、`.stream` 为具体模型列表。
+字典投影只包含传入的 `messages`、`tools`、`chunks`；参数为 `None` 时省略，空列表仍保留。
 `profile=None` 表示标准字段行为；`convert` 的 profile 和额外选项作用于目标转换。
 额外选项由目标协议支持情况决定，例如事件中的 `model`。
 
@@ -434,7 +467,8 @@ assert converted["messages"] == [{"role": "user", "parts": [{"text": "Hello"}]}]
 | `PreparedOptions` | 已验证的生成控制值，通常由 BaseDecoder.validate_parameters 返回 |
 
 `BaseCodec` 提供 `encode_messages` / `decode_messages`、`encode_tools` / `decode_tools`、
-`encode_chunks` / `decode_chunks`，签名均为 `(values, profile=None, **parameters)`，返回字典列表。
+`encode_chunks` / `decode_chunks`，签名均为 `(values, profile=None, **parameters)`。
+编码分别返回 `Message`、`FunctionTool`、`StreamBatch` 模型列表，解码返回原生字典列表。
 `match_protocol(values)` 返回本协议名或 `None`；`validate_input`、`validate_profile` 和 `request`
 分别验证输入、验证配置、返回原生请求参数。
 

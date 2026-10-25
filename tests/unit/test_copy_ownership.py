@@ -637,7 +637,7 @@ def stream_payload_cases():
         (
             "anthropic",
             [{"type": "content_block_start", "index": 0, "content_block": tool}],
-            [{"type": "block", "index": 0, "block": {**tool, "type": "server_tool_use"}}],
+            [{"type": "tool", "index": 0, "block": tool}],
             {},
         ),
         (

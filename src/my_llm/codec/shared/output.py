@@ -16,7 +16,6 @@ def _output_block(block: dict, profile: ResolvedProfile) -> bool:
     name = {
         "text": "content",
         "thinking": "reasoning_content",
-        "redacted_thinking": "reasoning_content",
     }.get(kind)
     if name is not None and profile.parameter(name, "output") is None:
         report_loss(block, f"profile disables supported {name}")

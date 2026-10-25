@@ -219,7 +219,7 @@ class OllamaDecoder(BaseDecoder):
                         }
                     )
                 elif kind == "thinking":
-                    reasoning += block.get("thinking", "")
+                    reasoning += block["thinking"] or "\n".join(block.get("summary", ()))
                 elif kind == "image":
                     source = block.get("source", {})
                     if source.get("type") != "base64":
@@ -240,7 +240,7 @@ class OllamaDecoder(BaseDecoder):
                         "replay_reasoning_content_when_tool_calls", False
                     ):
                         for block in content:
-                            if block.get("type") == "thinking" and block.get("thinking"):
+                            if block.get("type") == "thinking":
                                 report_loss(block, "Ollama profile cannot replay thinking")
                     else:
                         value["thinking"] = reasoning
@@ -285,10 +285,8 @@ class OllamaDecoder(BaseDecoder):
             elif kind == "block_stop" and not native_owner:
                 foreign_block(event["block"])
                 continue
-            elif kind == "block" and event.get("block", {}).get("type") == "redacted_thinking":
-                report_loss(
-                    event["block"], "Ollama cannot represent opaque reasoning from another protocol"
-                )
+            elif kind == "block" and event["block"]["type"] == "thinking":
+                foreign_block(event["block"])
                 continue
             elif kind == "tool":
                 block = event["block"]

@@ -39,12 +39,19 @@ def decode_part(block: dict, *, foreign: bool = False) -> dict | None:
             },
         }
     if kind == "thinking":
+        if block.get("redacted") or block.get("mark") == "encrypted":
+            report_loss(block, "Gemini cannot represent opaque reasoning from another protocol")
+            return None
         if not native_signature or not block.get("signature"):
             report_loss(
                 block, "Gemini cannot replay reasoning without its native thought signature"
             )
             return None
-        return {**common, "text": block.get("thinking", ""), "thought": True}
+        return {
+            **common,
+            "text": block["thinking"] or "\n".join(block.get("summary", ())),
+            "thought": True,
+        }
     if kind == "text":
         return {**common, "text": block.get("text", "")}
     if kind == "image":
@@ -58,6 +65,4 @@ def decode_part(block: dict, *, foreign: bool = False) -> dict | None:
             }
         )
         return {"inline_data" if source.get("type") == "base64" else "file_data": data}
-    if kind == "redacted_thinking":
-        report_loss(block, "Gemini cannot represent opaque reasoning from another protocol")
     return None

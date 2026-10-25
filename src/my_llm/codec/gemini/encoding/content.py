@@ -68,7 +68,12 @@ def image_part(part: dict) -> dict | None:
 
 
 def encode_part(part: dict, call_id: str, *, path: str = "$") -> dict | None:
-    common = {"signature": part["thought_signature"]} if "thought_signature" in part else {}
+    common = (
+        {"signature": part["thought_signature"]}
+        if "thought_signature" in part
+        and ("function_call" in part or "text" in part and part.get("thought"))
+        else {}
+    )
     if isinstance(common.get("signature"), bytes):
         common["signature"] = b64encode(common["signature"]).decode("ascii")
     if "function_call" in part:
@@ -113,7 +118,7 @@ def encode_part(part: dict, call_id: str, *, path: str = "$") -> dict | None:
         }
     if "text" in part:
         return (
-            {**common, "type": "thinking", "thinking": part["text"]}
+            {**common, "type": "thinking", "thinking": part["text"], "mark": "raw"}
             if part.get("thought")
             else {**common, "type": "text", "text": part["text"]}
         )

@@ -382,7 +382,7 @@ def test_responses_final_snapshot_cannot_restore_unsupported_output(name):
     reasoning = next(block for block in blocks if block["type"] == "thinking")
     assert text["text"] == "answer"
     assert reasoning["thinking"] == "thought"
-    assert reasoning["summary"][0]["text"] == "thought"
+    assert reasoning["summary"] == ["thought"]
     from my_llm import SemanticLossError
 
     with pytest.raises(SemanticLossError, match="profile disables supported"):

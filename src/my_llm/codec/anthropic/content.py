@@ -40,3 +40,23 @@ def native_block(block: dict, *, path: str | None = None) -> dict | None:
         else:
             value["content"] = content
     return originated(value, path, block) if path is not None else value
+
+
+def intermediate_block(block: dict, *, path: str | None = None) -> dict | None:
+    value = native_block(block, path=path)
+    if value is None:
+        return None
+    if value["type"] == "redacted_thinking":
+        value = {
+            "type": "thinking",
+            "thinking": "",
+            "mark": "encrypted",
+            "redacted": True,
+            "encrypted_content": value["data"],
+            "protocol": "anthropic",
+        }
+        if path is not None:
+            value = originated(value, path, block)
+    elif value["type"] == "thinking":
+        value["mark"] = "raw"
+    return value

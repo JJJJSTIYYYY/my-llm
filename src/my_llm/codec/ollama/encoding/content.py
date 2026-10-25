@@ -5,7 +5,7 @@ import binascii
 from pathlib import Path
 
 from my_llm.basic.exceptions import MessageValidationError
-from my_llm.codec.shared.conversion import arguments, select
+from my_llm.codec.shared.conversion import arguments
 
 
 def image_data(value) -> str:
@@ -42,11 +42,10 @@ def media_type(value: str) -> str:
 
 
 def tool_block(call: dict, *, call_id: str | None = None) -> dict:
-    fn = call.get("function", call)
+    fn = call["function"]
     return {
         "type": "tool_use",
         "id": call.get("id") or call_id,
         "name": fn.get("name"),
         "input": arguments(fn.get("arguments", {})),
-        **select(fn, "index"),
     }

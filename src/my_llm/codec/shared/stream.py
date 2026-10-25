@@ -73,8 +73,8 @@ def record(
 ):
     return compact(
         {
-            "input": {"base": input_base, "add": input_add},
-            "output": {"base": output_base, "add": output_add},
+            "input": {"base": input_base, "add": input_add} if input_base is not None else None,
+            "output": {"base": output_base, "add": output_add} if output_base is not None else None,
             "total": total,
             "cached": cached,
             "cache_write": cache_write,

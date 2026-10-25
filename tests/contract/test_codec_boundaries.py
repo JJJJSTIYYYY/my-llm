@@ -41,6 +41,16 @@ SDK_CLIENTS = {
         *client.__module__.split(".")[:-1],
     )
 }
+MIDDLEWARE_NATIVE_FIELDS = frozenset(
+    (
+        "response_items",
+        "native_stop_reason",
+        "native_stop_sequence",
+        "redacted_thinking",
+        "summary_text",
+        "created",
+    )
+)
 
 
 def imported_modules(node):
@@ -237,6 +247,25 @@ def test_protocol_models_and_data_views_do_not_depend_on_higher_layers(paths, fo
         for node in ast.walk(ast.parse(path.read_text())):
             for module in imported_modules(node):
                 assert not module.startswith(forbidden), (path, module)
+
+
+def assert_no_native_middleware_fields(tree, path):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            assert node.value not in MIDDLEWARE_NATIVE_FIELDS, (path, node.lineno, node.value)
+
+
+def test_middleware_does_not_interpret_native_field_spellings():
+    for path in (ROOT / "middleware").glob("*.py"):
+        assert_no_native_middleware_fields(ast.parse(path.read_text()), path)
+
+
+@pytest.mark.parametrize("field", sorted(MIDDLEWARE_NATIVE_FIELDS))
+def test_native_middleware_field_check_rejects_native_spelling(field):
+    with pytest.raises(AssertionError):
+        assert_no_native_middleware_fields(
+            ast.parse(f"value = {{{field!r}: None}}"), Path("models.py")
+        )
 
 
 def test_invoke_only_accesses_its_own_private_attributes():

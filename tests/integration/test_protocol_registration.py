@@ -612,9 +612,13 @@ def test_registered_protocol_owns_its_metadata_projection_and_merge_paths(regist
     assert "vendor_unconfigured" not in str(encoded)
     operations = state.feed(encoded)
     operations.extend(state.finish())
-    assert "trace" not in state.metadata
+    assert state.metadata["trace"] == {"token": "trace-1", "phase": "complete"}
     output = codec.decode(chunks=operations, target_format=PROTOCOL, **state.metadata)["chunks"]
-    assert output[-1] == {"body": "", "done": True}
+    assert output[-1] == {
+        "body": "",
+        "done": True,
+        "trace": {"token": "trace-1", "phase": "complete"},
+    }
 
 
 def test_independent_stream_hooks_capture_their_mutable_metadata(registered):
@@ -626,7 +630,11 @@ def test_independent_stream_hooks_capture_their_mutable_metadata(registered):
 
     trace["token"]["parts"].append("caller edit")
     assert encoded == expected
-    assert all(event.get("type") != "metadata" for batch in encoded for event in batch["events"])
+    assert encoded[0].events[0] == {
+        "type": "metadata",
+        "path": ("trace",),
+        "values": {"token": {"parts": ["original"]}},
+    }
     assert trace["token"]["parts"] == ["original", "caller edit"]
 
     output = codec.decoder.chunks([{"type": "finish", "reason": "stop"}], trace=trace)

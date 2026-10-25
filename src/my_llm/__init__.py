@@ -29,7 +29,6 @@ from my_llm.codec import (
 )
 from my_llm.middleware import (
     AssistantMessage,
-    AssistantMessageChunk,
     FunctionTool,
     ImageContent,
     ImageSource,
@@ -91,7 +90,6 @@ __all__ = [
     "ToolCall",
     "ToolResult",
     "FunctionTool",
-    "AssistantMessageChunk",
     "StreamBatch",
     "Usage",
     "Origin",

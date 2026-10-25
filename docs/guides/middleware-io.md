@@ -53,7 +53,8 @@ reply = await llm.generate(messages=middle.messages, tools=middle.tools)
 | 内容 | `TextContent`、`ImageContent`、`ImageSource`、`ReasoningContent`、`ToolCall`、`ToolResult` |
 | 工具与类型别名 | `FunctionTool`、`MessageContent`、`ResultContent`、`JsonObject`、`JsonValue` |
 | 公开生成结果 | `AssistantMessage`、`MessageEvent` |
-| 转换容器和原生编码操作 | `ProtocolMiddleWare`、`StreamBatch`、`AssistantMessageChunk`、`ItemIdentity` |
+| 转换容器 | `ProtocolMiddleWare`、`StreamBatch` |
+| 源项身份 | `ItemIdentity` |
 | 用量和来源 | `Usage`、`Origin` |
 
 历史角色为 `user`、`assistant`、`system`、`developer`。工具结果使用 `user` 角色的
@@ -85,6 +86,16 @@ history = [
 图片支持用户消息及工具结果；指令为文本，思维和工具调用属于 assistant。
 opaque 思维的 `opaque_protocol`、签名和加密内容仍需符合上游的原生回放条件。
 
+`Message` 和所有内容块都可携带 `item=ItemIdentity(id=..., status=...)`，用于保留源输出项身份，
+当前主要用于 Responses 回放。应用通常直接保存 encoder 或生成接口返回的模型，无须手动设置。
+`ToolCall.call_id` / `ToolResult.call_id` 关联工具调用与结果，和源输出项 id 的用途不同。
+流事件的 `source_ref` 是源块地址，`index` 是本次返回内容的顺序。
+
+思维模型始终使用 `ReasoningContent`：正文为 `reasoning`，标记为
+`mark="raw" / "summary" / "encrypted"`，可选摘要为 `summary: list[str]`，
+隐去思维通过 `redacted=True` 表示。原生摘要对象、隐去块和签名字段由相应 codec 转换，
+应用直接使用这些模型字段即可。
+
 ## 流式输出
 
 ```python
@@ -105,7 +116,8 @@ reply = stream.result  # 成功耗尽后为 AssistantMessage；此前或提前�
 usage = llm.get_last_usage()
 ```
 
-`MessageEvent` 是累积和校验后的公开事件，与 encoder 的原始 `AssistantMessageChunk` 操作不同。
+`MessageEvent` 是累积和校验后的公开事件。`StreamBatch.events` 是供协议扩展和状态机使用的
+内部操作字典列表；应用消费生成流时使用下表事件。
 
 | `type` | 有效内容 |
 | --- | --- |
@@ -130,6 +142,11 @@ raise / ignore / hook 处理；请求 hook 收到完整原生 SDK 请求，返�
 
 输入在 `await generate()` 的准备阶段隔离；调用者可在流消费前修改自己的历史。
 应用仍负责追加完成回复。必须关闭未耗尽的流及实例。
+
+`to_wire()` 和字典索引提供转换投影，会借用嵌套应用值及内部操作；它们不是深拷贝接口。
+需要直接调用生成方法时传 `.messages` / `.tools` 模型属性。
+`Origin` 只记录错误定位来源，不作为 payload 字段输出。
+未知原生字段由 encoder 过滤；未知中间内容或内部操作抛出 `MessageValidationError`。
 
 请求直接进入上游现有 `Decoder.prepare()`，跳过源 encoder。返回由上游现有 encoder 和
 同一个请求状态机生成具体模型，跳过目标 decoder。没有注册名为 `middleware` 的 codec，

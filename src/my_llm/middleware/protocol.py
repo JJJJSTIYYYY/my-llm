@@ -9,6 +9,7 @@ from my_llm.middleware.models import (
     FunctionTool,
     ImageContent,
     ImageSource,
+    ItemIdentity,
     Message,
     MessageContent,
     Origin,
@@ -64,6 +65,10 @@ def wire_values(values: list) -> list:
 
 
 def _valid_content(part: MessageContent, role: str) -> bool:
+    if not isinstance(part, (TextContent, ImageContent, ReasoningContent, ToolCall, ToolResult)):
+        return False
+    if not _valid_item(part.item):
+        return False
     if isinstance(part, TextContent):
         return isinstance(part.text, str)
     if isinstance(part, ImageContent):
@@ -85,10 +90,11 @@ def _valid_content(part: MessageContent, role: str) -> bool:
         return (
             role == "assistant"
             and isinstance(part.reasoning, str)
+            and isinstance(part.redacted, bool)
             and part.mark in ("raw", "summary", "encrypted")
             and all(
                 value is None or isinstance(value, str)
-                for value in (part.signature, part.encrypted_content, part.opaque_protocol, part.id)
+                for value in (part.signature, part.encrypted_content, part.opaque_protocol)
             )
             and (
                 part.summary is None
@@ -113,6 +119,14 @@ def _valid_content(part: MessageContent, role: str) -> bool:
             )
         )
     return False
+
+
+def _valid_item(item: ItemIdentity | None) -> bool:
+    return (
+        item is None
+        or isinstance(item, ItemIdentity)
+        and all(value is None or isinstance(value, str) for value in (item.id, item.status))
+    )
 
 
 def _input_origin(part: MessageContent, path: str) -> MessageContent:
@@ -149,8 +163,10 @@ def generation_input(messages, tools) -> ProtocolMiddleWare:
             raise MessageValidationError(
                 "middleware messages require Message models and valid roles"
             )
-        if not isinstance(message.content, list) or not all(
-            _valid_content(part, message.role) for part in message.content
+        if (
+            not _valid_item(message.item)
+            or not isinstance(message.content, list)
+            or not all(_valid_content(part, message.role) for part in message.content)
         ):
             raise MessageValidationError("invalid middleware content or content role")
         path = f"$.messages[{index}]"

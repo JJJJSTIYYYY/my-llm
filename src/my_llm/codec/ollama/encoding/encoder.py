@@ -4,6 +4,7 @@ from typing import Any
 
 from ollama import Message, Tool
 
+from my_llm.basic.data import capture
 from my_llm.basic.exceptions import ResponseFailedError
 from my_llm.basic.semantic_loss import originated
 from my_llm.codec.base.encoder import BaseEncoder
@@ -123,7 +124,7 @@ class OllamaEncoder(BaseEncoder):
             if message.get("thinking"):
                 content.append(
                     originated(
-                        {"type": "thinking", "thinking": message["thinking"]},
+                        {"type": "thinking", "thinking": message["thinking"], "mark": "raw"},
                         f"$.messages[{index}].thinking",
                         message["thinking"],
                     )
@@ -224,6 +225,7 @@ class OllamaEncoder(BaseEncoder):
                     )
             for call in message.get("tool_calls") or []:
                 block = tool_block(call)
+                block["input"] = capture(block["input"])
                 ops.append({"type": "block_append", "block": block})
             if event.get("done"):
                 ops.append(

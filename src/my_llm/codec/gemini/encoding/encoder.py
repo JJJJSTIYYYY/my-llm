@@ -4,7 +4,7 @@ from typing import Any
 
 from google.genai import types
 
-from my_llm.basic.data import _MISSING
+from my_llm.basic.data import _MISSING, capture
 from my_llm.basic.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.basic.semantic_loss import originated
 from my_llm.codec.base.encoder import BaseEncoder
@@ -216,6 +216,8 @@ class GeminiEncoder(BaseEncoder):
                 for part_index, part in enumerate(native_parts):
                     block = encode_part(part, "")
                     if block is not None and block["type"] in ("text", "thinking", "tool_use"):
+                        if block["type"] == "tool_use":
+                            block["input"] = capture(block["input"])
                         # A standard text path uses each native part's thought flag.
                         # An overridden path addresses one exact SDK-root parameter.
                         if block["type"] in ("text", "thinking"):
@@ -272,7 +274,11 @@ class GeminiEncoder(BaseEncoder):
                             position,
                             {
                                 "type": "block_append",
-                                "block": {"type": kind, field: value},
+                                "block": {
+                                    "type": kind,
+                                    field: value,
+                                    **({"mark": "raw"} if kind == "thinking" else {}),
+                                },
                             },
                         )
             for operation_index, operation in enumerate(ops):

@@ -15,8 +15,7 @@ from pydantic import ValidationError
 from my_llm.basic.data import capture
 from my_llm.basic.exceptions import ConfigurationError, MessageValidationError, ResponseFailedError
 from my_llm.basic.semantic_loss import report_loss
-from my_llm.codec.anthropic.content import native_block
-from my_llm.codec.anthropic.decoding.content import foreign_block
+from my_llm.codec.anthropic.decoding.content import decode_block, foreign_block
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.shared.conversion import (
     coalesce_messages,
@@ -169,10 +168,7 @@ class AnthropicDecoder(BaseDecoder):
                     block = foreign_block(block)
                     if block is None:
                         continue
-                if block.get("type") == "thinking" and not block.get("signature"):
-                    report_loss(block, "Anthropic reasoning requires a native signature")
-                    continue
-                value = native_block(block)
+                value = decode_block(block)
                 if value is not None:
                     content.append(value)
             result.append({"role": message["role"], "content": content})
@@ -275,7 +271,7 @@ class AnthropicDecoder(BaseDecoder):
                 block = event["block"]
                 if not native_owner:
                     block = foreign_block(block)
-                block = native_block(block)
+                block = decode_block(block)
                 result.extend(
                     [
                         {
@@ -292,12 +288,15 @@ class AnthropicDecoder(BaseDecoder):
                     block = foreign_block(block)
                     if block is None:
                         continue
+                block = decode_block(block)
+                if block is None:
+                    continue
                 result.extend(
                     [
                         {
                             "type": "content_block_start",
                             "index": index,
-                            "content_block": capture(native_block(block)),
+                            "content_block": capture(block),
                         },
                         {"type": "content_block_stop", "index": index},
                     ]

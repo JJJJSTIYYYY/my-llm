@@ -206,16 +206,38 @@ def test_reasoning_mark_survives_typed_input_and_wire_roundtrips(mark):
 
 
 @pytest.mark.parametrize(
-    "wire,mark",
+    "protocol,native,mark",
     [
-        ({"type": "thinking", "thinking": "raw"}, "raw"),
-        ({"type": "thinking", "summary": [{"type": "summary_text", "text": "summary"}]}, "summary"),
-        ({"type": "thinking", "encrypted_content": "opaque"}, "encrypted"),
-        ({"type": "redacted_thinking", "data": "opaque"}, "encrypted"),
+        (
+            "openai_chat",
+            {"role": "assistant", "content": "", "reasoning_content": "raw"},
+            "raw",
+        ),
+        (
+            "openai_responses",
+            {
+                "type": "reasoning",
+                "id": "reason-1",
+                "summary": [{"type": "summary_text", "text": "summary"}],
+            },
+            "summary",
+        ),
+        (
+            "openai_responses",
+            {"type": "reasoning", "id": "reason-1", "summary": [], "encrypted_content": "opaque"},
+            "encrypted",
+        ),
+        (
+            "anthropic",
+            {"role": "assistant", "content": [{"type": "redacted_thinking", "data": "opaque"}]},
+            "encrypted",
+        ),
     ],
 )
-def test_native_reasoning_still_infers_mark_without_an_explicit_middle_mark(wire, mark):
-    assert content_from_wire(wire).mark == mark
+def test_native_encoders_assign_reasoning_mark_before_middleware(protocol, native, mark):
+    messages = MyCodec().codecs[protocol].encoder.messages([native])
+    reasoning = next(part for part in messages[0].content if isinstance(part, ReasoningContent))
+    assert reasoning.mark == mark
 
 
 def test_reasoning_mark_reaches_decoder_without_becoming_a_native_field(monkeypatch):

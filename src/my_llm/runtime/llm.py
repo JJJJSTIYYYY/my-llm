@@ -297,7 +297,7 @@ class MyLLM:
                     )["chunks"]
                     chunk_offset += 1
                     emitted = state.feed(encoded)
-                    if streaming:
+                    if streaming and emitted:
                         for output in self._render(emitted, state, stdio_protocol):
                             yield output
                 final = state.finish()

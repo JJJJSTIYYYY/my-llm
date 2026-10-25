@@ -12,6 +12,7 @@ from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.openai.responses.decoding.content import (
     _tool_output,
     foreign_block,
+    reasoning_summary,
     render_content,
 )
 from my_llm.codec.shared.conversion import (
@@ -137,12 +138,10 @@ class ResponsesDecoder(BaseDecoder):
                                 if message["role"] == "assistant" and not input_media
                                 else {}
                             ),
-                            **select(message, "id", "status"),
-                            **({"id": pending[0]["item_id"]} if pending[0].get("item_id") else {}),
-                            **(
-                                {"status": pending[0]["item_status"]}
-                                if pending[0].get("item_status")
-                                else {}
+                            **select(
+                                pending[0].get("item") or message.get("item") or {},
+                                "id",
+                                "status",
                             ),
                             "role": message["role"],
                             "content": render_content(
@@ -155,16 +154,21 @@ class ResponsesDecoder(BaseDecoder):
             for block in content:
                 kind = block.get("type")
                 if kind not in ("tool_use", "tool_result", "thinking"):
-                    if pending and block.get("item_id") != pending[0].get("item_id"):
-                        flush()
+                    if pending:
+                        identity = block.get("item", {})
+                        first_identity = pending[0].get("item", {})
+                        if identity.get("id") != first_identity.get("id") or identity.get(
+                            "status"
+                        ) != first_identity.get("status"):
+                            flush()
                     pending.append(block)
                     continue
                 flush()
                 if kind == "tool_use":
                     result.append(
                         {
-                            **select(block, "name", "status"),
-                            **({"id": block["item_id"]} if "item_id" in block else {}),
+                            **select(block, "name"),
+                            **select(block.get("item", {}), "id", "status"),
                             "type": "function_call",
                             "call_id": block["id"],
                             "arguments": json_arguments(block["input"]),
@@ -173,7 +177,7 @@ class ResponsesDecoder(BaseDecoder):
                 elif kind == "tool_result":
                     result.append(
                         {
-                            **select(block, "id", "status"),
+                            **select(block.get("item", {}), "id", "status"),
                             "type": "function_call_output",
                             "call_id": block["tool_use_id"],
                             "output": render_content(block["content"], role="user")
@@ -183,16 +187,11 @@ class ResponsesDecoder(BaseDecoder):
                     )
                 else:
                     item = {
-                        **select(block, "status", "encrypted_content"),
+                        "id": f"rs_{len(result)}",
+                        **select(block.get("item", {}), "id", "status"),
+                        **select(block, "encrypted_content"),
                         "type": "reasoning",
-                        "id": block.get("id", f"rs_{len(result)}"),
-                        "summary": [
-                            select(part, "type", "text")
-                            for part in block.get(
-                                "summary",
-                                [{"type": "summary_text", "text": block.get("thinking", "")}],
-                            )
-                        ],
+                        "summary": reasoning_summary(block),
                     }
                     if (
                         result
@@ -214,9 +213,8 @@ class ResponsesDecoder(BaseDecoder):
                             if message["role"] == "assistant"
                             else {}
                         ),
-                        "content": render_content(
-                            [{"type": "text", "text": ""}], role=message["role"]
-                        ),
+                        **select(message.get("item", {}), "id", "status"),
+                        "content": [],
                     }
                 )
         return result
@@ -387,7 +385,7 @@ class ResponsesDecoder(BaseDecoder):
                         {"type": "response.output_item.done", "output_index": index, "item": item}
                     )
             elif kind == "block":
-                if event["block"].get("type") == "redacted_thinking":
+                if event["block"].get("redacted"):
                     report_loss(
                         event["block"],
                         "Responses cannot represent opaque reasoning from another protocol",
@@ -487,7 +485,7 @@ class ResponsesDecoder(BaseDecoder):
             "id": parameters.get("response_id", "generated"),
             "object": "response",
             "model": parameters.get("model", ""),
-            "created_at": parameters.get("created_at", parameters.get("created", 0)),
+            "created_at": parameters.get("created_at", 0),
             "parallel_tool_calls": True,
             "tool_choice": "auto",
             "tools": [],
@@ -507,7 +505,7 @@ class ResponsesDecoder(BaseDecoder):
             return [
                 self._output_item(entry["block"], entry["index"], origin)
                 for entry in entries
-                if origin == PROTOCOL or entry["block"].get("type") != "redacted_thinking"
+                if origin == PROTOCOL or not entry["block"].get("redacted")
             ]
         grouped = {}
         for entry in entries:
@@ -537,13 +535,7 @@ class ResponsesDecoder(BaseDecoder):
                 blocks = retained
                 item = {
                     "type": kind,
-                    "summary": [
-                        select(part, "type", "text")
-                        for block in blocks
-                        for part in block.get(
-                            "summary", [{"type": "summary_text", "text": block.get("thinking", "")}]
-                        )
-                    ],
+                    "summary": [part for block in blocks for part in reasoning_summary(block)],
                 }
                 for block in blocks:
                     item.update(select(block, "encrypted_content"))

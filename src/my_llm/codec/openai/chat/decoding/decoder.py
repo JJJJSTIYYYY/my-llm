@@ -181,7 +181,9 @@ class ChatCompletionsDecoder(BaseDecoder):
                 if calls:
                     value["tool_calls"] = calls
                 reasoning = "".join(
-                    b.get("thinking", "") for b in other if b.get("type") == "thinking"
+                    b["thinking"] or "\n".join(b.get("summary", ()))
+                    for b in other
+                    if b.get("type") == "thinking"
                 )
                 if reasoning:
                     if profile is not None and (
@@ -189,7 +191,7 @@ class ChatCompletionsDecoder(BaseDecoder):
                         or profile.parameter("reasoning_content", "output") is None
                     ):
                         for block in other:
-                            if block.get("type") == "thinking" and block.get("thinking"):
+                            if block.get("type") == "thinking":
                                 report_loss(block, "Chat profile cannot replay reasoning_content")
                     else:
                         value["reasoning_content"] = reasoning
@@ -255,10 +257,8 @@ class ChatCompletionsDecoder(BaseDecoder):
             elif kind == "block_stop" and not native_owner:
                 foreign_block(event["block"])
                 continue
-            elif kind == "block" and event.get("block", {}).get("type") == "redacted_thinking":
-                report_loss(
-                    event["block"], "Chat cannot represent opaque reasoning from another protocol"
-                )
+            elif kind == "block" and event["block"]["type"] == "thinking":
+                foreign_block(event["block"])
                 continue
             elif kind == "tool":
                 block = event["block"]
@@ -314,5 +314,5 @@ class ChatCompletionsDecoder(BaseDecoder):
         return {
             "id": parameters.get("response_id", "generated"),
             "model": parameters.get("model", ""),
-            "created": parameters.get("created", 0),
+            "created": parameters.get("created_at", 0),
         }

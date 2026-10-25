@@ -12,6 +12,14 @@ def _tool_output(value: Any) -> Any:
     return json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else value
 
 
+def reasoning_summary(block: dict) -> list[dict]:
+    """Project canonical reasoning text parts into native summary entries."""
+    summary = block.get("summary")
+    if summary is None:
+        summary = [block["thinking"]] if block["thinking"] else []
+    return [{"type": "summary_text", "text": text} for text in summary]
+
+
 def render_content(content: list[dict], *, role: str = "user") -> list[dict]:
     result = []
     for block in content:
@@ -41,14 +49,14 @@ def foreign_block(block: dict) -> dict | None:
     if kind == "tool_result":
         value = block.get("content")
         return {
-            **select(block, "type", "tool_use_id", "name"),
+            **select(block, "type", "tool_use_id", "name", "item"),
             "content": [
                 projected for child in value if (projected := foreign_block(child)) is not None
             ]
             if isinstance(value, list)
             else text_result(value),
         }
-    if kind == "redacted_thinking":
+    if kind == "thinking" and block.get("redacted"):
         report_loss(block, "Responses cannot represent opaque reasoning from another protocol")
         return None
     if kind == "thinking" and block.get("protocol") == "openai_responses":
@@ -58,7 +66,7 @@ def foreign_block(block: dict) -> dict | None:
     ):
         report_loss(block, "Responses cannot preserve another protocol's reasoning signature")
     if kind == "thinking":
-        value = select(block, "type", "thinking", "summary")
+        value = select(block, "type", "thinking", "mark", "summary", "item")
         return (
             originated(value, block.origin_path, block.origin_value)
             if hasattr(block, "origin_path")

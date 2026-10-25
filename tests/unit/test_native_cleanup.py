@@ -7,6 +7,51 @@ import pytest
 from my_llm import MyCodec
 
 
+@pytest.mark.parametrize("kind", ["messages", "chunks"])
+def test_ollama_function_index_and_unknown_fields_do_not_enter_middleware(kind):
+    class Unreadable:
+        def __deepcopy__(self, memo):
+            raise AssertionError("read unsupported native tool field")
+
+    message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "function": {
+                    "name": "lookup",
+                    "arguments": {"value": 1},
+                    "index": 7,
+                    "vendor": Unreadable(),
+                },
+                "vendor": Unreadable(),
+            }
+        ],
+    }
+    values = [message] if kind == "messages" else [{"message": message}, {"done": True}]
+    codec = MyCodec()
+    middleware = codec.encode(**{kind: values}, input_format="ollama")
+    tool = (
+        middleware.messages[0].content[-1].to_wire()
+        if kind == "messages"
+        else middleware.stream[0].events[-1]["block"]
+    )
+    assert set(tool) == {"type", "id", "name", "input"} | (
+        {"protocol"} if kind == "messages" else set()
+    )
+    assert tool["name"] == "lookup"
+    assert tool["input"] == {"value": 1}
+
+    restored = codec.convert(**{kind: values}, input_format="ollama", target_format="ollama")
+    native_messages = (
+        restored["messages"]
+        if kind == "messages"
+        else [event["message"] for event in restored["chunks"]]
+    )
+    calls = [call for value in native_messages for call in value.get("tool_calls", [])]
+    assert calls == [{"function": {"name": "lookup", "arguments": {"value": 1}}}]
+
+
 @pytest.mark.parametrize("protocol", ["anthropic", "gemini", "ollama"])
 def test_stream_tool_arguments_are_owned_once_at_the_middleware_boundary(protocol):
     copies = []
@@ -40,11 +85,11 @@ def test_stream_tool_arguments_are_owned_once_at_the_middleware_boundary(protoco
         }
 
     middleware = MyCodec().encode(chunks=[event], input_format=protocol)
-    tool = middleware.stream[0].events[-1].block
+    tool = middleware.stream[0].events[-1]["block"]
     assert len(copies) == 1
-    assert tool.arguments == arguments
+    assert tool["input"] == arguments
     arguments["items"][0]["value"] = 2
-    assert tool.arguments == {"items": [{"value": 1}]}
+    assert tool["input"] == {"items": [{"value": 1}]}
     original = (
         event["content_block"]
         if protocol == "anthropic"
@@ -52,7 +97,7 @@ def test_stream_tool_arguments_are_owned_once_at_the_middleware_boundary(protoco
         if protocol == "gemini"
         else event
     )
-    assert tool.origin.value is original
+    assert tool.origin_value is original
 
 
 @pytest.mark.parametrize("protocol", ["anthropic", "gemini"])

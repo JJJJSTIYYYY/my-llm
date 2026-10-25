@@ -123,7 +123,11 @@ class ChatCompletionsEncoder(BaseEncoder):
             if message.get("reasoning_content"):
                 content.append(
                     originated(
-                        {"type": "thinking", "thinking": message["reasoning_content"]},
+                        {
+                            "type": "thinking",
+                            "thinking": message["reasoning_content"],
+                            "mark": "raw",
+                        },
                         f"{path}.reasoning_content",
                         message["reasoning_content"],
                     )
@@ -275,7 +279,11 @@ class ChatCompletionsEncoder(BaseEncoder):
 
     def _metadata(self, event: dict) -> dict:
         return {
-            "response_id" if key == "id" else key: event[key]
-            for key in ("id", "model", "created")
-            if isinstance(event.get(key), (str, int, float))
+            target: event[native]
+            for native, target in (
+                ("id", "response_id"),
+                ("model", "model"),
+                ("created", "created_at"),
+            )
+            if isinstance(event.get(native), (str, int, float))
         }

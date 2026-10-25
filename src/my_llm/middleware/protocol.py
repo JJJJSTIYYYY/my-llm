@@ -20,6 +20,7 @@ from my_llm.middleware.models import (
     ToolResult,
 )
 from my_llm.middleware.stream import StreamBatch, Usage
+from my_llm.middleware.validation import REASONING_MARKS, RESULT_CONTENT_TYPES
 from my_llm.profile.types import Omit
 
 
@@ -61,7 +62,15 @@ class ProtocolMiddleWare(ProtocolValue):
 
 
 def wire_values(values: list) -> list:
-    return [v.to_wire() if isinstance(v, ProtocolValue) else v for v in values]
+    if not isinstance(values, (list, tuple)):
+        raise MessageValidationError("$: expected a middleware list or tuple")
+    result = []
+    for index, value in enumerate(values):
+        projected = value.to_wire() if isinstance(value, ProtocolValue) else value
+        if not isinstance(projected, dict):
+            raise MessageValidationError(f"$[{index}]: expected a middleware object")
+        result.append(projected)
+    return result
 
 
 def _valid_content(part: MessageContent, role: str) -> bool:
@@ -91,7 +100,7 @@ def _valid_content(part: MessageContent, role: str) -> bool:
             role == "assistant"
             and isinstance(part.reasoning, str)
             and isinstance(part.redacted, bool)
-            and part.mark in ("raw", "summary", "encrypted")
+            and part.mark in REASONING_MARKS
             and all(
                 value is None or isinstance(value, str)
                 for value in (part.signature, part.encrypted_content, part.opaque_protocol)
@@ -114,7 +123,8 @@ def _valid_content(part: MessageContent, role: str) -> bool:
             role == "user"
             and isinstance(part.content, list)
             and all(
-                isinstance(value, (TextContent, ImageContent)) and _valid_content(value, "user")
+                getattr(value, "type", None) in RESULT_CONTENT_TYPES
+                and _valid_content(value, "user")
                 for value in part.content
             )
         )

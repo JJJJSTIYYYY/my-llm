@@ -9,7 +9,7 @@ from copy import deepcopy
 
 import pytest
 
-from my_llm import MyCodec, SemanticLossError
+from my_llm import MessageValidationError, MyCodec, SemanticLossError
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import PROTOCOLS, history, stream_events, tools
 
@@ -166,7 +166,7 @@ def test_open_tool_arguments_and_json_schema_keep_arbitrary_nested_keys(source, 
 
 
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_unknown_intermediate_blocks_are_discarded_without_changing_supported_text(target):
+def test_unknown_intermediate_blocks_are_rejected(target):
     values = [
         {
             "role": "user",
@@ -177,10 +177,8 @@ def test_unknown_intermediate_blocks_are_discarded_without_changing_supported_te
         }
     ]
     before = deepcopy(values)
-    result = MyCodec().decode(values, target_format=target)
-    assert "known" in str(result)
-    assert "vendor_future" not in str(result)
-    assert_no_unknown(result)
+    with pytest.raises(MessageValidationError, match="content type"):
+        MyCodec().decode(values, target_format=target)
     assert values == before
 
 
@@ -314,7 +312,7 @@ def test_direct_responses_intermediate_annotations_are_filtered_in_every_event()
     assert chunks == original
 
 
-def test_direct_anthropic_intermediate_citations_filter_unknown_fields():
+def test_unknown_intermediate_annotation_event_is_rejected():
     citation = {
         "type": "web_search_result_location",
         "url": "https://example.invalid",
@@ -326,12 +324,8 @@ def test_direct_anthropic_intermediate_citations_filter_unknown_fields():
     chunks = [{"type": "block_annotation", "index": 0, "field": "citations", "value": citation}]
     before = deepcopy(chunks)
 
-    output = MyCodec().decode(
-        chunks=chunks, target_format="anthropic", source_protocol="anthropic"
-    )["chunks"]
-
-    assert_no_unknown(output)
-    assert output == []
+    with pytest.raises(MessageValidationError, match="event"):
+        MyCodec().decode(chunks=chunks, target_format="anthropic", source_protocol="anthropic")
     assert chunks == before
 
 
@@ -541,18 +535,15 @@ def test_gemini_function_response_schema_and_behavior_are_outside_supported_tool
 
 
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_unknown_intermediate_delta_fields_are_ignored_without_becoming_text(target):
+def test_unknown_intermediate_delta_fields_are_rejected(target):
     incoming = [
         {"type": "delta", "field": "vendor_future", "value": "unrecognized content", "index": 0}
     ]
     original = deepcopy(incoming)
     codec = MyCodec()
 
-    assert codec.decode(chunks=incoming, target_format=target)["chunks"] == []
-
     known = {"type": "delta", "field": "text", "value": "known", "index": 0}
-    actual = codec.decode(chunks=[*incoming, known], target_format=target)["chunks"]
-    assert actual == codec.decode(chunks=[known], target_format=target)["chunks"]
-    assert "vendor_future" not in str(actual)
-    assert "unrecognized content" not in str(actual)
+    for chunks in (incoming, [*incoming, known]):
+        with pytest.raises(MessageValidationError, match="delta field"):
+            codec.decode(chunks=chunks, target_format=target)
     assert incoming == original

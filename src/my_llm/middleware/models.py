@@ -9,8 +9,8 @@ from dataclasses import field as dataclass_field
 from typing import Literal
 
 from my_llm.basic.data import capture
-from my_llm.basic.exceptions import MessageValidationError
 from my_llm.basic.semantic_loss import originated
+from my_llm.middleware.validation import validate_content, validate_messages, validate_tools
 
 type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
 type JsonObject = dict[str, JsonValue]
@@ -195,25 +195,30 @@ def _result_content(value: object, path: str, protocol: str | None) -> list[Resu
     if isinstance(value, str):
         return [TextContent(value, Origin(path, value))]
     if isinstance(value, list) and all(isinstance(v, dict) and "type" in v for v in value):
-        parts = [
-            content_from_wire(raw, f"{path}[{index}]", protocol) for index, raw in enumerate(value)
+        return [
+            content_from_validated_wire(raw, f"{path}[{index}]", protocol)
+            for index, raw in enumerate(value)
         ]
-        if any(not isinstance(part, (TextContent, ImageContent)) for part in parts):
-            raise MessageValidationError("middleware tool results require text or image content")
-        return parts
     # Objects and arrays of application values are supported text results.
     return [TextContent(json.dumps(value, ensure_ascii=False), Origin(path, value))]
 
 
 def content_from_wire(value: dict, path: str = "$", protocol: str | None = None) -> MessageContent:
+    """Read canonical content; invalid structure raises MessageValidationError."""
+    validate_content(value, path)
+    return content_from_validated_wire(value, path, protocol)
+
+
+def content_from_validated_wire(
+    value: dict, path: str = "$", protocol: str | None = None
+) -> MessageContent:
+    """Project content already checked by validate_content, without revalidation."""
     kind = value["type"]
     origin = Origin.from_value(value, path)
     if kind == "text":
         return TextContent(value["text"], origin, _item(value))
     if kind == "image":
         source = value["source"]
-        if source.get("type") not in ("url", "base64"):
-            raise MessageValidationError("unknown middleware image source")
         return ImageContent(
             ImageSource(
                 source["type"], source.get("url"), source.get("data"), source.get("media_type")
@@ -243,15 +248,13 @@ def content_from_wire(value: dict, path: str = "$", protocol: str | None = None)
             origin,
             _item(value),
         )
-    if kind == "tool_result":
-        return ToolResult(
-            value["tool_use_id"],
-            _result_content(value["content"], f"{origin.path}.content", protocol),
-            value.get("name"),
-            origin,
-            _item(value),
-        )
-    raise MessageValidationError(f"unknown middleware content type: {kind!r}")
+    return ToolResult(
+        value["tool_use_id"],
+        _result_content(value["content"], f"{origin.path}.content", protocol),
+        value.get("name"),
+        origin,
+        _item(value),
+    )
 
 
 @dataclass(slots=True)
@@ -303,13 +306,20 @@ class ToolMessage(Message):
 
 
 def messages_from_wire(values: list) -> list[Message]:
+    """Read canonical history; invalid structure raises MessageValidationError."""
+    validate_messages(values)
+    return messages_from_validated_wire(values)
+
+
+def messages_from_validated_wire(values: list) -> list[Message]:
+    """Project history already checked by validate_messages, without revalidating it."""
     result = []
     for index, raw in enumerate(values):
         role = raw["role"]
         protocol = raw.get("protocol")
         origin = Origin.from_value(raw, f"$.messages[{index}]")
         content = [
-            content_from_wire(block, f"{origin.path}.content[{offset}]", protocol)
+            content_from_validated_wire(block, f"{origin.path}.content[{offset}]", protocol)
             for offset, block in enumerate(raw["content"])
         ]
         model = (
@@ -352,12 +362,14 @@ class FunctionTool(ProtocolValue):
 
 
 def tools_from_wire(values: list) -> list[FunctionTool]:
+    """Read canonical function declarations without swallowing application errors."""
+    validate_tools(values)
     result = []
     for index, tool in enumerate(values):
         for fn in tool["functions"]:
             result.append(
                 FunctionTool(
-                    fn.get("name", ""),
+                    fn["name"],
                     fn.get("description"),
                     capture(fn.get("parameters")),
                     fn.get("strict"),

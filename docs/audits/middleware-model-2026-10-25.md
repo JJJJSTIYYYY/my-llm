@@ -211,3 +211,48 @@ Gemini 对应为 **56.573 / 56.569 / 34.910 ms**。
 
 在相同解释器和 driver 下用 `PYTHONPATH` 选择保存的两版源码，按 A B B A 运行，
 核对摘要后比较采样分布。全部 JSON 与 profiler 原始数据仍只写本机临时目录。
+
+## 公共入口错误契约修正
+
+此前未知操作的测试只验证了 `stream_from_wire()`，遗漏了 `decode(chunks=[StreamBatch(...)])`
+直接进入状态机的路径；内容读取器对缺少 `thinking` / `mark` 等必需字段也会泄漏 `KeyError`。
+
+现在 encode 的批次读取与 decode 共用结构校验，typed / raw 批次及编码后被修改的批次均先检查，
+再进入状态机。公共内容、消息、工具和事件入口对缺少必需字段、未知内容类型、操作或增量字段
+抛出带路径的 `MessageValidationError`；语义损失 `ignore` / `hook` 不跳过格式校验。
+同步修正了旧测试中“未知中间类型静默删除”的要求；未知原生字段仍由 encoder 过滤。
+
+校验只读取结构字段，不复制应用载荷或构造完整补丁模型。合法的 `block_update` 部分补丁、
+无独立 reason 的终止操作继续保留；已校验的内部投影直接读取字段，状态机不增加兜底分支。
+不通过捕获任意 `KeyError` / `TypeError` 实现校验，应用自身的复制错误仍按原异常传播。
+
+新增 **138** 项回归用例，全量 **2762 passed**；Ruff、格式与差异空白检查通过。
+此轮未重跑性能基准，上文性能数字仍对应此前快照。
+
+## 校验接口与热路径整理
+
+wire 校验集中到 `middleware/validation.py`，从 `my_llm.middleware` 公开导出
+`validate_content`、`validate_messages`、`validate_tools`、`validate_operations`、`validate_events`。
+codec 不再导入私有校验或投影符号；已通过检查并做完能力过滤的值走明确的
+`from_validated_wire` 投影，避免再次校验。
+
+校验失败后通过专用内部异常逐层补齐字段名和数组索引，公共入口统一转换为
+`MessageValidationError`。成功路径不构造路径字符串、路径节点或闭包，也不深拷贝应用载荷。
+新增用例验证五个公开校验接口成功时不格式化自定义路径，以及嵌套内容、snapshot、
+finish 消息和 output_blocks 失败时的完整路径。应用异常仍不被截获。
+
+`RESULT_CONTENT_TYPES`、`REASONING_MARKS` 由 wire 与模型输入校验共用；wire 必需字段、
+模型角色和字段类型、模型构造分别保留各自职责。事件可选字段纳入 `_EVENT_OPTIONAL`，
+包括 finish 的 reason/messages/output_blocks；结构字段不适用于对应事件种类时明确报错。
+
+局部校验微基准使用同一解释器、同一载荷，各运行 7 组 × 10000 次，取每次调用耗时中位数：
+
+| 校验对象 | 整理前（µs） | 整理后（µs） |
+| --- | ---: | ---: |
+| 单个 thinking 内容 | 0.229 | 0.240 |
+| 含 thinking/text 的消息 | 0.873 | 0.826 |
+| 同一批次中的 20 条 text delta 操作 | 6.329 | 5.172 |
+| 20 条公开 text delta 事件 | 5.116 | 4.801 |
+
+该结果仅用于观察校验热路径，不代表端到端性能；本轮没有重跑完整性能矩阵。
+新增 **17** 项回归用例，全量 **2779 passed**；Ruff、格式与差异空白检查通过。

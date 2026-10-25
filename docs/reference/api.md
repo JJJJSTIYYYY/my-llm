@@ -194,7 +194,13 @@ async def print_stream(llm, prompt):
 
 `to_wire()` 提供显式投影并借用部分嵌套值；它不提供深拷贝或自动校验。
 生成请求在准备阶段隔离输入，公开结果和事件拥有自己的可变数据。
-未知原生字段由 encoder 过滤，未知中间内容、内部操作或增量字段抛出 `MessageValidationError`。
+未知原生字段由 encoder 过滤。公共中间输入入口遇到未知内容类型、操作或增量字段，
+以及缺少必需字段时，抛出带路径的 `MessageValidationError`；`ignore` / `hook` 不会跳过格式校验。
+`decode(chunks=...)` 对 `StreamBatch` 和原始批次字典使用相同校验，再进入状态机。
+
+校验函数也可从 `my_llm.middleware` 导入：`validate_content`、`validate_messages`、`validate_tools`、
+`validate_operations`（接收批次列表）、`validate_events`；这些函数只校验，不复制或转换输入，
+返回 `None`，可用 `path` 指定错误路径前缀。
 
 ## 配置接口
 

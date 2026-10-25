@@ -28,6 +28,7 @@ from my_llm.codec.shared.schema import (
     validate_values,
 )
 from my_llm.middleware.protocol import wire_values
+from my_llm.middleware.validation import validate_events, validate_messages, validate_tools
 from my_llm.profile.paths import path_keys
 from my_llm.profile.resolution import ResolvedProfile, client_parameters
 from my_llm.profile.types import Omit
@@ -293,6 +294,9 @@ class BaseDecoder(ABC):
         """
         messages = wire_values(messages)
         tools = wire_values(tools) if tools is not None else None
+        validate_messages(messages)
+        if tools is not None:
+            validate_tools(tools)
         if tools and not profile.get("supports_function_calling", False):
             for tool in tools:
                 report_loss(tool, "model does not support function calling")
@@ -394,7 +398,9 @@ class BaseDecoder(ABC):
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         """Return independent native message dictionaries from intermediate values."""
-        values = output_messages(wire_values(values), parameters.pop("semantic_profile", None))
+        values = wire_values(values)
+        validate_messages(values)
+        values = output_messages(values, parameters.pop("semantic_profile", None))
         return capture(self._messages(values, profile, **parameters))
 
     @final
@@ -403,7 +409,9 @@ class BaseDecoder(ABC):
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         """Return independent native tool declarations from intermediate values."""
-        return capture(self._tools(wire_values(values), profile, **parameters))
+        values = wire_values(values)
+        validate_tools(values)
+        return capture(self._tools(values, profile, **parameters))
 
     @final
     @_collect_translation
@@ -411,7 +419,9 @@ class BaseDecoder(ABC):
         self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         """Return native event dictionaries from the supplied intermediate events."""
-        values = output_chunks(wire_values(values), parameters.pop("semantic_profile", None))
+        values = wire_values(values)
+        validate_events(values)
+        values = output_chunks(values, parameters.pop("semantic_profile", None))
         return self._chunks(values, profile, **parameters)
 
     def result(self, messages: list) -> dict | list:

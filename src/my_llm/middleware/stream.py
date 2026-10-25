@@ -5,14 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Literal
 
-from my_llm.basic.exceptions import MessageValidationError
 from my_llm.middleware.models import (
     Message,
     MessageContent,
     ProtocolValue,
-    content_from_wire,
-    messages_from_wire,
+    content_from_validated_wire,
+    messages_from_validated_wire,
 )
+from my_llm.middleware.validation import validate_events, validate_operations
 
 
 @dataclass(slots=True)
@@ -91,17 +91,25 @@ class MessageEvent(ProtocolValue):
 
     @classmethod
     def from_wire(cls, event: dict) -> MessageEvent:
-        """Project a normalized StreamState event; raw encoder operations differ."""
+        """Read a public event, raising MessageValidationError for malformed wire data."""
+        validate_events((event,))
+        return cls.from_validated_wire(event)
+
+    @classmethod
+    def from_validated_wire(cls, event: dict) -> MessageEvent:
+        """Project an event already checked by validate_events without revalidating it."""
         return cls(
             type=event["type"],
             index=event.get("index"),
             source_ref=event.get("source_ref"),
-            block=content_from_wire(event["block"]) if "block" in event else None,
+            block=content_from_validated_wire(event["block"]) if "block" in event else None,
             tool_index=event.get("tool_index"),
             field=event.get("field"),
             value=event.get("value"),
             reason=event.get("reason"),
-            messages=messages_from_wire(event["messages"]) if "messages" in event else None,
+            messages=messages_from_validated_wire(event["messages"])
+            if "messages" in event
+            else None,
         )
 
     def to_wire(self) -> dict:
@@ -116,36 +124,7 @@ class MessageEvent(ProtocolValue):
         return result
 
 
-_OPERATIONS = frozenset(
-    (
-        "start",
-        "metadata",
-        "usage",
-        "snapshot",
-        "reason",
-        "finish",
-        "block_set",
-        "block_append",
-        "block_update",
-        "block_delta",
-        "block_stop",
-    )
-)
-
-
 def stream_from_wire(values: list) -> list[StreamBatch]:
     """Wrap owned encoder operations; unknown canonical operations are errors."""
-    result = []
-    for value in values:
-        for event in value["events"]:
-            if event["type"] not in _OPERATIONS:
-                raise MessageValidationError(f"unknown middleware operation: {event['type']!r}")
-            if event["type"] == "block_delta" and event["field"] not in (
-                "text",
-                "thinking",
-                "arguments",
-                "signature",
-            ):
-                raise MessageValidationError(f"unknown middleware delta field: {event['field']!r}")
-        result.append(StreamBatch(value["protocol"], value["events"]))
-    return result
+    validate_operations(values)
+    return [StreamBatch(value["protocol"], value["events"]) for value in values]

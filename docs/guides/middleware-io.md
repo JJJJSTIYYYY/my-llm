@@ -146,7 +146,9 @@ raise / ignore / hook 处理；请求 hook 收到完整原生 SDK 请求，返�
 `to_wire()` 和字典索引提供转换投影，会借用嵌套应用值及内部操作；它们不是深拷贝接口。
 需要直接调用生成方法时传 `.messages` / `.tools` 模型属性。
 `Origin` 只记录错误定位来源，不作为 payload 字段输出。
-未知原生字段由 encoder 过滤；未知中间内容或内部操作抛出 `MessageValidationError`。
+未知原生字段由 encoder 过滤。公共中间输入入口遇到未知内容类型、操作或增量字段，
+以及缺少必需字段时，抛出带路径的 `MessageValidationError`；`ignore` / `hook` 不会跳过格式校验。
+`decode(chunks=...)` 对 `StreamBatch` 和原始批次字典使用相同校验，再进入状态机。
 
 请求直接进入上游现有 `Decoder.prepare()`，跳过源 encoder。返回由上游现有 encoder 和
 同一个请求状态机生成具体模型，跳过目标 decoder。没有注册名为 `middleware` 的 codec，

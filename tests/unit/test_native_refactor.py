@@ -433,7 +433,13 @@ def test_signature_ownership_is_part_of_the_value_when_message_protocol_is_absen
         {
             "role": "assistant",
             "content": [
-                {"type": "thinking", "thinking": "reason", "protocol": protocol, field: signature}
+                {
+                    "type": "thinking",
+                    "thinking": "reason",
+                    "mark": "raw",
+                    "protocol": protocol,
+                    field: signature,
+                }
             ],
         }
     ]

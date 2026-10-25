@@ -20,7 +20,9 @@ from my_llm.middleware.models import (
     ToolMessage,
     ToolResult,
     UserMessage,
+    content_from_validated_wire,
     content_from_wire,
+    messages_from_validated_wire,
     messages_from_wire,
     tools_from_wire,
 )
@@ -34,6 +36,13 @@ from my_llm.middleware.stream import (
     StreamBatch,
     Usage,
     stream_from_wire,
+)
+from my_llm.middleware.validation import (
+    validate_content,
+    validate_events,
+    validate_messages,
+    validate_operations,
+    validate_tools,
 )
 
 __all__ = [
@@ -60,10 +69,17 @@ __all__ = [
     "ToolResult",
     "Usage",
     "UserMessage",
+    "content_from_validated_wire",
     "content_from_wire",
     "generation_input",
+    "messages_from_validated_wire",
     "messages_from_wire",
     "stream_from_wire",
     "tools_from_wire",
+    "validate_content",
+    "validate_events",
+    "validate_messages",
+    "validate_operations",
+    "validate_tools",
     "wire_values",
 ]

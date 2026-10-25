@@ -296,6 +296,7 @@ def test_foreign_opaque_owner_is_checked_on_public_response_blocks(target):
     block = {
         "type": "thinking",
         "thinking": "reason",
+        "mark": "raw",
         "signature": "signed",
         "protocol": "gemini" if target == "anthropic" else "anthropic",
     }

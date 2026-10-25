@@ -29,9 +29,15 @@ from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.base.transport import BaseTransport
 from my_llm.codec.shared.output import output_chunks, output_messages
 from my_llm.codec.shared.stream import is_batch
-from my_llm.middleware.models import FunctionTool, Message, messages_from_wire, tools_from_wire
+from my_llm.middleware.models import (
+    FunctionTool,
+    Message,
+    messages_from_validated_wire,
+    tools_from_wire,
+)
 from my_llm.middleware.protocol import ProtocolMiddleWare, generation_input, wire_values
 from my_llm.middleware.stream import MessageEvent
+from my_llm.middleware.validation import validate_events, validate_messages, validate_operations
 from my_llm.profile.configuration import Protocol, ProtocolDefaults
 from my_llm.profile.resolution import ResolvedProfile
 from my_llm.profile.types import Omit
@@ -307,10 +313,14 @@ class MyCodec:
             if input_format is None:
                 raise ConfigurationError("middleware results require the source input_format")
             source = self._codec(input_format)
+
+            def render():
+                values = wire_values(messages)
+                validate_messages(values)
+                return messages_from_validated_wire(output_messages(values, semantic_profile))[0]
+
             return source.translate(
-                lambda: messages_from_wire(
-                    output_messages(wire_values(messages), semantic_profile)
-                )[0],
+                render,
                 SemanticLossContext(input_format, target_format, origin_source, "result"),
             )
         target = self._codec(target_format)
@@ -392,7 +402,10 @@ class MyCodec:
         consumption is available through MyLLM.generate(stream=True).
         """
         chunks = wire_values(chunks) if chunks is not None else None
-        if chunks and all(is_batch(chunk) for chunk in chunks):
+        if chunks and any(is_batch(chunk) for chunk in chunks):
+            if not all(is_batch(chunk) for chunk in chunks):
+                raise MessageValidationError("cannot mix middleware batches and public events")
+            validate_operations(chunks)
             # Complete offline streams use the same request-owned accumulation
             # as live calls, regardless of their source and target protocols.
             from my_llm.runtime.state import StreamState
@@ -413,14 +426,17 @@ class MyCodec:
             def render_middleware():
                 result = {}
                 if messages is not None:
-                    result["messages"] = messages_from_wire(
-                        output_messages(wire_values(messages), semantic_profile)
+                    values = wire_values(messages)
+                    validate_messages(values)
+                    result["messages"] = messages_from_validated_wire(
+                        output_messages(values, semantic_profile)
                     )
                 if tools is not None:
                     result["tools"] = tools_from_wire(wire_values(tools))
                 if chunks is not None:
+                    validate_events(chunks)
                     result["chunks"] = [
-                        MessageEvent.from_wire(event)
+                        MessageEvent.from_validated_wire(event)
                         for event in output_chunks(chunks, semantic_profile)
                     ]
                 return result

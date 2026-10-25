@@ -42,8 +42,9 @@ Responses decoder 按内容项边界分组，内容未提供身份时使用消�
 不在支持集合的结构在 encoder 投影时静默删除，随后仅验证支持结构。
 
 `ReasoningContent.mark=raw / summary / encrypted` 在中间投影中显式保留。
-原生 encoder 根据源语义设置标记，模型构造时补齐默认值；middleware 解析器直接读取确定的中间字段，
-不承担原生格式推断或缺失必需字段的兜底。
+原生 encoder 根据源语义设置标记，模型构造时补齐默认值；middleware 公共读取入口先检查结构和必需字段，
+例如缺少 `mark` 时抛出带字段路径的 `MessageValidationError`，不推断原生格式或补齐缺失字段。
+通过检查后的内部投影直接读取已确定字段。
 隐去思维也使用同一 `type=thinking` 结构和 `redacted=True`，摘要为字符串列表；
 对应的原生块类型、摘要对象和回放格式均由各自 codec 构造。标记不写入原生 SDK 字段。
 
@@ -70,7 +71,22 @@ Responses decoder 按内容项边界分组，内容未提供身份时使用消�
 响应时间统一为通用 `created_at`，Chat decoder 在输出时映射回原生 `created`。
 
 源协议不支持的原生字段由 encoder 静默丢弃。已进入中间契约后，未知内容类型、未知操作种类、
-不支持的增量字段属于内部协议错误，抛出 `MessageValidationError`，不静默删除。
+不支持的增量字段属于中间协议错误，抛出 `MessageValidationError`，不静默删除。
+`encode()` 和 `decode(chunks=...)` 共用操作校验；后者对 `StreamBatch` 模型及原始字典一视同仁，
+即使模型在编码后被修改也会重新检查，再交给状态机。不允许混合内部批次与公开事件。
+公共消息、工具、事件读取入口同样拒绝缺少必需字段的结构；这些格式错误不受语义损失策略影响。
+`block_update` 仍按部分补丁检查，`finish` 操作允许沿用此前的结束原因。
+状态机及内部投影不重复兜底，也不通过捕获任意 `KeyError` / `TypeError` 掩盖应用或内部错误。
+
+校验统一归入 `middleware/validation.py`，公开接口为 `validate_content`、`validate_messages`、
+`validate_tools`、`validate_operations`（批次及其内部操作）、`validate_events`（公开事件）。
+codec 只依赖公开接口；需要先校验再做能力过滤时，使用 `messages_from_validated_wire` /
+`MessageEvent.from_validated_wire` 投影已检查的结果，不重复校验。
+成功路径不构造错误路径字符串、路径节点或闭包；校验失败后才逐层补充字段名和数组索引。
+工具结果允许的内容种类、reasoning 标记集合由 wire 与模型输入校验共享。
+事件必需字段和可选字段分别列于规则表中，`finish` 的 `reason`、`messages`、`output_blocks`
+均可缺省；结构字段只能用于对应事件种类。
+
 显式投影会借用嵌套应用字典、摘要列表及内部操作，不能把 `to_wire()` 视作独立深拷贝。
 输入在准备 SDK 请求时完成隔离；公开生成结果和各公开事件拥有自己的可变数据，
 调用者修改历史或已收到的事件不会影响别的结果、事件或请求。

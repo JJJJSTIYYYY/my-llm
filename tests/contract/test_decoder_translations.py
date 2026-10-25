@@ -185,7 +185,13 @@ def test_responses_known_item_header_does_not_copy_unknown_metadata():
         MyCodec()
         .decoder("openai_responses")
         .chunks(
-            [{"type": "block_start", "block": {"type": "text"}, "source_ref": ["text", 0, 0]}],
+            [
+                {
+                    "type": "block_start",
+                    "block": {"type": "text", "text": ""},
+                    "source_ref": ["text", 0, 0],
+                }
+            ],
             source_protocol="openai_responses",
             response_items={"0": item},
         )

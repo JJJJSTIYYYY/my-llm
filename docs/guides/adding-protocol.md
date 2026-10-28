@@ -74,7 +74,7 @@ def read_text_delta(encoder, event, profile):
     return encoder.parameter_value(event, profile, "content", "$.text")
 ```
 
-Schema 类型计划继续复用 shared/schema.py 的有界 LRU，只保存类型及编译规则。
+Schema 类型计划复用 cache/compiled_cache.py 的 CompiledCache 有界 LRU，只保存类型及编译规则。
 输入验证用只读 projected，最终需要独立可变数据的过滤用 supported；每份请求仍单独验证。
 JSON Schema 的应用键不能作为协议字段删除。若先委派开放叶，协议钩子必须随后建立独立副本。
 
@@ -176,7 +176,7 @@ MyCodec / MyLLM 实例保留创建时的注册快照；注册新协议后需创�
 - conversion.encode_functions / decode_functions 管理工具声明；stream 管理原生事件操作与用量计数。
 - 流控制数据只保留中间协议明确声明的 id、模型、终止与回放分组身份；不能通过 metadata 钩子扩展用户 metadata 支持。
 - options 提供参数路径操作与生成选项；BaseEncoder / BaseDecoder 固定参数读取和请求应用流程，
-  shared/schema 提供 Codec 共用的 Schema 规则；shared/conversion 验证历史关联；base/transport 集中保存执行契约与共用响应关闭辅助。
+  cache/compiled_cache 提供 Codec 共用的 Schema 规则；shared/conversion 验证历史关联；base/transport 集中保存执行契约与共用响应关闭辅助。
 跨协议来回翻译不保证无损。不能把其他协议的密文解释为本协议的签名，也不通过隐藏记录恢复跨协议无法表达的信息。
 标准签名与密文必须在对应协议实现中明确处理。详见[翻译字段边界](../design/translation-boundaries.md)。
 

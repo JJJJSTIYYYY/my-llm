@@ -1,6 +1,7 @@
 """openai/responses: intermediate to native output."""
 
 from typing import Any
+from uuid import uuid4
 
 from openai.resources.responses import AsyncResponses
 from openai.types.responses import ResponseInputItemParam, ToolParam
@@ -8,6 +9,7 @@ from openai.types.responses import ResponseInputItemParam, ToolParam
 from my_llm.basic.data import dictionaries
 from my_llm.basic.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.basic.semantic_loss import report_loss
+from my_llm.cache.compiled_cache import parameter_types
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.openai.responses.decoding.content import (
     _tool_output,
@@ -23,7 +25,6 @@ from my_llm.codec.shared.conversion import (
     source_protocol,
 )
 from my_llm.codec.shared.options import PreparedOptions, validate_request_options
-from my_llm.codec.shared.schema import parameter_types
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
 from my_llm.profile.types import Omit
@@ -96,6 +97,9 @@ class ResponsesDecoder(BaseDecoder):
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
+        # Each incremental batch needs distinct generated identities; explicit
+        # native item IDs below continue to take precedence over these fallbacks.
+        id_prefix = f"{uuid4().hex}_" if parameters.get("enable_message_cache", False) else ""
         for index, message in enumerate(dictionaries(messages)):
             if message.get("name") is not None:
                 report_loss(
@@ -134,7 +138,7 @@ class ResponsesDecoder(BaseDecoder):
                         {
                             "type": "message",
                             **(
-                                {"id": f"msg_{len(result)}", "status": "completed"}
+                                {"id": f"msg_{id_prefix}{len(result)}", "status": "completed"}
                                 if message["role"] == "assistant" and not input_media
                                 else {}
                             ),
@@ -187,7 +191,7 @@ class ResponsesDecoder(BaseDecoder):
                     )
                 else:
                     item = {
-                        "id": f"rs_{len(result)}",
+                        "id": f"rs_{id_prefix}{len(result)}",
                         **select(block.get("item", {}), "id", "status"),
                         **select(block, "encrypted_content"),
                         "type": "reasoning",
@@ -209,7 +213,7 @@ class ResponsesDecoder(BaseDecoder):
                         "type": "message",
                         "role": message["role"],
                         **(
-                            {"id": f"msg_{len(result)}", "status": "completed"}
+                            {"id": f"msg_{id_prefix}{len(result)}", "status": "completed"}
                             if message["role"] == "assistant"
                             else {}
                         ),

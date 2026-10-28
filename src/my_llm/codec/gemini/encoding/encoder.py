@@ -1,6 +1,7 @@
 """gemini: native input to intermediate."""
 
 from typing import Any
+from uuid import uuid4
 
 from google.genai import types
 
@@ -95,6 +96,7 @@ class GeminiEncoder(BaseEncoder):
     ) -> list[dict]:
         result = []
         pending: list[dict] = []
+        id_prefix = f"{uuid4().hex}_" if parameters.get("enable_message_cache", False) else ""
         # Reserve IDs from later messages too, before synthesizing any missing IDs.
         used_ids = {
             part["function_call"]["id"]
@@ -107,7 +109,8 @@ class GeminiEncoder(BaseEncoder):
             for part_index, part in enumerate(message["parts"]):
                 call = part.get("function_call")
                 call_id = (
-                    call.get("id") or allocate_call_id(used_ids, f"call_{index}_{part_index}")
+                    call.get("id")
+                    or allocate_call_id(used_ids, f"call_{id_prefix}{index}_{part_index}")
                     if call is not None
                     else ""
                 )

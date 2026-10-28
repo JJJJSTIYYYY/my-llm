@@ -1,15 +1,18 @@
-"""Bounded type-only schema plans, SDK contracts and payload validation."""
+"""Type-only schema compilation, bounded caches and native payload validation."""
 
-from collections.abc import Iterable, Mapping, Sequence
-from functools import lru_cache
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from functools import lru_cache, update_wrapper
 from inspect import Parameter, signature
 from types import UnionType
 from typing import (
     Annotated,
     Any,
+    Generic,
     Literal,
     NotRequired,
+    ParamSpec,
     Required,
+    TypeVar,
     Union,
     get_args,
     get_origin,
@@ -21,8 +24,73 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 from my_llm.basic.data import capture
 from my_llm.basic.exceptions import MessageValidationError, UnsupportedCapabilityError
 
+P = ParamSpec("P")
+T = TypeVar("T")
 
-@lru_cache(maxsize=512)
+
+class CompiledCache(Generic[P, T]):
+    """Cache a type-only compiler's results in a bounded least-recently-used cache.
+
+    Use as a decorator on a function accepting immutable type/rule keys. Each
+    compiler owns an independent 512-entry cache; request values never belong here.
+    """
+
+    def __init__(self, compiler: Callable[P, T]) -> None:
+        self._compiled = lru_cache(maxsize=512)(compiler)
+        update_wrapper(self, compiler)
+
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> T:
+        """Return the cached result, compiling it only on a cache miss."""
+        return self._compiled(*args, **kwargs)
+
+    def cache_info(self):
+        """Return hit, miss, capacity and entry counts for this compiler."""
+        return self._compiled.cache_info()
+
+    def cache_clear(self) -> None:
+        """Release this compiler's results and reset its counters."""
+        self._compiled.cache_clear()
+
+
+def _same_schema(left, right):
+    if left is right:
+        return True
+    if left != right:
+        return False
+    # Union equality ignores member order, but filtering resolves tied scores
+    # by that order. Compare nested generic arguments in their declared order.
+    return all(
+        _same_schema(first, second)
+        for first, second in zip(get_args(left), get_args(right), strict=True)
+    )
+
+
+class SchemaKey:
+    """Preserve Union order and accept legal unhashable Annotated metadata."""
+
+    __slots__ = ("schema", "_hash", "_hashable")
+
+    def __init__(self, schema):
+        self.schema = schema
+        try:
+            self._hash = hash(schema)
+            self._hashable = True
+        except TypeError:
+            self._hash = id(schema)
+            self._hashable = False
+
+    def __hash__(self):
+        return self._hash
+
+    def __eq__(self, other):
+        if not isinstance(other, SchemaKey):
+            return NotImplemented
+        return self.schema is other.schema or (
+            self._hashable and other._hashable and _same_schema(self.schema, other.schema)
+        )
+
+
+@CompiledCache
 def fields(schema):
     if isinstance(schema, type) and issubclass(schema, BaseModel):
         return {name: field.annotation for name, field in schema.model_fields.items()}
@@ -30,15 +98,15 @@ def fields(schema):
 
 
 def adapter(schema):
-    return _cached_adapter(_SchemaKey(schema))
+    return _cached_adapter(SchemaKey(schema))
 
 
-@lru_cache(maxsize=512)
+@CompiledCache
 def _cached_adapter(key):
     return TypeAdapter(key.schema)
 
 
-@lru_cache(maxsize=512)
+@CompiledCache
 def parameter_types(method):
     """Read the public SDK's keyword contract once, independently of payload data."""
     annotations = get_type_hints(method, include_extras=True)
@@ -119,47 +187,11 @@ def _literal_routes(choices):
     return routes
 
 
-def _same_schema(left, right):
-    if left is right:
-        return True
-    if left != right:
-        return False
-    # Union equality ignores member order, but filtering resolves tied scores
-    # by that order. Compare nested generic arguments in their declared order.
-    return all(
-        _same_schema(first, second)
-        for first, second in zip(get_args(left), get_args(right), strict=True)
-    )
-
-
-class _SchemaKey:
-    __slots__ = ("schema", "_hash", "_hashable")
-
-    def __init__(self, schema):
-        self.schema = schema
-        try:
-            self._hash = hash(schema)
-            self._hashable = True
-        except TypeError:
-            # Annotated permits unhashable metadata. Such annotations remain
-            # cacheable by identity, with their metadata outside filtering.
-            self._hash = id(schema)
-            self._hashable = False
-
-    def __hash__(self):
-        return self._hash
-
-    def __eq__(self, other):
-        return self.schema is other.schema or (
-            self._hashable and other._hashable and _same_schema(self.schema, other.schema)
-        )
-
-
 def _plan(schema, delegated_paths=()):
-    return _compiled_plan(_SchemaKey(schema), delegated_paths)
+    return _compiled_plan(SchemaKey(schema), delegated_paths)
 
 
-@lru_cache(maxsize=512)
+@CompiledCache
 def _compiled_plan(key, delegated_paths):
     # SDK models can be recursive. Register each node before its children so
     # recursive annotations refer to the same plan without storing request data.
@@ -348,10 +380,10 @@ def projected(value, schema):
 
 def declared_path(schema, keys):
     """Whether an SDK schema already declares a path, including open JSON leaves."""
-    return _declared_path(_SchemaKey(schema), keys)
+    return _declared_path(SchemaKey(schema), keys)
 
 
-@lru_cache(maxsize=512)
+@CompiledCache
 def _declared_path(key, keys):
     schema = _unwrap(key.schema)
     if not keys or schema in (Any, object):

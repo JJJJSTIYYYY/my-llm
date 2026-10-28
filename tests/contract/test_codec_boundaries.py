@@ -218,7 +218,7 @@ def test_profiles_do_not_depend_on_codec_or_execution_implementations():
     for path in (ROOT / "profile").rglob("*.py"):
         for node in ast.walk(ast.parse(path.read_text())):
             for module in imported_modules(node):
-                assert not module.startswith(("my_llm.codec", "my_llm.runtime")), (
+                assert not module.startswith(("my_llm.codec", "my_llm.my_llm", "my_llm.runtime")), (
                     path,
                     module,
                 )
@@ -229,13 +229,14 @@ def test_profiles_do_not_depend_on_codec_or_execution_implementations():
     [
         (
             tuple((ROOT / "middleware").glob("*.py")),
-            ("my_llm.codec", "my_llm.runtime"),
+            ("my_llm.codec", "my_llm.my_llm", "my_llm.runtime"),
         ),
         (
             (ROOT / "basic/data.py",),
             (
                 "my_llm.codec",
                 "my_llm.middleware",
+                "my_llm.my_llm",
                 "my_llm.profile",
                 "my_llm.runtime",
             ),
@@ -268,8 +269,8 @@ def test_native_middleware_field_check_rejects_native_spelling(field):
         )
 
 
-def test_invoke_only_accesses_its_own_private_attributes():
-    path = ROOT / "runtime/llm.py"
+def test_llm_only_accesses_its_own_private_attributes():
+    path = ROOT / "my_llm.py"
     for node in ast.walk(ast.parse(path.read_text())):
         if isinstance(node, ast.Attribute) and node.attr.startswith("_"):
             assert isinstance(node.value, ast.Name) and node.value.id == "self", (

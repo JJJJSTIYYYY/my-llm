@@ -50,11 +50,12 @@ def test_build_contains_runtime_modules_and_source_tests(tmp_path, version_overr
             for name in names
             if name.startswith("my_llm/") and (name.endswith(".py") or name.endswith("/py.typed"))
         } == expected_runtime
-        assert "my_llm/runtime/llm.py" in names
+        assert "my_llm/my_llm.py" in names
         assert "my_llm/_version.py" in names
         assert {name for name in names if name.count("/") == 1 and name.endswith(".py")} == {
             "my_llm/__init__.py",
             "my_llm/_version.py",
+            "my_llm/my_llm.py",
         }
         assert "my_llm/basic/protocols.py" in names
         assert "my_llm/basic/semantic_loss.py" in names
@@ -71,7 +72,9 @@ def test_build_contains_runtime_modules_and_source_tests(tmp_path, version_overr
         assert "my_llm/codec/shared/conversion.py" in names
         assert "my_llm/codec/shared/stream.py" in names
         assert "my_llm/codec/shared/transport.py" not in names
-        assert "my_llm/codec/shared/schema.py" in names
+        assert "my_llm/codec/shared/schema.py" not in names
+        assert "my_llm/cache/compiled_cache.py" in names
+        assert "my_llm/cache/message_cache.py" in names
         assert "my_llm/basic/data.py" in names
         for module in ("__init__", "models", "stream", "protocol"):
             assert f"my_llm/middleware/{module}.py" in names
@@ -121,7 +124,7 @@ def test_build_contains_runtime_modules_and_source_tests(tmp_path, version_overr
     with tarfile.open(source / f"dist/my_llm_py-{expected_version}.tar.gz") as archive:
         names = archive.getnames()
         for name in (
-            "src/my_llm/runtime/llm.py",
+            "src/my_llm/my_llm.py",
             "src/my_llm/_version.py",
             "src/my_llm/py.typed",
             "tests/integration/test_sdk_transport.py",

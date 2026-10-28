@@ -4,8 +4,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any, final
 
-from my_llm.basic.exceptions import SemanticLossError
+from my_llm.basic.exceptions import ConfigurationError, SemanticLossError
 from my_llm.basic.semantic_loss import BaseSemanticLossAdaptor, SemanticLossContext, collect_losses
+from my_llm.cache.message_cache import MessageCache
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.base.transport import BaseTransport
@@ -39,8 +40,11 @@ class BaseCodec(ABC):
         context: SemanticLossContext,
         *,
         draft_key: str | None = None,
+        enable_message_cache: bool = False,
+        message_cache: MessageCache | None = None,
+        message_cache_key: str | None = None,
     ):
-        """Resolve losses only after the full request or output draft exists."""
+        """Resolve losses, then optionally update/read the translated input cache."""
         draft = None
         completed = False
         try:
@@ -49,12 +53,23 @@ class BaseCodec(ABC):
                 completed = True
                 if owner:
                     losses.complete(draft[draft_key] if draft_key is not None else draft)
-                return draft
         except SemanticLossError as error:
             result = self.semantic_loss_adaptor.handle(error)
             if draft_key is None:
-                return result
-            return draft if completed else {draft_key: result}
+                draft = result
+            elif not completed:
+                draft = {draft_key: result}
+        if enable_message_cache:
+            if message_cache is None or message_cache_key is None:
+                raise ConfigurationError("message caching requires a cache and an instance key")
+            request = draft[draft_key] if draft_key is not None else draft
+            message_cache.update(message_cache_key, request, paths=self.decoder.message_cache_paths)
+            cached = message_cache.get(message_cache_key, request)
+            if draft_key is None:
+                draft = cached
+            else:
+                draft[draft_key] = cached
+        return draft
 
     @property
     @abstractmethod

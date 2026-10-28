@@ -18,11 +18,11 @@
 - basic 集中保存共用基础能力：data.py 负责数据捕获与 SDK 字段只读视图，exceptions.py 定义异常，
   semantic_loss.py 管理损失收集与策略，protocols.py 合并协议注册、工厂快照和可选 SDK 发现。
 - codec/shared 保存不选择厂商的公共机制；conversion.py 负责消息、媒体、工具转换与历史关联验证，
-  schema.py 集中保存类型分析、编译计划与验证；响应关闭辅助随执行契约放在 codec/base/transport.py；
+  cache/compiled_cache.py 集中保存类型分析、编译计划、过滤与验证；响应关闭辅助随执行契约放在 codec/base/transport.py；
   options.py 负责配置路径、选项准备与校验。Decoder 每次解析一次 PreparedOptions，并输出 client / request / local 字典；连接参数在构造时准备。
 - profile/configuration.py 保存配置类型、覆盖字段与字典合并；resolution.py 负责解析、快照及校验。
   协议默认值保存在各 Codec.defaults；profile/defaults.py 只从 basic/protocols.py 复制已注册声明。
-- runtime 的 llm.py 负责生成编排与 SDK 客户端复用，message_stream.py 和 state.py 保存响应流生命周期与请求状态。
+- 包根目录的 my_llm.py 负责生成编排与 SDK 客户端复用，runtime/message_stream.py 和 state.py 保存响应流生命周期与请求状态。
   实例通过异步上下文或 aclose 关闭客户端；响应流按请求清理，见[生命周期设计](../design/client-lifecycle.md)。
 - __init__.py 只保留说明、导入与 __all__，不放业务代码。
 

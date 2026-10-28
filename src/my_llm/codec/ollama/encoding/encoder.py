@@ -1,6 +1,7 @@
 """ollama: native input to intermediate."""
 
 from typing import Any
+from uuid import uuid4
 
 from ollama import Message, Tool
 
@@ -90,6 +91,7 @@ class OllamaEncoder(BaseEncoder):
     ) -> list[dict]:
         pending = []
         result = []
+        id_prefix = f"{uuid4().hex}_" if parameters.get("enable_message_cache", False) else ""
         # Reserve explicit IDs first so ID-less calls cannot shadow a later native ID.
         used_ids = {
             call["id"]
@@ -130,7 +132,9 @@ class OllamaEncoder(BaseEncoder):
                     )
                 )
             for call_index, call in enumerate(message.get("tool_calls") or []):
-                call_id = call.get("id") or allocate_call_id(used_ids, f"call_{index}_{call_index}")
+                call_id = call.get("id") or allocate_call_id(
+                    used_ids, f"call_{id_prefix}{index}_{call_index}"
+                )
                 block = tool_block(call, call_id=call_id)
                 content.append(
                     originated(block, f"$.messages[{index}].tool_calls[{call_index}]", call)

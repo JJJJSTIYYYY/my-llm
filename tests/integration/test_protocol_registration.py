@@ -298,16 +298,16 @@ async def test_new_protocol_reuses_caches_with_unhashable_annotations(registered
 
 
 def test_new_protocol_queries_filter_plans_once_per_batch(registered, monkeypatch):
-    from my_llm.codec.shared import schema
+    from my_llm.cache.compiled_cache import SchemaKey
 
     calls = []
-    original = schema._SchemaKey.__init__
+    original = SchemaKey.__init__
 
     def counted(self, schema):
         calls.append(schema)
         original(self, schema)
 
-    monkeypatch.setattr(schema._SchemaKey, "__init__", counted)
+    monkeypatch.setattr(SchemaKey, "__init__", counted)
     provider, model = profiles()
     profile = resolve_profiles(provider, model)
     messages = [{"speaker": "user", "body": str(index), "vendor": True} for index in range(100)]

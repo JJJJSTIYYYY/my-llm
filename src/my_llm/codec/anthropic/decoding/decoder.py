@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from my_llm.basic.data import capture
 from my_llm.basic.exceptions import ConfigurationError, MessageValidationError, ResponseFailedError
 from my_llm.basic.semantic_loss import report_loss
+from my_llm.cache.compiled_cache import _plan, adapter, parameter_types
 from my_llm.codec.anthropic.decoding.content import decode_block, foreign_block
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.shared.conversion import (
@@ -24,7 +25,6 @@ from my_llm.codec.shared.conversion import (
     source_protocol,
 )
 from my_llm.codec.shared.options import PreparedOptions, validate_request_options
-from my_llm.codec.shared.schema import _plan, adapter, parameter_types
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
 
@@ -54,6 +54,10 @@ class AnthropicDecoder(BaseDecoder):
 
     request_schema = REQUEST_SCHEMA
 
+    @property
+    def message_cache_paths(self) -> tuple[tuple[str, ...], ...]:
+        return (*super().message_cache_paths, ("system",))
+
     def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
         # The SDK's InputSchema TypedDict names only some JSON Schema keys.
         # Delegate this open leaf so it is captured once rather than filtered
@@ -72,7 +76,7 @@ class AnthropicDecoder(BaseDecoder):
         return validate_request_options(profile, options, protected=PROTECTED, containers=())
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
-        if not request["messages"]:
+        if not request["messages"] and not parameters.get("has_cached_messages", False):
             raise ConfigurationError("a non-system message is required")
         if request.get("max_tokens") is None:
             raise ConfigurationError("Anthropic requires max_tokens in the model or generation")

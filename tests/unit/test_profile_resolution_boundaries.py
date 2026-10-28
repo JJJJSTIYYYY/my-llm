@@ -52,7 +52,7 @@ def test_llm_uses_its_own_codec_for_protocol_validation(monkeypatch):
             calls.append((self, profile))
             super().validate_profile(profile)
 
-    monkeypatch.setattr("my_llm.runtime.llm.MyCodec", Codec)
+    monkeypatch.setattr("my_llm.my_llm.MyCodec", Codec)
     llm = MyLLM(
         provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
         model=ModelProfile(model=Attribute(default_value="demo")),

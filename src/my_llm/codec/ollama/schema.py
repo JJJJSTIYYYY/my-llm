@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from my_llm.basic.data import read
 from my_llm.basic.exceptions import MessageValidationError
-from my_llm.codec.shared.schema import parameter_types, projected, validate_values
+from my_llm.cache.compiled_cache import parameter_types, projected, validate_values
 
 REQUEST_SCHEMA = {**parameter_types(AsyncClient.chat), "options": Options}
 

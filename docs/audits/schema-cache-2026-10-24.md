@@ -17,7 +17,8 @@ before 的 60 场景暖内存探针中，五类缓存的 miss 增量均为 0。
 整个矩阵的缓存项数最高为 fields 379、adapter 13、parameter_types 5、plan 34、declared_path 21，
 都小于各自的 512 项上限。fields 与 parameter_types 的分析也没有在暖请求中重新执行。
 
-第一种候选试验修改 [schema.py](../../src/my_llm/codec/shared/schema.py) 中的 Union 过滤计划：
+第一种候选试验修改 [schema.py](../../src/my_llm/cache/compiled_cache.py) 中的 Union 过滤计划
+（该实现现已迁至 cache/compiled_cache.py）：
 类型编译时记录结构候选的 Literal 约束是否全部有路由索引；执行时若已完整检查这些约束，
 且只剩一个结构候选，直接执行其过滤函数。省去对唯一候选的字段计数评分及候选列表构造。
 重叠候选、缺少判别字段时的同分顺序、标量候选、递归类型和非法判别值仍受原规则约束。

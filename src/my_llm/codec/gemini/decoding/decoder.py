@@ -8,6 +8,7 @@ from google.genai.models import AsyncModels
 from my_llm.basic.data import capture
 from my_llm.basic.exceptions import ConfigurationError, UnsupportedCapabilityError
 from my_llm.basic.semantic_loss import report_loss
+from my_llm.cache.compiled_cache import parameter_types
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.gemini.decoding.content import decode_part
 from my_llm.codec.shared.conversion import (
@@ -18,7 +19,6 @@ from my_llm.codec.shared.conversion import (
     source_protocol,
 )
 from my_llm.codec.shared.options import PreparedOptions, validate_request_options
-from my_llm.codec.shared.schema import parameter_types
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile, client_parameters, validate_max_tokens
 
@@ -56,6 +56,10 @@ class GeminiDecoder(BaseDecoder):
         "config": types.GenerateContentConfig,
     }
 
+    @property
+    def message_cache_paths(self) -> tuple[tuple[str, ...], ...]:
+        return (*super().message_cache_paths, ("config", "system_instruction"))
+
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
         options = super().validate_parameters(profile, **parameters)
         return validate_request_options(
@@ -63,7 +67,7 @@ class GeminiDecoder(BaseDecoder):
         )
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
-        if not request["contents"]:
+        if not request["contents"] and not parameters.get("has_cached_messages", False):
             raise ConfigurationError("a non-system message is required")
         config = request.get("config")
         if config is None:

@@ -1,6 +1,6 @@
 # Schema 过滤计划：缓存中保存的对象与运行过程
 
-本文对应当前 [Schema 过滤实现](../../src/my_llm/codec/shared/schema.py)。
+本文对应当前 [编译缓存与 Schema 过滤实现](../../src/my_llm/cache/compiled_cache.py)。
 这里的“预编译”是把 SDK 的 Python 类型注解转换成可直接调用的 Python 函数图，
 在首次使用该类型时生成，随后重复执行。
 
@@ -23,26 +23,29 @@
 | 位置 | 保存内容 | 生命周期 |
 | --- | --- | --- |
 | Schema 过滤缓存 | 类型、字段与处理函数 | 当前进程内复用。 |
+| MessageCache | 语义损失处理后的已翻译输入历史及指令字段 | 启用时按 MyLLM 的 uuid4 键隔离，aclose 时释放。 |
 | Encoder 的 `_ModelView` 字段缓存 | 本次转换已读取的 SDK 字段值、缺失标记及嵌套包装值 | 当前转换，不跨请求复用。 |
 | MyLLM 客户端缓存 | 官方 SDK 客户端 | 当前 MyLLM 实例。 |
 | StreamState / BlockState 缓存 | 当前响应的物化块和终态消息，包含真实响应内容 | 当前请求。 |
 
 因此，“Schema 缓存不保存实际请求值”不能理解为所有请求状态都不保存实际内容。
 
-## 2. 过滤计划相关的三份缓存
+## 2. 五类编译缓存
 
-这些缓存都是 [schema.py](../../src/my_llm/codec/shared/schema.py) 中的模块级函数缓存，
-由同一进程内的不同 MyLLM / Codec 实例共享。
+[compiled_cache.py](../../src/my_llm/cache/compiled_cache.py) 集中保存类型分析、计划编译、
+过滤与验证逻辑，`CompiledCache` 封装以下结果的有界 LRU、统计和清理操作。
+每类最多 512 项，由同一进程内的不同 MyLLM / Codec 实例共享；Codec 通过接口复用这些规则。
 
 | 缓存函数 | 键 | 返回并保留的值 |
 | --- | --- | --- |
 | `fields(schema)` | Python 类型定义 | 字段名到字段注解的字典。Pydantic 类型读取 `model_fields`；TypedDict 等类型读取 `get_type_hints`。 |
-| `_cached_adapter(key)`，由 `adapter(schema)` 调用 | `_SchemaKey` 对象 | 对应的 Pydantic `TypeAdapter`，用于实际验证和序列化检查。 |
-| `_compiled_plan(key, delegated_paths)` | `_SchemaKey` 对象与不可变路径元组 | 根 `_FilterPlan` 对象，由它引用整个子计划图。 |
+| `_cached_adapter(key)`，由 `adapter(schema)` 调用 | `SchemaKey` 对象 | 对应的 Pydantic `TypeAdapter`，用于实际验证和序列化检查。 |
+| `parameter_types(method)` | SDK 方法对象 | 方法关键字参数到类型注解的字典。 |
+| `_compiled_plan(key, delegated_paths)` | `SchemaKey` 对象与不可变路径元组 | 根 `_FilterPlan` 对象，由它引用整个子计划图。 |
+| `_declared_path(key, keys)` | `SchemaKey` 对象与不可变字段路径 | SDK 类型是否声明该路径的布尔结果。 |
 
-此次优化的主要新增部分是第三项。仅缓存字段名和 TypeAdapter，仍会让每个请求反复解析
-嵌套注解、列表元素和 Union；完整计划把这些分析结果一起保存下来。
-模块另有 SDK 参数注解、路径声明等缓存；上表只列过滤计划直接依赖的缓存。
+仅缓存字段名和 TypeAdapter，仍会让每个请求反复解析嵌套注解、列表元素和 Union；
+完整计划把这些分析结果一起保存下来。缓存只接收类型与不可变规则键，消息值不进入 CompiledCache。
 
 ## 3. 缓存键具体保存什么
 
@@ -50,10 +53,10 @@
 
 ```python
 def _plan(schema, delegated_paths=()):
-    return _compiled_plan(_SchemaKey(schema), delegated_paths)
+    return _compiled_plan(SchemaKey(schema), delegated_paths)
 ```
 
-`_SchemaKey` 实际只有三个槽位：
+`SchemaKey` 位于 cache/compiled_cache.py，实际只有三个槽位：
 
 | 属性 | 保存的值 | 用途 |
 | --- | --- | --- |
@@ -79,12 +82,12 @@ Right | Left
 ```
 
 这两个注解需要在本计划缓存中区分，否则同分值可能复用错误顺序的计划。
-`_SchemaKey.__eq__` 使用 `_same_schema` 递归比较泛型参数的实际顺序，
+`SchemaKey.__eq__` 使用 `_same_schema` 递归比较泛型参数的实际顺序，
 因此 `list[Left | Right]` 和 `list[Right | Left]` 也会分开。
 
 等价的泛型注解仍可复用计划。`Annotated` 若携带不可哈希的 metadata，则按注解对象身份缓存。
 该 metadata 属于类型声明，不是传入 `supported` / `projected` 的请求值。
-验证器和路径声明缓存同样使用 `_SchemaKey`，合法的不可哈希 metadata 不再只在过滤入口可用、
+验证器和路径声明缓存同样使用 `SchemaKey`，合法的不可哈希 metadata 不再只在过滤入口可用、
 却在实际输入验证时失败。验证器也保留 Union 的声明顺序，避免不同顺序共用错误的验证器。
 
 ## 4. 缓存值具体保存什么
@@ -169,7 +172,7 @@ class Message(TypedDict):
 
 ```mermaid
 flowchart TD
-    K["缓存键: _SchemaKey(Message), delegated_paths=()"] --> M["Message 根计划"]
+    K["缓存键: SchemaKey(Message), delegated_paths=()"] --> M["Message 根计划"]
     M -->|"children: role"| R["Literal user 计划"]
     M -->|"children: content"| C["Union 计划: str 或 list"]
     M -->|"children: metadata"| D["开放 dict 计划"]
@@ -230,7 +233,7 @@ supported(first, Message)
 
 运行顺序：
 
-1. `_SchemaKey(Message)` 查找失败，开始编译上述完整计划，包括这次尚未使用的列表和图片分支。
+1. `SchemaKey(Message)` 查找失败，开始编译上述完整计划，包括这次尚未使用的列表和图片分支。
 2. 根计划遍历类型声明中的字段名，定点读取 `role`、`content`、`metadata`，不读取或枚举 `vendor_extra`。
 3. `content` 的 Union 根据当前值选择 `str` 分支，返回本次文本。
 4. `metadata` 是开放应用字典，`apply` 为它建立独立副本。
@@ -324,14 +327,15 @@ Anthropic 的开放 `input_schema` 同样委派后一次捕获，避免先按 SD
 | 3 | Encoder 编码当前消息与工具，生成本次中间态。 | 不跳过 Encoder。 |
 | 4 | 校验生成选项，Decoder 构造当前原生请求。 | 不跳过 Decoder。 |
 | 5 | 上游 Decoder 过滤根信封，委派消息/工具叶给 filter_messages / filter_tools 投影并验证。 | 普通消息/工具计划可与步骤2复用；含委派路径的信封计划单独缓存。输入输出协议不同时分别使用对应类型计划。 |
-| 6 | 官方 SDK 执行请求、解析返回事件。 | 仍执行 SDK 自己的处理。 |
-| 7 | 每个事件经过 Encoder、StreamState、Decoder，再转换完整结果。 | 本计划缓存不替代返回路径，也不缓存响应结果。 |
+| 6 | BaseCodec.translate 完成语义损失处理；启用 MessageCache 时更新当前已翻译批，再读取最新历史快照。 | 只处理当前增量；缓存历史不重新翻译或校验工具关联。 |
+| 7 | 官方 SDK 执行请求、解析返回事件。 | 仍执行 SDK 自己的处理。 |
+| 8 | 每个事件经过 Encoder、StreamState、Decoder，再转换完整结果。 | 本计划缓存不替代返回路径，也不缓存响应结果。 |
 
 第一次请求也可能在步骤2编译、步骤5就命中缓存；“冷请求”不代表它内部所有计划查询都未命中。
 Encoder / Decoder 对每批消息和工具只解析一次计划并复用其 apply / project 函数，
 不会为同一批中的每条数据重复创建缓存键。每条消息仍独立过滤、验证和执行必要的所有权复制。
 
-源码入口见 [generate](../../src/my_llm/runtime/llm.py)、
+源码入口见 [generate](../../src/my_llm/my_llm.py)、
 [输入验证](../../src/my_llm/codec/base/encoder.py)、
 [请求边界](../../src/my_llm/codec/base/decoder.py)和
 [Codec 固定编排](../../src/my_llm/codec/base/codec.py)。
@@ -341,7 +345,8 @@ Encoder / Decoder 对每批消息和工具只解析一次计划并复用其 appl
 ### 进程内共享和内存代价
 
 字段、验证器、SDK 参数注解、根过滤计划、路径声明这五类进程级缓存均使用
-`functools.lru_cache(maxsize=512)`。每类最多保留 512 个最近使用的入口，超出时淘汰最久未使用项；
+`CompiledCache` 封装的 `functools.lru_cache(maxsize=512)`。
+每类最多保留 512 个最近使用的入口，超出时淘汰最久未使用项；
 被淘汰的规则下次使用时重新编译，不改变输出。没有 TTL，同一进程内不同实例共享，不同进程各自缓存。
 限制的是根入口数，不是所有子节点数或总字节数；一个根计划仍可能引用较大的递归类型图。
 缓存增长取决于类型声明及其计划，而不是处理过多少条消息。
@@ -397,7 +402,7 @@ Encoder 读取 SDK 模型时，`_ModelView` 只按请求的字段名读取属性
 from typing import Any, Literal, NotRequired
 from typing_extensions import TypedDict
 
-from my_llm.codec.shared import schema
+from my_llm.cache import compiled_cache
 
 
 class TextPart(TypedDict):
@@ -431,12 +436,12 @@ second = {
     "metadata": {"request_id": "R2", "new_key": {"items": [1, 2]}},
 }
 
-first_output = schema.supported(first, Message)
-first_info = schema._compiled_plan.cache_info()
-second_output = schema.supported(second, Message)
-second_info = schema._compiled_plan.cache_info()
-readonly = schema.projected(second, Message)
-plan = schema._plan(Message)
+first_output = compiled_cache.supported(first, Message)
+first_info = compiled_cache._compiled_plan.cache_info()
+second_output = compiled_cache.supported(second, Message)
+second_info = compiled_cache._compiled_plan.cache_info()
+readonly = compiled_cache.projected(second, Message)
+plan = compiled_cache._plan(Message)
 
 assert "vendor_extra" not in first_output
 assert first_output["content"] == "北京天气怎么样？"
@@ -444,13 +449,13 @@ assert second_output["content"][1]["type"] == "image"
 assert second_output["metadata"] == second["metadata"]
 assert second_output["metadata"] is not second["metadata"]
 assert readonly["metadata"] is second["metadata"]
-assert schema._plan(Message) is plan
+assert compiled_cache._plan(Message) is plan
 
 print("first:", first_output)
 print("second:", second_output)
 print("after first:", first_info)
 print("after second:", second_info)
-print("same plan:", schema._plan(Message) is plan)
+print("same plan:", compiled_cache._plan(Message) is plan)
 print("root callbacks:", plan.apply.__name__, plan.project.__name__, plan.score.__name__)
 ```
 
@@ -469,7 +474,8 @@ root callbacks: structured_copy structured_projection structured_score
 
 | 要确认的事实 | 实现或证据 |
 | --- | --- |
-| 缓存键和值的实际字段 | [schema.py](../../src/my_llm/codec/shared/schema.py) 的 `_SchemaKey`、`_FilterPlan`、`_compiled_plan`。 |
+| 缓存键、容量与淘汰 | [compiled_cache.py](../../src/my_llm/cache/compiled_cache.py) 的 `SchemaKey`、`CompiledCache`。 |
+| 编译计划中的处理规则 | [compiled_cache.py](../../src/my_llm/cache/compiled_cache.py) 的 `_FilterPlan`、`_compiled_plan`。 |
 | 命中后不重复分析字段类型 | [计划测试](../../tests/unit/test_schema_filter_plans.py) 把类型分析函数替换为失败函数，继续执行已缓存计划。 |
 | Union 顺序与递归类型保持正确 | 同一测试文件覆盖直接/嵌套 Union 同分顺序、Annotated 与递归模型。 |
 | Literal 索引只剪枝，不改变候选选择 | 同一测试文件覆盖共享判别值、无限制候选、多判别字段、SDK 模型及不合法判别值。 |

@@ -1,6 +1,7 @@
 """openai/chat: native input to intermediate."""
 
 from typing import Any
+from uuid import uuid4
 
 from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
 
@@ -109,6 +110,11 @@ class ChatCompletionsEncoder(BaseEncoder):
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
+        legacy_call_id = (
+            f"legacy_function_call_{uuid4().hex}"
+            if parameters.get("enable_message_cache", False)
+            else "legacy_function_call"
+        )
         for index, message in enumerate(messages):
             path = f"$.messages[{index}]"
             role = message.get("role")
@@ -138,12 +144,12 @@ class ChatCompletionsEncoder(BaseEncoder):
                 if call.get("type", "function") == "function"
             )
             if message.get("function_call"):
-                content.append(tool_block(message["function_call"], call_id="legacy_function_call"))
+                content.append(tool_block(message["function_call"], call_id=legacy_call_id))
             if role in ("tool", "function"):
                 content = [
                     {
                         "type": "tool_result",
-                        "tool_use_id": message.get("tool_call_id") or "legacy_function_call",
+                        "tool_use_id": message.get("tool_call_id") or legacy_call_id,
                         "content": encode_content(native_content, path=f"{path}.content")
                         if isinstance(native_content, list)
                         else native_content,

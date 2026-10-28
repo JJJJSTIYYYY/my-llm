@@ -67,8 +67,7 @@ from my_llm.profile import (
     omit,
     resolve_profiles,
 )
-from my_llm.runtime import MessageStream
-from my_llm.runtime.llm import MyLLM, generate
+from my_llm.runtime import MessageStream, MyLLM, generate
 
 __all__ = [
     "ProtocolMiddleWare",

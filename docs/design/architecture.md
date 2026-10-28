@@ -1,6 +1,6 @@
 # 项目架构与职责边界
 
-2026-10-24 更新。一次 `generate(messages=..., stream=True, max_tokens=1024)` 将完整调用参数
+2026-10-29 更新。一次 `generate(messages=..., stream=True, max_tokens=1024)` 将完整调用参数
 打包为字典，连同已解析 Profile 进入 Codec。Encoder 先投影支持字段、验证输入协议并生成类型化中间协议；
 Decoder 应用参数路径、默认值、覆盖规则及目标 SDK Schema，输出三个明确的目的地：
 
@@ -23,6 +23,11 @@ src/my_llm/
 ├── __init__.py                 # 统一公开导出
 ├── _version.py                 # 构建与发行版本
 ├── py.typed                    # 类型标记
+├── my_llm.py                   # MyLLM / generate、客户端缓存、流编排
+├── cache/                      # 缓存实现与所有权隔离
+│   ├── __init__.py             # 缓存接口导出
+│   ├── compiled_cache.py       # CompiledCache、SDK 类型计划编译、过滤与验证
+│   └── message_cache.py        # MessageCache，已翻译增量历史的更新与快照
 ├── basic/                      # 配置、模型与运行时共用的基础能力
 │   ├── data.py                 # 数据捕获与 SDK 字段只读视图
 │   ├── exceptions.py           # 统一异常
@@ -33,8 +38,7 @@ src/my_llm/
 │   ├── stream.py               # 流操作、公开事件、条目身份与用量
 │   └── protocol.py             # 完整容器与类型化生成输入校验
 ├── profile/                    # 配置分层、声明分类、校验及实例快照
-├── runtime/                    # 生成编排、客户端与响应流生命周期
-│   ├── llm.py                  # MyLLM / generate、客户端缓存、流编排
+├── runtime/                    # 响应流与每次调用的状态
 │   ├── message_stream.py       # 公开异步流与关闭回调
 │   └── state.py                # 本次请求的块累积、事件与终态
 └── codec/
@@ -48,8 +52,7 @@ src/my_llm/
     │   ├── conversion.py       # 消息、媒体、工具转换及历史关联验证
     │   ├── options.py          # 请求选项、参数路径及优先级
     │   ├── output.py           # 原生与中间输出共用的能力过滤
-    │   ├── stream.py           # 流操作、块身份及用量
-    │   └── schema.py           # SDK 类型分析、Schema 计划缓存、过滤与验证
+    │   └── stream.py           # 流操作、块身份及用量
     └── <protocol>/             # codec、transport、encoding、decoding 及按需共享模块
 ```
 
@@ -58,10 +61,11 @@ src/my_llm/
 | BaseEncoder | 协议识别、输入 Schema 验证、完整调用编码、消息／工具／事件／用量翻译。 |
 | BaseDecoder | 请求选项解析、参数映射、默认值与覆盖、工具关联及能力验证、目标 Schema 过滤和验证、最终字典及结果形状。 |
 | BaseTransport | create_client(parameters)、upstream(client, request)、close_client(client)；不接收 Profile 或原始生成参数。 |
-| BaseCodec | 声明身份及 ProtocolDefaults，组合 Encoder / Decoder / Transport，协调离线入口。 |
-| MyCodec | 注册快照、输入协议绑定、prepare 路由；不保存调用数据。 |
+| BaseCodec | 声明身份及 ProtocolDefaults，组合 Encoder / Decoder / Transport；翻译与损失处理完成后调用消息缓存接口。 |
+| MyCodec | 注册快照、输入协议绑定、prepare 路由；持有实例独立的 MessageCache。 |
+| CompiledCache / MessageCache | 分别保存进程级类型规则和按实例键隔离的已翻译输入历史，集中管理缓存操作与快照。 |
 | Profile / resolve_profiles | 分层合并、声明分类、通用字段验证、连接参数解析及独立配置快照。 |
-| MyLLM | 固定实例配置、已准备连接字典、延迟客户端缓存、生成和输出编排。 |
+| MyLLM | 固定实例配置、uuid4 消息缓存键、已准备连接字典、延迟客户端缓存、生成和输出编排。 |
 | StreamState / MessageStream | 每次请求独立的响应状态、事件、最终结果 draft 和清理回调。 |
 
 注册表保存工厂，codec 及其组件按实例按需创建；允许实例状态，不跨实例共享组件。
@@ -77,8 +81,8 @@ Encoder / Decoder 不创建 SDK 客户端，也不相互导入。官方类型与
 解析相邻，流模型与事件投影相邻，完整输入校验与容器相邻。MyLLM、MyCodec、各协议
 Encoder / Decoder 的完整调用流程仍集中在所属类中。初始化文件仅重导出；运行时内部
 直接导入定义模块。`from my_llm import ...` 和 `from my_llm.middleware import ...`
-继续提供同一组协议模型。顶层仅保留导出、版本与类型标记；
-基础能力在 basic，执行编排与流状态在 runtime。迁移后的内部路径不保留转发文件。
+继续提供同一组协议模型。MyLLM 执行编排位于顶层 my_llm.py；
+基础能力在 basic，缓存实现在 cache，响应流状态在 runtime。迁移后的内部路径不保留转发文件。
 
 ## 请求与返回路径
 
@@ -95,6 +99,8 @@ Encoder / Decoder 的完整调用流程仍集中在所属类中。初始化文�
           → request → 参数路径及默认值 → assemble_request
           → native_request → 历史关联、Schema 过滤、能力及原生结构验证
           → {client, request, local}
+      → BaseCodec.translate 完成语义损失处理
+      → 启用消息缓存时：更新已翻译增量 → 读取最新历史快照
       → MyLLM 延迟取得／复用客户端 → Transport.upstream → SDK(**request)
 
 返回：SDK 事件 → 上游 Encoder → 本次 StreamState
@@ -148,10 +154,21 @@ Anthropic 的开放 input_schema 再委派为应用数据，只复制完整 JSON
 TypedDict / Pydantic 只处理声明的结构字段；开放 dict / Any 中的工具参数、结果和 Schema 约束完整保留。
 Profile 显式声明的兼容叶字段按路径处理，未知字段不会通过缓存学习或透传。
 
-复用 shared/schema.py 的有界 LRU：字段、TypeAdapter、SDK 方法参数类型、编译计划、路径声明
-各最多 512 项。缓存键及闭包只保存类型和编译规则，不保存请求数据、Profile、客户端或上次 Union 分支。
+cache/compiled_cache.py 集中管理 SDK 类型分析、计划编译、过滤与验证，以 `CompiledCache` 复用有界 LRU：
+字段、TypeAdapter、SDK 方法参数类型、编译计划、路径声明各最多 512 项。
+`SchemaKey`、计划图和缓存淘汰逻辑均位于该模块，Codec 通过接口调用。
+缓存键及闭包只保存类型和编译规则，不保存请求数据、Profile、客户端或上次 Union 分支。
 类型分析命中后，当前请求仍逐值选择分支、过滤和验证；输入和输出的验证分别保证两个协议边界。
 详见 [Schema 过滤计划缓存](schema-filter-cache.md)。
+
+`MyLLM(enable_message_cache=True)` 将开关和实例生成的 uuid4 键传至 `BaseCodec.translate`。
+以上游 OpenAI Chat 为例：首次提交 `[system, user]`，下次提交 `[assistant, user]`，两批分别走原有翻译流程；
+完整输入 draft 的语义损失处理完成后，MessageCache 追加当前批，再返回包含四条消息的独立快照给 Transport。
+增量可以包含 system、user、assistant 或完整工具调用与结果批次；只验证当前批的工具关联，
+旧缓存中的对应关系不重复校验。Decoder 声明原生消息路径及指令路径，
+Anthropic 的 system、Gemini 的 system_instruction 随已翻译消息一起保留。
+缓存只保存输入历史；模型输出需要调用方显式加入下一批增量，工具声明、生成控制和请求选项仍按次准备。
+翻译成功后即更新缓存，即使随后的 Transport 调用失败，该批也已保留；`aclose()` 释放本实例缓存。
 
 客户端缓存属于 MyLLM；块物化与终态复用属于请求独立的 StreamState。
 生命周期见[客户端生命周期](client-lifecycle.md)，流式顺序见[流状态设计](stream-state.md)。

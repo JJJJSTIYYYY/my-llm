@@ -23,6 +23,7 @@ from my_llm.basic.semantic_loss import (
     SemanticLossContext,
     SemanticLossHook,
 )
+from my_llm.cache.message_cache import MessageCache
 from my_llm.codec.base.codec import BaseCodec
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.base.encoder import BaseEncoder
@@ -88,7 +89,7 @@ class MyCodec:
     Only recognized fields are translated; conversion is not guaranteed lossless.
     """
 
-    __slots__ = ("codecs", "semantic_loss_adaptor")
+    __slots__ = ("codecs", "semantic_loss_adaptor", "_message_cache")
 
     def __init__(
         self,
@@ -100,6 +101,11 @@ class MyCodec:
             semantic_loss_protocol, input_semantic_loss_hook, output_semantic_loss_hook
         )
         self.codecs = _CodecInstances(self.semantic_loss_adaptor)
+        self._message_cache = MessageCache()
+
+    def expire_message_cache(self, key: str) -> None:
+        """Release the translated input history associated with one MyLLM instance."""
+        self._message_cache.expire(key)
 
     def set_semantic_loss_policy(
         self,
@@ -245,7 +251,14 @@ class MyCodec:
         return protocol
 
     def prepare(
-        self, inputs: dict, profile: ResolvedProfile, *, input_format: Protocol, client: dict
+        self,
+        inputs: dict,
+        profile: ResolvedProfile,
+        *,
+        input_format: Protocol,
+        client: dict,
+        enable_message_cache: bool = False,
+        message_cache_key: str | None = None,
     ) -> dict:
         """Prepare one complete generation call without performing network I/O.
 
@@ -256,6 +269,8 @@ class MyCodec:
             input_format: Registered protocol, or "middleware" for typed history/tools
                 that bypass the source encoder.
             client: Connection settings from client_parameters(profile).
+            enable_message_cache: Append translated incremental input to cached history.
+            message_cache_key: Unique instance key required when caching is enabled.
 
         Returns:
             Dictionary with client (SDK constructor arguments), request (SDK call
@@ -266,6 +281,10 @@ class MyCodec:
             MessageValidationError: Messages, tools or their associations are invalid.
             UnsupportedCapabilityError: Required content cannot be represented.
         """
+        if enable_message_cache and message_cache_key is None:
+            raise ConfigurationError("message caching requires an instance key")
+        if enable_message_cache:
+            inputs = {**inputs, "enable_message_cache": True}
         if input_format == "middleware":
             intermediate = {
                 **{key: value for key, value in inputs.items() if key not in ("messages", "tools")},
@@ -275,10 +294,17 @@ class MyCodec:
         else:
             intermediate = self._codec(input_format).encoder.request(inputs, profile)
         target = self._codec(profile.protocol)
+        if enable_message_cache:
+            intermediate["has_cached_messages"] = self._message_cache.has_messages(
+                message_cache_key, target.decoder.message_path
+            )
         return target.translate(
             lambda: target.decoder.prepare(intermediate, client),
             SemanticLossContext(input_format, profile.protocol, "input", "request"),
             draft_key="request",
+            enable_message_cache=enable_message_cache,
+            message_cache=self._message_cache,
+            message_cache_key=message_cache_key,
         )
 
     def upstream(self, client: Any, request: dict, profile: ResolvedProfile):

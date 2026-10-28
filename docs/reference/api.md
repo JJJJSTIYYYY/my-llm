@@ -30,13 +30,14 @@ async def session():
 
 认证通过 Provider 配置或相应 SDK 支持的环境变量提供，见[配置指南](configuration.md#provider-与-model-字段)。
 
-`MyLLM(*, provider, model, stdio_protocol=None)` 创建可重复调用的实例；所有构造参数仅限关键字：
+`MyLLM(*, provider, model, stdio_protocol=None, enable_message_cache=False, ...)` 创建可重复调用的实例；所有构造参数仅限关键字：
 
 | 参数 | 类型 | 含义 |
 | --- | --- | --- |
 | `provider` | `ProviderProfile` | 必填，连接配置和明确指定的上游协议 |
 | `model` | `ModelProfile` | 必填，模型 ID 和模型配置 |
 | `stdio_protocol` | `Protocol \| None` | 输入消息、工具和输出共用的协议；默认尝试唯一推断 |
+| `enable_message_cache` | `bool` | 默认 `False`；开启后缓存本实例已翻译的输入，每次传入增量消息列表 |
 
 `ProviderProfile.protocol` 选择上游 API，`stdio_protocol` 选择应用使用的消息格式，两者可以不同。
 `stdio_protocol` 未指定时，第一次生成从整个消息与工具列表中推断；只有唯一匹配时才绑定。
@@ -71,6 +72,35 @@ async def session():
 
 实例的生成方法不接收 provider、model 或连接选项。输入历史和可变选项在协程被 `await` 时隔离，
 调用不会自动更新业务历史。工具由调用者执行。
+
+### 增量消息缓存
+
+设置 `MyLLM(enable_message_cache=True, ...)` 后，首批仍传普通消息列表，后续只传新增消息：
+
+```python
+async def cached_conversation(provider, model):
+    async with MyLLM(
+        provider=provider,
+        model=model,
+        stdio_protocol="openai_chat",
+        enable_message_cache=True,
+    ) as llm:
+        reply = await llm.generate(messages=[{"role": "user", "content": "Hello"}])
+        return await llm.generate(
+            messages=[reply, {"role": "user", "content": "Please continue"}]
+        )
+```
+
+第二次实际发送首批 user 消息、`reply` 和新增 user 消息。返回的 assistant 回复由调用者放入
+下一批列表；Responses 的返回 items 使用 `[*reply, ...]` 展开。增量也可以包含 system、developer、
+assistant 或一整批工具调用及结果；每批工具调用与结果必须完整对应，已缓存的对应关系不会重复校验。
+Anthropic、Gemini 已有普通消息缓存时，可以单独追加 system 消息。
+
+新批次仍经过完整翻译和语义损失处理，成功后追加缓存，再读取独立的完整快照发送请求。
+翻译或 hook 抛错不会追加本批；缓存更新发生在网络请求之前，后续网络失败不会撤销已翻译的输入。
+输入按批追加，不去重，也不识别重复提交的完整历史。
+工具声明、请求头、输出上限等选项只用于本次调用。缓存按实例隔离，`aclose()` 时释放；
+启用缓存时不能同时设置非空的 `previous_response_id`，`None` / `omit` 仍可使用。
 
 ### 协议和返回值
 

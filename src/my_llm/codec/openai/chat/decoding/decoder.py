@@ -12,6 +12,7 @@ from my_llm.basic.exceptions import (
     UnsupportedCapabilityError,
 )
 from my_llm.basic.semantic_loss import report_loss
+from my_llm.cache.compiled_cache import parameter_types
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.openai.chat.decoding.content import (
     chat_call,
@@ -30,7 +31,6 @@ from my_llm.codec.shared.options import (
     PreparedOptions,
     validate_request_options,
 )
-from my_llm.codec.shared.schema import parameter_types
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.configuration import merge_dicts
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens

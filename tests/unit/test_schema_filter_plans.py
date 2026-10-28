@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict
 from typing_extensions import TypedDict
 
 from my_llm import MyCodec, UnsupportedCapabilityError
-from my_llm.codec.shared import schema as schema_plans
+from my_llm.cache import compiled_cache as schema_plans
 from tests.helpers.protocols import PROTOCOLS, history, tools
 
 

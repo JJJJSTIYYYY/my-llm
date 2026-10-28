@@ -5,9 +5,9 @@ from typing import Any, final
 
 from my_llm.basic.data import dictionaries, dictionary_views
 from my_llm.basic.exceptions import MessageValidationError
+from my_llm.cache.compiled_cache import validate_values
 from my_llm.codec.shared.conversion import match_all
 from my_llm.codec.shared.options import path_value
-from my_llm.codec.shared.schema import validate_values
 from my_llm.middleware.models import FunctionTool, Message, messages_from_wire, tools_from_wire
 from my_llm.middleware.protocol import ProtocolMiddleWare
 from my_llm.middleware.stream import StreamBatch, stream_from_wire
@@ -68,7 +68,13 @@ class BaseEncoder(ABC):
             **{key: value for key, value in inputs.items() if key not in ("messages", "tools")},
             "profile": profile,
             "middleware": ProtocolMiddleWare(
-                messages=messages_from_wire(self._messages(history, None)),
+                messages=messages_from_wire(
+                    self._messages(
+                        history,
+                        None,
+                        enable_message_cache=inputs.get("enable_message_cache", False),
+                    )
+                ),
                 tools=tools_from_wire(self._tools(tools, None)) if tools is not None else None,
             ),
         }

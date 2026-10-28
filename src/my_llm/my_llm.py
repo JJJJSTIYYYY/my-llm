@@ -1,4 +1,4 @@
-"""Official SDK execution with request-owned stream and history state."""
+"""Instance-owned SDK clients and optional translated history, with per-call streams."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from contextlib import AsyncExitStack, aclosing
 from copy import deepcopy
 from dataclasses import replace
 from typing import Any
+from uuid import uuid4
 
 from my_llm.basic.data import _MISSING
 from my_llm.basic.exceptions import ConfigurationError, StreamError
@@ -38,6 +39,9 @@ class MyLLM:
         input_semantic_loss_hook: Synchronous hook for the complete request draft.
         output_semantic_loss_hook: Synchronous hook for response drafts. Hooks receive
             the draft, grouped losses and context, and modify the draft in place.
+        enable_message_cache: Cache translated input batches for this instance.
+            Subsequent calls supply only incremental messages, including prior
+            assistant results and complete tool rounds. Defaults to False.
 
     Attributes:
         provider: Copy of the supplied provider profile.
@@ -67,13 +71,18 @@ class MyLLM:
         semantic_loss_protocol: LossPolicy = "raise",
         input_semantic_loss_hook: SemanticLossHook | None = None,
         output_semantic_loss_hook: SemanticLossHook | None = None,
+        enable_message_cache: bool = False,
     ) -> None:
         """Create an instance from profiles; see the class for argument contracts."""
+        if not isinstance(enable_message_cache, bool):
+            raise ConfigurationError("enable_message_cache must be a bool")
         self.codec = MyCodec(
             semantic_loss_protocol=semantic_loss_protocol,
             input_semantic_loss_hook=input_semantic_loss_hook,
             output_semantic_loss_hook=output_semantic_loss_hook,
         )
+        self.enable_message_cache = enable_message_cache
+        self._message_cache_key = str(uuid4())
         if stdio_protocol is not None and (
             not isinstance(stdio_protocol, str)
             or stdio_protocol != "middleware"
@@ -149,6 +158,7 @@ class MyLLM:
         if not self._closed:
             self._closed = True
             self._clients.clear()
+            self.codec.expire_message_cache(self._message_cache_key)
             await self._client_resources.aclose()
 
     async def __aenter__(self) -> MyLLM:
@@ -199,6 +209,7 @@ class MyLLM:
             messages: Nonempty history in this instance's input/output protocol.
                 Items may be dictionaries or supported official SDK models.
                 With stdio_protocol="middleware", pass Message models instead.
+                With message caching enabled, supply only the new message batch.
             stream: If True, return a MessageStream to consume with ``async with``.
             tools: Tool declarations in the same protocol. None or omit leaves them
                 out; an empty list sends an empty tool list. Tools are not executed.
@@ -232,11 +243,21 @@ class MyLLM:
                 protocol and the active loss policy is "raise".
             StreamError: The response fails or ends without a valid completion.
 
-        SDK errors retain their original types. Input histories and mutable options
-        are isolated when this coroutine is awaited; the caller owns conversation
-        history and must append the completed result before the next turn.
+        SDK errors retain their original types. Input messages and mutable options
+        are isolated when this coroutine is awaited. Include the completed result
+        in the next history, or in the next incremental batch when caching is enabled.
         """
         self._check_open()
+
+        if (
+            previous_response_id is not None
+            and previous_response_id is not omit
+            and self.enable_message_cache
+        ):
+            raise ConfigurationError(
+                "previous_response_id is not supported when enable_message_cache is True"
+            )
+
         inputs = dict(
             messages=messages,
             stream=stream,
@@ -252,7 +273,12 @@ class MyLLM:
         self._stdio_protocol = protocol
         profile = self.resolved_profile
         prepared = self.codec.prepare(
-            inputs, profile, input_format=protocol, client=self.client_parameters
+            inputs,
+            profile,
+            input_format=protocol,
+            client=self.client_parameters,
+            enable_message_cache=self.enable_message_cache,
+            message_cache_key=self._message_cache_key,
         )
         state = StreamState(profile.model)
         result = MessageStream(self._stream(prepared, state, protocol), state)

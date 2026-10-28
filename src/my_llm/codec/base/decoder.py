@@ -11,6 +11,14 @@ from my_llm.basic.exceptions import (
     UnsupportedCapabilityError,
 )
 from my_llm.basic.semantic_loss import SemanticLossContext, collect_losses, report_loss
+from my_llm.cache.compiled_cache import (
+    _MISSING,
+    _plan,
+    declared_path,
+    path_item,
+    supported,
+    validate_values,
+)
 from my_llm.codec.shared.conversion import validate_history
 from my_llm.codec.shared.options import (
     PreparedOptions,
@@ -19,14 +27,6 @@ from my_llm.codec.shared.options import (
     set_path,
 )
 from my_llm.codec.shared.output import output_chunks, output_messages
-from my_llm.codec.shared.schema import (
-    _MISSING,
-    _plan,
-    declared_path,
-    path_item,
-    supported,
-    validate_values,
-)
 from my_llm.middleware.protocol import wire_values
 from my_llm.middleware.validation import validate_events, validate_messages, validate_tools
 from my_llm.profile.paths import path_keys
@@ -77,6 +77,11 @@ class BaseDecoder(ABC):
     def message_path(self) -> tuple[str, ...]:
         """Path to native request history, declared by the protocol owner."""
         ...
+
+    @property
+    def message_cache_paths(self) -> tuple[tuple[str, ...], ...]:
+        """Native request paths retaining translated history across incremental calls."""
+        return (self.message_path,)
 
     @property
     @abstractmethod

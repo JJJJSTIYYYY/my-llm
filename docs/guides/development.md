@@ -1,8 +1,7 @@
 # 本地开发规范
 
-当前 codec 布局与接口以本页目录说明、[架构文档](../design/architecture.md)和
-[接入协议指南](adding-protocol.md)为准。页末各轮验收保留对应时点的目录、接口与测试快照，
-其中的旧路径和职责划分不作为当前实现约束。
+codec 布局与接口以本页目录说明、[架构文档](../design/architecture.md)和
+[接入协议指南](adding-protocol.md)为准。
 
 ## 目录与模块
 
@@ -82,14 +81,3 @@ uv run --no-sync python examples/local_demo.py
 结构整理还应对比移动前后的代码 AST，核对除导入外的执行节点不变，
 并核对顶层公开导出；不要以测试通过代替对纯结构变更的直接检查。
 发行步骤见[构建指南](building.md)。
-
-## 历史验收记录（2026-10-17 ～ 10-18）
-
-以下三轮目录调整的结论只对应当时的布局与测试数，不作为当前实现约束；
-当前结构见[架构文档](../design/architecture.md)，近期验收见[审计与验证记录](../README.md#审计与验证记录)。
-
-| 轮次 | 主要变更 | 当时核对结论 |
-| --- | --- | --- |
-| 2026-10-17 首轮目录整理 | 148 个运行时模块、22 个包接口 | 除导入外 AST 与导入绑定一致，82 个协议参考文件逐字节相同；**915 passed** |
-| 2026-10-17 协议目录分层 | 82 个模块移入 messages / tools / stream / decoding-request | AST 与绑定一致，公开入口与构建配置不变；**915 passed**，wheel 可导入 183 个模块 |
-| 2026-10-18 codec 收敛 | codec 文件 171 → 63，encoding / decoding 142 → 34 | 115 个函数体 AST 一致，五个 transport 逐字节一致；**933 passed** |

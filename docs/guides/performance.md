@@ -13,7 +13,22 @@ Chat Completions → Chat Completions 的增量消息缓存对照：
 逐次核对生成请求一致。计时不含历史缓存建立、SDK 请求执行、网络或模型推理。
 `--delta-chars 256` 可以固定新增消息长度，单独放大历史文本。
 
-交叉点、绝对耗时、复测和边界见[消息缓存性能对照](../audits/message-cache-performance-2026-10-29.md)。
+历史通过正常 prepare 流程在计时外建立；每对采样前重建相同历史，避免测成重复批次去重或
+逐轮增长的历史。直接/缓存、缓存/直接交替采样，逐样本记录墙钟、CPU、GC 次数及环境指纹。
+实现见 [message_cache.py](../../tests/performance/message_cache.py)。交叉点附近可增加采样密度：
+
+```sh
+.venv/bin/python -m tests.performance.message_cache --history 0 1 2 3 4 5 6 8 16 32 64 128 --iterations 201 --warmup 10 --json /tmp/message-cache-crossover.json
+
+# 新增消息固定很短，单独扫描历史文本的长度。
+.venv/bin/python -m tests.performance.message_cache --history 1 2 4 8 16 --chars 256 2048 16384 --delta-chars 256 --iterations 101 --warmup 10 --json /tmp/message-cache-fixed-delta.json
+```
+
+字符数指文本 content 的 Python 字符数，非 token 或字节数。交叉点取决于历史条数、单条结构和
+本轮增量长度，不能用统一字符阈值判断。缓存省去旧消息的解析、翻译和工具关联校验，
+但仍复制历史并对完整原生请求进行过滤和校验，所以请求准备耗时仍随历史规模增长。
+此对照衡量已有历史后单次请求的成本，不包含建立历史缓存的累计成本，
+也不代表完整 generate 或远程调用能获得相同比例的收益。
 
 ## 中间协议直接输入输出
 
@@ -33,7 +48,10 @@ uv run --no-sync python -m tests.performance.middleware --iterations 15 --warmup
 此对照衡量直接中间输入输出的调用成本，不包含应用先从原生协议转成中间模型的成本，
 也不表示网络请求或模型推理会获得相同比例的提速。
 
-运行条件、结果汇总与限制见[直接中间协议验收与性能](../audits/middleware-io-2026-10-24.md)。
+实现见 [middleware.py](../../tests/performance/middleware.py)。比较时保留相同负载、解释器和依赖，
+重点核对请求字节、P50/P95、GC 和内存指标，尾延迟差异应增加样本复测。
+
+## 完整 generate 调用
 
 从项目根目录运行：
 
@@ -64,8 +82,8 @@ MyLLM 构造、实例最终关闭、负载 / 响应字节准备及验证断言�
 控制台给出 cold、warm 中位数、P95、CPU 中位数与串行 requests/s。
 JSON 同时保存每个样本、流句柄 / 首事件时间、实际请求 / 响应字节数、事件 / HTTP 分块数、
 负载规模、Git 版本和工作区状态、Python / 平台及各 SDK 版本。
-本轮 `MessageStream.result` 按 hook 身份约定返回最终 draft 本身；旧版读取会复制。计时包含各版实际结果交付成本，
-不将这一行为变化归因于缓存加速。
+`MessageStream.result` 按 hook 身份约定返回最终 draft 本身。计时包含各版实际结果交付成本，
+跨版本比较时需要核对返回对象的所有权及复制行为，避免将其变化归因于缓存加速。
 P95 使用 nearest-rank；requests/s 是样本数除以样本总耗时，不是并发吞吐。
 
 ## 复杂负载与覆盖
@@ -124,8 +142,7 @@ uv run --no-sync pytest -q tests/performance
 [transport.py](../../tests/performance/transport.py)、[runner.py](../../tests/performance/runner.py)
 和[测试](../../tests/performance/test_generate.py)。
 
-历史报告只保留最近五轮的结果汇总，原始 JSON 日志已清理。新测量请将输出保存到 `/tmp`
-等本机目录；需要逐样本比较时，应另外保存对应源码快照和两版结果文件。
+测量输出保存到 `/tmp` 等本机目录；需要逐样本比较时，同时保存源码快照、环境信息与两版结果文件。
 当前调用链与组件契约见[架构说明](../design/architecture.md)。
 
 ## 请求链路的时间、内存、缓存与并发对照
@@ -174,10 +191,3 @@ python -m tests.performance.gc_diagnostic /tmp/chat-gc.json --protocol openai_ch
 `--protocol` 支持五种协议，默认 `openai_responses`；`--stdio` 选择报告关注的 `native` 或 `middleware`，
 两者仍同时测量。GC 保持原有开关与阈值；回调有额外开销，诊断数据不替换无回调计时。
 比较版本时使用相同解释器与脚本、独立进程交替运行，避免把九样本的最大值当成稳定 P95。
-
-固定中间协议和双向语义损失后的首次对照见[2026-10-24 验收与性能报告](../audits/protocol-middleware-2026-10-24.md)。
-后续冗余清理、边界复核及清理阶段的复测见[同日清理报告](../audits/code-cleanup-2026-10-24.md)。
-需求反向验收补漏时的源码和复测见[需求全量验收复核](../audits/requirements-acceptance-2026-10-24.md)。
-其后的缓存命中检查与同负载优化试验见[Schema 缓存检查记录](../audits/schema-cache-2026-10-24.md)。
-2026-10-25 的模型整理、十组相同字节负载对照及尾延迟限制见
-[Middleware 模型整理核对](../audits/middleware-model-2026-10-25.md#本轮验证与性能对照)。

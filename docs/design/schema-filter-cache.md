@@ -23,7 +23,7 @@
 | 位置 | 保存内容 | 生命周期 |
 | --- | --- | --- |
 | Schema 过滤缓存 | 类型、字段与处理函数 | 当前进程内复用。 |
-| MessageCache | 语义损失处理后的已翻译输入历史及指令字段 | 启用时按 MyLLM 的 uuid4 键隔离，aclose 时释放。 |
+| MessageCache | adaptor 处理前的消息翻译列表，以及最后追加批次的输入哈希 | 启用时按 MyLLM 的 uuid4 键隔离，串行使用，aclose 时释放。 |
 | Encoder 的 `_ModelView` 字段缓存 | 本次转换已读取的 SDK 字段值、缺失标记及嵌套包装值 | 当前转换，不跨请求复用。 |
 | MyLLM 客户端缓存 | 官方 SDK 客户端 | 当前 MyLLM 实例。 |
 | StreamState / BlockState 缓存 | 当前响应的物化块和终态消息，包含真实响应内容 | 当前请求。 |
@@ -325,9 +325,9 @@ Anthropic 的开放 `input_schema` 同样委派后一次捕获，避免先按 SD
 | 1 | generate 打包完整输入，Encoder 只读规范化消息与工具。 | 不在这里查询计划。 |
 | 2 | 输入 Encoder 调用 projected，随后通过 TypeAdapter 验证。 | 首次遇到对应 SDK 类型时编译；后续复用。 |
 | 3 | Encoder 编码当前消息与工具，生成本次中间态。 | 不跳过 Encoder。 |
-| 4 | 校验生成选项，Decoder 构造当前原生请求。 | 不跳过 Decoder。 |
+| 4 | 校验生成选项及当前工具关联，Decoder 翻译消息；启用消息缓存时先合并消息列表，再组装请求。 | 不跳过 Decoder，不重复翻译旧消息。 |
 | 5 | 上游 Decoder 过滤根信封，委派消息/工具叶给 filter_messages / filter_tools 投影并验证。 | 普通消息/工具计划可与步骤2复用；含委派路径的信封计划单独缓存。输入输出协议不同时分别使用对应类型计划。 |
-| 6 | BaseCodec.translate 完成语义损失处理；启用 MessageCache 时更新当前已翻译批，再读取最新历史快照。 | 只处理当前增量；缓存历史不重新翻译或校验工具关联。 |
+| 6 | BaseCodec.translate 在调用语义损失 adaptor 前发布消息翻译缓存，再处理损失。 | 连续相同批次不重复追加，旧历史不重新校验工具关联；hook 改动不自动回写缓存。 |
 | 7 | 官方 SDK 执行请求、解析返回事件。 | 仍执行 SDK 自己的处理。 |
 | 8 | 每个事件经过 Encoder、StreamState、Decoder，再转换完整结果。 | 本计划缓存不替代返回路径，也不缓存响应结果。 |
 

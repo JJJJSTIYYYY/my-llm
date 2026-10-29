@@ -40,8 +40,12 @@ class MyLLM:
         output_semantic_loss_hook: Synchronous hook for response drafts. Hooks receive
             the draft, grouped losses and context, and modify the draft in place.
         enable_message_cache: Cache translated input batches for this instance.
+            Results are cached before semantic-loss adaptation. Hooks own their
+            changes and any corresponding cache maintenance.
             Subsequent calls supply only incremental messages, including prior
-            assistant results and complete tool rounds. Defaults to False.
+            assistant results and complete tool rounds. Consecutive equal input
+            batches reuse cached history, including retries after an unconsumed
+            or failed stream. Defaults to False. Calls must be sequential when enabled.
 
     Attributes:
         provider: Copy of the supplied provider profile.
@@ -58,7 +62,9 @@ class MyLLM:
 
     Use ``async with MyLLM(...)`` or ``await llm.aclose()`` to release resources.
     Finish or close response streams before closing the instance. Use an instance
-    within one event loop; concurrent generation calls are supported. Create a new
+    within one event loop. Concurrent generation calls are supported with message
+    caching disabled. With caching enabled, finish or close each stream before the
+    next call; use separate instances for concurrent conversations. Create a new
     instance to change its configuration.
     """
 
@@ -210,6 +216,7 @@ class MyLLM:
                 Items may be dictionaries or supported official SDK models.
                 With stdio_protocol="middleware", pass Message models instead.
                 With message caching enabled, supply only the new message batch.
+                Repeating the last batch retries it without appending it again.
             stream: If True, return a MessageStream to consume with ``async with``.
             tools: Tool declarations in the same protocol. None or omit leaves them
                 out; an empty list sends an empty tool list. Tools are not executed.

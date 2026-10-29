@@ -1,5 +1,20 @@
 # generate 性能测试
 
+## 消息缓存与完整历史翻译
+
+Chat Completions → Chat Completions 的增量消息缓存对照：
+
+```sh
+.venv/bin/python -m tests.performance.message_cache --json /tmp/my-llm-message-cache.json
+```
+
+固定每轮新增两条消息，扫描已有历史条数和单条文本长度，比较实际 `MyCodec.prepare()` 的耗时。
+缓存组包含 fingerprint、历史复制与提交，两组仍进行完整原生请求组装、过滤及校验，
+逐次核对生成请求一致。计时不含历史缓存建立、SDK 请求执行、网络或模型推理。
+`--delta-chars 256` 可以固定新增消息长度，单独放大历史文本。
+
+交叉点、绝对耗时、复测和边界见[消息缓存性能对照](../audits/message-cache-performance-2026-10-29.md)。
+
 ## 中间协议直接输入输出
 
 ```sh

@@ -1,4 +1,4 @@
-"""Translated-history storage owns snapshots and retains only message fields."""
+"""Translated message lists are independent of request structure and hook edits."""
 
 import pytest
 
@@ -6,89 +6,112 @@ from my_llm import ConfigurationError
 from my_llm.cache import MessageCache
 
 
-def test_cache_owns_batches_and_independent_request_snapshots():
+def test_cache_owns_batches_and_independent_message_snapshots():
     cache = MessageCache()
-    batch = {"messages": [{"role": "user", "content": ["first"]}], "max_tokens": 1}
-    cache.update("session", batch, paths=(("messages",),))
-    first = cache.get("session", batch)
-    batch["messages"][0]["content"].append("caller mutation")
-    first["messages"][0]["content"].append("SDK mutation")
+    batch = [{"role": "user", "content": ["first"]}]
+    cache.update("session", batch)
+    first = cache.get("session")
+    batch[0]["content"].append("caller mutation")
+    first[0]["content"].append("SDK mutation")
 
-    second_batch = {"messages": [{"role": "assistant", "content": "second"}], "tools": []}
-    cache.update("session", second_batch, paths=(("messages",),))
-    second = cache.get("session", second_batch)
-
-    assert second == {
-        "messages": [
-            {"role": "user", "content": ["first"]},
-            {"role": "assistant", "content": "second"},
-        ],
-        "tools": [],
-    }
-    assert len(first["messages"]) == 1
-    assert second_batch["messages"] == [{"role": "assistant", "content": "second"}]
-    assert cache.has_messages("session", ("messages",))
+    second_batch = [{"role": "assistant", "content": "second"}]
+    cache.update("session", second_batch)
+    second = cache.get("session")
+    assert second == [
+        {"role": "user", "content": ["first"]},
+        {"role": "assistant", "content": "second"},
+    ]
+    assert len(first) == 1
+    assert second_batch == [{"role": "assistant", "content": "second"}]
 
 
-def test_nested_instruction_fields_accumulate_without_caching_generation_options():
+def test_system_messages_append_as_regular_translated_list_items():
     cache = MessageCache()
-    paths = (("contents",), ("config", "system_instruction"))
-    cache.update(
-        "session",
-        {
-            "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
-            "config": {"system_instruction": {"parts": [{"text": "first"}]}},
-        },
-        paths=paths,
-    )
-    batch = {
-        "contents": [],
-        "config": {
-            "system_instruction": {"parts": [{"text": "second"}]},
-            "max_output_tokens": 7,
-        },
-    }
-    cache.update("session", batch, paths=paths)
-    latest = cache.get("session", batch)
-    assert latest["config"] == {
-        "system_instruction": {"parts": [{"text": "first"}, {"text": "second"}]},
-        "max_output_tokens": 7,
-    }
-    assert batch["config"]["system_instruction"]["parts"] == [{"text": "second"}]
-    assert "max_output_tokens" not in cache.get("session", {})["config"]
-
-    # Semantic hooks can replace the instruction shape explicitly.
-    replacement = {"contents": [], "config": {"system_instruction": "replacement"}}
-    cache.update("session", replacement, paths=paths)
-    assert cache.get("session", {})["config"]["system_instruction"] == "replacement"
+    initial = [
+        {"role": "system", "parts": [{"text": "first"}]},
+        {"role": "user", "parts": [{"text": "hi"}]},
+    ]
+    cache.update("session", initial)
+    cache.update("session", [{"role": "system", "parts": [{"text": "second"}]}])
+    assert cache.get("session") == [
+        *initial,
+        {"role": "system", "parts": [{"text": "second"}]},
+    ]
 
 
-def test_failed_capture_leaves_previous_batch_unchanged():
+def test_failed_capture_leaves_previous_batch_and_fingerprint_unchanged():
     class Uncopyable:
         def __deepcopy__(self, memo):
             raise RuntimeError("capture failed")
 
     cache = MessageCache()
-    paths = (("messages",), ("system",))
-    cache.update("session", {"messages": [{"content": "first"}]}, paths=paths)
+    cache.update("session", [{"content": "first"}])
+    messages = [{"content": "second"}]
+    fingerprint = cache.fingerprint(messages)
     with pytest.raises(RuntimeError, match="capture failed"):
-        cache.update(
-            "session", {"messages": [{"content": "second"}], "system": Uncopyable()}, paths=paths
-        )
-    assert cache.get("session", {}) == {"messages": [{"content": "first"}]}
-    with pytest.raises(ConfigurationError, match="native message list"):
-        cache.update("session", {"messages": None}, paths=paths)
-    assert cache.get("session", {}) == {"messages": [{"content": "first"}]}
+        cache.update("session", [*messages, {"content": Uncopyable()}], fingerprint=fingerprint)
+    assert cache.get("session") == [{"content": "first"}]
+    with pytest.raises(ConfigurationError, match="translated message list"):
+        cache.update("session", None)
+    cache.update("session", messages, fingerprint=fingerprint)
+    assert cache.get("session") == [{"content": "first"}, {"content": "second"}]
 
 
 def test_instance_keys_and_release_are_independent():
     cache = MessageCache()
     for key in ("first", "second"):
-        cache.update(key, {"messages": [{"content": key}]}, paths=(("messages",),))
+        cache.update(key, [{"content": key}])
     cache.expire("first")
     cache.expire("first")
     assert "first" not in cache
-    assert not cache.has_messages("first", ("messages",))
-    assert cache.get("second", {}) == {"messages": [{"content": "second"}]}
+    assert cache.get("first") == []
+    assert cache.get("second") == [{"content": "second"}]
     cache.clear()
     assert "second" not in cache
+
+
+def test_retry_fingerprint_is_last_batch_only_and_released_with_history():
+    cache = MessageCache()
+    for content in ("A", "A", "B", "A"):
+        messages = [{"content": content}]
+        cache.update("session", messages, fingerprint=cache.fingerprint(messages))
+    assert cache.get("session") == [{"content": "A"}, {"content": "B"}, {"content": "A"}]
+    for release in (lambda: cache.expire("session"), cache.clear):
+        release()
+        messages = [{"content": "A"}]
+        cache.update("session", messages, fingerprint=cache.fingerprint(messages))
+        assert cache.get("session") == messages
+
+
+def test_staged_translation_is_published_independently_of_request_and_hook_edits():
+    cache = MessageCache()
+    cache.update("session", [{"content": "first"}])
+    batch = cache.batch("session")
+    request_messages = batch.append([{"content": "second"}])
+    assert cache.get("session") == [{"content": "first"}]
+    request_messages[1]["content"] = "request edit"
+    batch.commit()
+    request_messages.append({"content": "hook edit"})
+    assert cache.get("session") == [{"content": "first"}, {"content": "second"}]
+
+
+def test_unpublished_batch_does_not_change_history_or_retry_identity():
+    cache = MessageCache()
+    cache.update("session", [{"content": "first"}])
+    messages = [{"content": "second"}]
+    fingerprint = cache.fingerprint(messages)
+    abandoned = cache.batch("session", fingerprint=fingerprint)
+    abandoned.append(messages)
+    assert cache.get("session") == [{"content": "first"}]
+    accepted = cache.batch("session", fingerprint=fingerprint)
+    assert accepted.append(messages) == [{"content": "first"}, {"content": "second"}]
+    accepted.commit()
+    assert cache.get("session") == [{"content": "first"}, {"content": "second"}]
+
+
+def test_opaque_extras_preserve_conversion_without_unsafe_deduplication():
+    cache = MessageCache()
+    assert cache.fingerprint([{"content": "first", "unknown": object()}]) is None
+    assert cache.fingerprint([{"content": b"first"}]) != cache.fingerprint(
+        [{"content": ["bytes", "6669727374"]}]
+    )

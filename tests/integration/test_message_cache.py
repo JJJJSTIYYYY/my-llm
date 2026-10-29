@@ -102,7 +102,7 @@ async def test_incremental_native_histories_cross_all_protocol_paths(upstream, s
             assert sdk.requests[1].headers["x-cache"] == "second"
             assert all(
                 field not in latest
-                for field in ("enable_message_cache", "message_cache_key", "has_cached_messages")
+                for field in ("enable_message_cache", "message_cache_key", "message_transform")
             )
             assert initial == before and delta == delta_before
             # Ollama binds each distinct request-header set to its SDK client.
@@ -223,11 +223,13 @@ async def test_tool_associations_only_scan_current_batches_and_reject_invalid_de
         assert "missing" not in json.dumps(latest)
 
 
-async def test_loss_hook_edits_are_cached_after_handling_without_request_controls():
+async def test_loss_hook_edits_are_request_local_and_do_not_update_cached_translation():
     drafts = []
+    cached_at_hook = []
 
     def hook(draft, losses, context):
         assert context.origin_source == "input" and context.stage == "request"
+        cached_at_hook.append(llm.codec._message_cache.get(llm._message_cache_key))
         draft["messages"].append(
             {"role": "user", "content": [{"type": "text", "text": "hook-added"}]}
         )
@@ -248,17 +250,21 @@ async def test_loss_hook_edits_are_cached_after_handling_without_request_control
             drafts[0]["messages"][0]["content"][0]["text"] = "changed-after-caching"
             await llm.generate(messages=[{"role": "user", "content": "next-input"}], max_tokens=22)
         first, second = [json.loads(item.content) for item in sdk.requests]
-        assert [part["content"][0]["text"] for part in second["messages"]] == [
+        assert [part["content"][0]["text"] for part in first["messages"]] == [
             "named",
             "hook-added",
+        ]
+        assert [part["content"][0]["text"] for part in second["messages"]] == [
+            "named",
             "next-input",
         ]
         assert first["max_tokens"] == 11 and second["max_tokens"] == 22
         assert len(drafts) == 1
+        assert [part["content"][0]["text"] for part in cached_at_hook[0]] == ["named"]
 
 
 @pytest.mark.parametrize("upstream", ["anthropic", "gemini"])
-async def test_loss_hook_scalar_system_replacements_are_retained(upstream):
+async def test_loss_hook_system_replacements_do_not_modify_cached_translation(upstream):
     def hook(draft, losses, context):
         if upstream == "anthropic":
             draft["system"] = "hook-instruction"
@@ -282,14 +288,13 @@ async def test_loss_hook_scalar_system_replacements_are_retained(upstream):
                 ]
             )
             await llm.generate(messages=[{"role": "user", "content": "next-input"}])
-        assert all(
-            system_texts(upstream, json.loads(item.content)) == ["hook-instruction"]
-            for item in sdk.requests
-        )
+        first, second = [json.loads(item.content) for item in sdk.requests]
+        assert system_texts(upstream, first) == ["hook-instruction"]
+        assert system_texts(upstream, second) == ["initial-instruction"]
 
 
 @pytest.mark.parametrize("policy", ["raise", "hook"])
-async def test_raising_loss_handling_does_not_update_history(policy):
+async def test_translation_is_cached_before_raising_adaptor_or_hook(policy):
     def hook(draft, losses, context):
         draft["messages"].append({"role": "user", "content": "discarded-hook-edit"})
         raise RuntimeError("hook failed")
@@ -307,14 +312,21 @@ async def test_raising_loss_handling_does_not_update_history(policy):
             await llm.generate(messages=[{"role": "user", "content": "first-input"}])
             error = SemanticLossError if policy == "raise" else RuntimeError
             with pytest.raises(error):
-                await llm.generate(messages=[{"role": "user", "content": "discarded", "name": "n"}])
+                await llm.generate(
+                    messages=[{"role": "user", "content": "translated", "name": "n"}]
+                )
             await llm.generate(messages=[{"role": "user", "content": "next-input"}])
         assert len(sdk.requests) == 2
         latest = json.loads(sdk.requests[-1].content)["messages"]
-        assert len(latest) == 2 and "discarded" not in json.dumps(latest)
+        assert [part["content"][0]["text"] for part in latest] == [
+            "first-input",
+            "translated",
+            "next-input",
+        ]
+        assert "discarded-hook-edit" not in json.dumps(latest)
 
 
-async def test_prepared_streams_own_snapshots_when_consumed_out_of_order():
+async def test_prepared_stream_owns_snapshot_after_caller_mutation():
     provider, model = profiles("openai_chat")
     with LocalSDK(
         "openai_chat", wire_frames("openai_chat", stream_events("openai_chat"), 61)
@@ -327,17 +339,17 @@ async def test_prepared_streams_own_snapshots_when_consumed_out_of_order():
         ) as llm:
             first_input = [{"role": "user", "content": "first-input"}]
             first = await llm.generate(messages=first_input, stream=True)
+            first_input[0]["content"] = "edited-by-caller"
+            assert not sdk.requests
+            await consume(first)
             second = await llm.generate(
                 messages=[{"role": "user", "content": "next-input"}], stream=True
             )
-            first_input[0]["content"] = "edited-by-caller"
-            assert not sdk.requests
             await consume(second)
-            await consume(first)
         assert [
             [message["content"] for message in json.loads(item.content)["messages"]]
             for item in sdk.requests
-        ] == [["first-input", "next-input"], ["first-input"]]
+        ] == [["first-input"], ["first-input", "next-input"]]
 
 
 async def test_instances_keep_distinct_cache_keys_and_histories():

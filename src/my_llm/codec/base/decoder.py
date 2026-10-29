@@ -1,6 +1,7 @@
 """Target rendering with complete drafts and collected semantic losses."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from functools import wraps
 from typing import Any, final
 
@@ -77,11 +78,6 @@ class BaseDecoder(ABC):
     def message_path(self) -> tuple[str, ...]:
         """Path to native request history, declared by the protocol owner."""
         ...
-
-    @property
-    def message_cache_paths(self) -> tuple[tuple[str, ...], ...]:
-        """Native request paths retaining translated history across incremental calls."""
-        return (self.message_path,)
 
     @property
     @abstractmethod
@@ -282,6 +278,7 @@ class BaseDecoder(ABC):
         profile: ResolvedProfile,
         *,
         options: PreparedOptions | None = None,
+        message_transform: Callable[[list], list] | None = None,
         **parameters: Any,
     ) -> dict:
         """Return validated native SDK call arguments for intermediate messages/tools.
@@ -291,6 +288,7 @@ class BaseDecoder(ABC):
             tools: Intermediate tool declarations, or None to omit tools.
             profile: Resolved upstream provider/model settings.
             options: Already validated controls, or None to validate parameters here.
+            message_transform: Optional transform of translated messages before assembly.
             **parameters: Generation controls and protocol-specific options.
 
         Invalid controls or history raise ConfigurationError or MessageValidationError.
@@ -308,9 +306,15 @@ class BaseDecoder(ABC):
             tools = []
         if options is None:
             options = self.validate_parameters(profile, **parameters)
+        validate_history(
+            messages,
+            allow_external_calls=self.allows_external_calls(parameters.get("previous_response_id")),
+        )
         # These internal translations borrow intermediate application leaves.
         # native_request establishes the independently mutable SDK ownership.
         native_messages = self._messages(messages, profile, **parameters)
+        if message_transform is not None:
+            native_messages = message_transform(native_messages)
         native_tools = self._tools(tools, profile, **parameters) if tools is not None else None
         request = self.assemble_request(
             native_messages,
@@ -319,7 +323,7 @@ class BaseDecoder(ABC):
             request=self.request_parameters(profile, options),
             **parameters,
         )
-        return self.native_request(request, profile, history=messages, **parameters)
+        return self.native_request(request, profile, **parameters)
 
     @final
     @_collect_translation
@@ -334,7 +338,7 @@ class BaseDecoder(ABC):
         parameters = {
             key: value
             for key, value in intermediate.items()
-            if key not in ("profile", "middleware")
+            if key not in ("profile", "middleware", "message_transform")
         }
         options = self.validate_parameters(profile, **parameters)
         client = self.request_client(client, options)
@@ -345,6 +349,7 @@ class BaseDecoder(ABC):
                 intermediate["middleware"].tools,
                 profile,
                 options=options,
+                message_transform=intermediate.get("message_transform"),
                 **parameters,
             ),
             "local": {"stream": parameters["stream"], "client_key": self.client_key(client)},

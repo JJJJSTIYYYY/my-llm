@@ -54,10 +54,6 @@ class AnthropicDecoder(BaseDecoder):
 
     request_schema = REQUEST_SCHEMA
 
-    @property
-    def message_cache_paths(self) -> tuple[tuple[str, ...], ...]:
-        return (*super().message_cache_paths, ("system",))
-
     def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
         # The SDK's InputSchema TypedDict names only some JSON Schema keys.
         # Delegate this open leaf so it is captured once rather than filtered
@@ -76,7 +72,7 @@ class AnthropicDecoder(BaseDecoder):
         return validate_request_options(profile, options, protected=PROTECTED, containers=())
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
-        if not request["messages"] and not parameters.get("has_cached_messages", False):
+        if not request["messages"]:
             raise ConfigurationError("a non-system message is required")
         if request.get("max_tokens") is None:
             raise ConfigurationError("Anthropic requires max_tokens in the model or generation")

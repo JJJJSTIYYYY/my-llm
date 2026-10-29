@@ -37,7 +37,7 @@ async def session():
 | `provider` | `ProviderProfile` | 必填，连接配置和明确指定的上游协议 |
 | `model` | `ModelProfile` | 必填，模型 ID 和模型配置 |
 | `stdio_protocol` | `Protocol \| None` | 输入消息、工具和输出共用的协议；默认尝试唯一推断 |
-| `enable_message_cache` | `bool` | 默认 `False`；开启后缓存本实例已翻译的输入，每次传入增量消息列表 |
+| `enable_message_cache` | `bool` | 默认 `False`；开启后缓存已翻译的增量输入，同一实例必须串行使用 |
 
 `ProviderProfile.protocol` 选择上游 API，`stdio_protocol` 选择应用使用的消息格式，两者可以不同。
 `stdio_protocol` 未指定时，第一次生成从整个消息与工具列表中推断；只有唯一匹配时才绑定。
@@ -96,11 +96,35 @@ async def cached_conversation(provider, model):
 assistant 或一整批工具调用及结果；每批工具调用与结果必须完整对应，已缓存的对应关系不会重复校验。
 Anthropic、Gemini 已有普通消息缓存时，可以单独追加 system 消息。
 
-新批次仍经过完整翻译和语义损失处理，成功后追加缓存，再读取独立的完整快照发送请求。
-翻译或 hook 抛错不会追加本批；缓存更新发生在网络请求之前，后续网络失败不会撤销已翻译的输入。
-输入按批追加，不去重，也不识别重复提交的完整历史。
-工具声明、请求头、输出上限等选项只用于本次调用。缓存按实例隔离，`aclose()` 时释放；
+缓存保存消息翻译得到的列表，不保存 SDK 请求字段。当前批次先与历史合并，再由 Decoder 组装、
+校验完整请求；请求准备完成后，在调用语义损失 adaptor 之前保存这份翻译结果。
+格式、工具关联或请求校验失败不会写入缓存；此后的 raise 策略、hook 或网络调用抛错不会撤销已保存的输入。
+hook 修改只影响本次请求，不会自动回写消息缓存。使用者负责 hook 的全部行为，
+包括修改翻译结果后需要进行的缓存维护。
+流尚未消费或调用失败后，连续重发相同消息批次会复用已有历史，不再追加一次。
+每次重发仍执行翻译和语义损失处理，发送时使用本次请求选项、消息历史和本次 hook 的修改。
+例如，丢弃尚未消费的流后，可以修改输出上限并重试：
+
+```python
+async def retry_unconsumed(llm):
+    # llm 已开启消息缓存，stdio_protocol 为 openai_chat。
+    batch = [{"role": "user", "content": "Hello"}]
+    abandoned = await llm.generate(messages=batch, stream=True)
+    await abandoned.aclose()
+    return await llm.generate(messages=batch, max_tokens=1024)
+```
+
+去重比较当前原始消息与最后一次成功追加批次的稳定哈希，字典键顺序不影响比较；
+工具声明、请求头、stream 和生成参数不参与消息哈希。只去重连续相同批次，`A → B → A` 的最后一个
+`A` 仍会追加。连续相同批次统一视为重试；继续对话时，应把上次 assistant 回复加入下一批增量。
+消息含无法稳定序列化的非标准扩展对象时，沿用原有转换规则，该批不做哈希去重。
+完整历史不会被自动识别为增量。
+缓存按实例隔离，`aclose()` 时释放；
 启用缓存时不能同时设置非空的 `previous_response_id`，`None` / `omit` 仍可使用。
+
+**启用消息缓存后，同一 `MyLLM` 实例不支持并发生成。** 调用方必须先完成或关闭前一条流，再发起
+下一次调用，也不能交错消费多个流。多个独立实例可以并发使用；关闭消息缓存时，同一实例仍支持
+在一个异步事件循环内并发生成。
 
 ### 协议和返回值
 
@@ -162,7 +186,7 @@ async def ask_once(provider, model_id):
 | `async with MyLLM(...) as llm` | 退出上下文时自动关闭实例 |
 
 先完成或关闭所有响应流，再关闭实例。关闭后调用 `generate` 或开始消费先前未启动的流会抛出
-`RuntimeError`。同一实例支持并发生成，须在同一个异步事件循环内使用。
+`RuntimeError`。同一实例须在一个异步事件循环内使用；关闭消息缓存时支持并发，启用时必须串行调用。
 
 ## `MessageStream`
 
@@ -414,7 +438,7 @@ Gemini / Ollama 的无 ID 调用与结果须保持历史顺序与名称对应。
 具体值和示例见[迁移指南](../guides/semantic-loss.md)。
 
 流事件过滤接口返回的 usage；成功结束后调用 `get_last_usage()` 获取独立的 `Usage`。
-未报告字段为 `None`，非流式结果不含 usage。并发时该接口代表最后完成的流式调用。
+未报告字段为 `None`，非流式结果不含 usage。关闭消息缓存后的并发调用中，该接口代表最后完成的流式调用。
 
 ## `MyCodec` 协议转换
 

@@ -31,6 +31,8 @@ llm.set_semantic_loss_policy(
 `ignore` 不保留损失历史或输出日志；`hook` 未提供函数时使用空函数。
 hook 是同步函数，接收 `(draft, losses, context)`，返回值忽略。它可以原地修改、抛错、
 重排内容或不做修改。生成请求的 hook 收到完整 SDK 请求；离线 convert 的消息 / 工具 hook 收到相应目标集合。
+启用消息缓存时，消息翻译结果在调用 adaptor 前已经保存。hook 对请求的修改不会自动回写缓存，
+即使 hook 抛错也不撤销这份翻译结果；使用者自行负责 hook 行为及所需的缓存维护。
 响应 `context.stage == "result"`
 时收到完整原生消息 / 列表，实时流的其他阶段收到本批原生事件列表。
 中间 stdio 的结果 draft 为 `AssistantMessage`，事件 draft 为 `MessageEvent` 列表。
@@ -66,8 +68,8 @@ Chat / Ollama 的并行工具调用出现在一个最终 `tool_calls` 列表；A
 
 usage 不出现在公开事件或非流式结果中。流成功结束后，`llm.get_last_usage()` 返回独立的
 `Usage`，包含 `input`、`output`、`total`、`cached`、`reasoning`；未返回的字段为 `None`，
-不推导未报告的 total。提前关闭或失败不替换上次成功记录。并发时它代表最后完成的调用；
-每个调用仍有独立的内部累积状态。
+不推导未报告的 total。提前关闭或失败不替换上次成功记录。关闭消息缓存后的并发调用中，
+它代表最后完成的调用；每个调用仍有独立的内部累积状态。
 
 自定义 codec 现在注册工厂：`MyCodec.register(CustomCodec)`。工厂必须每次创建独立的
 codec、encoder、decoder 和 transport，并调用 `BaseCodec.__init__()`。

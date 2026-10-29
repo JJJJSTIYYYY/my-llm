@@ -294,17 +294,18 @@ class MyCodec:
         else:
             intermediate = self._codec(input_format).encoder.request(inputs, profile)
         target = self._codec(profile.protocol)
+        batch = None
         if enable_message_cache:
-            intermediate["has_cached_messages"] = self._message_cache.has_messages(
-                message_cache_key, target.decoder.message_path
+            batch = self._message_cache.batch(
+                message_cache_key, fingerprint=self._message_cache.fingerprint(inputs["messages"])
             )
+            intermediate["message_transform"] = batch.append
         return target.translate(
             lambda: target.decoder.prepare(intermediate, client),
             SemanticLossContext(input_format, profile.protocol, "input", "request"),
             draft_key="request",
             enable_message_cache=enable_message_cache,
-            message_cache=self._message_cache,
-            message_cache_key=message_cache_key,
+            message_cache_batch=batch,
         )
 
     def upstream(self, client: Any, request: dict, profile: ResolvedProfile):

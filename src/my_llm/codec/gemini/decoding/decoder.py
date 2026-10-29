@@ -56,10 +56,6 @@ class GeminiDecoder(BaseDecoder):
         "config": types.GenerateContentConfig,
     }
 
-    @property
-    def message_cache_paths(self) -> tuple[tuple[str, ...], ...]:
-        return (*super().message_cache_paths, ("config", "system_instruction"))
-
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
         options = super().validate_parameters(profile, **parameters)
         return validate_request_options(
@@ -67,7 +63,7 @@ class GeminiDecoder(BaseDecoder):
         )
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
-        if not request["contents"] and not parameters.get("has_cached_messages", False):
+        if not request["contents"]:
             raise ConfigurationError("a non-system message is required")
         config = request.get("config")
         if config is None:

@@ -6,7 +6,7 @@ from typing import Any, final
 
 from my_llm.basic.exceptions import ConfigurationError, SemanticLossError
 from my_llm.basic.semantic_loss import BaseSemanticLossAdaptor, SemanticLossContext, collect_losses
-from my_llm.cache.message_cache import MessageCache
+from my_llm.cache.message_cache import MessageCacheBatch
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.base.transport import BaseTransport
@@ -41,10 +41,11 @@ class BaseCodec(ABC):
         *,
         draft_key: str | None = None,
         enable_message_cache: bool = False,
-        message_cache: MessageCache | None = None,
-        message_cache_key: str | None = None,
+        message_cache_batch: MessageCacheBatch | None = None,
     ):
-        """Resolve losses, then optionally update/read the translated input cache."""
+        """Publish translated messages before invoking the semantic-loss adaptor."""
+        if enable_message_cache and message_cache_batch is None:
+            raise ConfigurationError("message caching requires a translated batch")
         draft = None
         completed = False
         try:
@@ -54,21 +55,16 @@ class BaseCodec(ABC):
                 if owner:
                     losses.complete(draft[draft_key] if draft_key is not None else draft)
         except SemanticLossError as error:
+            if enable_message_cache:
+                message_cache_batch.commit()
             result = self.semantic_loss_adaptor.handle(error)
             if draft_key is None:
                 draft = result
             elif not completed:
                 draft = {draft_key: result}
-        if enable_message_cache:
-            if message_cache is None or message_cache_key is None:
-                raise ConfigurationError("message caching requires a cache and an instance key")
-            request = draft[draft_key] if draft_key is not None else draft
-            message_cache.update(message_cache_key, request, paths=self.decoder.message_cache_paths)
-            cached = message_cache.get(message_cache_key, request)
-            if draft_key is None:
-                draft = cached
-            else:
-                draft[draft_key] = cached
+        else:
+            if enable_message_cache:
+                message_cache_batch.commit()
         return draft
 
     @property

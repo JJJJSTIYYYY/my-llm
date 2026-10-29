@@ -61,7 +61,7 @@ src/my_llm/
 | BaseEncoder | 协议识别、输入 Schema 验证、完整调用编码、消息／工具／事件／用量翻译。 |
 | BaseDecoder | 请求选项解析、参数映射、默认值与覆盖、工具关联及能力验证、目标 Schema 过滤和验证、最终字典及结果形状。 |
 | BaseTransport | create_client(parameters)、upstream(client, request)、close_client(client)；不接收 Profile 或原始生成参数。 |
-| BaseCodec | 声明身份及 ProtocolDefaults，组合 Encoder / Decoder / Transport；翻译与损失处理完成后调用消息缓存接口。 |
+| BaseCodec | 声明身份及 ProtocolDefaults，组合 Encoder / Decoder / Transport；在调用损失 adaptor 前发布消息翻译缓存。 |
 | MyCodec | 注册快照、输入协议绑定、prepare 路由；持有实例独立的 MessageCache。 |
 | CompiledCache / MessageCache | 分别保存进程级类型规则和按实例键隔离的已翻译输入历史，集中管理缓存操作与快照。 |
 | Profile / resolve_profiles | 分层合并、声明分类、通用字段验证、连接参数解析及独立配置快照。 |
@@ -96,11 +96,12 @@ Encoder / Decoder 的完整调用流程仍集中在所属类中。初始化文�
       → 上游 Decoder.prepare
           → validate_parameters（每次一次）
           → request_client / client_key（SDK 的请求级客户端变体）
-          → request → 参数路径及默认值 → assemble_request
-          → native_request → 历史关联、Schema 过滤、能力及原生结构验证
+          → request → 当前批工具关联验证 → 消息翻译
+          → 启用缓存时：按批次哈希合并消息列表，取得独立快照
+          → 参数路径及默认值 → assemble_request
+          → native_request → Schema 过滤、能力及原生结构验证
           → {client, request, local}
-      → BaseCodec.translate 完成语义损失处理
-      → 启用消息缓存时：更新已翻译增量 → 读取最新历史快照
+      → BaseCodec.translate 发布消息翻译缓存，再调用语义损失 adaptor
       → MyLLM 延迟取得／复用客户端 → Transport.upstream → SDK(**request)
 
 返回：SDK 事件 → 上游 Encoder → 本次 StreamState
@@ -163,12 +164,25 @@ cache/compiled_cache.py 集中管理 SDK 类型分析、计划编译、过滤与
 
 `MyLLM(enable_message_cache=True)` 将开关和实例生成的 uuid4 键传至 `BaseCodec.translate`。
 以上游 OpenAI Chat 为例：首次提交 `[system, user]`，下次提交 `[assistant, user]`，两批分别走原有翻译流程；
-完整输入 draft 的语义损失处理完成后，MessageCache 追加当前批，再返回包含四条消息的独立快照给 Transport。
+MessageCache 按原始输入哈希判断是否追加当前消息翻译列表，
+返回包含四条消息的独立快照供 Decoder 组装本次请求。
 增量可以包含 system、user、assistant 或完整工具调用与结果批次；只验证当前批的工具关联，
-旧缓存中的对应关系不重复校验。Decoder 声明原生消息路径及指令路径，
-Anthropic 的 system、Gemini 的 system_instruction 随已翻译消息一起保留。
+旧缓存中的对应关系不重复校验。system 消息也保留在消息列表里，
+Decoder 组装请求时将其放入 Anthropic 的 system、Gemini 的 system_instruction 等原生位置。
+缓存不读取、提取或回填这些请求字段，也不需要 Decoder 声明缓存路径。
 缓存只保存输入历史；模型输出需要调用方显式加入下一批增量，工具声明、生成控制和请求选项仍按次准备。
-翻译成功后即更新缓存，即使随后的 Transport 调用失败，该批也已保留；`aclose()` 释放本实例缓存。
+消息列表先在缓存中暂存，完整请求校验失败时不发布；请求准备完成后、语义损失 adaptor 调用前发布。
+因此即使 adaptor、hook 或后续 Transport 调用失败，该批翻译结果也已保留。
+hook 修改本次请求不会自动更新缓存，相关维护由使用者负责。
+重发时仍翻译并处理语义损失；当前原始消息哈希与最后一次成功追加的批次相同，则复用原有原生历史，
+不重复追加。哈希按消息内容稳定计算，SDK / middleware 输入均可使用，字典键顺序不影响比较；
+工具声明、stream、headers 和生成选项不参与比较。只比较最后一批，因此 `A → B → A` 会追加最后的 A。
+`aclose()` 同时释放本实例历史和批次哈希。
+
+消息缓存使同一实例具有会话状态。`enable_message_cache=True` 时不支持同实例并发生成，
+调用方必须先完成或关闭前一条流，再开始下一次调用；不能交错消费多个流。
+此约束由调用方遵守，不通过内部排队串行化请求。关闭消息缓存时保留原有并发支持，
+不同 MyLLM 实例可以并发使用。
 
 客户端缓存属于 MyLLM；块物化与终态复用属于请求独立的 StreamState。
 生命周期见[客户端生命周期](client-lifecycle.md)，流式顺序见[流状态设计](stream-state.md)。

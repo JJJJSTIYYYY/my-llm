@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from my_llm import ConfigurationError, MyCodec, UnsupportedCapabilityError, omit
+from my_llm import ConfigurationError, MyCodec, SemanticLossError, omit
 from my_llm.codec.shared.options import path_value, resolve_options
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import PROTOCOLS
@@ -133,7 +133,7 @@ def test_prepared_options_and_requests_own_their_nested_values(
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
-def test_none_effort_mapping_preserves_configuration_and_rejects_requested_effort(
+def test_none_effort_mapping_preserves_configuration_and_reports_requested_effort(
     profile_factory, protocol
 ):
     profile = profile_factory(
@@ -143,5 +143,7 @@ def test_none_effort_mapping_preserves_configuration_and_rejects_requested_effor
         reasoning_effort_mapping=config(None),
     )
     assert profile.get("reasoning_effort_mapping", "missing") is None
-    with pytest.raises(UnsupportedCapabilityError, match="effort"):
+    with pytest.raises(SemanticLossError, match="effort") as caught:
         encode_request(profile, reasoning_effort="high")
+    assert caught.value.draft["model"] == profile.model
+    assert "x" in str(caught.value.draft)

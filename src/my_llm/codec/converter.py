@@ -279,7 +279,8 @@ class MyCodec:
         Raises:
             ConfigurationError: Generation options or target request are invalid.
             MessageValidationError: Messages, tools or their associations are invalid.
-            UnsupportedCapabilityError: Required content cannot be represented.
+            SemanticLossError: Content or controls are unsupported by the target and
+                the active loss policy is "raise".
         """
         if enable_message_cache and message_cache_key is None:
             raise ConfigurationError("message caching requires an instance key")
@@ -384,8 +385,8 @@ class MyCodec:
 
         Typed messages/tools can also be passed to MyLLM.generate with explicit
         stdio_protocol="middleware".
-        Invalid recognized values raise MessageValidationError or
-        UnsupportedCapabilityError; unregistered protocols raise UnsupportedProviderError.
+        Invalid recognized values raise MessageValidationError;
+        unregistered protocols raise UnsupportedProviderError.
         A missing optional SDK for a built-in protocol raises ModuleNotFoundError.
         """
         codec = self._codec(input_format)

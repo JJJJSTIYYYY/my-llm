@@ -22,6 +22,7 @@ from my_llm import (
     Parameter,
     ProtocolDefaults,
     ProviderProfile,
+    SemanticLossError,
     UnsupportedProviderError,
     omit,
     resolve_profiles,
@@ -588,10 +589,18 @@ async def test_protocol_default_bindings_are_isolated_between_profiles_and_reque
     assert client.closed
 
 
-def test_custom_usage_mode_is_owned_by_transport(registered):
+def test_custom_usage_mode_is_owned_by_decoder(registered):
     provider, model = profiles()
-    with pytest.raises(ConfigurationError, match="usage_mode"):
-        MyLLM(provider=replace(provider, usage_mode=config("native")), model=model)
+    instance = MyLLM(provider=replace(provider, usage_mode=config("native")), model=model)
+    inputs = instance.codec.encode(
+        [{"speaker": "user", "body": "complete tail"}], input_format=PROTOCOL
+    )
+    with pytest.raises(SemanticLossError, match="usage_mode") as caught:
+        instance.codec.request(inputs, instance.resolved_profile)
+    assert "complete tail" in str(caught.value.draft)
+    assert [(loss.origin_path, loss.origin_value) for loss in caught.value.losses] == [
+        ("$.usage_mode", "native")
+    ]
 
 
 def test_registered_protocol_owns_its_metadata_projection_and_merge_paths(registered):

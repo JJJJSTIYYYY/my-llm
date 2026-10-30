@@ -2,16 +2,18 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from dataclasses import replace
 from functools import wraps
 from typing import Any, final
 
 from my_llm.basic.data import capture
-from my_llm.basic.exceptions import (
-    ConfigurationError,
-    MessageValidationError,
-    UnsupportedCapabilityError,
+from my_llm.basic.exceptions import ConfigurationError, MessageValidationError
+from my_llm.basic.semantic_loss import (
+    SemanticLossContext,
+    SemanticLossItem,
+    collect_losses,
+    report_loss,
 )
-from my_llm.basic.semantic_loss import SemanticLossContext, collect_losses, report_loss
 from my_llm.cache.compiled_cache import (
     _MISSING,
     _plan,
@@ -20,9 +22,12 @@ from my_llm.cache.compiled_cache import (
     supported,
     validate_values,
 )
+from my_llm.codec.shared.capabilities import content_capability, supports_content
 from my_llm.codec.shared.conversion import validate_history
 from my_llm.codec.shared.options import (
     PreparedOptions,
+    delete_path,
+    path_value,
     request_parameters,
     resolve_options,
     set_path,
@@ -32,7 +37,7 @@ from my_llm.middleware.protocol import wire_values
 from my_llm.middleware.validation import validate_events, validate_messages, validate_tools
 from my_llm.profile.paths import path_keys
 from my_llm.profile.resolution import ResolvedProfile, client_parameters
-from my_llm.profile.types import Omit
+from my_llm.profile.types import Omit, Parameter
 
 
 def _collect_translation(method):
@@ -108,21 +113,27 @@ class BaseDecoder(ABC):
 
         parameters accepts generation options such as stream, max_tokens, reasoning,
         reasoning_effort, extra_headers and extra_body. previous_response_id must be a
-        nonempty ID for a supported protocol. Invalid options raise ConfigurationError;
-        unsupported reasoning raises UnsupportedCapabilityError.
+        nonempty ID. Invalid options raise ConfigurationError;
+        unsupported controls are retained as losses for the completed request.
         """
         if not isinstance(parameters.get("stream", False), bool):
             raise ConfigurationError("stream must be a bool")
         options = resolve_options(profile, **parameters)
         previous = previous_response_id
         if previous is not None and not isinstance(previous, Omit):
-            if (
-                not self.supports_previous_response_id
-                or not isinstance(previous, str)
-                or not previous
-            ):
-                raise ConfigurationError(
-                    "previous_response_id requires a supported API and a non-empty ID"
+            if not isinstance(previous, str) or not previous:
+                raise ConfigurationError("previous_response_id requires a non-empty ID")
+            if not self.supports_previous_response_id:
+                options = replace(
+                    options,
+                    losses=(
+                        *options.losses,
+                        SemanticLossItem(
+                            previous,
+                            "$.previous_response_id",
+                            "protocol does not support previous_response_id",
+                        ),
+                    ),
                 )
         return options
 
@@ -134,6 +145,7 @@ class BaseDecoder(ABC):
         profile: ResolvedProfile,
         *,
         history: list | None = None,
+        _translated: bool = False,
         **parameters: Any,
     ) -> dict:
         """Filter native payloads and validate their owned request envelopes."""
@@ -146,31 +158,68 @@ class BaseDecoder(ABC):
             )
         original = request
         request = self.filter_request(request, profile)
+        usage = profile.get("usage_mode", "none")
+        if usage not in self.usage_modes:
+            report_loss(usage, "protocol does not support this usage_mode", path="$.usage_mode")
         messages = self._parent(request, self.message_path)
         if messages is None or self.message_path[-1] not in messages:
             raise MessageValidationError("native request requires messages")
         key = self.message_path[-1]
         if not isinstance(messages[key], list):
             raise MessageValidationError("native messages must be a list")
-        messages[key] = self.filter_messages(messages[key], profile, **parameters)
+        messages[key] = self.filter_messages(
+            messages[key], profile, _translated=_translated, **parameters
+        )
         self.validate_values(messages[key], self.message_type, filtered=True)
         tools = self._parent(request, self.tool_path)
         if tools is not None and tools.get(self.tool_path[-1]) is not None:
             key = self.tool_path[-1]
             if not isinstance(tools[key], list):
                 raise MessageValidationError("native tools must be a list")
-            if tools[key] and not profile.get("supports_function_calling", False):
-                for tool in history or []:
-                    for block in tool.get("content", []):
-                        if block.get("type") == "tool_use":
-                            report_loss(block, "model does not support function calling")
-                for tool in tools[key]:
-                    report_loss(tool, "model does not support function calling")
-                tools[key] = []
+            path = "$" + "".join(f".{key}" for key in self.tool_path)
+            tools[key] = self._supported_tools(tools[key], profile, path=path)
             tools[key] = self.filter_tools(tools[key], profile)
             self.validate_values(tools[key], self.tool_type, filtered=True)
+        self.filter_unsupported_parameters(request, original, profile)
         request = self.validate_request(request, profile, **parameters)
         return self.extend_request(request, original, profile)
+
+    def filter_unsupported_parameters(
+        self, request: dict, original: dict, profile: ResolvedProfile
+    ) -> None:
+        """Remove explicitly unsupported native input bindings and record their values."""
+        for name, path, value in self._unsupported_parameters(original, profile):
+            report_loss(value, f"model does not support {name}", path=path)
+            delete_path(request, path)
+
+    def _unsupported_parameters(self, request: dict, profile: ResolvedProfile):
+        """Yield supplied unsupported bindings, honoring supported enable defaults."""
+        for name, binding in profile.parameters.items():
+            if not isinstance(binding, Parameter) or binding.source != "input" or binding.supports:
+                continue
+            # Enablement can own a compound value containing the effort leaf.
+            # Keep its supported defaults; unsupported public effort controls
+            # are reported separately in PreparedOptions.
+            enable = profile.parameter("reasoning_enable", "input")
+            enabled_value = _MISSING
+            if (
+                name == "reasoning_effort"
+                and enable is not None
+                and path_keys(binding.path)[: len(path_keys(enable.path))] == path_keys(enable.path)
+            ):
+                enabled_value = path_item(
+                    enable.default_value, path_keys(binding.path)[len(path_keys(enable.path)) :]
+                )
+            paths = [binding.path]
+            if self.body_overlay is not None and path_keys(binding.path)[0] != self.body_overlay:
+                paths.append(f"$.{self.body_overlay}{binding.path[1:]}")
+            for path in paths:
+                value = path_value(request, path, _MISSING)
+                if value is _MISSING or isinstance(value, Omit):
+                    continue
+                if enabled_value is not _MISSING and value == enabled_value:
+                    continue
+                yield name, path, value
 
     def filter_request(self, request: dict, profile: ResolvedProfile) -> dict:
         """Select SDK fields and explicit profile extensions by declared location."""
@@ -181,18 +230,17 @@ class BaseDecoder(ABC):
         for name, schema in self.request_schema.items():
             if name not in request or isinstance(request[name], Omit):
                 continue
-            try:
-                result[name] = supported(
-                    request[name],
-                    schema,
-                    delegated_paths=tuple(path[1:] for path in delegated if path[0] == name),
-                )
-            except UnsupportedCapabilityError as exc:
-                raise ConfigurationError(f"invalid {name}: {exc}") from exc
+            value = _plan(
+                schema,
+                delegated_paths=tuple(path[1:] for path in delegated if path[0] == name),
+            ).decode(request[name], f"$.{name}")
+            if value is not _MISSING:
+                result[name] = value
         return result
 
     def extend_request(self, result: dict, request: dict, profile: ResolvedProfile) -> dict:
         """Restore only explicit profile leaves absent from the SDK declaration."""
+        unsupported = None
         for name, parameter in profile.request_parameters:
             path = parameter.path
             keys = path_keys(path)
@@ -202,6 +250,12 @@ class BaseDecoder(ABC):
                 )
             schema = self.request_schema[keys[0]]
             if declared_path(schema, tuple(keys[1:])):
+                continue
+            if unsupported is None:
+                unsupported = tuple(
+                    path_keys(path) for _, path, _ in self._unsupported_parameters(request, profile)
+                )
+            if any(keys[: len(parent)] == parent for parent in unsupported):
                 continue
             item = path_item(request, keys)
             if item is not _MISSING and not isinstance(item, Omit):
@@ -227,13 +281,28 @@ class BaseDecoder(ABC):
 
     def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
         """Return independent message values restricted to the target message schema."""
-        apply = _plan(self.message_type).apply
-        return [apply(message) for message in messages]
+        path = "$" + "".join(f".{key}" for key in self.message_path)
+        return _plan(list[self.message_type]).decode(messages, path)
 
     def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
         """Return independent tool declarations restricted to the target tool schema."""
-        apply = _plan(self.tool_type).apply
-        return [apply(tool) for tool in tools]
+        path = "$" + "".join(f".{key}" for key in self.tool_path)
+        return _plan(list[self.tool_type]).decode(tools, path)
+
+    def _supported_tools(
+        self, tools: list, profile: ResolvedProfile | None, *, path: str = "$.tools"
+    ) -> list:
+        """Apply the same definition capability at every decoder entry point."""
+        if not tools or supports_content("tool_definition", profile):
+            return tools
+        for index, tool in enumerate(tools):
+            content_capability(
+                tool,
+                "tool_definition",
+                profile,
+                path=getattr(tool, "origin_path", f"{path}[{index}]"),
+            )
+        return []
 
     def allows_external_calls(self, previous_response_id: Any) -> bool:
         """Return whether server history may satisfy missing tool-call references.
@@ -245,8 +314,6 @@ class BaseDecoder(ABC):
     def validate_profile(self, profile: ResolvedProfile) -> None:
         """Validate SDK connection settings before creating any client."""
         self.validate_parameter_roots(profile)
-        if profile.get("usage_mode", "none") not in self.usage_modes:
-            raise ConfigurationError("usage_mode is incompatible with the selected API")
 
     def validate_values(self, values: list, schema: Any, *, filtered: bool = False) -> None:
         """Validate each item against schema, raising MessageValidationError on failure.
@@ -258,8 +325,8 @@ class BaseDecoder(ABC):
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
         """Return request after protocol-specific semantic validation.
 
-        The default accepts request unchanged; overrides may reject incompatible
-        values with ConfigurationError or UnsupportedCapabilityError.
+        The default accepts request unchanged. Overrides reject malformed values
+        with ConfigurationError and collect unsupported values as semantic losses.
         """
         return request
 
@@ -300,12 +367,12 @@ class BaseDecoder(ABC):
         validate_messages(messages)
         if tools is not None:
             validate_tools(tools)
-        if tools and not profile.get("supports_function_calling", False):
-            for tool in tools:
-                report_loss(tool, "model does not support function calling")
-            tools = []
+        if tools is not None:
+            tools = self._supported_tools(tools, profile)
         if options is None:
             options = self.validate_parameters(profile, **parameters)
+        for loss in options.losses:
+            report_loss(loss.origin_value, loss.reason, path=loss.origin_path)
         validate_history(
             messages,
             allow_external_calls=self.allows_external_calls(parameters.get("previous_response_id")),
@@ -323,7 +390,9 @@ class BaseDecoder(ABC):
             request=self.request_parameters(profile, options),
             **parameters,
         )
-        return self.native_request(request, profile, **parameters)
+        if options.effort is None and options.losses:
+            parameters = {**parameters, "reasoning": None, "reasoning_effort": "none"}
+        return self.native_request(request, profile, _translated=True, **parameters)
 
     @final
     @_collect_translation
@@ -421,6 +490,7 @@ class BaseDecoder(ABC):
         """Return independent native tool declarations from intermediate values."""
         values = wire_values(values)
         validate_tools(values)
+        values = self._supported_tools(values, profile)
         return capture(self._tools(values, profile, **parameters))
 
     @final

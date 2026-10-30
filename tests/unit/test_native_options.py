@@ -12,6 +12,7 @@ from my_llm import (
     MyCodec,
     MyLLM,
     ProviderProfile,
+    SemanticLossError,
 )
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import history
@@ -90,6 +91,7 @@ def test_chat_replays_compatible_reasoning_by_default_and_when_enabled(profile_f
     profile = profile_factory(
         "openai_chat",
         feedback_reasoning_content=replay,
+        supports_function_calling=config(True),
     )
     request = codec.request(
         codec.encode(history("openai_chat"), input_format="openai_chat"), profile, reasoning=True
@@ -110,24 +112,24 @@ def test_ollama_effort_mapping_can_use_model_defined_strings(profile_factory):
 
 @pytest.mark.parametrize("retries", [1, 3])
 def test_ollama_cannot_silently_ignore_requested_retries(retries):
-    from my_llm import UnsupportedCapabilityError
-
-    with pytest.raises(UnsupportedCapabilityError, match="max_retries"):
-        MyLLM(
-            stdio_protocol="openai_chat",
-            provider=ProviderProfile(
-                protocol=Config(default_value="ollama"), max_retries=config(retries)
-            ),
-            model=ModelProfile(model=Attribute(default_value="demo")),
-        )
+    instance = MyLLM(
+        stdio_protocol="openai_chat",
+        provider=ProviderProfile(
+            protocol=Config(default_value="ollama"), max_retries=config(retries)
+        ),
+        model=ModelProfile(model=Attribute(default_value="demo")),
+    )
+    with pytest.raises(SemanticLossError, match="max_retries") as caught:
+        encode_request(instance.resolved_profile)
+    assert caught.value.draft["model"] == "demo"
 
 
 @pytest.mark.parametrize("protocol,field", [("openai_chat", "n"), ("gemini", "candidate_count")])
-def test_multiple_candidates_are_rejected_before_native_execution(profile_factory, protocol, field):
-    from my_llm import UnsupportedCapabilityError
-
-    with pytest.raises(UnsupportedCapabilityError, match="one generated candidate"):
+def test_multiple_candidates_are_losses_before_native_execution(profile_factory, protocol, field):
+    with pytest.raises(SemanticLossError, match="candidate") as caught:
         encode_request(profile_factory(protocol), extra_body={field: 2})
+    body = caught.value.draft.get("config", caught.value.draft.get("extra_body", {}))
+    assert body[field] == 1
 
 
 def test_native_sdk_configuration_objects_remain_usable_with_generated_parameters(profile_factory):

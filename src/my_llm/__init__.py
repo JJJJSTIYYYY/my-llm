@@ -10,7 +10,6 @@ from my_llm.basic.exceptions import (
     ResponseIncompleteError,
     SemanticLossError,
     StreamError,
-    UnsupportedCapabilityError,
     UnsupportedProviderError,
 )
 from my_llm.basic.semantic_loss import (
@@ -128,6 +127,5 @@ __all__ = [
     "ResponseFailedError",
     "ResponseIncompleteError",
     "StreamError",
-    "UnsupportedCapabilityError",
     "UnsupportedProviderError",
 ]

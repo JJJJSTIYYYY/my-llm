@@ -5,20 +5,26 @@ from typing import Any
 from google.genai import types
 from google.genai.models import AsyncModels
 
-from my_llm.basic.data import capture
-from my_llm.basic.exceptions import ConfigurationError, UnsupportedCapabilityError
+from my_llm.basic.data import capture, dictionary_views
+from my_llm.basic.exceptions import ConfigurationError
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.cache.compiled_cache import parameter_types
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.gemini.decoding.content import decode_part
+from my_llm.codec.shared.capabilities import content_capability, supports_content
 from my_llm.codec.shared.conversion import (
-    coalesce_messages,
     decode_functions,
     select,
     select_present,
     source_protocol,
+    split_system_messages,
 )
-from my_llm.codec.shared.input import input_content, message_feedback
+from my_llm.codec.shared.input import (
+    feedback_reasoning,
+    input_capability,
+    input_content,
+    message_feedback,
+)
 from my_llm.codec.shared.options import PreparedOptions, validate_request_options
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile, client_parameters, validate_max_tokens
@@ -40,6 +46,18 @@ PROTECTED = {
 PROTOCOL = "gemini"
 
 
+def input_kind(part: dict) -> str:
+    if part.get("function_call") is not None:
+        return "tool_use"
+    if part.get("function_response") is not None:
+        return "tool_result"
+    if part.get("thought"):
+        return "thinking"
+    media = part.get("inline_data") or part.get("file_data")
+    mime = media.get("mime_type") if isinstance(media, dict) else None
+    return "image" if isinstance(mime, str) and mime.startswith("image/") else "text"
+
+
 class GeminiDecoder(BaseDecoder):
     """Translate recognized intermediate values into protocol dictionaries."""
 
@@ -57,6 +75,68 @@ class GeminiDecoder(BaseDecoder):
         "config": types.GenerateContentConfig,
     }
 
+    def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
+        if parameters.get("_translated") or (
+            feedback_reasoning(profile, has_tool_calls=False)
+            and supports_content("image", profile)
+            and supports_content("tool_use", profile)
+            and supports_content("message_name", profile)
+        ):
+            return super().filter_messages(messages, profile, **parameters)
+        projected = []
+        for index, message in enumerate(dictionary_views(messages)):
+            path = f"$.contents[{index}]"
+            if message.get("name") is not None:
+                content_capability(message["name"], "message_name", profile, path=f"{path}.name")
+            parts = message.get("parts")
+            if isinstance(parts, list):
+                feedback = feedback_reasoning(
+                    profile,
+                    has_tool_calls=any(
+                        isinstance(b, dict) and b.get("function_call") is not None for b in parts
+                    ),
+                )
+                retained = []
+                for offset, block in enumerate(parts):
+                    if not isinstance(block, dict):
+                        retained.append(block)
+                        continue
+                    block_path = f"{path}.parts[{offset}]"
+                    kind = input_kind(block)
+                    if not input_capability(
+                        block, kind, profile, feedback=feedback, path=block_path
+                    ):
+                        continue
+                    response = block.get("function_response")
+                    if (
+                        kind == "tool_result"
+                        and isinstance(response, dict)
+                        and isinstance(children := response.get("parts"), list)
+                    ):
+                        block = {
+                            **select(block, *types.Part.model_fields),
+                            "function_response": {
+                                **select(
+                                    block["function_response"], *types.FunctionResponse.model_fields
+                                ),
+                                "parts": [
+                                    child
+                                    for child_index, child in enumerate(children)
+                                    if not isinstance(child, dict)
+                                    or input_capability(
+                                        child,
+                                        input_kind(child),
+                                        profile,
+                                        path=f"{block_path}.function_response.parts[{child_index}]",
+                                    )
+                                ],
+                            },
+                        }
+                    retained.append(block)
+                message = {**select(message, "role"), "parts": retained}
+            projected.append(message)
+        return super().filter_messages(projected, profile, **parameters)
+
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
         options = super().validate_parameters(profile, **parameters)
         return validate_request_options(
@@ -71,7 +151,12 @@ class GeminiDecoder(BaseDecoder):
             return request
         validate_max_tokens(config.get("max_output_tokens"))
         if config.get("candidate_count") not in (None, 1):
-            raise UnsupportedCapabilityError("only one generated candidate is supported")
+            report_loss(
+                config["candidate_count"],
+                "multiple generated candidates are not supported",
+                path="$.config.candidate_count",
+            )
+            config["candidate_count"] = 1
         # Tool declarations were validated separately in native_request. Validate
         # remaining public config fields without rebuilding every tool schema.
         thinking = types.GenerateContentConfig(
@@ -118,8 +203,7 @@ class GeminiDecoder(BaseDecoder):
     ) -> dict:
         result = request
         config = result["config"]
-        system = [m for m in messages if m.get("role") in ("system", "developer")]
-        history = [m for m in messages if m.get("role") not in ("system", "developer")]
+        system, history = split_system_messages(messages)
         if system:
             config["system_instruction"] = {"parts": [part for m in system for part in m["parts"]]}
         if tools is not None:
@@ -132,22 +216,23 @@ class GeminiDecoder(BaseDecoder):
     ) -> list[dict]:
         result = []
         names = {}
-        for index, message, feedback in message_feedback(coalesce_messages(messages), profile):
+        for index, message, feedback in message_feedback(messages, profile):
             if message.get("name") is not None:
-                report_loss(
+                content_capability(
                     message["name"],
-                    "Gemini cannot represent message names",
+                    "message_name",
+                    profile,
+                    native_support=False,
                     path=f"{getattr(message, 'origin_path', f'$.messages[{index}]')}.name",
                 )
-            for block in message.get("content", []):
-                if block.get("type") == "tool_use":
-                    names[block["id"]] = block["name"]
             foreign = source_protocol(message) != PROTOCOL
             parts = []
             for block in message["content"]:
                 if not input_content(block, profile, feedback=feedback):
                     continue
-                if block.get("type") == "tool_result":
+                if block["type"] == "tool_use":
+                    names[block["id"]] = block["name"]
+                elif block["type"] == "tool_result":
                     if not block.get("name"):
                         block = {
                             **select(

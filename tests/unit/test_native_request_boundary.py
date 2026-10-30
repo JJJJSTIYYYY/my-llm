@@ -15,7 +15,7 @@ from my_llm import (
     ConfigurationError,
     MessageValidationError,
     MyCodec,
-    UnsupportedCapabilityError,
+    SemanticLossError,
 )
 from my_llm.codec.openai.chat.decoding.decoder import ChatCompletionsDecoder
 from my_llm.profile import ModelProfile, ProviderProfile, resolve_profiles
@@ -106,38 +106,46 @@ def test_system_unknown_fields_do_not_enter_intermediate_or_sdk_request(
 
 
 @pytest.mark.parametrize(
-    "protocol,native,match",
+    "protocol,native,match,expected",
     [
         (
             "anthropic",
             {"max_tokens": 2048, "thinking": {"type": "enabled", "budget_tokens": 4096}},
             "budget",
+            ConfigurationError,
         ),
         (
             "anthropic",
             {"max_tokens": 2048, "thinking": {"type": "enabled", "budget_tokens": 256}},
             "budget",
+            ConfigurationError,
         ),
-        ("anthropic", {"output_config": {"effort": "unsupported"}}, "output_config"),
-        ("openai_chat", {"max_completion_tokens": -1}, "max_tokens"),
-        ("openai_chat", {"reasoning_effort": 5}, "reasoning_effort"),
-        ("openai_chat", {"extra_body": {"n": 2}}, "candidate"),
-        ("openai_responses", {"max_output_tokens": -1}, "max_tokens"),
-        ("openai_responses", {"reasoning": {"effort": 5}}, "reasoning"),
-        ("openai_responses", {"reasoning": 5}, "reasoning"),
-        ("gemini", {"config": {"max_output_tokens": -1}}, "max_tokens"),
-        ("gemini", {"config": {"candidate_count": 2}}, "candidate"),
+        (
+            "anthropic",
+            {"output_config": {"effort": "unsupported"}},
+            "output_config",
+            SemanticLossError,
+        ),
+        ("openai_chat", {"max_completion_tokens": -1}, "max_tokens", ConfigurationError),
+        ("openai_chat", {"reasoning_effort": 5}, "reasoning_effort", SemanticLossError),
+        ("openai_chat", {"extra_body": {"n": 2}}, "candidate", SemanticLossError),
+        ("openai_responses", {"max_output_tokens": -1}, "max_tokens", ConfigurationError),
+        ("openai_responses", {"reasoning": {"effort": 5}}, "reasoning", ConfigurationError),
+        ("openai_responses", {"reasoning": 5}, "reasoning", SemanticLossError),
+        ("gemini", {"config": {"max_output_tokens": -1}}, "max_tokens", ConfigurationError),
+        ("gemini", {"config": {"candidate_count": 2}}, "candidate", SemanticLossError),
         (
             "gemini",
             {"config": {"thinking_config": {"include_thoughts": True, "thinking_budget": 0}}},
             "budget",
+            ConfigurationError,
         ),
-        ("ollama", {"think": {"invalid": True}}, "think"),
-        ("ollama", {"options": {"temperature": "invalid"}}, "options"),
+        ("ollama", {"think": {"invalid": True}}, "think", SemanticLossError),
+        ("ollama", {"options": {"temperature": "invalid"}}, "options", ConfigurationError),
     ],
 )
 def test_direct_native_requests_validate_generation_settings(
-    profile_factory, protocol, native, match
+    profile_factory, protocol, native, match, expected
 ):
     messages = {
         "openai_chat": {"messages": [{"role": "user", "content": "hello"}]},
@@ -150,7 +158,7 @@ def test_direct_native_requests_validate_generation_settings(
     if protocol == "anthropic":
         request.setdefault("max_tokens", 2048)
     original = deepcopy(request)
-    with pytest.raises((ConfigurationError, UnsupportedCapabilityError), match=match):
+    with pytest.raises(expected, match=match):
         MyCodec().decoder(protocol).native_request(
             request,
             profile_factory(protocol, max_tokens=parameter("max_tokens", 2048, protocol=protocol)),
@@ -228,7 +236,12 @@ def test_request_projection_addresses_sdk_fields_without_reading_extensions(
 
     filtered = bound.native_request(
         request,
-        profile_factory(protocol, max_tokens=parameter("max_tokens", 2048, protocol=protocol)),
+        profile_factory(
+            protocol,
+            max_tokens=parameter("max_tokens", 2048, protocol=protocol),
+            supports_function_calling=config(True),
+            supports_vision=config(True),
+        ),
     )
 
     assert type(filtered) is dict
@@ -297,7 +310,7 @@ def test_ollama_sdk_message_images_survive_input_validation_and_request_projecti
     message = Message(role="user", content="hello", images=[image])
     profile = resolve_profiles(
         ProviderProfile(protocol=Config(default_value="ollama")),
-        ModelProfile(model=Attribute(default_value="demo")),
+        ModelProfile(model=Attribute(default_value="demo"), supports_vision=config(True)),
     )
     bound = MyCodec().decoder("ollama")
 
@@ -484,7 +497,10 @@ def test_direct_gemini_request_projects_sdk_config_and_owns_nested_values(profil
         .decoder("gemini")
         .native_request(
             {"contents": [{"role": "user", "parts": [{"text": "hello"}]}], "config": config},
-            profile_factory("gemini"),
+            profile_factory(
+                "gemini",
+                reasoning_effort=parameter("reasoning_effort", supports=True, protocol="gemini"),
+            ),
         )
     )
 

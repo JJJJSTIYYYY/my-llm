@@ -7,9 +7,9 @@ from my_llm import (
     Config,
     ConfigurationError,
     ModelProfile,
+    MyCodec,
     ProviderProfile,
     SemanticLossError,
-    UnsupportedCapabilityError,
     omit,
 )
 from my_llm.profile.resolution import resolve_profiles
@@ -52,10 +52,12 @@ def test_no_reasoning_parameters_by_default(profile_factory, protocol):
     )
 
 
-def test_reasoning_enable_only_for_chat(profile_factory):
-    request = codec(profile_factory()).encode(
-        [{"role": "user", "content": "x"}], tools=omit, reasoning_effort="high"
-    )
+def test_chat_reports_unsupported_effort_while_preserving_reasoning_enable(profile_factory):
+    with pytest.raises(SemanticLossError, match="effort") as caught:
+        codec(profile_factory()).encode(
+            [{"role": "user", "content": "x"}], tools=omit, reasoning_effort="high"
+        )
+    request = caught.value.draft
     assert request["reasoning_effort"] == "medium"
     assert "extra_body" not in request
 
@@ -69,18 +71,21 @@ def test_response_reasoning_mapping(profile_factory, effort):
 
 
 def test_unsupported_reasoning_and_effort(profile_factory):
-    with pytest.raises(UnsupportedCapabilityError, match="reasoning"):
+    with pytest.raises(SemanticLossError, match="reasoning") as caught:
         codec(
             profile_factory(reasoning_enable=parameter("reasoning_enable", supports=False))
         ).encode([{"role": "user", "content": "x"}], tools=omit, reasoning_effort="low")
+    assert caught.value.draft["messages"] == [{"role": "user", "content": "x"}]
+    assert "reasoning_effort" not in caught.value.draft
     limited = codec(
         profile_factory(
             "openai_responses",
             reasoning_effort_mapping=config({"xhigh": None, "max": None}),
         )
     )
-    with pytest.raises(UnsupportedCapabilityError, match="xhigh"):
+    with pytest.raises(SemanticLossError, match="xhigh") as caught:
         limited.encode([{"role": "user", "content": "x"}], tools=omit, reasoning_effort="xhigh")
+    assert "x" in str(caught.value.draft["input"])
 
 
 def test_custom_effort_body_and_generated_priority():
@@ -234,21 +239,9 @@ def test_reasoning_replay_only_pads_tool_calls_when_thinking(
             protocol=Config(default_value=protocol),
             feedback_reasoning_content=config(feedback),
         ),
-        ModelProfile(model=Attribute(default_value="demo")),
+        ModelProfile(model=Attribute(default_value="demo"), supports_function_calling=config(True)),
     )
     replay = feedback == "always" or feedback == "when_tool_calls" and has_calls
-    if visible and not replay:
-        with pytest.raises(SemanticLossError) as captured:
-            MyCodec().convert(
-                [message],
-                input_format="openai_chat",
-                target_format=protocol,
-                profile=profile,
-                reasoning=thinking,
-            )
-        assert captured.value.losses.items[0].origin_path == "$.messages[0].reasoning_content"
-        assert captured.value.draft["messages"][0]["content"] == "hello"
-        return
     result = MyCodec().convert(
         [message],
         input_format="openai_chat",
@@ -284,9 +277,45 @@ def test_native_generation_parameters_and_tools(profile_factory, protocol, funct
 
 
 @pytest.mark.parametrize("protocol", ["openai_chat", "anthropic", "gemini", "ollama"])
-def test_previous_response_id_is_responses_only(profile_factory, protocol):
-    with pytest.raises(ConfigurationError):
-        encode_request(
-            profile_factory(protocol, max_tokens=parameter("max_tokens", 2048, protocol=protocol)),
-            previous_response_id="resp_previous",
-        )
+@pytest.mark.parametrize("policy", ["raise", "ignore", "hook"])
+def test_unsupported_previous_response_id_uses_loss_policy(profile_factory, protocol, policy):
+    observed = []
+
+    def hook(draft, losses, context):
+        assert [(loss.origin_path, loss.origin_value) for loss in losses] == [
+            ("$.previous_response_id", "resp_previous")
+        ]
+        assert all("support" in loss.reason for loss in losses)
+        assert context.target_protocol == protocol
+        assert "complete tail" in str(draft)
+        draft["handled_previous_response_id"] = True
+        observed.append(draft)
+
+    codec = MyCodec(policy, input_semantic_loss_hook=hook)
+    inputs = codec.encode(
+        [{"role": "user", "content": "complete tail"}], input_format="openai_chat"
+    )
+    profile = profile_factory(protocol, max_tokens=parameter("max_tokens", 2048, protocol=protocol))
+    if policy == "raise":
+        with pytest.raises(SemanticLossError, match="support") as caught:
+            codec.request(inputs, profile, previous_response_id="resp_previous")
+        request = caught.value.draft
+        assert caught.value.losses.items[0].origin_path == "$.previous_response_id"
+    else:
+        request = codec.request(inputs, profile, previous_response_id="resp_previous")
+        if policy == "hook":
+            assert observed[0] is request
+            assert request["handled_previous_response_id"] is True
+        else:
+            assert observed == []
+    assert "previous_response_id" not in request
+    assert "complete tail" in str(request)
+
+
+@pytest.mark.parametrize("protocol", ["openai_chat", "openai_responses"])
+@pytest.mark.parametrize("value", ["", 1, True])
+def test_malformed_previous_response_id_remains_configuration_error(
+    profile_factory, protocol, value
+):
+    with pytest.raises(ConfigurationError, match="previous_response_id"):
+        encode_request(profile_factory(protocol), previous_response_id=value)

@@ -230,8 +230,9 @@ class MyLLM:
             extra_headers: Request headers merged by key over profile defaults.
             extra_body: Native generation options merged by key over profile defaults.
                 Cannot replace managed fields such as model, messages or tools.
-            previous_response_id: Nonempty server-side history ID, supported only for
-                an openai_responses upstream. None or omit leaves it out.
+            previous_response_id: Nonempty server-side history ID for an
+                openai_responses upstream. Other protocols record an unsupported
+                semantic loss and omit it. None or omit leaves it out.
 
         Returns:
             A protocol-native assistant message dictionary, or output items list for
@@ -245,9 +246,8 @@ class MyLLM:
             MessageValidationError: Input or tool-call/result associations are invalid,
                 or the input/output protocol cannot be inferred uniquely.
             ConfigurationError: A generation option is invalid or conflicts.
-            UnsupportedCapabilityError: A generation control is unavailable.
-            SemanticLossError: A supported value cannot be represented by the target
-                protocol and the active loss policy is "raise".
+            SemanticLossError: A supported value or requested control is unsupported
+                by the target and the active loss policy is "raise".
             StreamError: The response fails or ends without a valid completion.
 
         SDK errors retain their original types. Input messages and mutable options

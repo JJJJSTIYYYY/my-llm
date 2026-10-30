@@ -75,8 +75,8 @@ class Parameter(Generic[_T]):
         path: Rooted field path, such as ``$.max_tokens`` or ``$.choices[0].delta.content``.
         default_value: Value used when the target field is absent; omit adds no
             default and None is an explicit value.
-        supports: Whether automatic routing is supported. False forces the
-            default_value to omit.
+        supports: Whether the capability is supported. False forces the
+            default_value to omit; supplied values become decoder semantic losses.
         comment: Optional description for display.
 
     Attributes:

@@ -10,7 +10,8 @@ import pytest
 from pydantic import BaseModel, ConfigDict
 from typing_extensions import TypedDict
 
-from my_llm import MyCodec, UnsupportedCapabilityError
+from my_llm import MessageValidationError, MyCodec
+from my_llm.basic.semantic_loss import SemanticLossContext, collect_losses
 from my_llm.cache import compiled_cache as schema_plans
 from tests.helpers.protocols import PROTOCOLS, history, tools
 
@@ -65,6 +66,12 @@ def test_cached_plan_filters_without_reanalyzing_types(monkeypatch):
     assert schema_plans.projected(value, Envelope) == {
         "content": [{"type": "text", "text": "hello"}]
     }
+    with collect_losses(SemanticLossContext(None, "test")) as (losses, _):
+        assert plan.decode(
+            {"content": [{"type": "unsupported"}, {"type": "text", "text": "retained"}]},
+            "$.messages[0]",
+        ) == {"content": [{"type": "text", "text": "retained"}]}
+        assert len(losses.items) == 1
 
 
 def test_union_literal_discriminator_takes_precedence_over_shared_fields():
@@ -133,7 +140,7 @@ def test_literal_pruning_combines_declared_discriminators_without_reading_unknow
         "role": "assistant",
         "text": "answer",
     }
-    with pytest.raises(UnsupportedCapabilityError, match="target SDK"):
+    with pytest.raises(MessageValidationError, match="SDK"):
         operation({"type": "message", "role": "vendor", "text": "answer"}, User | Assistant)
 
 
@@ -186,7 +193,7 @@ def test_literal_routing_keeps_sdk_model_defaults_none_and_recursive_content(ope
 
 @pytest.mark.parametrize("operation", [schema_plans.supported, schema_plans.projected])
 def test_unhashable_discriminator_values_keep_union_rejection(operation):
-    with pytest.raises(UnsupportedCapabilityError, match="target SDK"):
+    with pytest.raises(MessageValidationError, match="SDK"):
         operation({"type": [], "text": "answer"}, Text | Image)
 
 
@@ -198,7 +205,7 @@ def test_cache_distinguishes_nested_union_order_and_reuses_equivalent_generics()
 
 
 def test_union_rejects_values_no_candidate_represents():
-    with pytest.raises(UnsupportedCapabilityError, match="target SDK"):
+    with pytest.raises(MessageValidationError, match="SDK"):
         schema_plans.supported({"unexpected": True}, int | str)
 
 

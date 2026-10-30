@@ -12,22 +12,29 @@ from anthropic.types import (
 )
 from pydantic import ValidationError
 
-from my_llm.basic.data import capture
+from my_llm.basic.data import capture, dictionary_views
 from my_llm.basic.exceptions import ConfigurationError, MessageValidationError, ResponseFailedError
 from my_llm.basic.semantic_loss import report_loss
-from my_llm.cache.compiled_cache import _plan, adapter, parameter_types
+from my_llm.cache.compiled_cache import _MISSING, _plan, adapter, parameter_types
 from my_llm.codec.anthropic.decoding.content import decode_block, foreign_block
 from my_llm.codec.base.decoder import BaseDecoder
+from my_llm.codec.shared.capabilities import content_capability, supports_content
 from my_llm.codec.shared.conversion import (
-    coalesce_messages,
     decode_functions,
     select_present,
     source_protocol,
+    split_system_messages,
 )
-from my_llm.codec.shared.input import input_content, message_feedback
+from my_llm.codec.shared.input import (
+    feedback_reasoning,
+    input_capability,
+    input_content,
+    message_feedback,
+)
 from my_llm.codec.shared.options import PreparedOptions, validate_request_options
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
+from my_llm.profile.types import Parameter
 
 PROTECTED = {"model", "stream", "messages", "input", "tools", "system", "previous_response_id"}
 
@@ -55,17 +62,79 @@ class AnthropicDecoder(BaseDecoder):
 
     request_schema = REQUEST_SCHEMA
 
+    def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
+        if parameters.get("_translated") or (
+            feedback_reasoning(profile, has_tool_calls=False)
+            and supports_content("image", profile)
+            and supports_content("tool_use", profile)
+            and supports_content("message_name", profile)
+        ):
+            return super().filter_messages(messages, profile, **parameters)
+        projected = []
+        for index, message in enumerate(dictionary_views(messages)):
+            path = f"$.messages[{index}]"
+            if message.get("name") is not None:
+                content_capability(message["name"], "message_name", profile, path=f"{path}.name")
+            content = message.get("content")
+            if isinstance(content, list):
+                feedback = feedback_reasoning(
+                    profile,
+                    has_tool_calls=any(
+                        isinstance(b, dict) and b.get("type") == "tool_use" for b in content
+                    ),
+                )
+                retained = []
+                for offset, block in enumerate(content):
+                    if not isinstance(block, dict):
+                        retained.append(block)
+                        continue
+                    kind = block.get("type")
+                    block_path = f"{path}.content[{offset}]"
+                    if not input_capability(
+                        block,
+                        "thinking" if kind == "redacted_thinking" else kind,
+                        profile,
+                        feedback=feedback,
+                        path=block_path,
+                    ):
+                        continue
+                    if kind == "tool_result" and isinstance(children := block.get("content"), list):
+                        block = {
+                            **select_present(
+                                block, "type", "tool_use_id", "is_error", "cache_control"
+                            ),
+                            "content": [
+                                child
+                                for child_index, child in enumerate(children)
+                                if not isinstance(child, dict)
+                                or input_capability(
+                                    child,
+                                    child.get("type"),
+                                    profile,
+                                    path=f"{block_path}.content[{child_index}]",
+                                )
+                            ],
+                        }
+                    retained.append(block)
+                message = {"role": message.get("role"), "content": retained}
+            projected.append(message)
+        return super().filter_messages(projected, profile, **parameters)
+
     def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
         # The SDK's InputSchema TypedDict names only some JSON Schema keys.
         # Delegate this open leaf so it is captured once rather than filtered
         # and copied before replacing it with the full application schema.
-        apply = _plan(self.tool_type, delegated_paths=(("input_schema",),)).apply
-        result = [apply(tool) for tool in tools]
-        for original, filtered in zip(tools, result):
+        decode = _plan(self.tool_type, delegated_paths=(("input_schema",),)).decode
+        result = []
+        for index, original in enumerate(tools):
+            filtered = decode(original, f"$.tools[{index}]")
+            if filtered is _MISSING:
+                continue
             # InputSchema is an open JSON Schema, not just the SDK TypedDict's
             # named type/properties/required fields. Keep its application keys.
             if "input_schema" in original:
                 filtered["input_schema"] = capture(original["input_schema"])
+            result.append(filtered)
         return result
 
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
@@ -75,9 +144,12 @@ class AnthropicDecoder(BaseDecoder):
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
         if not request["messages"]:
             raise ConfigurationError("a non-system message is required")
-        if request.get("max_tokens") is None:
+        tokens = profile.parameters.get("max_tokens")
+        if request.get("max_tokens") is None and not (
+            isinstance(tokens, Parameter) and not tokens.supports
+        ):
             raise ConfigurationError("Anthropic requires max_tokens in the model or generation")
-        validate_max_tokens(request["max_tokens"])
+        validate_max_tokens(request.get("max_tokens"))
         if "system" in request and not isinstance(request["system"], str):
             try:
                 validator = adapter(list[TextBlockParam])
@@ -101,6 +173,7 @@ class AnthropicDecoder(BaseDecoder):
         if (
             (binding := profile.parameter("reasoning_enable", "input")) is not None
             and binding.path == "$.thinking"
+            and "thinking" in request
             and (
                 parameters.get("reasoning") is True
                 or parameters.get("reasoning_effort", "none") != "none"
@@ -133,8 +206,7 @@ class AnthropicDecoder(BaseDecoder):
         **parameters: Any,
     ) -> dict:
         result = request
-        system = [m for m in messages if m.get("role") in ("system", "developer")]
-        history = [m for m in messages if m.get("role") not in ("system", "developer")]
+        system, history = split_system_messages(messages)
         result.update(model=profile.model, stream=True, messages=history)
         if system:
             result["system"] = [
@@ -154,11 +226,13 @@ class AnthropicDecoder(BaseDecoder):
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for index, message, feedback in message_feedback(coalesce_messages(messages), profile):
+        for index, message, feedback in message_feedback(messages, profile):
             if message.get("name") is not None:
-                report_loss(
+                content_capability(
                     message["name"],
-                    "Anthropic cannot represent message names",
+                    "message_name",
+                    profile,
+                    native_support=False,
                     path=f"{getattr(message, 'origin_path', f'$.messages[{index}]')}.name",
                 )
             context_owner = source_protocol(message)

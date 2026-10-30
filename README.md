@@ -40,7 +40,7 @@ OpenAI Chat 格式输入 → 任意协议 API → OpenAI Chat 格式输出
 输入接受标准字典或可转为字典的官方 SDK 对象，输出为所选输入协议的标准字典。
 也可[直接使用中间模型](docs/guides/middleware-io.md)，输入 `Message` / `FunctionTool`，返回 `AssistantMessage` / `MessageEvent`。
 文本、图片、思维链、工具与 usage 通过具体的 `ProtocolMiddleWare` 翻译；audio、file、用户 metadata 等未支持字段静默丢弃。
-已支持字段无法表达时默认抛 `SemanticLossError`，可选择 ignore 或双向原位 hook，详见[迁移指南](docs/guides/semantic-loss.md)。
+已支持字段无法表达或配置声明不支持时统一记录语义损失，默认抛 `SemanticLossError`，可选择 ignore 或双向原位 hook，详见[迁移指南](docs/guides/semantic-loss.md)。
 Profile 用 `Parameter` 声明字段路径、默认值与 source，`Config` 控制代码分支；继承不能扩大固定中间协议的支持集合。
 字段 `None` 继承配置；`default_value=None` 是实际值，已有 `None` 不会被默认值覆盖；跨协议来回翻译不保证无损。
 跨协议转换受目标协议的表达能力限制，详见[兼容边界](docs/reference/configuration.md#跨协议请求的处理边界)。

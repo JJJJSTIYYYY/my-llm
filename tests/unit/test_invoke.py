@@ -246,7 +246,9 @@ async def test_early_exit_during_final_tool_frames_has_no_completed_result(monke
     client, _ = patch_client(monkeypatch, stream_events("openai_chat", tool=True))
     llm = MyLLM(
         provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
-        model=ModelProfile(model=Attribute(default_value="demo")),
+        model=ModelProfile(
+            model=Attribute(default_value="demo"), supports_function_calling=config(True)
+        ),
         stdio_protocol="openai_chat",
     )
     stream = await llm.generate(messages=[{"role": "user", "content": "hi"}], stream=True)

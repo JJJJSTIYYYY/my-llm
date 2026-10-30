@@ -5,9 +5,10 @@ from typing import Any
 from ollama import Image, Message, Options, Tool
 from pydantic import ValidationError
 
-from my_llm.basic.data import capture, read
-from my_llm.basic.exceptions import ConfigurationError, UnsupportedCapabilityError
+from my_llm.basic.data import capture, dictionary_views, read
+from my_llm.basic.exceptions import ConfigurationError
 from my_llm.basic.semantic_loss import report_loss
+from my_llm.cache.compiled_cache import _MISSING, _plan
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.ollama.decoding.content import (
     chat_call,
@@ -16,13 +17,18 @@ from my_llm.codec.ollama.decoding.content import (
     tool_text,
 )
 from my_llm.codec.ollama.schema import REQUEST_SCHEMA, validate_ollama_values
+from my_llm.codec.shared.capabilities import content_capability, supports_content
 from my_llm.codec.shared.conversion import (
-    coalesce_messages,
     decode_functions,
     source_protocol,
-    text,
 )
-from my_llm.codec.shared.input import feedback_reasoning, input_content, message_feedback
+from my_llm.codec.shared.input import (
+    feedback_reasoning,
+    input_capability,
+    input_content,
+    input_reasoning,
+    message_feedback,
+)
 from my_llm.codec.shared.options import PreparedOptions, validate_request_options
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.configuration import merge_dicts
@@ -31,14 +37,16 @@ from my_llm.profile.resolution import ResolvedProfile, client_parameters
 PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response_id"}
 
 
-def validate_schema(parameters: dict) -> dict:
+def validate_schema(parameters: dict, *, path: str | None = None) -> dict:
     """Do not let the official SDK silently discard JSON Schema constraints."""
     try:
         parsed = Tool(function={"name": "schema_check", "parameters": parameters}).model_dump(
             exclude_none=True
         )["function"]["parameters"]
     except (ValidationError, KeyError):
-        report_loss(parameters, "installed Ollama SDK cannot represent the tool parameter schema")
+        report_loss(
+            parameters, "installed Ollama SDK cannot represent the tool parameter schema", path=path
+        )
         return {"type": "object"}
 
     def preserves(expected, actual):
@@ -61,7 +69,9 @@ def validate_schema(parameters: dict) -> dict:
 
     if not preserves(parameters, parsed):
         report_loss(
-            parameters, "installed Ollama SDK would discard tool parameter schema constraints"
+            parameters,
+            "installed Ollama SDK would discard tool parameter schema constraints",
+            path=path,
         )
         return parsed
     return parameters
@@ -98,6 +108,13 @@ class OllamaDecoder(BaseDecoder):
         return validate_request_options(profile, options, protected=PROTECTED, containers=())
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
+        retries = profile.get("max_retries")
+        if isinstance(retries, int) and not isinstance(retries, bool) and retries > 0:
+            report_loss(
+                retries,
+                "Ollama SDK does not support a positive max_retries",
+                path="$.max_retries",
+            )
         thinking = request.get("think")
         if thinking is not None and not isinstance(thinking, (str, bool)):
             raise ConfigurationError("Ollama think must be a boolean or model-defined string")
@@ -119,30 +136,63 @@ class OllamaDecoder(BaseDecoder):
         return request
 
     def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
-        for tool in tools:
-            if "parameters" in tool.get("function", {}):
-                tool["function"]["parameters"] = validate_schema(tool["function"]["parameters"])
-        return super().filter_tools(tools, profile)
+        decode = _plan(self.tool_type, delegated_paths=(("function", "parameters"),)).decode
+        result = []
+        for index, original in enumerate(dictionary_views(tools)):
+            tool = decode(original, f"$.tools[{index}]")
+            if tool is _MISSING:
+                continue
+            function = tool.get("function", {})
+            if "parameters" in function:
+                function["parameters"] = capture(
+                    validate_schema(
+                        function["parameters"], path=f"$.tools[{index}].function.parameters"
+                    )
+                )
+            result.append(tool)
+        return result
 
     def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
-        result = super().filter_messages(messages, profile, **parameters)
-        for index, (original, value) in enumerate(zip(messages, result)):
-            images = read(original, "images")
+        result = []
+        # Images are normalized below; defer this leaf to avoid copying it first.
+        decode = _plan(self.message_type, delegated_paths=(("images",),)).decode
+        for index, original in enumerate(messages):
+            path = f"$.messages[{index}]"
+            if read(original, "role") == "tool" and not input_capability(
+                original, "tool_result", profile, path=path
+            ):
+                continue
+            value = decode(original, path)
+            images = value.get("images")
             if images:
                 value["images"] = [
                     image.model_dump(mode="json") if isinstance(image, Image) else image
-                    for image in images
+                    for offset, image in enumerate(images)
+                    if input_capability(image, "image", profile, path=f"{path}.images[{offset}]")
                 ]
-            if not profile.get("supports_message_name", True):
+                if not value["images"]:
+                    value.pop("images", None)
+            elif "images" in value:
+                value["images"] = capture(images)
+            if not supports_content("tool_use", profile):
+                for offset, call in enumerate(read(original, "tool_calls") or []):
+                    input_capability(call, "tool_use", profile, path=f"{path}.tool_calls[{offset}]")
+                value.pop("tool_calls", None)
+            if read(original, "name") is not None and not content_capability(
+                read(original, "name"), "message_name", profile, path=f"{path}.name"
+            ):
                 value.pop("name", None)
-            if not feedback_reasoning(profile, has_tool_calls=bool(value.get("tool_calls"))):
-                if reasoning := read(original, "thinking"):
-                    report_loss(
-                        reasoning,
-                        "profile excludes reasoning feedback from this message",
-                        path=f"$.messages[{index}].thinking",
-                    )
-                value.pop("thinking", None)
+            if (reasoning := read(original, "thinking")) is not None:
+                if not input_reasoning(
+                    reasoning,
+                    profile,
+                    feedback=feedback_reasoning(
+                        profile, has_tool_calls=bool(value.get("tool_calls"))
+                    ),
+                    path=f"$.messages[{index}].thinking",
+                ):
+                    value.pop("thinking", None)
+            result.append(value)
         return result
 
     def validate_profile(self, profile: ResolvedProfile) -> None:
@@ -150,9 +200,6 @@ class OllamaDecoder(BaseDecoder):
         api_key = profile.parameter("api_key")
         if api_key is not None and api_key.path == "$.api_key":
             raise ConfigurationError("Ollama api_key must use $.extra_headers.<name>")
-        retries = profile.get("max_retries")
-        if isinstance(retries, int) and not isinstance(retries, bool) and retries > 0:
-            raise UnsupportedCapabilityError("Ollama SDK does not support a positive max_retries")
 
     headers_field = None
 
@@ -189,34 +236,39 @@ class OllamaDecoder(BaseDecoder):
     ) -> list[dict]:
         result = []
         names = {}
-        for index, message, feedback in message_feedback(coalesce_messages(messages), profile):
+        pad_reasoning = (
+            profile is not None
+            and feedback_reasoning(profile, has_tool_calls=True)
+            and thinking_enabled(profile, parameters)
+        )
+        for index, message, feedback in message_feedback(messages, profile):
             if message.get("name") is not None:
-                report_loss(
+                content_capability(
                     message["name"],
-                    "Ollama cannot represent message names",
+                    "message_name",
+                    profile,
+                    native_support=False,
                     path=f"{getattr(message, 'origin_path', f'$.messages[{index}]')}.name",
                 )
-            content = message["content"]
-            for block in content:
-                if block.get("type") == "tool_use":
-                    names[block["id"]] = block["name"]
             context_owner = source_protocol(message)
-            content = []
+            calls = []
+            images = []
+            reasoning = []
+            text_parts = []
+            results = []
+            has_other = False
             for block in message["content"]:
                 if not input_content(block, profile, feedback=feedback):
                     continue
                 owner = block.get("protocol")
                 if (context_owner if owner is None else owner) != PROTOCOL:
                     block = foreign_block(block)
-                if block is not None:
-                    content.append(block)
-            calls = []
-            images = []
-            reasoning = ""
-            results = []
-            for block in content:
+                if block is None:
+                    continue
                 kind = block.get("type")
+                has_other = has_other or kind != "tool_result"
                 if kind == "tool_use":
+                    names[block["id"]] = block["name"]
                     call = chat_call(block)
                     calls.append({"function": call["function"]})
                 elif kind == "tool_result":
@@ -228,31 +280,29 @@ class OllamaDecoder(BaseDecoder):
                         }
                     )
                 elif kind == "thinking":
-                    reasoning += block["thinking"] or "\n".join(block.get("summary", ()))
+                    reasoning.append(block["thinking"] or "\n".join(block.get("summary", ())))
+                elif kind == "text":
+                    text_parts.append(block.get("text", ""))
                 elif kind == "image":
                     source = block.get("source", {})
                     if source.get("type") != "base64":
                         report_loss(block, "Ollama images require base64 data")
                         continue
                     images.append(source.get("data"))
-            if len(content) != len(results) or not results:
+            if has_other or not results:
                 value = {
                     "role": message["role"],
-                    "content": text(content),
+                    "content": "".join(text_parts),
                 }
                 if calls:
                     value["tool_calls"] = calls
                 if images:
                     value["images"] = images
-                if reasoning:
-                    value["thinking"] = reasoning
+                reasoning_text = "".join(reasoning)
+                if reasoning_text or (pad_reasoning and calls and message["role"] == "assistant"):
+                    value["thinking"] = reasoning_text
                 result.append(value)
             result.extend(results)
-        if profile is not None and feedback_reasoning(profile, has_tool_calls=True):
-            if thinking_enabled(profile, parameters):
-                for value in result:
-                    if value.get("role") == "assistant" and value.get("tool_calls"):
-                        value.setdefault("thinking", "")
         return result
 
     def _tools(

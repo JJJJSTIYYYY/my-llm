@@ -1,5 +1,21 @@
 # generate 性能测试
 
+## 编译规则缓存与每次重新编译
+
+```sh
+.venv/bin/python -m tests.performance.compiled_cache --iterations 15 --warmup 2 --json /tmp/compiled-cache.json
+```
+
+五种协议使用默认复杂原生负载，测量实际 `MyCodec.prepare()`：一组复用编译规则，另一组
+绕过五类规则 LRU，调用相同编译器。两组均关闭消息缓存，逐对核对完整请求一致与输入不变。
+按缓存/重编译、重编译/缓存交替采样；编译器切换、夹具、实例构造、断言及关闭不计时。
+保留正常 GC，记录逐样本墙钟、CPU、GC 次数、源码指纹及 SDK 版本。
+
+计时包含输入校验、翻译和最终 SDK 请求过滤校验，不创建 SDK 客户端，不含网络或模型推理。
+该对照确认当前缓存省下的编译成本，不依赖历史性能报告，也不代表前后版本的性能差异。
+暖请求的规则 miss 与条目数必须保持不变。实现见
+[compiled_cache.py](../../tests/performance/compiled_cache.py)。
+
 ## 消息缓存与完整历史翻译
 
 Chat Completions → Chat Completions 的增量消息缓存对照：
@@ -29,6 +45,11 @@ Chat Completions → Chat Completions 的增量消息缓存对照：
 但仍复制历史并对完整原生请求进行过滤和校验，所以请求准备耗时仍随历史规模增长。
 此对照衡量已有历史后单次请求的成本，不包含建立历史缓存的累计成本，
 也不代表完整 generate 或远程调用能获得相同比例的收益。
+
+[缓存执行测试](../../tests/unit/test_cache_execution.py)覆盖五种上游与六种输入格式：
+预热后禁止重建 SDK 类型注解和验证器，检查缓存 miss 与条目数不变；调用计数确认增量及重试
+只编码、翻译和校验当前批次，完整历史仍经过最终原生过滤。重试去重发生在翻译之后，
+不会跳过当前批次校验，也不会复用整份请求或响应。
 
 ## 中间协议直接输入输出
 

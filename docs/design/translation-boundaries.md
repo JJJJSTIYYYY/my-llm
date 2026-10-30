@@ -13,8 +13,13 @@ Encoder / Decoder 直接读取并构造已支持的字段，不扫描、收集�
 - 同协议转换也执行这些规则，不以原始对象快照绕过翻译。
 - Decoder 在 SDK 请求边界统一过滤、验证消息与工具结构，并执行 Profile 明确声明的兼容策略。
 
-SDK 的类型声明用于 Decoder 的结构过滤和验证，不是翻译器自动支持该类型全部字段的证明。
+SDK 的类型声明用于 Encoder 的输入结构校验，以及 Decoder 的目标结构过滤和验证，
+不是翻译器自动支持该类型全部字段的证明。Encoder 只将自身转换逻辑识别的字段送入中间态。
 SDK 模型的 `extra="allow"` 也不构成未知字段的通用透传入口。
+
+配置声明不支持的字段或能力由 Decoder 记录语义损失，交给统一的 raise / ignore / hook 策略；
+`supports_stream` 例外：项目始终调用流式接口，禁用时抛出 `UnsupportedProviderError`。
+非法输入结构仍抛出 `MessageValidationError`，无效配置或参数值仍抛出 `ConfigurationError`。
 
 ## 开放字典
 

@@ -29,7 +29,9 @@ Encoder.request(inputs, profile) 接收完整 generate 输入并输出包含 pro
 Decoder 的消息循环通过 `codec.shared.input.message_feedback(messages, profile)` 获取
 `(index, message, feedback)`，在原有内容循环内调用 `input_content(block, profile, feedback=feedback)`，
 返回 False 时跳过该块。工具结果中的图片也在翻译子内容时调用 `input_content`。
-公共函数集中记录图片能力和思考回传策略的损失，与协议原生限制一同交给完整 draft 的 adaptor 处理。
+`codec.shared.capabilities` 统一判断内容能力并记录不支持的原因；原生值可传入内容种类与来源路径复用检查。
+`message_feedback` 在一次分组中完成消息合并与回传判断；需要保留原生 item 身份时传 `coalesce=False`。
+回传策略排除的思考不记录损失；能力损失与协议原生限制一同交给完整 draft 的 adaptor 处理。
 公开 messages / tools 捕获独立结果；内部 Decoder.request 直接调用私有钩子，
 由最终 native_request 捕获 SDK 需要的可变内容，避免先复制公开转换结果再复制请求。
 工具参数、结果和 JSON Schema 的开放字典应完整保留内部应用键。
@@ -59,7 +61,7 @@ assemble_request(messages, tools, profile, *, request: dict, **parameters) 只�
 | native_request | 固定流程：历史关联 → 根过滤并委派消息／工具 → 叶过滤与验证 → validate_request → 显式兼容叶。 |
 | filter_messages / filter_tools | 只读借入原生叶，返回可独立修改的 SDK 值；根计划不会重复过滤同一叶。 |
 | validate_request | 可覆盖的原生选项和组合约束检查，返回字典。 |
-| validate_profile / usage_modes | 构造期检查 SDK 路径、用量模式及协议连接限制。 |
+| validate_profile / usage_modes | 构造期检查 SDK 路径与协议连接配置；声明支持的用量模式，不兼容模式在 Decoder 准备请求时记录损失。 |
 | client_parameters(profile) | 构造期把已解析连接配置映射到 SDK 构造 kwargs，不创建 SDK 客户端。 |
 | request_client(client, options) / client_key(client) | 默认复用实例字典及 None 键；SDK 把请求选项绑定客户端时生成请求独立变体。 |
 | allows_external_calls | 默认 False；服务端历史协议按需覆盖。 |
@@ -68,6 +70,7 @@ assemble_request(messages, tools, profile, *, request: dict, **parameters) 只�
 BaseCodec.validate_profile 委托 Decoder；MyLLM 在构造时调用，并准备连接字典。
 MyCodec.request 是离线原生请求入口，共用 Decoder 请求流程；完整调用使用 MyCodec.prepare。
 usage_mode 是开放字符串，接受的具体值由 Decoder.usage_modes 声明。
+不支持的非空模式不在构造期拒绝，而在准备请求时记录语义损失；空字符串或错误类型仍是配置错误。
 
 BaseEncoder.parameter_value(value, profile, field_id, default_path, default=None, *, use_default=True)
 统一读取 encode 参数。协议钩子先识别事件语义，再读取指定字段；不枚举未知返回字段。
@@ -79,7 +82,8 @@ def read_text_delta(encoder, event, profile):
 ```
 
 Schema 类型计划复用 cache/compiled_cache.py 的 CompiledCache 有界 LRU，只保存类型及编译规则。
-输入验证用只读 projected，最终需要独立可变数据的过滤用 supported；每份请求仍单独验证。
+输入验证用只读 projected；Decoder 的原生 SDK 过滤使用计划 decode，隔离数据并记录无法匹配的值。
+其他需要独立可变数据的过滤使用 supported；每份请求仍单独验证。
 JSON Schema 的应用键不能作为协议字段删除。若先委派开放叶，协议钩子必须随后建立独立副本。
 
 ## Transport 契约
@@ -108,6 +112,8 @@ Parameter[T] | Omit | None，分支配置声明 Config[T] | Omit | None。
 自定义 output 参数只能映射为现有中间态语义，不能扩大固定支持集合。
 支持字段无法表达时调用 my_llm.basic.semantic_loss.report_loss(value, reason)，继续完成 draft；
 BaseDecoder 聚合损失，BaseCodec 统一执行策略，不在 encoder 报 SemanticLossError。
+配置声明不支持的能力与字段也走该损失通道；Encoder 的非法输入结构使用 MessageValidationError。
+`supports_stream` 是项目调用能力，禁用时仍直接拒绝生成。
 SDK 根参数必须符合 SDK 调用签名，非标准字段使用 SDK 正式提供的 extra_body 等扩展入口。
 
 完成自己的 Encoder、Decoder、Transport 后，组合和注册如下；将 your_package 替换为实际包名：

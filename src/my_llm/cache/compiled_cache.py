@@ -22,7 +22,8 @@ from typing import (
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from my_llm.basic.data import capture
-from my_llm.basic.exceptions import MessageValidationError, UnsupportedCapabilityError
+from my_llm.basic.exceptions import MessageValidationError
+from my_llm.basic.semantic_loss import report_loss
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -158,7 +159,7 @@ def _field_value(value, name):
 class _FilterPlan:
     """Type-only graph node; compiled before it is published in the plan cache."""
 
-    __slots__ = ("apply", "project", "score", "literals")
+    __slots__ = ("apply", "project", "decode", "score", "literals")
 
 
 def _literal_routes(choices):
@@ -256,9 +257,7 @@ def _compiled_plan(key, delegated_paths):
                 else:
                     candidates = choices
                 if not candidates:
-                    raise UnsupportedCapabilityError(
-                        "target SDK cannot represent this protocol value"
-                    )
+                    raise MessageValidationError("target SDK cannot represent this protocol value")
                 # Strictly greater retains the first candidate when scores tie,
                 # matching max(..., key=...) without rescoring the winner.
                 choice = candidates[0]
@@ -268,13 +267,23 @@ def _compiled_plan(key, delegated_paths):
                     if candidate_score > score:
                         choice, score = candidate, candidate_score
                 if score < 0:
-                    raise UnsupportedCapabilityError(
-                        "target SDK cannot represent this protocol value"
-                    )
+                    raise MessageValidationError("target SDK cannot represent this protocol value")
                 return choice
 
             node.apply = lambda value: None if value is None else select(value).apply(value)
             node.project = lambda value: None if value is None else select(value).project(value)
+
+            def decode_union(value, path):
+                if value is None:
+                    return None
+                try:
+                    choice = select(value)
+                except MessageValidationError:
+                    report_loss(value, "target SDK does not support this protocol value", path=path)
+                    return _MISSING
+                return choice.decode(value, path)
+
+            node.decode = decode_union
         elif origin in (list, tuple, Iterable, Sequence) and arguments:
             item_plan = compile(arguments[0])
             node.apply = lambda value: (
@@ -285,6 +294,17 @@ def _compiled_plan(key, delegated_paths):
             node.project = lambda value: (
                 [item_plan.project(item) for item in value] if isinstance(value, list) else value
             )
+
+            def decode_list(value, path):
+                if not isinstance(value, list):
+                    return _copy_payload(value)
+                return [
+                    decoded
+                    for index, item in enumerate(value)
+                    if (decoded := item_plan.decode(item, f"{path}[{index}]")) is not _MISSING
+                ]
+
+            node.decode = decode_list
         elif _structured(annotation):
             declared = fields(annotation)
             for name, item in declared.items():
@@ -345,25 +365,38 @@ def _compiled_plan(key, delegated_paths):
                     if (item := _field_value(value, name)) is not _MISSING
                 }
 
+            def decode_structure(value, path):
+                if not isinstance(value, (dict, BaseModel)):
+                    return _copy_payload(value)
+                return {
+                    name: decoded
+                    for name, child in children.items()
+                    if (item := _field_value(value, name)) is not _MISSING
+                    and (decoded := child.decode(item, f"{path}.{name}")) is not _MISSING
+                }
+
             node.score = structured_score
             node.apply = structured_copy
             node.project = structured_projection
+            node.decode = decode_structure
         else:
             # Open dictionaries (tool arguments/results and JSON Schema) are
             # atomic application data; protocol filtering never inspects keys.
             node.apply = _copy_payload
             node.project = _borrow_payload
+            node.decode = lambda value, path: _copy_payload(value)
         if () in delegated_paths:
-            # Only Transport delegates message/tool leaves to its own hooks.
+            # Native request filtering delegates message/tool leaves to hooks.
             # Enclosing structures and unrelated application data remain owned.
             node.apply = _borrow_payload
+            node.decode = lambda value, path: value
         return node
 
     return compile(key.schema, delegated_paths)
 
 
 def supported(value, schema, *, delegated_paths=()):
-    """Filter owned values; Transport alone delegates leaves to its later hooks.
+    """Filter owned values, optionally delegating leaves to native decoder hooks.
 
     Delegated leaves remain borrowed until filter_messages/filter_tools returns.
     Ordinary callers omit delegated_paths and always receive isolated payloads.

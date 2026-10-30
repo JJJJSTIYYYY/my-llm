@@ -11,6 +11,7 @@ import json
 import os
 import re
 import time
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,11 +20,14 @@ from my_llm import (
     Attribute,
     Config,
     FunctionTool,
+    ImageContent,
+    ImageSource,
     MessageEvent,
     ModelProfile,
     MyLLM,
     Parameter,
     ProviderProfile,
+    ReasoningContent,
     TextContent,
     ToolCall,
     ToolMessage,
@@ -33,6 +37,8 @@ from my_llm import (
 
 PROTOCOLS = ("openai_chat", "openai_responses", "anthropic")
 STDIO_PROTOCOLS = (*PROTOCOLS, "middleware")
+BASE_CASES = ("text_collected", "text_stream", "tool_roundtrip")
+POLICY_CASES = ("capability_losses", "feedback_none", "feedback_when_tool_calls")
 MODEL = "sensenova-6.8-flash-lite"
 SCHEMA = {
     "type": "object",
@@ -56,6 +62,7 @@ def provider(protocol, key):
     overrides = {}
     if protocol == "openai_chat":
         overrides["max_tokens"] = Parameter(path="$.max_tokens", default_value=512)
+        overrides["reasoning_effort"] = Parameter(path="$.reasoning_effort")
         # SenseNova's Chat stream uses reasoning rather than reasoning_content.
         overrides["reasoning_content"] = Parameter(
             path="$.choices[0].delta.reasoning",
@@ -247,6 +254,89 @@ async def scenario(llm, protocol, case, *, request_interval=0.0):
     }
 
 
+async def policy_scenario(upstream, model_id, key, case, *, request_interval=0.0):
+    """Exercise decoder policies, then send the complete filtered draft upstream."""
+    unsupported = case == "capability_losses"
+    thought = "POLICY_THOUGHT_MUST_NOT_BE_SENT"
+    picture = "https://example.invalid/POLICY_IMAGE_MUST_NOT_BE_SENT.png"
+    prompt = "Reply with exactly SENSENOVA_OK and nothing else."
+    messages = [
+        UserMessage("user", [TextContent("Remember the test marker.")]),
+        AssistantMessage("assistant", [ReasoningContent(thought), TextContent("Ready.")]),
+        UserMessage("user", [TextContent(prompt)]),
+    ]
+    declared = []
+    if unsupported:
+        settings = {
+            "feedback_reasoning_content": config("none"),
+            "supports_vision": config(False),
+            "supports_function_calling": config(False),
+            "supports_message_name": config(False),
+            "reasoning_enable": Parameter(
+                path={
+                    "openai_chat": "$.reasoning_effort",
+                    "openai_responses": "$.reasoning",
+                    "anthropic": "$.thinking",
+                }[upstream],
+                supports=False,
+            ),
+        }
+        messages[-1].name = "POLICY_NAME_MUST_NOT_BE_SENT"
+        messages[-1].content.append(ImageContent(ImageSource("url", url=picture)))
+        declared = tools("middleware")
+    else:
+        settings = {"feedback_reasoning_content": config(case.removeprefix("feedback_"))}
+    before = deepcopy((messages, declared))
+    input_losses, output_losses, drafts = [], [], []
+
+    def input_hook(draft, losses, context):
+        assert context.origin_source == "input" and context.stage == "request"
+        assert context.target_protocol == upstream
+        assert draft["model"] == model_id and prompt in json.dumps(draft)
+        assert not draft.get("tools"), "unsupported tools reached request draft"
+        rendered = json.dumps(draft)
+        assert "POLICY_" not in rendered, "unsupported history reached request draft"
+        assert all("does not support" in item.reason for item in losses)
+        input_losses.extend(losses)
+        drafts.append(draft)
+
+    def output_hook(draft, losses, context):
+        assert context.origin_source == "output"
+        output_losses.extend(losses)
+
+    async with MyLLM(
+        provider=provider(upstream, key),
+        model=ModelProfile(model=Attribute(default_value=model_id), **settings),
+        stdio_protocol="middleware",
+        semantic_loss_protocol="hook",
+        input_semantic_loss_hook=input_hook,
+        output_semantic_loss_hook=output_hook,
+    ) as llm:
+        result, events = await consume(
+            llm,
+            stream=True,
+            request_interval=request_interval,
+            messages=messages,
+            tools=declared,
+        )
+    assert (messages, declared) == before, "translation changed caller input"
+    if unsupported:
+        assert len(drafts) == 1, "request losses were not collected together"
+        for label in ("image input", "function calling", "message names", "reasoning content"):
+            assert any(label in item.reason for item in input_losses), label
+    else:
+        assert not input_losses, "feedback policy exclusion reported a semantic loss"
+    answer = text("middleware", result).strip()
+    assert delta_text("middleware", events).strip() == answer, "policy delta/result mismatch"
+    return {
+        **check_answer(answer, "SENSENOVA_OK"),
+        "input_losses": len(input_losses),
+        "output_losses": len(output_losses),
+        "events": len(events),
+        "requests": 1,
+    }
+
+
 async def run(args, key):
     report = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -275,12 +365,17 @@ async def run(args, key):
                 stdio_protocol=stdio,
                 semantic_loss_protocol=args.semantic_loss_protocol,
             ) as llm:
-                for case in ("text_collected", "text_stream", "tool_roundtrip"):
+                cases = (*BASE_CASES, *POLICY_CASES) if stdio == "middleware" else BASE_CASES
+                for case in cases:
+                    if args.case and case not in args.case:
+                        continue
                     row = {
                         "upstream": upstream,
                         "stdio": stdio,
                         "case": case,
-                        "semantic_loss_protocol": args.semantic_loss_protocol,
+                        "semantic_loss_protocol": (
+                            "hook" if case in POLICY_CASES else args.semantic_loss_protocol
+                        ),
                     }
                     position = positions.get((upstream, stdio, case))
                     if args.retry_failed:
@@ -297,12 +392,18 @@ async def run(args, key):
                         ]
                     started = time.monotonic()
                     try:
-                        row.update(
-                            await asyncio.wait_for(
-                                scenario(llm, stdio, case, request_interval=args.request_interval),
-                                150,
+                        operation = (
+                            policy_scenario(
+                                upstream,
+                                args.model,
+                                key,
+                                case,
+                                request_interval=args.request_interval,
                             )
+                            if case in POLICY_CASES
+                            else scenario(llm, stdio, case, request_interval=args.request_interval)
                         )
+                        row.update(await asyncio.wait_for(operation, 150))
                         row["status"] = "passed"
                     except Exception as exc:
                         # Never persist SDK request headers, profiles or tracebacks.
@@ -331,6 +432,7 @@ def main():
     parser.add_argument("--model", default=MODEL)
     parser.add_argument("--upstream", nargs="+", choices=PROTOCOLS)
     parser.add_argument("--stdio", nargs="+", choices=STDIO_PROTOCOLS)
+    parser.add_argument("--case", nargs="+", choices=(*BASE_CASES, *POLICY_CASES))
     parser.add_argument("--report", type=Path)
     parser.add_argument("--request-interval", type=float, default=3.0, metavar="SECONDS")
     parser.add_argument("--retry-failed", action="store_true")

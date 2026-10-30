@@ -38,7 +38,9 @@ async def test_previous_response_id_allows_external_tool_results(monkeypatch):
     )
     llm = MyLLM(
         provider=ProviderProfile(protocol=Config(default_value="openai_responses")),
-        model=ModelProfile(model=Attribute(default_value="demo")),
+        model=ModelProfile(
+            model=Attribute(default_value="demo"), supports_function_calling=config(True)
+        ),
         stdio_protocol="openai_responses",
     )
     result = [{"type": "function_call_output", "call_id": "server_call", "output": "ok"}]

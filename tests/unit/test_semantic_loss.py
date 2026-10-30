@@ -348,7 +348,7 @@ def test_request_hook_can_move_images_in_place_on_the_final_sdk_request(profile_
         return {"replacement": "ignored"}
 
     codec = MyCodec("hook", input_semantic_loss_hook=hook)
-    profile = profile_factory("openai_chat")
+    profile = profile_factory("openai_chat", supports_function_calling=config(True))
     prepared = codec.prepare(
         complete_inputs(picture_history()),
         profile,
@@ -564,7 +564,7 @@ def test_images_in_tool_results_are_model_capability_losses(profile_factory, tar
     with pytest.raises(SemanticLossError) as caught:
         MyCodec().prepare(
             {**complete_inputs(messages), "max_tokens": 128},
-            profile_factory(target),
+            profile_factory(target, supports_function_calling=config(True)),
             input_format="anthropic",
             client={},
         )

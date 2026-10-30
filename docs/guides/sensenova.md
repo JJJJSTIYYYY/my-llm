@@ -26,7 +26,15 @@ uv run python examples/sensenova_e2e.py --report /tmp/sensenova-results.json
 3. 流式调用 `add(19, 23)`，检查名称、完整参数和调用 ID；本地得到 `42` 后回传工具结果，
    再次请求，检查最终正文精确匹配 `42` 及其流式增量。
 
-一次全部成功共 36 个场景、48 次上游请求；失败和补跑会改变实际请求总数。
+Middleware 另在每种上游验证三个策略场景：
+
+- 同时关闭图片、工具、消息名称与思维能力，检查一次输入 hook 收到完整请求及各项不支持原因，
+  过滤后的请求仍能完成真实调用，且调用方输入保持不变。
+- `feedback_reasoning_content="none"` 时省略历史思维，不产生输入损失。
+- `feedback_reasoning_content="when_tool_calls"` 时省略没有工具调用的历史思维，不产生输入损失。
+
+一次全部成功共 45 个场景、57 次上游请求；失败和补跑会改变实际请求总数。
+策略场景使用独立实例和 `hook` 策略；其他场景使用命令行指定的损失策略。
 汇总与流式模式都使用库的上游 SSE 执行路径，未独立验证供应商 HTTP 非流式响应。
 客户端和响应流通过异步上下文关闭，本例不独立测量连接资源泄漏。
 
@@ -41,6 +49,7 @@ uv run python examples/sensenova_e2e.py --report /tmp/sensenova-results.json
 | `--model MODEL_ID` | 更换模型 |
 | `--upstream openai_chat` | 仅测指定上游，可传多个 |
 | `--stdio middleware` | 仅测指定输入/输出格式，可传多个 |
+| `--case capability_losses feedback_none feedback_when_tool_calls` | 仅测指定场景；策略场景只在 Middleware 格式运行 |
 | `--request-interval SECONDS` | 调整每次请求前的等待时间 |
 | `--semantic-loss-protocol raise` | 使用严格损失策略 |
 | `--retry-failed --report /tmp/sensenova-results.json` | 仅补跑本机报告中的未通过项；成功项保持不变，历史失败保留在 `previous_attempts` |
@@ -48,6 +57,15 @@ uv run python examples/sensenova_e2e.py --report /tmp/sensenova-results.json
 Middleware 场景直接构造 `UserMessage` 与 `FunctionTool`，不通过原生转换生成输入。
 结果须为 `AssistantMessage`，流事件须为 `MessageEvent`；工具以完整 `ToolCall` 交付，
 事件与结果中的调用 ID 必须一致。第二轮使用 `ToolMessage` / `ToolResult` 回传结果。
+
+## 2026-10-31 实测结果
+
+完整运行 **45 passed，0 failed**，共 **57 次真实请求**，无需补跑。
+原有十二条协议路径的 36 个场景使用 `ignore`；新增的九个 Middleware 策略场景使用 `hook`。
+三个上游的能力损失场景均一次收集到五项输入损失，过滤后请求正常完成且输入未被修改；
+Chat 和 Responses 实际返回的思维也触发了输出损失 hook。`none` 与 `when_tool_calls`
+无工具调用场景均没有输入损失，正文增量与最终正文一致。
+本次报告保存在本机 `/tmp`，密钥只通过隐藏输入传入进程，没有写入文件。
 
 ## 2026-10-25 实测结果
 
@@ -104,5 +122,6 @@ Anthropic 上游的 11 个场景。加入请求间隔后补跑均不再限流；
 脚本现已在此类错误中包含最多 160 字符的正文片段，持久化前仍执行密钥脱敏。
 完整原生响应、思维正文和签名值未保留，不能从汇总还原这些内容。
 
-本例不覆盖图像、结构化输出、并行工具、开启思维的力度映射、服务端状态、取消或故障注入。
+本例只验证不支持图片时的过滤，不验证上游视觉识别；也不覆盖结构化输出、并行工具、
+开启思维的力度映射、服务端状态、取消或故障注入。
 Responses 工具定义显式带 `strict=False`；正文匹配不代表服务端完全关闭思维或协议转换无损。

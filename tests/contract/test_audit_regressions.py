@@ -15,6 +15,7 @@ from my_llm import (
 )
 from my_llm.codec.gemini.encoding.content import json_schema
 from my_llm.runtime.state import StreamState
+from tests.helpers.profiles import config
 from tests.helpers.protocols import PROTOCOLS, response_completed, stream_events
 from tests.helpers.sdk import (
     EVENT_TYPES,
@@ -438,7 +439,11 @@ def test_foreign_message_extensions_cannot_become_native_request_fields(
     before = deepcopy(incoming)
     converted = MyCodec().convert(incoming, input_format=source, target_format=target)["messages"]
     assert all("vendor_metadata" not in message for message in converted)
-    filtered = MyCodec().decoder(target).filter_messages(converted, profile_factory(target))
+    filtered = (
+        MyCodec()
+        .decoder(target)
+        .filter_messages(converted, profile_factory(target, supports_function_calling=config(True)))
+    )
     assert all("vendor_metadata" not in message for message in filtered)
     for message in filtered:
         assert_native(message, MESSAGE_TYPES[target])

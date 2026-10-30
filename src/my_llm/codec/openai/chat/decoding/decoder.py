@@ -5,14 +5,14 @@ from typing import Any
 from openai.resources.chat.completions import AsyncCompletions
 from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
 
+from my_llm.basic.data import dictionary_views
 from my_llm.basic.exceptions import (
     ConfigurationError,
     MessageValidationError,
     ResponseFailedError,
-    UnsupportedCapabilityError,
 )
 from my_llm.basic.semantic_loss import report_loss
-from my_llm.cache.compiled_cache import parameter_types
+from my_llm.cache.compiled_cache import _MISSING, _plan, parameter_types
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.openai.chat.decoding.content import (
     chat_call,
@@ -20,14 +20,20 @@ from my_llm.codec.openai.chat.decoding.content import (
     render_content,
     tool_text,
 )
+from my_llm.codec.shared.capabilities import content_capability, supports_content
 from my_llm.codec.shared.conversion import (
-    coalesce_messages,
     decode_functions,
     select,
     select_present,
     source_protocol,
 )
-from my_llm.codec.shared.input import feedback_reasoning, input_content, message_feedback
+from my_llm.codec.shared.input import (
+    feedback_reasoning,
+    input_capability,
+    input_content,
+    input_reasoning,
+    message_feedback,
+)
 from my_llm.codec.shared.options import (
     PreparedOptions,
     validate_request_options,
@@ -67,30 +73,73 @@ class ChatCompletionsDecoder(BaseDecoder):
     request_schema = parameter_types(AsyncCompletions.create)
 
     def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
-        result = super().filter_messages(messages, profile, **parameters)
-        for index, (original, value) in enumerate(zip(messages, result)):
-            if not profile.get("supports_message_name", True):
-                if original.get("name") is not None:
-                    report_loss(
-                        original["name"],
-                        "Chat profile cannot represent message names",
-                        path=f"$.messages[{index}].name",
+        result = []
+        decode = _plan(self.message_type).decode
+        envelope = _plan(
+            self.message_type,
+            delegated_paths=(("content",), ("tool_calls",), ("function_call",)),
+        ).decode
+        for index, original in enumerate(dictionary_views(messages)):
+            path = f"$.messages[{index}]"
+            if original.get("role") in ("tool", "function") and not input_capability(
+                original, "tool_result", profile, path=path
+            ):
+                continue
+            projected = original
+            if (
+                not parameters.get("_translated")
+                and isinstance(content := original.get("content"), list)
+                and not supports_content("image", profile)
+            ):
+                retained = [
+                    block
+                    for offset, block in enumerate(content)
+                    if not isinstance(block, dict)
+                    or block.get("type") != "image_url"
+                    or input_capability(block, "image", profile, path=f"{path}.content[{offset}]")
+                ]
+                if len(retained) != len(content):
+                    projected = envelope(original, path)
+                    if projected is _MISSING:
+                        continue
+                    projected["content"] = retained
+            if not parameters.get("_translated") and not supports_content("tool_use", profile):
+                for offset, call in enumerate(original.get("tool_calls") or []):
+                    input_capability(call, "tool_use", profile, path=f"{path}.tool_calls[{offset}]")
+                if original.get("function_call") is not None:
+                    input_capability(
+                        original["function_call"], "tool_use", profile, path=f"{path}.function_call"
                     )
+                if "tool_calls" in original or "function_call" in original:
+                    if projected is original:
+                        projected = envelope(original, path)
+                        if projected is _MISSING:
+                            continue
+                    projected.pop("tool_calls", None)
+                    projected.pop("function_call", None)
+            value = decode(projected, path)
+            if value is _MISSING:
+                continue
+            if original.get("name") is not None and not content_capability(
+                original["name"], "message_name", profile, path=f"{path}.name"
+            ):
                 value.pop("name", None)
             if value.get("role") == "assistant" and "reasoning_content" in original:
                 reasoning = original["reasoning_content"]
                 if not isinstance(reasoning, str):
                     raise MessageValidationError("reasoning_content must be a string")
-                if feedback_reasoning(profile, has_tool_calls=bool(value.get("tool_calls"))):
+                if input_reasoning(
+                    reasoning,
+                    profile,
+                    feedback=feedback_reasoning(
+                        profile, has_tool_calls=bool(value.get("tool_calls"))
+                    ),
+                    path=f"$.messages[{index}].reasoning_content",
+                ):
                     value["reasoning_content"] = reasoning
                 else:
-                    if reasoning:
-                        report_loss(
-                            reasoning,
-                            "profile excludes reasoning feedback from this message",
-                            path=f"$.messages[{index}].reasoning_content",
-                        )
                     value.pop("reasoning_content", None)
+            result.append(value)
         return result
 
     def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
@@ -117,7 +166,15 @@ class ChatCompletionsDecoder(BaseDecoder):
             raise ConfigurationError("reasoning_effort must be a string")
         body = request.get("extra_body")
         if body is not None and body.get("n") not in (None, 1):
-            raise UnsupportedCapabilityError("only one generated candidate is supported")
+            report_loss(
+                body["n"],
+                "multiple generated candidates are not supported",
+                path="$.extra_body.n",
+            )
+            body["n"] = 1
+        if request.get("n") not in (None, 1):
+            report_loss(request["n"], "multiple generated candidates are not supported", path="$.n")
+            request["n"] = 1
         return request
 
     body_container = "extra_body"
@@ -159,57 +216,60 @@ class ChatCompletionsDecoder(BaseDecoder):
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        name_supported = profile is None or profile.get("supports_message_name", True)
-        for index, message, feedback in message_feedback(coalesce_messages(messages), profile):
-            if message.get("name") is not None and not name_supported:
-                report_loss(
-                    message["name"],
-                    "Chat profile cannot represent message names",
-                    path=f"{getattr(message, 'origin_path', f'$.messages[{index}]')}.name",
-                )
+        pad_reasoning = (
+            profile is not None
+            and feedback_reasoning(profile, has_tool_calls=True)
+            and thinking_enabled(profile, parameters)
+        )
+        for index, message, feedback in message_feedback(messages, profile):
+            name_supported = message.get("name") is None or content_capability(
+                message["name"],
+                "message_name",
+                profile,
+                path=f"{getattr(message, 'origin_path', f'$.messages[{index}]')}.name",
+            )
             context_owner = source_protocol(message)
             content = []
+            tool_results = []
+            calls = []
+            reasoning = []
             for block in message["content"]:
                 if not input_content(block, profile, feedback=feedback):
                     continue
                 owner = block.get("protocol")
                 if (context_owner if owner is None else owner) != PROTOCOL:
                     block = foreign_block(block)
-                if block is not None:
-                    content.append(block)
-            tool_results = [b for b in content if b.get("type") == "tool_result"]
-            other = [b for b in content if b.get("type") != "tool_result"]
-            if other or not tool_results:
+                if block is None:
+                    continue
+                kind = block["type"]
+                if kind == "tool_result":
+                    tool_results.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": block["tool_use_id"],
+                            "content": tool_text(block, profile),
+                        }
+                    )
+                    continue
+                content.append(block)
+                if kind == "tool_use":
+                    calls.append(chat_call(block))
+                elif kind == "thinking":
+                    reasoning.append(block["thinking"] or "\n".join(block.get("summary", ())))
+            if content or not tool_results:
                 value = {
                     **select(message, "role", "name"),
-                    "content": render_content(other, role=message["role"]),
+                    "content": render_content(content, role=message["role"]),
                 }
                 if not name_supported:
                     value.pop("name", None)
-                calls = [chat_call(b) for b in other if b.get("type") == "tool_use"]
                 if calls:
                     value["tool_calls"] = calls
-                reasoning = "".join(
-                    b["thinking"] or "\n".join(b.get("summary", ()))
-                    for b in other
-                    if b.get("type") == "thinking"
-                )
-                if reasoning:
-                    value["reasoning_content"] = reasoning
+                reasoning_text = "".join(reasoning)
+                if reasoning_text or (pad_reasoning and calls and message["role"] == "assistant"):
+                    value["reasoning_content"] = reasoning_text
                 result.append(value)
-            result.extend(
-                {
-                    "role": "tool",
-                    "tool_call_id": b["tool_use_id"],
-                    "content": tool_text(b, profile),
-                }
-                for b in tool_results
-            )
-        if profile is not None and feedback_reasoning(profile, has_tool_calls=True):
-            if thinking_enabled(profile, parameters):
-                for value in result:
-                    if value.get("role") == "assistant" and value.get("tool_calls"):
-                        value.setdefault("reasoning_content", "")
+            result.extend(tool_results)
         return result
 
     def _tools(

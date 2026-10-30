@@ -92,14 +92,14 @@ Right | Left
 
 ## 4. 缓存值具体保存什么
 
-真实的 `_FilterPlan` 没有 `fields`、`messages`、`output` 等属性，只有四个槽位：
+真实的 `_FilterPlan` 没有 `fields`、`messages`、`output` 等属性，只有五个槽位：
 
 ```python
 class _FilterPlan:
-    __slots__ = ("apply", "project", "score", "literals")
+    __slots__ = ("apply", "project", "decode", "score", "literals")
 ```
 
-前三个槽位保存可调用对象，`literals` 保存结构节点已声明的 Literal 判别字段及其常量。
+前四个槽位保存可调用对象，`literals` 保存结构节点已声明的 Literal 判别字段及其常量。
 字段表、子计划和候选列表由函数闭包引用。
 闭包是函数随身保留的外部变量；本实现保留的是编译期间确定的类型规则。
 
@@ -107,6 +107,7 @@ class _FilterPlan:
 | --- | --- | --- |
 | `apply` | `plan.apply(value)` | 过滤协议字段，为可变应用 payload 建立独立副本，内置不可变标量直接使用。 |
 | `project` | `plan.project(value)` | 过滤协议字段，借用应用 payload，供只读验证。 |
+| `decode` | `plan.decode(value, path)` | 为 Decoder 建立独立副本，无法匹配的 Union 值按路径记录语义损失并移除。 |
 | `score` | `plan.score(value)` | 根据当前值计算某个 Union 候选的匹配分数。 |
 | `literals` | `plan.literals` | 结构类型的 Literal 字段规则；其他节点为空字典，供编译 Union 候选索引使用。 |
 
@@ -119,7 +120,7 @@ class _FilterPlan:
 | Union | `choices`：按声明顺序排列的候选计划元组；`routes`：Literal 字段名、未限制该字段的候选位图及常量到候选位图的索引。 |
 | Literal | 声明中的常量参数，用于评分。 |
 | 普通类型 | 判断所需的类型对象。 |
-| 开放字典、Any 等应用 payload | `apply` 使用 `_copy_payload`；`project` 使用 `_borrow_payload`。 |
+| 开放字典、Any 等应用 payload | `apply` 与 `decode` 使用 `_copy_payload`；`project` 使用 `_borrow_payload`。 |
 
 `value` 始终是上述函数的调用参数。函数执行结束后，不会把这个参数追加到计划中。
 `children`、`choices` 等也不会因某次请求增加了字段而改变。
@@ -203,6 +204,9 @@ cache entry:
     project: structured_projection 函数
       closure.children: 同一份字段子计划字典
 
+    decode: decode_structure 函数
+      closure.children: 同一份字段子计划字典
+
     score: structured_score 函数
       closure.children: role / content / metadata 的子计划映射
       closure.literal_fields: [("role", ("user",))]
@@ -274,13 +278,16 @@ supported(second, Message)
 
 1. 检查当前值里已出现的 Literal 判别字段；与该候选声明不一致时，得分为 -1。
 2. 其余候选按“当前字典与声明字段的交集大小 + 1”评分。
-3. 取最高分；同分保留声明在前的候选。全部候选不适配时抛出 UnsupportedCapabilityError。
+3. 取最高分；同分保留声明在前的候选。全部候选不适配时，默认抛出 MessageValidationError。
+
+Encoder 使用默认校验规则。Decoder 使用允许记录损失的过滤模式：无法表示的 Union 值记录为
+语义损失并移除，继续保留同级可表达字段，完成 draft 后交给统一策略处理。
 
 剪枝保留候选的原声明顺序，最高分和同分取首项的语义不变；获胜候选也不再额外评分一次。
 计划没有保存“上一次选中了哪个候选”。None、单候选等分支按当前实现直接处理，
 最终合法性仍由 TypeAdapter 验证。
 
-## 7. apply 与 project 为什么共用计划却有不同复制行为
+## 7. apply、project 与 decode 的复制和损失处理
 
 对于第二条数据的 `metadata`：
 
@@ -297,6 +304,11 @@ plan.project(second)
 结构字段的筛选规则相同，区别在于应用 payload 是否需要独立修改。
 `project` 的调用方必须只读使用借用值；当前调用方是输入验证路径。
 测试覆盖了五家官方 SDK 的 `validate_python` 和 `dump_json` 不修改这些投影输入。
+
+`decode(value, path)` 与 `apply` 一样隔离可变 payload，并在遍历中传递原生路径；
+遇到无法匹配的 Union 值时记录损失、移除该值并继续处理其余字段或元素。
+`apply` / `project` 对同样的结构不匹配直接抛出 `MessageValidationError`。
+三种函数使用同一份类型规则，损失集合仍属于当前请求，不存入缓存。
 
 执行过滤后仍需要校验：字段缺失、字段类型、字面量及惰性 Iterable 的元素合法性不能只靠
 过滤器的分支评分证明。TypeAdapter 仍逐次运行，`dump_json` 用来触发惰性元素验证。
@@ -332,7 +344,7 @@ Anthropic 的开放 `input_schema` 同样委派后一次捕获，避免先按 SD
 | 8 | 每个事件经过 Encoder、StreamState、Decoder，再转换完整结果。 | 本计划缓存不替代返回路径，也不缓存响应结果。 |
 
 第一次请求也可能在步骤2编译、步骤5就命中缓存；“冷请求”不代表它内部所有计划查询都未命中。
-Encoder / Decoder 对每批消息和工具只解析一次计划并复用其 apply / project 函数，
+Encoder / Decoder 对每批消息和工具解析计划并复用其 project / decode 函数，
 不会为同一批中的每条数据重复创建缓存键。每条消息仍独立过滤、验证和执行必要的所有权复制。
 
 源码入口见 [generate](../../src/my_llm/my_llm.py)、
@@ -456,7 +468,13 @@ print("second:", second_output)
 print("after first:", first_info)
 print("after second:", second_info)
 print("same plan:", compiled_cache._plan(Message) is plan)
-print("root callbacks:", plan.apply.__name__, plan.project.__name__, plan.score.__name__)
+print(
+    "root callbacks:",
+    plan.apply.__name__,
+    plan.project.__name__,
+    plan.decode.__name__,
+    plan.score.__name__,
+)
 ```
 
 在单独的 Python 进程中运行时，关键输出如下：
@@ -465,7 +483,7 @@ print("root callbacks:", plan.apply.__name__, plan.project.__name__, plan.score.
 after first: CacheInfo(hits=0, misses=1, maxsize=512, currsize=1)
 after second: CacheInfo(hits=1, misses=1, maxsize=512, currsize=1)
 same plan: True
-root callbacks: structured_copy structured_projection structured_score
+root callbacks: structured_copy structured_projection decode_structure structured_score
 ```
 
 两次输出包含各自文本与 metadata；缓存项数没有因 R1 / R2 或字符串 / 列表变化增加。

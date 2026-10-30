@@ -43,8 +43,9 @@ Profile 的 `@set_attr` 在初始化时检查并绑定字段名；Parameter 的 
 已有同一身份的 wrapper 可复用，不会重新赋值；不能把已绑定 wrapper 换到另一个字段。
 `comment` 可用于展示说明。Parameter 与 Config 的 default_value 都支持 None 和 omit。
 Attribute 的 default_value 按声明的类型校验，不参与各层配置合并；通过 `.default_value` 读取其数据。
-`Parameter(supports=False, ...)` 会将 default_value 强制设为 omit，并停止自动读取或写入（包括块起始和最终快照中的可见字段）；
-原生请求中手动提供的字段仍保留，显式请求不受支持的 reasoning 时会报错。
+`Parameter(supports=False, ...)` 会将 default_value 强制设为 omit，并停止自动读取或写入（包括块起始和最终快照中的可见字段）。
+请求使用配置声明不支持的字段时，由 Decoder 记录语义损失并交给 raise / ignore / hook 策略处理；
+原生请求中显式提供的对应字段同样受支持状态约束。
 
 ProviderProfile、ModelProfile、ProtocolDefaults 共享 `Profile` 基类的三个成员获取方法：
 
@@ -165,14 +166,14 @@ Chat 的 reasoning_content 是兼容服务扩展；Responses、Gemini 仍按标�
 | `api_key` | Provider input Parameter；配置连接密钥的传递位置，default_value 默认为 omit，不出现在 repr |
 | `timeout` / `max_retries` | Provider Config；正秒数 / 非负整数，默认使用 SDK 配置 |
 | `supports_stream` | Provider Config；默认 True，False/omit 不支持，因为两种返回模式均使用上游流 |
-| `usage_mode` | Provider Config；默认 none；可选值由协议 Decoder.usage_modes 声明 |
+| `usage_mode` | Provider Config；默认 none；可选值由协议 Decoder.usage_modes 声明，不兼容的非空模式在 Decoder 记录语义损失 |
 | `models` | Provider Attribute[list[ModelProfile]]；可选模型目录，生成仍须显式选择模型 |
 | `model` | Model Attribute[str]；必填非空模型 ID；解析后作为请求模型名使用 |
 | `max_context_window` | Model Attribute[int]；默认 256000，仅描述性整数元数据，不截断输入或限制输出 |
-| `reasoning_enable.supports` | Parameter；默认 True，替代 supports_reasoning |
-| `supports_function_calling` | Model Config；默认 False，发送非空 tools 前开启 |
+| `reasoning_enable.supports` | Parameter；默认 True；False 时请求开启思考及所有思考内容均记录为不支持的语义损失 |
+| `supports_function_calling` | Model Config；默认 False；不支持时工具定义、调用和结果记录语义损失 |
 | `supports_vision` | Model Config；默认 False，不支持时翻译会移除图片并标记语义损失，默认抛出 SemanticLossError；包括工具结果中的图片 |
-| `supports_message_name` | Model Config；默认 True，False/omit 在 Chat 请求移除 name |
+| `supports_message_name` | Model Config；默认 True，False/omit 时移除消息 name 并记录语义损失 |
 
 `ModelProfile.supported_roles` 是固定类属性。
 Provider 的 `add_models(ModelProfile | list[ModelProfile])` 按 ID 更新并保留顺序；
@@ -180,7 +181,7 @@ Provider 的 `add_models(ModelProfile | list[ModelProfile])` 按 ID 更新并保
 模型字符串不会触发 catalogue 查找。
 
 `stdio_protocol` 属于 MyLLM，决定输入输出协议。客户端由 MyLLM 延迟创建、复用和关闭，响应流按请求关闭。
-Ollama SDK 没有原生 max_retries 选项，仅接受默认值 None / omit / 0，正数在构造时拒绝。
+Ollama SDK 没有原生 max_retries 选项，仅接受默认值 None / omit / 0，正数在 Decoder 准备请求时记录语义损失。
 
 `api_key` 在创建 SDK 客户端时应用，其路径指向连接参数组：`$.api_key` 使用 SDK 密钥参数，
 `$.extra_headers.<头名>` 使用指定认证头。Decoder 将请求头映射到 SDK 的 default_headers、
@@ -230,8 +231,9 @@ generate 的 extra_headers 继续按现有规则覆盖；Ollama 的请求头仍�
 | `reasoning_effort_mapping` | Config；none/low/medium/high/xhigh/max 的映射，映射项 None/omit 禁用对应级别 |
 | `feedback_reasoning_content` | Config[Literal["when_tool_calls", "always", "none"]]；所有内置协议默认 always；回传工具调用消息中的思考、全部历史思考或不回传；omit 等同 none |
 
-回传策略只处理历史输入，模型本次生成思考的开关和响应输出分别由对应 Parameter 控制。
-被策略排除的思考记录为语义损失，交给现有 raise / ignore / hook 策略处理。
+回传策略只决定哪些历史思考进入请求，被策略排除的思考不记录语义损失。
+`reasoning_enable.supports=False` 表示模型不支持思考，所有思考内容均记录为不支持的语义损失，
+与回传策略无关。模型本次生成思考的开关和响应输出分别由对应 Parameter 控制。
 `when_tool_calls` 按完整 assistant 消息判断，包括 Responses 拆开的 reasoning / message / function_call 项；
 保留下来的原生签名和加密内容仍须满足目标协议的表达约束。
 
@@ -240,7 +242,7 @@ max_tokens 声明的 default_value=omit 时不制造 token 参数；Anthropic �
 路径不能覆盖 model、messages、tools 等库管理结构。
 
 reasoning_enable=omit 只关闭该自动路由，仍可独立使用 reasoning_effort；
-reasoning_enable.supports=False 才表示模型不支持 reasoning。
+reasoning_enable.supports=False 才表示模型不支持 reasoning，请求开启思考时同样记录语义损失。
 开启 reasoning 时才应用 reasoning_enable；支持强度时，映射结果写入 reasoning_effort 的路径，覆盖该参数的默认值。
 各协议默认值由 Codec 声明：Chat 使用 medium，Responses 使用 effort=medium、summary=detailed；
 Anthropic 使用 enabled 与 budget_tokens=1024，Gemini 使用 include_thoughts=True、thinking_budget=-1，Ollama 使用 True。
@@ -371,7 +373,7 @@ Encoder / Decoder 只读取并构造标准协议及 Profile 明确声明的已�
 跨协议来回翻译不保证无损，详见[翻译字段边界](../design/translation-boundaries.md)。
 
 标准签名、redacted_thinking、encrypted_content 按对应协议明确处理，不能转换成其他协议的原生签名，
-也不通过隐藏记录保存供后续恢复。不能表达的媒体或会改变工具约束的已知 SDK 限制会在请求前报错。
+也不通过隐藏记录保存供后续恢复。不能表达的媒体或会改变工具约束的已知 SDK 限制会在 Decoder 记录语义损失。
 audio / file / 文档与用户 metadata 不在支持集合，编码时静默丢弃。图片不能变为文本引用；
 目标无法表达支持值时进入默认 raise、ignore 或双向 hook，见[语义损失指南](../guides/semantic-loss.md)。
 

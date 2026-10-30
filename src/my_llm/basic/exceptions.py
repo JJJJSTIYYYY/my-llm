@@ -21,10 +21,6 @@ class UnsupportedProviderError(ConfigurationError):
     """The selected protocol or provider cannot be invoked."""
 
 
-class UnsupportedCapabilityError(ConfigurationError):
-    """A model or target protocol cannot support the requested capability or content."""
-
-
 class MessageValidationError(ConfigurationError):
     """A message/tool is invalid or cannot be converted to the selected API."""
 

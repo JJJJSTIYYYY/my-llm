@@ -6,34 +6,21 @@ import json
 from typing import Any
 
 from my_llm.basic.data import _MISSING, dictionary_views
-from my_llm.basic.exceptions import MessageValidationError, UnsupportedCapabilityError
+from my_llm.basic.exceptions import MessageValidationError
+from my_llm.basic.semantic_loss import report_loss
 
 FUNCTIONS = "functions"
 
 
-def coalesce_messages(messages: list) -> list[dict]:
-    """Combine consecutive Responses fragments from one assistant history turn."""
-    result = []
-    combined = False
+def split_system_messages(messages: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Separate instructions from conversation history in one pass."""
+    system, history = [], []
     for message in messages:
-        if (
-            result
-            and message.get("coalesce")
-            and result[-1].get("coalesce")
-            and message.get("role") == result[-1].get("role") == "assistant"
-            and source_protocol(message) == source_protocol(result[-1])
-        ):
-            if not combined:
-                result[-1] = {
-                    **select(result[-1], "protocol", "coalesce", "role", "name", "item"),
-                    "content": list(result[-1]["content"]),
-                }
-                combined = True
-            result[-1]["content"].extend(message["content"])
+        if message.get("role") in ("system", "developer"):
+            system.append(message)
         else:
-            result.append(message)
-            combined = False
-    return result
+            history.append(message)
+    return system, history
 
 
 def blocks(content: Any) -> list[dict]:
@@ -189,9 +176,8 @@ def decode_functions(tools, wrap) -> list[dict]:
     for tool in dictionary_views(tools):
         functions = tool.get(FUNCTIONS)
         if functions is None:
-            raise UnsupportedCapabilityError(
-                "intermediate tool requires recognized function definitions"
-            )
+            report_loss(tool, "target does not support this tool definition")
+            continue
         result.extend(wrap(functions))
     return result
 

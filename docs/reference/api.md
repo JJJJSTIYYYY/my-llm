@@ -68,7 +68,7 @@ async def session():
 | `reasoning_effort` | `"none"` | `none` / `low` / `medium` / `high` / `xhigh` / `max`，受模型支持状态和配置映射约束 |
 | `extra_headers` | `None` | 请求头字典，按键覆盖配置默认值；字典中的 `omit` 删除对应键 |
 | `extra_body` | `None` | 协议原生生成参数字典，按键覆盖配置默认值；不能覆盖模型、消息、工具等受管理字段 |
-| `previous_response_id` | `None` | 非空服务端历史 ID，仅用于 `openai_responses` 上游；`None` / `omit` 不发送 |
+| `previous_response_id` | `None` | 非空服务端历史 ID，用于 `openai_responses` 上游；其他协议记录不支持的语义损失并省略；`None` / `omit` 不发送 |
 
 实例的生成方法不接收 provider、model 或连接选项。输入历史和可变选项在协程被 `await` 时隔离，
 调用不会自动更新业务历史。工具由调用者执行。
@@ -299,7 +299,7 @@ Parameter 覆盖时替换完整声明。Config 字典按键合并，嵌套值整
 | `timeout` | `Config[float]` | 正数，单位为秒 |
 | `max_retries` | `Config[int]` | 非负重试次数；Ollama 仅接受未设置或 `0` |
 | `supports_stream` | `Config[bool]` | 生成要求支持流，默认继承协议的 `True` |
-| `usage_mode` | `Config[str]` | 协议支持的用量模式，内置协议默认 `"none"` |
+| `usage_mode` | `Config[str]` | 内置协议默认 `"none"`；协议不支持的非空模式在 Decoder 记录语义损失 |
 | `models` | `Attribute[list[ModelProfile]]` | 可选模型目录，不自动选择生成模型 |
 
 模型目录方法直接修改当前 Provider 的目录，不影响已经创建的 MyLLM：
@@ -336,10 +336,10 @@ Provider 与 Model 共享以下覆盖项，均默认 `None`，表示继承：
 | `extra_headers` / `extra_body` | `Config[dict]` | 默认请求头与协议原生生成选项 |
 | `max_tokens` | 输入 `Parameter[int]` | 输出 token 上限 |
 | `content` / `reasoning_content` | 输出 `Parameter` | 可见文本与思考字段 |
-| `reasoning_enable` | 输入 `Parameter` | 开启思考的参数；`supports=False` 表示不支持 reasoning |
+| `reasoning_enable` | 输入 `Parameter` | 开启思考的参数；`supports=False` 表示不支持 reasoning，请求开启思考及已有思考内容均记录语义损失 |
 | `reasoning_effort` | 输入 `Parameter` | 思考强度参数及支持状态 |
 | `reasoning_effort_mapping` | `Config[dict]` | 公共强度到原生值的映射；值为 `None` / `omit` 时该级别不可用 |
-| `feedback_reasoning_content` | `Config[Literal["when_tool_calls", "always", "none"]]` | 内置协议默认 `always`；仅回传工具调用消息中的思考、全部历史思考或不回传；`omit` 等同 `none`，移除已有思考会记录语义损失 |
+| `feedback_reasoning_content` | `Config[Literal["when_tool_calls", "always", "none"]]` | 内置协议默认 `always`；仅回传工具调用消息中的思考、全部历史思考或不回传；`omit` 等同 `none`，策略排除的思考不记录损失 |
 
 `ReasoningEffort` 是 `Literal["none", "low", "medium", "high", "xhigh", "max"]` 类型别名。
 可接受的强度还取决于具体模型及其配置。完整字段配置示例见[配置指南](configuration.md)。
@@ -430,6 +430,7 @@ async def add_round_trip(provider, model_id):
 重复调用 ID、重复结果、未知结果 ID 和缺少结果均会报错。
 Gemini / Ollama 的无 ID 调用与结果须保持历史顺序与名称对应。
 `previous_response_id` 用于 Responses 上游时，可仅发送新增消息或结果，并引用服务端已有的调用。
+其他协议收到合法的非空 ID 时记录语义损失并省略；空字符串或错误类型仍属于无效参数。
 
 ## 语义损失与 usage
 
@@ -543,8 +544,9 @@ BaseTransport 的 `create_client(parameters)` 返回调用者拥有的 SDK 客�
 `await close_client(client)` 释放客户端；`upstream(client, request)` 提供异步事件上下文。
 退出响应上下文后再关闭客户端。
 
-`PreparedOptions` 的字段为 `tokens`、`headers`、`body`、`effort`、`explicit_tokens=False`，
-分别表示已解析 token 控制、请求头、原生选项、映射后的强度或 `None`，以及是否显式传入 token 控制。
+`PreparedOptions` 的字段为 `tokens`、`headers`、`body`、`effort`、`explicit_tokens=False`、`losses=()`，
+分别表示已解析 token 控制、请求头、原生选项、映射后的强度或 `None`、是否显式传入 token 控制，
+以及待 Decoder 完成请求草稿后统一处理的不支持控制项。
 其构造参数可按字段顺序或名称传入；嵌套字典按只读使用。
 
 ## 异常
@@ -554,8 +556,7 @@ BaseTransport 的 `create_client(parameters)` 返回调用者拥有的 SDK 客�
 | `MyLLMError` | `Exception` | 库异常基类 |
 | `ConfigurationError` | `MyLLMError`、`ValueError` | 无效配置、路径或生成选项 |
 | `UnsupportedProviderError` | `ConfigurationError` | 协议不可用或不能用于生成 |
-| `UnsupportedCapabilityError` | `ConfigurationError` | 生成控制或 SDK 配置能力不支持 |
-| `SemanticLossError` | `MyLLMError` | 固定支持字段无法表达；包含完整 draft、损失集合与方向上下文 |
+| `SemanticLossError` | `MyLLMError` | 已支持字段无法表达或配置声明不支持；包含完整 draft、损失集合与方向上下文，由语义损失策略处理 |
 | `MessageValidationError` | `ConfigurationError` | 输入格式、协议推断或工具调用与结果关联错误 |
 | `StreamError` | `MyLLMError` | 流式或非流式响应失败 |
 | `IncompleteStreamError` | `StreamError` | 响应未完整结束 |

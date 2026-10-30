@@ -17,6 +17,14 @@ JSON Schema 内应用属性不按这些名称删除。
 单项的 `.origin_value` 引用原始来源对象，不复制或遍历其中未支持的字段，并提供`$.messages[...].content[...]` 形式的 `.origin_path` 与原因。
 decoder 完整翻译后统一报出本批损失，请求在发送前处理，响应在交付前处理。
 
+配置声明不支持的字段与生成控制也由 decoder 记录损失，原因标记为不支持，沿用相同策略。
+`supports_stream` 声明项目调用能力，禁用时仍抛出 `UnsupportedProviderError`；非法输入结构使用
+`MessageValidationError`，无效配置或参数值使用 `ConfigurationError`。
+
+`reasoning_enable.supports=False` 时，所有思考内容都记录为不支持的损失。
+`feedback_reasoning_content` 只决定回传全部历史思考、工具调用消息中的思考或不回传，
+因回传策略排除的内容不记录损失；例如 `when_tool_calls` 会静默跳过没有工具调用的历史思考。
+
 创建 `MyLLM` 时选择策略，也可以在实例上二次设置：
 
 ```python

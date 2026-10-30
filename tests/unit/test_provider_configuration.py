@@ -9,6 +9,7 @@ from my_llm import (
     ModelProfile,
     MyLLM,
     ProviderProfile,
+    SemanticLossError,
     UnsupportedProviderError,
     omit,
 )
@@ -171,23 +172,46 @@ def test_bad_provider_configuration(field, value):
 
 
 @pytest.mark.parametrize(
-    "protocol,usage", [("openai_responses", "stream_options"), ("openai_chat", "native")]
+    "protocol,usage",
+    [
+        ("openai_responses", "stream_options"),
+        ("openai_chat", "native"),
+        ("openai_chat", "custom_counter"),
+    ],
 )
-def test_incompatible_usage_modes(protocol, usage):
-    with pytest.raises(ConfigurationError):
-        MyLLM(
-            provider=ProviderProfile(
-                protocol=Config(default_value=protocol), usage_mode=config(usage)
-            ),
-            model=ModelProfile(model=Attribute(default_value="demo")),
-        )
+@pytest.mark.parametrize("policy", ["raise", "ignore", "hook"])
+def test_incompatible_usage_modes_are_decoder_losses(protocol, usage, policy):
+    observed = []
 
+    def hook(draft, losses, context):
+        assert [(loss.origin_path, loss.origin_value) for loss in losses] == [
+            ("$.usage_mode", usage)
+        ]
+        assert all("support" in loss.reason for loss in losses)
+        assert context.target_protocol == protocol
+        assert "complete tail" in str(draft)
+        draft["handled_usage_mode"] = True
+        observed.append(draft)
 
-def test_unrecognized_usage_mode_is_rejected_by_selected_transport():
-    with pytest.raises(ConfigurationError, match="usage_mode"):
-        MyLLM(
-            provider=ProviderProfile(
-                protocol=Config(default_value="openai_chat"), usage_mode=config("invalid")
-            ),
-            model=ModelProfile(model=Attribute(default_value="demo")),
-        )
+    instance = MyLLM(
+        provider=ProviderProfile(protocol=Config(default_value=protocol), usage_mode=config(usage)),
+        model=ModelProfile(model=Attribute(default_value="demo")),
+        semantic_loss_protocol=policy,
+        input_semantic_loss_hook=hook,
+    )
+    inputs = instance.codec.encode(
+        [{"role": "user", "content": "complete tail"}], input_format="openai_chat"
+    )
+    if policy == "raise":
+        with pytest.raises(SemanticLossError, match="usage_mode") as caught:
+            instance.codec.request(inputs, instance.resolved_profile)
+        request = caught.value.draft
+    else:
+        request = instance.codec.request(inputs, instance.resolved_profile)
+        if policy == "hook":
+            assert observed[0] is request
+            assert request["handled_usage_mode"] is True
+        else:
+            assert observed == []
+    assert "complete tail" in str(request)
+    assert "stream_options" not in request

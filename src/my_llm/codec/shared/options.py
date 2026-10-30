@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from my_llm.basic.data import _MISSING, plain, read
-from my_llm.basic.exceptions import ConfigurationError, UnsupportedCapabilityError
+from my_llm.basic.exceptions import ConfigurationError
+from my_llm.basic.semantic_loss import SemanticLossItem
 from my_llm.profile.configuration import EFFORTS, merge_dicts
 from my_llm.profile.paths import path_keys
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
@@ -22,6 +23,7 @@ class PreparedOptions:
         body: Native generation options after merging call and profile values.
         effort: Mapped native reasoning effort, or None when inactive.
         explicit_tokens: Whether the call supplied max_tokens explicitly.
+        losses: Unsupported controls to report with the completed decoder draft.
 
     Frozen dataclass returned by BaseDecoder.validate_parameters. Treat its
     nested dictionaries as read-only when passing options between hooks.
@@ -32,6 +34,7 @@ class PreparedOptions:
     body: dict
     effort: str | None
     explicit_tokens: bool = False
+    losses: tuple[SemanticLossItem, ...] = ()
 
 
 def path_value(value: Any, path: str, default: Any = None) -> Any:
@@ -136,18 +139,43 @@ def resolve_options(
         raise ConfigurationError("reasoning must be a bool")
     if reasoning is False and reasoning_effort != "none":
         raise ConfigurationError("reasoning=False conflicts with a non-none effort")
+    losses = []
     effort = "medium" if reasoning is True and reasoning_effort == "none" else reasoning_effort
     if effort != "none":
         enable = profile.parameters.get("reasoning_enable")
+        effort_binding = profile.parameters.get("reasoning_effort")
         if isinstance(enable, Parameter) and not enable.supports:
-            raise UnsupportedCapabilityError("model does not support reasoning")
-        if profile.parameter("reasoning_effort", "input") is not None:
-            mapping = profile.get("reasoning_effort_mapping")
-            effort = mapping.get(effort) if mapping is not None else None
-            if not isinstance(effort, str) or not effort:
-                raise UnsupportedCapabilityError(
-                    f"model does not support effort {reasoning_effort!r}"
+            losses.append(
+                SemanticLossItem(
+                    reasoning if reasoning_effort == "none" else reasoning_effort,
+                    "$.reasoning" if reasoning_effort == "none" else "$.reasoning_effort",
+                    "model does not support reasoning",
                 )
+            )
+            effort = "none"
+        elif isinstance(effort_binding, Parameter) and not effort_binding.supports:
+            if reasoning_effort != "none":
+                losses.append(
+                    SemanticLossItem(
+                        reasoning_effort,
+                        "$.reasoning_effort",
+                        "model does not support reasoning effort",
+                    )
+                )
+        elif profile.parameter("reasoning_effort", "input") is not None:
+            mapping = profile.get("reasoning_effort_mapping")
+            mapped = mapping.get(effort) if mapping is not None else None
+            if not isinstance(mapped, str) or not mapped:
+                losses.append(
+                    SemanticLossItem(
+                        reasoning if reasoning_effort == "none" else reasoning_effort,
+                        "$.reasoning" if reasoning_effort == "none" else "$.reasoning_effort",
+                        f"model does not support effort {effort!r}",
+                    )
+                )
+                effort = "none"
+            else:
+                effort = mapped
     if max_tokens is _MISSING:
         parameter = profile.parameter("max_tokens", "input")
         tokens = parameter.default_value if parameter is not None else omit
@@ -155,6 +183,12 @@ def resolve_options(
         tokens = max_tokens
     if not isinstance(tokens, Omit):
         validate_max_tokens(tokens)
+        binding = profile.parameters.get("max_tokens")
+        if isinstance(binding, Parameter) and not binding.supports:
+            losses.append(
+                SemanticLossItem(tokens, "$.max_tokens", "model does not support max_tokens")
+            )
+            tokens = omit
     headers = merge_dicts(profile.get("extra_headers", {}), extra_headers)
     body = merge_dicts(profile.get("extra_body", {}), extra_body, preserve_omit=True)
     return PreparedOptions(
@@ -163,6 +197,7 @@ def resolve_options(
         merge_parameters(body),
         None if effort == "none" else effort,
         max_tokens is not _MISSING,
+        tuple(losses),
     )
 
 

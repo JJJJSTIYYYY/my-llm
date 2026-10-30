@@ -236,7 +236,9 @@ def test_decoder_validates_filtered_native_message_structure(profile_factory):
     }
     before = deepcopy(request)
     with pytest.raises(MessageValidationError):
-        ChatCompletionsDecoder().native_request(request, profile_factory())
+        ChatCompletionsDecoder().native_request(
+            request, profile_factory(supports_function_calling=config(True))
+        )
     assert request == before
 
 

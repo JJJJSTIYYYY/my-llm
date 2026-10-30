@@ -11,7 +11,7 @@ from my_llm import (
     ModelProfile,
     Parameter,
     ProviderProfile,
-    UnsupportedCapabilityError,
+    SemanticLossError,
     omit,
     resolve_profiles,
 )
@@ -194,8 +194,10 @@ def test_unsupported_parameter_forces_omit_before_profile_type_validation(value)
     assert profile.values["max_tokens"] is omit
     assert profile.parameter("max_tokens") is None
     assert "max_tokens" not in dict(profile.request_parameters)
-    request = encode_request(profile, max_tokens=100, extra_body={"max_completion_tokens": 12})
-    assert request["extra_body"]["max_completion_tokens"] == 12
+    with pytest.raises(SemanticLossError, match="support") as caught:
+        encode_request(profile, max_tokens=100, extra_body={"max_completion_tokens": 12})
+    request = caught.value.draft
+    assert "max_completion_tokens" not in request.get("extra_body", {})
     assert "max_completion_tokens" not in request
 
 
@@ -210,7 +212,7 @@ def test_reasoning_capability_is_owned_by_parameter(protocol):
     assert profile.parameters["reasoning_enable"].default_value is omit
     assert "supports_reasoning" not in profile.values
     assert "supports_reasoning_effort" not in profile.values
-    with pytest.raises(UnsupportedCapabilityError, match="reasoning"):
+    with pytest.raises(SemanticLossError, match="reasoning"):
         encode_request(profile, reasoning=True)
     enabled = replace(model, reasoning_enable=parameter("reasoning_enable", protocol=protocol))
     profile = resolve_profiles(ProviderProfile(protocol=Config(default_value=protocol)), enabled)
@@ -284,7 +286,7 @@ def test_unsupported_output_parameter_is_preserved_by_encoder_and_lost_in_decode
     )
     from my_llm import SemanticLossError
 
-    with pytest.raises(SemanticLossError, match="profile disables supported"):
+    with pytest.raises(SemanticLossError, match="model does not support"):
         codec.decoder.chunks(
             [{"type": "delta", "field": kind, "value": "disabled"}],
             semantic_profile=profile,
@@ -322,7 +324,7 @@ def test_anthropic_initial_block_cannot_restore_unsupported_output(name, kind):
     assert result.get(kind, "") == "disabled"
     from my_llm import SemanticLossError
 
-    with pytest.raises(SemanticLossError, match="profile disables supported"):
+    with pytest.raises(SemanticLossError, match="model does not support"):
         MyCodec().result(state.messages(), target_format="anthropic", semantic_profile=profile)
     if kind == "thinking":
         assert result["signature"] == "native-signature"
@@ -385,7 +387,7 @@ def test_responses_final_snapshot_cannot_restore_unsupported_output(name):
     assert reasoning["summary"] == ["thought"]
     from my_llm import SemanticLossError
 
-    with pytest.raises(SemanticLossError, match="profile disables supported"):
+    with pytest.raises(SemanticLossError, match="model does not support"):
         MyCodec().result(
             state.messages(), target_format="openai_responses", semantic_profile=profile
         )

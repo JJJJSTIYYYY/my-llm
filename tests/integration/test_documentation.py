@@ -58,8 +58,18 @@ def test_offline_request_pipeline_example():
     assert prepared["request"]["model"] == "example-model"
 
 
-@pytest.mark.parametrize("stdio", ["openai_chat", "openai_responses", "anthropic", "middleware"])
-@pytest.mark.parametrize("case", ["text_collected", "text_stream", "tool_roundtrip"])
+@pytest.mark.parametrize(
+    ("stdio", "case"),
+    [
+        (stdio, case)
+        for stdio in ("openai_chat", "openai_responses", "anthropic", "middleware")
+        for case in ("text_collected", "text_stream", "tool_roundtrip")
+    ]
+    + [
+        ("middleware", case)
+        for case in ("capability_losses", "feedback_none", "feedback_when_tool_calls")
+    ],
+)
 async def test_sensenova_example_scenarios_with_local_sdk(monkeypatch, stdio, case):
     import runpy
 
@@ -107,7 +117,17 @@ async def test_sensenova_example_scenarios_with_local_sdk(monkeypatch, stdio, ca
         ),
         stdio_protocol=stdio,
     ) as llm:
-        result = await example["scenario"](llm, stdio, case)
+        if case in example["POLICY_CASES"]:
+            result = await example["policy_scenario"](
+                "openai_chat", "local-example", "local-example-key", case
+            )
+            assert all("POLICY_" not in json.dumps(request) for request in requests)
+            if case == "capability_losses":
+                assert result["input_losses"] >= 4
+            else:
+                assert result["input_losses"] == 0
+        else:
+            result = await example["scenario"](llm, stdio, case)
     assert result["requests"] == len(requests) == (2 if case == "tool_roundtrip" else 1)
     assert result["text"] == ("42" if case == "tool_roundtrip" else "SENSENOVA_OK")
     assert len(clients) == 1 and clients[0].is_closed()
@@ -153,6 +173,7 @@ async def test_sensenova_retry_preserves_passed_rows_and_failure_history(
             model="local-example",
             upstream=["openai_chat"],
             stdio=["middleware"],
+            case=None,
             report=report,
             retry_failed=True,
             request_interval=0,

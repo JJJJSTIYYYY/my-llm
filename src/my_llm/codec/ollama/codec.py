@@ -20,7 +20,7 @@ class OllamaCodec(BaseCodec):
     __slots__ = ("encoder", "decoder", "transport", "_defaults")
     protocol_or_api_style = "ollama"
     _DEFAULTS = ProtocolDefaults(
-        replay_reasoning_content_when_tool_calls=Config(default_value=True),
+        feedback_reasoning_content=Config(default_value="always"),
         api_key=Parameter(
             path="$.extra_headers.Authorization",
             default_value=omit,

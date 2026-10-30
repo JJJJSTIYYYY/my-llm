@@ -107,6 +107,8 @@ decoder 把无法表达的支持值记为 `SemanticLossItem(origin_value, origin
 实例所有的 `BaseSemanticLossAdaptor`。默认 `raise`；`ignore` 无日志、无损失历史；
 `hook` 调用相应同步函数 `(draft, losses, context)`，函数返回值忽略。
 hook 可任意原地编辑 draft，进入 transport 或返回用户的对象身份保持不变。
+图片能力和 `feedback_reasoning_content` 回传策略由共享输入函数判断，各协议在现有消息和内容循环内调用，
+损失保留原始来源信息；工具结果中的图片在子内容翻译时处理。
 `MessageStream.result` 返回该调用最终 draft 本身；重复读取不另做复制，也不与其他调用共享。
 hook 未传时为空函数，但不会改变默认的 `raise` 策略。
 

@@ -19,6 +19,7 @@ def target_profile(profile_factory, target):
     return profile_factory(
         target,
         supports_function_calling=Config(default_value=True),
+        supports_vision=Config(default_value=True),
         max_tokens=parameter("max_tokens", 2048, protocol=target),
     )
 

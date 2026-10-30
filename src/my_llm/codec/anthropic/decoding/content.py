@@ -3,6 +3,8 @@
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.anthropic.content import native_block
 from my_llm.codec.shared.conversion import select, text_result
+from my_llm.codec.shared.input import input_content
+from my_llm.profile.resolution import ResolvedProfile
 
 
 def foreign_block(block: dict) -> dict | None:
@@ -27,7 +29,17 @@ def foreign_block(block: dict) -> dict | None:
     return block if kind in ("text", "image", "tool_use") else None
 
 
-def decode_block(block: dict) -> dict | None:
+def decode_block(block: dict, *, profile: ResolvedProfile | None = None) -> dict | None:
+    if block["type"] == "tool_result" and isinstance(block.get("content"), list):
+        return {
+            **select(block, "type", "tool_use_id"),
+            "content": [
+                value
+                for child in block["content"]
+                if input_content(child, profile)
+                and (value := decode_block(child, profile=profile)) is not None
+            ],
+        }
     if block["type"] == "thinking":
         if block.get("redacted"):
             return {"type": "redacted_thinking", "data": block["encrypted_content"]}

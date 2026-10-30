@@ -18,6 +18,7 @@ from my_llm.codec.shared.conversion import (
     select_present,
     source_protocol,
 )
+from my_llm.codec.shared.input import input_content, message_feedback
 from my_llm.codec.shared.options import PreparedOptions, validate_request_options
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile, client_parameters, validate_max_tokens
@@ -131,7 +132,7 @@ class GeminiDecoder(BaseDecoder):
     ) -> list[dict]:
         result = []
         names = {}
-        for index, message in enumerate(coalesce_messages(messages)):
+        for index, message, feedback in message_feedback(coalesce_messages(messages), profile):
             if message.get("name") is not None:
                 report_loss(
                     message["name"],
@@ -144,6 +145,8 @@ class GeminiDecoder(BaseDecoder):
             foreign = source_protocol(message) != PROTOCOL
             parts = []
             for block in message["content"]:
+                if not input_content(block, profile, feedback=feedback):
+                    continue
                 if block.get("type") == "tool_result":
                     if not block.get("name"):
                         block = {
@@ -156,7 +159,7 @@ class GeminiDecoder(BaseDecoder):
                             ),
                             "name": names.get(block["tool_use_id"]),
                         }
-                part = decode_part(block, foreign=foreign)
+                part = decode_part(block, foreign=foreign, profile=profile)
                 if part is not None:
                     parts.append(part)
             result.append(

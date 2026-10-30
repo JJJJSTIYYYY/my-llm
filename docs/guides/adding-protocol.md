@@ -26,6 +26,10 @@ Encoder.matches 负责整批识别。validate_input 是固定公开入口，先�
 Encoder.request(inputs, profile) 接收完整 generate 输入并输出包含 profile 和类型化 middleware 的调用信封。
 
 两个方向的私有转换钩子只读借用输入，只处理已识别字段，不保留未知字段或原始快照。
+Decoder 的消息循环通过 `codec.shared.input.message_feedback(messages, profile)` 获取
+`(index, message, feedback)`，在原有内容循环内调用 `input_content(block, profile, feedback=feedback)`，
+返回 False 时跳过该块。工具结果中的图片也在翻译子内容时调用 `input_content`。
+公共函数集中记录图片能力和思考回传策略的损失，与协议原生限制一同交给完整 draft 的 adaptor 处理。
 公开 messages / tools 捕获独立结果；内部 Decoder.request 直接调用私有钩子，
 由最终 native_request 捕获 SDK 需要的可变内容，避免先复制公开转换结果再复制请求。
 工具参数、结果和 JSON Schema 的开放字典应完整保留内部应用键。
@@ -90,7 +94,7 @@ MyLLM 根据 Decoder 生成的 client_key 管理实例缓存和最终关闭。
 ## Codec 组合
 
 BaseCodec 必须提供 protocol_or_api_style、defaults、encoder、decoder、transport。
-defaults 使用 frozen dataclass ProtocolDefaults。replay_reasoning_content_when_tool_calls 通过 Config 明确声明；
+defaults 使用 frozen dataclass ProtocolDefaults。feedback_reasoning_content 通过 Config 明确声明；
 max_tokens、content、reasoning_content、reasoning_enable、reasoning_effort 使用 Parameter 声明，不用的字段保留默认 omit。
 max_tokens / reasoning_enable / reasoning_effort source 固定为 input，content / reasoning_content source 固定为 output。
 路径从根字典定位，使用 $. 前缀，$ 表示 **parameters 解包字典的根；事件类型不是参数路径。
@@ -132,7 +136,7 @@ class ExampleCodec(BaseCodec):
     __slots__ = ("encoder", "decoder", "transport", "_defaults")
     protocol_or_api_style = "example"
     _DEFAULTS = ProtocolDefaults(
-        replay_reasoning_content_when_tool_calls=Config(default_value=False),
+        feedback_reasoning_content=Config(default_value="none"),
         max_tokens=Parameter(
             path="$.max_tokens",
             default_value=omit,

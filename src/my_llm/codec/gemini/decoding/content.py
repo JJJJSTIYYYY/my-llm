@@ -2,9 +2,13 @@
 
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.shared.conversion import text_result
+from my_llm.codec.shared.input import input_content
+from my_llm.profile.resolution import ResolvedProfile
 
 
-def decode_part(block: dict, *, foreign: bool = False) -> dict | None:
+def decode_part(
+    block: dict, *, foreign: bool = False, profile: ResolvedProfile | None = None
+) -> dict | None:
     kind = block.get("type")
     owner = block.get("protocol")
     native_signature = not foreign if owner is None else owner == "gemini"
@@ -23,6 +27,8 @@ def decode_part(block: dict, *, foreign: bool = False) -> dict | None:
         if isinstance(content, list):
             retained = []
             for child in content:
+                if not input_content(child, profile):
+                    continue
                 if child.get("type") == "image":
                     report_loss(child, "Gemini tool results cannot represent images")
                 elif child.get("type") == "text":

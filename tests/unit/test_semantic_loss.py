@@ -9,6 +9,7 @@ from my_llm import (
     BaseSemanticLossAdaptor,
     FunctionTool,
     ImageContent,
+    ImageSource,
     MyCodec,
     ProtocolMiddleWare,
     ReasoningContent,
@@ -21,6 +22,7 @@ from my_llm.middleware.models import content_from_wire
 from my_llm.middleware.protocol import generation_input
 from my_llm.profile.types import omit
 from tests.helpers.profiles import config
+from tests.helpers.protocols import PROTOCOLS
 
 
 def picture_history():
@@ -486,3 +488,159 @@ def test_unused_protocol_factories_are_lazy_and_not_global():
     chat = converter.codecs["openai_chat"]
     assert set(converter.codecs.instances) == {"openai_chat"}
     assert MyCodec().codecs["openai_chat"] is not chat
+
+
+def image_history():
+    return [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "before"},
+                {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,aW1hZ2U="}},
+                {"type": "text", "text": "after"},
+            ],
+        },
+        {"role": "user", "content": "complete tail"},
+    ]
+
+
+@pytest.mark.parametrize("target", PROTOCOLS)
+@pytest.mark.parametrize("supports_vision", [None, config(False), omit])
+@pytest.mark.parametrize("stage", ["convert", "prepare"])
+def test_unsupported_images_report_original_values_and_complete_draft(
+    profile_factory, target, supports_vision, stage
+):
+    messages = image_history()
+    before = deepcopy(messages)
+    profile = profile_factory(target, supports_vision=supports_vision)
+    codec = MyCodec()
+    with pytest.raises(SemanticLossError) as caught:
+        if stage == "convert":
+            codec.convert(
+                messages, input_format="openai_chat", target_format=target, profile=profile
+            )
+        else:
+            codec.prepare(
+                {**complete_inputs(messages), "max_tokens": 128},
+                profile,
+                input_format="openai_chat",
+                client={},
+            )
+    error = caught.value
+    assert error.context.source_protocol == "openai_chat"
+    assert error.context.target_protocol == target
+    assert error.context.origin_source == "input"
+    assert [item.origin_path for item in error.losses] == [
+        "$.messages[0].content[1]",
+        "$.messages[0].content[2]",
+    ]
+    assert [item.origin_value for item in error.losses] == messages[0]["content"][1:3]
+    assert all(item.reason == "model does not support image input" for item in error.losses)
+    assert "complete tail" in str(error.draft)
+    assert "before" in str(error.draft) and "after" in str(error.draft)
+    assert "aW1hZ2U=" not in str(error.draft) and "a.png" not in str(error.draft)
+    assert messages == before
+
+
+@pytest.mark.parametrize("target", PROTOCOLS)
+def test_enabled_vision_preserves_supported_images_in_requests(profile_factory, target):
+    messages = image_history()
+    del messages[0]["content"][1]  # Ollama supports base64 images.
+    codec = MyCodec()
+    prepared = codec.prepare(
+        {**complete_inputs(messages), "max_tokens": 128},
+        profile_factory(target, supports_vision=config(True)),
+        input_format="openai_chat",
+        client={},
+    )
+    assert "aW1hZ2U=" in str(prepared["request"])
+
+
+@pytest.mark.parametrize("target", PROTOCOLS)
+def test_images_in_tool_results_are_model_capability_losses(profile_factory, target):
+    messages = picture_history()
+    before = deepcopy(messages)
+    with pytest.raises(SemanticLossError) as caught:
+        MyCodec().prepare(
+            {**complete_inputs(messages), "max_tokens": 128},
+            profile_factory(target),
+            input_format="anthropic",
+            client={},
+        )
+    assert [item.origin_path for item in caught.value.losses] == [
+        "$.messages[1].content[0].content[1]",
+        "$.messages[1].content[0].content[2]",
+    ]
+    assert all("model does not support image input" == item.reason for item in caught.value.losses)
+    assert "complete tail" in str(caught.value.draft)
+    assert messages == before
+
+
+@pytest.mark.parametrize("policy", ["ignore", "hook"])
+def test_vision_loss_policies_and_cache_keep_the_complete_filtered_translation(
+    profile_factory, policy
+):
+    observed = []
+
+    def hook(draft, losses, context):
+        assert context.stage == "request"
+        assert len(losses) == 2
+        assert "complete tail" in str(draft)
+        draft["messages"].append({"role": "user", "content": "hook edit"})
+        observed.append(draft)
+
+    codec = MyCodec(policy, input_semantic_loss_hook=hook)
+    profile = profile_factory()
+    messages = image_history()
+    for _ in range(2):
+        prepared = codec.prepare(
+            complete_inputs(messages),
+            profile,
+            input_format="openai_chat",
+            client={},
+            enable_message_cache=True,
+            message_cache_key="vision-test",
+        )
+        assert "aW1hZ2U=" not in str(prepared)
+        if policy == "hook":
+            assert observed[-1] is prepared["request"]
+    cached = codec._message_cache.get("vision-test")
+    assert len(cached) == 2
+    assert "hook edit" not in str(cached) and "aW1hZ2U=" not in str(cached)
+
+
+def test_vision_loss_raise_commits_filtered_cache_before_the_adaptor(profile_factory):
+    codec = MyCodec()
+    for _ in range(2):
+        with pytest.raises(SemanticLossError):
+            codec.prepare(
+                complete_inputs(image_history()),
+                profile_factory(),
+                input_format="openai_chat",
+                client={},
+                enable_message_cache=True,
+                message_cache_key="vision-test",
+            )
+    cached = codec._message_cache.get("vision-test")
+    assert len(cached) == 2
+    assert "aW1hZ2U=" not in str(cached)
+
+
+def test_typed_images_keep_the_original_object_as_loss_value(profile_factory):
+    image = ImageContent(ImageSource("url", url="https://example.com/a.png"))
+    messages = [UserMessage("user", [image, TextContent("tail")])]
+    with pytest.raises(SemanticLossError) as caught:
+        MyCodec().prepare(
+            complete_inputs(messages), profile_factory(), input_format="middleware", client={}
+        )
+    assert caught.value.losses.items[0].origin_value is image
+    assert caught.value.losses.items[0].origin_path == "$.messages[0].content[0]"
+    assert messages[0].content[0] is image
+
+
+def test_profile_free_conversion_continues_to_translate_images():
+    result = MyCodec().convert(
+        image_history(), input_format="openai_chat", target_format="openai_responses"
+    )
+    assert "aW1hZ2U=" in str(result)

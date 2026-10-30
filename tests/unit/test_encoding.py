@@ -216,11 +216,11 @@ def test_invalid_request_parameters(profile_factory, kwargs):
     "protocol,key", [("openai_chat", "reasoning_content"), ("ollama", "thinking")]
 )
 @pytest.mark.parametrize("thinking", [True, False])
-@pytest.mark.parametrize("replay", [True, False])
+@pytest.mark.parametrize("feedback", ["always", "when_tool_calls", "none"])
 @pytest.mark.parametrize("has_calls", [True, False])
 @pytest.mark.parametrize("visible", [None, "reason"])
 def test_reasoning_replay_only_pads_tool_calls_when_thinking(
-    protocol, key, thinking, replay, has_calls, visible, tool_call
+    protocol, key, thinking, feedback, has_calls, visible, tool_call
 ):
     from my_llm import MyCodec
 
@@ -232,10 +232,11 @@ def test_reasoning_replay_only_pads_tool_calls_when_thinking(
     profile = resolve_profiles(
         ProviderProfile(
             protocol=Config(default_value=protocol),
-            replay_reasoning_content_when_tool_calls=config(replay),
+            feedback_reasoning_content=config(feedback),
         ),
         ModelProfile(model=Attribute(default_value="demo")),
     )
+    replay = feedback == "always" or feedback == "when_tool_calls" and has_calls
     if visible and not replay:
         with pytest.raises(SemanticLossError) as captured:
             MyCodec().convert(

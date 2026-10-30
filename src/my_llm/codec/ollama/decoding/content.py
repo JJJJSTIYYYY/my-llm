@@ -2,6 +2,8 @@
 
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.shared.conversion import select_present, text_result
+from my_llm.codec.shared.input import input_content
+from my_llm.profile.resolution import ResolvedProfile
 
 
 def foreign_block(block: dict) -> dict | None:
@@ -24,11 +26,13 @@ def foreign_block(block: dict) -> dict | None:
     return block if kind in ("text", "image", "tool_use", "tool_result", "thinking") else None
 
 
-def tool_text(block: dict) -> str:
+def tool_text(block: dict, profile: ResolvedProfile | None = None) -> str:
     content = block.get("content")
     if isinstance(content, list):
         retained = []
         for child in content:
+            if not input_content(child, profile):
+                continue
             if child.get("type") == "image":
                 report_loss(child, "Ollama tool results cannot represent images")
             elif child.get("type") == "text":

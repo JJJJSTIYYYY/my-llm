@@ -27,6 +27,7 @@ from my_llm.codec.shared.conversion import (
     select_present,
     source_protocol,
 )
+from my_llm.codec.shared.input import feedback_reasoning, input_content, message_feedback
 from my_llm.codec.shared.options import (
     PreparedOptions,
     validate_request_options,
@@ -76,14 +77,20 @@ class ChatCompletionsDecoder(BaseDecoder):
                         path=f"$.messages[{index}].name",
                     )
                 value.pop("name", None)
-            if (
-                value.get("role") == "assistant"
-                and profile.get("replay_reasoning_content_when_tool_calls", False)
-                and "reasoning_content" in original
-            ):
-                if not isinstance(original["reasoning_content"], str):
+            if value.get("role") == "assistant" and "reasoning_content" in original:
+                reasoning = original["reasoning_content"]
+                if not isinstance(reasoning, str):
                     raise MessageValidationError("reasoning_content must be a string")
-                value["reasoning_content"] = original["reasoning_content"]
+                if feedback_reasoning(profile, has_tool_calls=bool(value.get("tool_calls"))):
+                    value["reasoning_content"] = reasoning
+                else:
+                    if reasoning:
+                        report_loss(
+                            reasoning,
+                            "profile excludes reasoning feedback from this message",
+                            path=f"$.messages[{index}].reasoning_content",
+                        )
+                    value.pop("reasoning_content", None)
         return result
 
     def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
@@ -153,7 +160,7 @@ class ChatCompletionsDecoder(BaseDecoder):
     ) -> list[dict]:
         result = []
         name_supported = profile is None or profile.get("supports_message_name", True)
-        for index, message in enumerate(coalesce_messages(messages)):
+        for index, message, feedback in message_feedback(coalesce_messages(messages), profile):
             if message.get("name") is not None and not name_supported:
                 report_loss(
                     message["name"],
@@ -163,6 +170,8 @@ class ChatCompletionsDecoder(BaseDecoder):
             context_owner = source_protocol(message)
             content = []
             for block in message["content"]:
+                if not input_content(block, profile, feedback=feedback):
+                    continue
                 owner = block.get("protocol")
                 if (context_owner if owner is None else owner) != PROTOCOL:
                     block = foreign_block(block)
@@ -186,25 +195,17 @@ class ChatCompletionsDecoder(BaseDecoder):
                     if b.get("type") == "thinking"
                 )
                 if reasoning:
-                    if profile is not None and (
-                        not profile.get("replay_reasoning_content_when_tool_calls", False)
-                        or profile.parameter("reasoning_content", "output") is None
-                    ):
-                        for block in other:
-                            if block.get("type") == "thinking":
-                                report_loss(block, "Chat profile cannot replay reasoning_content")
-                    else:
-                        value["reasoning_content"] = reasoning
+                    value["reasoning_content"] = reasoning
                 result.append(value)
             result.extend(
                 {
                     "role": "tool",
                     "tool_call_id": b["tool_use_id"],
-                    "content": tool_text(b),
+                    "content": tool_text(b, profile),
                 }
                 for b in tool_results
             )
-        if profile is not None and profile.get("replay_reasoning_content_when_tool_calls", False):
+        if profile is not None and feedback_reasoning(profile, has_tool_calls=True):
             if thinking_enabled(profile, parameters):
                 for value in result:
                     if value.get("role") == "assistant" and value.get("tool_calls"):

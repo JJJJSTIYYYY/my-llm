@@ -161,12 +161,20 @@ def resolve_profiles(
     for key in (
         "supports_stream",
         "supports_function_calling",
+        "supports_vision",
         "supports_message_name",
-        "replay_reasoning_content_when_tool_calls",
     ):
         value = resolved.get(key, False)
         if value is not None and not isinstance(value, bool):
             raise ConfigurationError(f"{key} must be a bool, None or omit")
+    if resolved.get("feedback_reasoning_content", "none") not in (
+        "when_tool_calls",
+        "always",
+        "none",
+    ):
+        raise ConfigurationError(
+            "feedback_reasoning_content must be when_tool_calls, always, none or omit"
+        )
     if not resolved.get("supports_stream", False):
         raise UnsupportedProviderError("provider must support upstream streaming")
     usage = resolved.get("usage_mode", "none")

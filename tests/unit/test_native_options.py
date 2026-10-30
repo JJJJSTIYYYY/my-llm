@@ -77,19 +77,19 @@ def test_chat_can_disable_compatible_reasoning_replay(profile_factory, source):
     profile = profile_factory(
         "openai_chat",
         supports_function_calling=config(True),
-        replay_reasoning_content_when_tool_calls=config(False),
+        feedback_reasoning_content=config("none"),
     )
     request = codec.request(intermediate, profile, reasoning=True)
     assert request["reasoning_effort"] == "medium"
     assert all("reasoning_content" not in message for message in request["messages"])
 
 
-@pytest.mark.parametrize("replay", [None, config(True)])
+@pytest.mark.parametrize("replay", [None, config("always")])
 def test_chat_replays_compatible_reasoning_by_default_and_when_enabled(profile_factory, replay):
     codec = MyCodec()
     profile = profile_factory(
         "openai_chat",
-        replay_reasoning_content_when_tool_calls=replay,
+        feedback_reasoning_content=replay,
     )
     request = codec.request(
         codec.encode(history("openai_chat"), input_format="openai_chat"), profile, reasoning=True

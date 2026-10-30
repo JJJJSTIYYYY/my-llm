@@ -737,6 +737,7 @@ def profiles(protocol: str):
             model=Attribute(default_value="benchmark"),
             max_tokens=parameter("max_tokens", 32768, protocol=protocol),
             supports_function_calling=config(True),
+            supports_vision=config(True),
             reasoning_enable=parameter("reasoning_enable", supports=True, protocol=protocol),
             reasoning_effort=parameter("reasoning_effort", supports=True, protocol=protocol),
             extra_headers=config({"x-benchmark-model": "model"}),

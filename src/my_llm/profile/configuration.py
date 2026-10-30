@@ -19,7 +19,7 @@ EFFORTS = ("none", "low", "medium", "high", "xhigh", "max")
 class ProtocolDefaults(Profile):
     """Declare default settings for a registered protocol.
 
-    Required keyword argument replay_reasoning_content_when_tool_calls is a Config
+    Required keyword argument feedback_reasoning_content is a Config
     or omit. Other fields provide default parameter routes, extra_headers,
     extra_body, reasoning_effort_mapping, capability flags and usage_mode.
     See OverridableProfile for the shared setting meanings.
@@ -31,7 +31,7 @@ class ProtocolDefaults(Profile):
     ModelProfile to override protocol defaults.
     """
 
-    replay_reasoning_content_when_tool_calls: Config[bool] | Omit
+    feedback_reasoning_content: Config[Literal["when_tool_calls", "always", "none"]] | Omit
     api_key: Parameter[str] | Omit = field(
         default=Parameter(path="$.api_key", default_value=omit),
         repr=False,
@@ -55,6 +55,7 @@ class ProtocolDefaults(Profile):
     )
     supports_stream: Config[bool] | Omit = Config(default_value=True)
     supports_function_calling: Config[bool] | Omit = Config(default_value=False)
+    supports_vision: Config[bool] | Omit = Config(default_value=False)
     supports_message_name: Config[bool] | Omit = Config(default_value=True)
     usage_mode: Config[str] | Omit = Config(default_value="none")
 
@@ -76,8 +77,9 @@ class OverridableProfile(Profile):
         reasoning_content: Output Parameter selecting visible reasoning.
         reasoning_enable: Input Parameter enabling reasoning.
         reasoning_effort: Input Parameter selecting native reasoning effort.
-        replay_reasoning_content_when_tool_calls: Config controlling visible
-            reasoning replay in tool-call history.
+        feedback_reasoning_content: Config selecting feedback of reasoning from
+            tool-call messages ("when_tool_calls"), all history ("always") or
+            no history ("none"). Omit disables feedback.
 
     None inherits a declaration; omit disables it. Parameter overrides replace
     path, support and default together. Config dictionaries merge by key, with
@@ -99,7 +101,9 @@ class OverridableProfile(Profile):
     reasoning_effort: Parameter[Any] | Omit | None = field(
         default=None, metadata={"source": "input"}
     )
-    replay_reasoning_content_when_tool_calls: Config[bool] | Omit | None = None
+    feedback_reasoning_content: (
+        Config[Literal["when_tool_calls", "always", "none"]] | Omit | None
+    ) = None
 
     @set_attr
     def __post_init__(self) -> None:

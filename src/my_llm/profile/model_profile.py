@@ -20,6 +20,8 @@ class ModelProfile(OverridableProfile):
             not truncate history or enforce token limits.
         supports_function_calling: Config capability flag; protocol default False.
             Enable it before sending nonempty tool declarations.
+        supports_vision: Config declaring image-input support; protocol default False.
+            Unsupported images are removed and reported as semantic losses.
         supports_message_name: Config controlling message-name support.
 
     This is a frozen keyword-only dataclass. None inherits provider settings;
@@ -32,6 +34,7 @@ class ModelProfile(OverridableProfile):
     model: Attribute[str]
     max_context_window: Attribute[int] = Attribute(default_value=256000)
     supports_function_calling: Config[bool] | Omit | None = None
+    supports_vision: Config[bool] | Omit | None = None
     supports_message_name: Config[bool] | Omit | None = None
     supported_roles: ClassVar[tuple[str, ...]] = ("system", "user", "assistant", "tool")
 

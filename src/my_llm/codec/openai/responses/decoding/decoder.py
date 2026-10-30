@@ -24,6 +24,7 @@ from my_llm.codec.shared.conversion import (
     select_present,
     source_protocol,
 )
+from my_llm.codec.shared.input import input_content, message_feedback
 from my_llm.codec.shared.options import PreparedOptions, validate_request_options
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
@@ -100,7 +101,7 @@ class ResponsesDecoder(BaseDecoder):
         # Each incremental batch needs distinct generated identities; explicit
         # native item IDs below continue to take precedence over these fallbacks.
         id_prefix = f"{uuid4().hex}_" if parameters.get("enable_message_cache", False) else ""
-        for index, message in enumerate(dictionaries(messages)):
+        for index, message, feedback in message_feedback(dictionaries(messages), profile):
             if message.get("name") is not None:
                 report_loss(
                     message["name"],
@@ -111,6 +112,8 @@ class ResponsesDecoder(BaseDecoder):
             context_owner = source_protocol(message)
             content = []
             for block in message["content"]:
+                if not input_content(block, profile, feedback=feedback):
+                    continue
                 owner = block.get("protocol")
                 if (context_owner if owner is None else owner) != PROTOCOL:
                     block = foreign_block(block)
@@ -184,7 +187,7 @@ class ResponsesDecoder(BaseDecoder):
                             **select(block.get("item", {}), "id", "status"),
                             "type": "function_call_output",
                             "call_id": block["tool_use_id"],
-                            "output": render_content(block["content"], role="user")
+                            "output": render_content(block["content"], role="user", profile=profile)
                             if isinstance(block.get("content"), list)
                             else _tool_output(block.get("content", "")),
                         }

@@ -5,6 +5,8 @@ from typing import Any
 
 from my_llm.basic.semantic_loss import originated, report_loss
 from my_llm.codec.shared.conversion import select, text_result
+from my_llm.codec.shared.input import input_content
+from my_llm.profile.resolution import ResolvedProfile
 
 
 def _tool_output(value: Any) -> Any:
@@ -20,7 +22,9 @@ def reasoning_summary(block: dict) -> list[dict]:
     return [{"type": "summary_text", "text": text} for text in summary]
 
 
-def render_content(content: list[dict], *, role: str = "user") -> list[dict]:
+def render_content(
+    content: list[dict], *, role: str = "user", profile: ResolvedProfile | None = None
+) -> list[dict]:
     result = []
     for block in content:
         kind = block.get("type")
@@ -33,6 +37,8 @@ def render_content(content: list[dict], *, role: str = "user") -> list[dict]:
                 }
             )
         elif kind == "image":
+            if not input_content(block, profile):
+                continue
             if role == "assistant":
                 report_loss(block, "Responses assistant output cannot represent images")
                 continue

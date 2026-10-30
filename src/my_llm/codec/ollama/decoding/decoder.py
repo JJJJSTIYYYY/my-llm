@@ -22,6 +22,7 @@ from my_llm.codec.shared.conversion import (
     source_protocol,
     text,
 )
+from my_llm.codec.shared.input import feedback_reasoning, input_content, message_feedback
 from my_llm.codec.shared.options import PreparedOptions, validate_request_options
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.configuration import merge_dicts
@@ -125,7 +126,7 @@ class OllamaDecoder(BaseDecoder):
 
     def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
         result = super().filter_messages(messages, profile, **parameters)
-        for original, value in zip(messages, result):
+        for index, (original, value) in enumerate(zip(messages, result)):
             images = read(original, "images")
             if images:
                 value["images"] = [
@@ -134,7 +135,13 @@ class OllamaDecoder(BaseDecoder):
                 ]
             if not profile.get("supports_message_name", True):
                 value.pop("name", None)
-            if not profile.get("replay_reasoning_content_when_tool_calls", False):
+            if not feedback_reasoning(profile, has_tool_calls=bool(value.get("tool_calls"))):
+                if reasoning := read(original, "thinking"):
+                    report_loss(
+                        reasoning,
+                        "profile excludes reasoning feedback from this message",
+                        path=f"$.messages[{index}].thinking",
+                    )
                 value.pop("thinking", None)
         return result
 
@@ -182,7 +189,7 @@ class OllamaDecoder(BaseDecoder):
     ) -> list[dict]:
         result = []
         names = {}
-        for index, message in enumerate(coalesce_messages(messages)):
+        for index, message, feedback in message_feedback(coalesce_messages(messages), profile):
             if message.get("name") is not None:
                 report_loss(
                     message["name"],
@@ -196,6 +203,8 @@ class OllamaDecoder(BaseDecoder):
             context_owner = source_protocol(message)
             content = []
             for block in message["content"]:
+                if not input_content(block, profile, feedback=feedback):
+                    continue
                 owner = block.get("protocol")
                 if (context_owner if owner is None else owner) != PROTOCOL:
                     block = foreign_block(block)
@@ -215,7 +224,7 @@ class OllamaDecoder(BaseDecoder):
                         {
                             "role": "tool",
                             "tool_name": block.get("name") or names.get(block["tool_use_id"]),
-                            "content": tool_text(block),
+                            "content": tool_text(block, profile),
                         }
                     )
                 elif kind == "thinking":
@@ -236,17 +245,10 @@ class OllamaDecoder(BaseDecoder):
                 if images:
                     value["images"] = images
                 if reasoning:
-                    if profile is not None and not profile.get(
-                        "replay_reasoning_content_when_tool_calls", False
-                    ):
-                        for block in content:
-                            if block.get("type") == "thinking":
-                                report_loss(block, "Ollama profile cannot replay thinking")
-                    else:
-                        value["thinking"] = reasoning
+                    value["thinking"] = reasoning
                 result.append(value)
             result.extend(results)
-        if profile is not None and profile.get("replay_reasoning_content_when_tool_calls", False):
+        if profile is not None and feedback_reasoning(profile, has_tool_calls=True):
             if thinking_enabled(profile, parameters):
                 for value in result:
                     if value.get("role") == "assistant" and value.get("tool_calls"):

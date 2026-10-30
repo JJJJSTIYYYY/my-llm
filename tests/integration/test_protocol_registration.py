@@ -213,7 +213,7 @@ class Codec(BaseCodec):
     __slots__ = ("encoder", "decoder", "transport", "_defaults")
     protocol_or_api_style = PROTOCOL
     _DEFAULTS = ProtocolDefaults(
-        replay_reasoning_content_when_tool_calls=config(False),
+        feedback_reasoning_content=config("none"),
         max_tokens=Parameter(path="$.limit", default_value=omit),
         content=Parameter(path="$.body", default_value=omit),
         reasoning_content=Parameter(path="$.thinking", default_value=omit),

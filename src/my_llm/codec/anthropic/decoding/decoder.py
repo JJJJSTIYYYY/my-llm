@@ -24,6 +24,7 @@ from my_llm.codec.shared.conversion import (
     select_present,
     source_protocol,
 )
+from my_llm.codec.shared.input import input_content, message_feedback
 from my_llm.codec.shared.options import PreparedOptions, validate_request_options
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
@@ -153,7 +154,7 @@ class AnthropicDecoder(BaseDecoder):
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         result = []
-        for index, message in enumerate(coalesce_messages(messages)):
+        for index, message, feedback in message_feedback(coalesce_messages(messages), profile):
             if message.get("name") is not None:
                 report_loss(
                     message["name"],
@@ -163,12 +164,14 @@ class AnthropicDecoder(BaseDecoder):
             context_owner = source_protocol(message)
             content = []
             for block in message["content"]:
+                if not input_content(block, profile, feedback=feedback):
+                    continue
                 owner = block.get("protocol")
                 if (context_owner if owner is None else owner) != PROTOCOL:
                     block = foreign_block(block)
                     if block is None:
                         continue
-                value = decode_block(block)
+                value = decode_block(block, profile=profile)
                 if value is not None:
                     content.append(value)
             result.append({"role": message["role"], "content": content})

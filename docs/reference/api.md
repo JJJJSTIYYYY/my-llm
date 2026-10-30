@@ -321,6 +321,7 @@ Parameter 覆盖时替换完整声明。Config 字典按键合并，嵌套值整
 | `model` | 必填 `Attribute[str]` | 非空模型 ID |
 | `max_context_window` | `Attribute[int]`，默认 `256000` | 描述性上下文窗口，不自动截断输入或限制输出 |
 | `supports_function_calling` | `Config[bool] \| Omit \| None`，默认继承 | 协议默认 `False`；使用非空 tools 前启用 |
+| `supports_vision` | `Config[bool] \| Omit \| None`，默认继承 | 协议默认 `False`；不支持时翻译会移除图片并标记语义损失，默认抛出 `SemanticLossError` |
 | `supports_message_name` | `Config[bool] \| Omit \| None`，默认继承 | 协议默认 `True`；控制消息名称支持 |
 
 `ModelProfile.supported_roles` 为固定类属性 `("system", "user", "assistant", "tool")`，不是构造参数。
@@ -338,7 +339,7 @@ Provider 与 Model 共享以下覆盖项，均默认 `None`，表示继承：
 | `reasoning_enable` | 输入 `Parameter` | 开启思考的参数；`supports=False` 表示不支持 reasoning |
 | `reasoning_effort` | 输入 `Parameter` | 思考强度参数及支持状态 |
 | `reasoning_effort_mapping` | `Config[dict]` | 公共强度到原生值的映射；值为 `None` / `omit` 时该级别不可用 |
-| `replay_reasoning_content_when_tool_calls` | `Config[bool]` | 是否在工具历史中回放可见思考 |
+| `feedback_reasoning_content` | `Config[Literal["when_tool_calls", "always", "none"]]` | 内置协议默认 `always`；仅回传工具调用消息中的思考、全部历史思考或不回传；`omit` 等同 `none`，移除已有思考会记录语义损失 |
 
 `ReasoningEffort` 是 `Literal["none", "low", "medium", "high", "xhigh", "max"]` 类型别名。
 可接受的强度还取决于具体模型及其配置。完整字段配置示例见[配置指南](configuration.md)。
@@ -523,7 +524,7 @@ assert converted["messages"] == [{"role": "user", "parts": [{"text": "Hello"}]}]
 | `BaseEncoder` | 将原生消息、工具和事件转换为中间值；协议名、消息及工具 schema 由子类声明 |
 | `BaseDecoder` | 将中间值转换为原生值，验证配置并构造原生请求参数 |
 | `BaseTransport` | 创建、关闭 SDK 客户端并提供原生异步响应事件 |
-| `ProtocolDefaults` | 协议默认配置，冻结且仅限关键字参数；必填 replay_reasoning_content_when_tool_calls，其余为标准参数与能力默认值 |
+| `ProtocolDefaults` | 协议默认配置，冻结且仅限关键字参数；必填 feedback_reasoning_content，其余为标准参数与能力默认值 |
 | `PreparedOptions` | 已验证的生成控制值，通常由 BaseDecoder.validate_parameters 返回 |
 
 `BaseCodec` 提供 `encode_messages` / `decode_messages`、`encode_tools` / `decode_tools`、

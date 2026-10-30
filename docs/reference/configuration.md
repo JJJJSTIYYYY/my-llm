@@ -171,6 +171,7 @@ Chat 的 reasoning_content 是兼容服务扩展；Responses、Gemini 仍按标�
 | `max_context_window` | Model Attribute[int]；默认 256000，仅描述性整数元数据，不截断输入或限制输出 |
 | `reasoning_enable.supports` | Parameter；默认 True，替代 supports_reasoning |
 | `supports_function_calling` | Model Config；默认 False，发送非空 tools 前开启 |
+| `supports_vision` | Model Config；默认 False，不支持时翻译会移除图片并标记语义损失，默认抛出 SemanticLossError；包括工具结果中的图片 |
 | `supports_message_name` | Model Config；默认 True，False/omit 在 Chat 请求移除 name |
 
 `ModelProfile.supported_roles` 是固定类属性。
@@ -227,7 +228,12 @@ generate 的 extra_headers 继续按现有规则覆盖；Ollama 的请求头仍�
 | `reasoning_effort` | input Parameter；强度位置及缺失时默认值 |
 | `reasoning_effort.supports` | Parameter；Responses 默认 True，其他默认 False，替代 supports_reasoning_effort |
 | `reasoning_effort_mapping` | Config；none/low/medium/high/xhigh/max 的映射，映射项 None/omit 禁用对应级别 |
-| `replay_reasoning_content_when_tool_calls` | Config；所有内置协议默认 True；控制可见思考回放 |
+| `feedback_reasoning_content` | Config[Literal["when_tool_calls", "always", "none"]]；所有内置协议默认 always；回传工具调用消息中的思考、全部历史思考或不回传；omit 等同 none |
+
+回传策略只处理历史输入，模型本次生成思考的开关和响应输出分别由对应 Parameter 控制。
+被策略排除的思考记录为语义损失，交给现有 raise / ignore / hook 策略处理。
+`when_tool_calls` 按完整 assistant 消息判断，包括 Responses 拆开的 reasoning / message / function_call 项；
+保留下来的原生签名和加密内容仍须满足目标协议的表达约束。
 
 generate 的显式 max_tokens 覆盖 Profile 默认，omit 删除该请求目标键。
 max_tokens 声明的 default_value=omit 时不制造 token 参数；Anthropic 仍要求提供有效 max_tokens。
@@ -251,7 +257,7 @@ from my_llm import Config, Parameter, ProviderProfile, omit
 
 compatible = ProviderProfile(
     protocol=Config(default_value="openai_chat"),
-    replay_reasoning_content_when_tool_calls=Config(default_value=True),
+    feedback_reasoning_content=Config(default_value="always"),
     reasoning_enable=Parameter(
         path="$.extra_body.thinking",
         default_value={"type": "enabled"},
@@ -383,5 +389,5 @@ assert model.reasoning_enable.source == "input"
 ```
 
 `supports_stream`、`supports_function_calling`、`supports_message_name` 控制流协议、工具能力和消息处理分支，
-当前没有对应的可路由 Parameter，继续使用独立 Config。`replay_reasoning_content_when_tool_calls`、
+当前没有对应的可路由 Parameter，继续使用独立 Config。`feedback_reasoning_content`、
 `reasoning_effort_mapping` 等行为配置也保持 Config。

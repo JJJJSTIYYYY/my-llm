@@ -1,11 +1,11 @@
 """openai/chat: intermediate to native output."""
 
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from openai.resources.chat.completions import AsyncCompletions
 from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
 
-from my_llm.basic.data import dictionary_views
 from my_llm.basic.exceptions import (
     ConfigurationError,
     MessageValidationError,
@@ -20,7 +20,7 @@ from my_llm.codec.openai.chat.decoding.content import (
     render_content,
     tool_text,
 )
-from my_llm.codec.shared.capabilities import content_capability, supports_content
+from my_llm.codec.shared.capabilities import content_capability
 from my_llm.codec.shared.conversion import (
     decode_functions,
     select,
@@ -28,34 +28,21 @@ from my_llm.codec.shared.conversion import (
     source_protocol,
 )
 from my_llm.codec.shared.input import (
-    feedback_reasoning,
-    input_capability,
+    InputPolicy,
     input_content,
-    input_reasoning,
     message_feedback,
+    pad_reasoning,
 )
 from my_llm.codec.shared.options import (
     PreparedOptions,
     validate_request_options,
 )
 from my_llm.codec.shared.stream import counts, events
-from my_llm.profile.configuration import merge_dicts
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
 
 PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response_id"}
 
 PROTOCOL = "openai_chat"
-
-
-def thinking_enabled(profile: ResolvedProfile, parameters: dict) -> bool:
-    """Whether shared controls or merged Chat body options enable reasoning."""
-    if parameters.get("reasoning") is True or parameters.get("reasoning_effort", "none") != "none":
-        return True
-    body = merge_dicts(profile.get("extra_body", {}), parameters.get("extra_body"))
-    thinking = body.get("thinking", {})
-    return (
-        isinstance(thinking, dict) and thinking.get("type") in ("enabled", "adaptive")
-    ) or body.get("enable_thinking") is True
 
 
 class ChatCompletionsDecoder(BaseDecoder):
@@ -73,76 +60,84 @@ class ChatCompletionsDecoder(BaseDecoder):
 
     request_schema = parameter_types(AsyncCompletions.create)
 
-    def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
-        """Filter owned Chat Completions messages to SDK fields and apply input capability policies."""
-        result = []
-        decode = _plan(self.message_type).decode
-        envelope = _plan(
-            self.message_type,
-            delegated_paths=(("content",), ("tool_calls",), ("function_call",)),
-        ).decode
-        for index, original in enumerate(dictionary_views(messages)):
-            path = f"$.messages[{index}]"
-            if original.get("role") in ("tool", "function") and not input_capability(
-                original, "tool_result", profile, path=path
-            ):
-                continue
-            projected = original
-            if (
-                not parameters.get("_translated")
-                and isinstance(content := original.get("content"), list)
-                and not supports_content("image", profile)
-            ):
-                retained = [
-                    block
-                    for offset, block in enumerate(content)
-                    if not isinstance(block, dict)
-                    or block.get("type") != "image_url"
-                    or input_capability(block, "image", profile, path=f"{path}.content[{offset}]")
-                ]
-                if len(retained) != len(content):
-                    projected = envelope(original, path)
+    def _filter_message(
+        self,
+        original: dict,
+        policy: InputPolicy,
+        *,
+        path: str,
+        decode: Callable,
+        feedback: bool,
+        **parameters: Any,
+    ) -> dict | None:
+        """Apply Chat capabilities and preserve its supported reasoning extension."""
+        if original.get("role") in ("tool", "function") and not policy.allows(
+            original, "tool_result", path=path
+        ):
+            return None
+        projected = original
+        if isinstance(content := original.get("content"), list) and not policy.supported["image"]:
+            retained = [
+                block
+                for offset, block in enumerate(content)
+                if not isinstance(block, dict)
+                or block.get("type") != "image_url"
+                or policy.allows(block, "image", path=f"{path}.content[{offset}]")
+            ]
+            if len(retained) != len(content):
+                projected = _plan(
+                    self.message_type,
+                    delegated_paths=(("content",), ("tool_calls",), ("function_call",)),
+                ).decode(original, path)
+                if projected is _MISSING:
+                    return None
+                projected["content"] = retained
+        if not policy.supported["tool_use"]:
+            for offset, call in enumerate(original.get("tool_calls") or []):
+                policy.allows(call, "tool_use", path=f"{path}.tool_calls[{offset}]")
+            if original.get("function_call") is not None:
+                policy.allows(original["function_call"], "tool_use", path=f"{path}.function_call")
+            if "tool_calls" in original or "function_call" in original:
+                if projected is original:
+                    projected = _plan(
+                        self.message_type,
+                        delegated_paths=(("content",), ("tool_calls",), ("function_call",)),
+                    ).decode(original, path)
                     if projected is _MISSING:
-                        continue
-                    projected["content"] = retained
-            if not parameters.get("_translated") and not supports_content("tool_use", profile):
-                for offset, call in enumerate(original.get("tool_calls") or []):
-                    input_capability(call, "tool_use", profile, path=f"{path}.tool_calls[{offset}]")
-                if original.get("function_call") is not None:
-                    input_capability(
-                        original["function_call"], "tool_use", profile, path=f"{path}.function_call"
-                    )
-                if "tool_calls" in original or "function_call" in original:
-                    if projected is original:
-                        projected = envelope(original, path)
-                        if projected is _MISSING:
-                            continue
-                    projected.pop("tool_calls", None)
-                    projected.pop("function_call", None)
-            value = decode(projected, path)
-            if value is _MISSING:
-                continue
-            if original.get("name") is not None and not content_capability(
-                original["name"], "message_name", profile, path=f"{path}.name"
+                        return None
+                projected.pop("tool_calls", None)
+                projected.pop("function_call", None)
+        value = decode(projected, path)
+        if value is _MISSING:
+            return None
+        if original.get("name") is not None and not policy.allows(
+            original["name"], "message_name", path=f"{path}.name"
+        ):
+            value.pop("name", None)
+        if (
+            value.get("role") == "assistant"
+            and (reasoning := original.get("reasoning_content")) is not None
+        ):
+            if not isinstance(reasoning, str):
+                raise MessageValidationError("reasoning_content must be a string")
+            if policy.allows(
+                reasoning,
+                "thinking",
+                feedback=policy.reasoning_feedback(
+                    has_tool_calls=bool(value.get("tool_calls") or value.get("function_call"))
+                ),
+                path=f"{path}.reasoning_content",
             ):
-                value.pop("name", None)
-            if value.get("role") == "assistant" and "reasoning_content" in original:
-                reasoning = original["reasoning_content"]
-                if not isinstance(reasoning, str):
-                    raise MessageValidationError("reasoning_content must be a string")
-                if input_reasoning(
-                    reasoning,
-                    profile,
-                    feedback=feedback_reasoning(
-                        profile, has_tool_calls=bool(value.get("tool_calls"))
-                    ),
-                    path=f"$.messages[{index}].reasoning_content",
-                ):
-                    value["reasoning_content"] = reasoning
-                else:
-                    value.pop("reasoning_content", None)
-            result.append(value)
-        return result
+                value["reasoning_content"] = reasoning
+            else:
+                value.pop("reasoning_content", None)
+        pad_reasoning(
+            value,
+            "reasoning_content",
+            feedback=policy.reasoning_feedback(has_tool_calls=True),
+            has_tool_calls=bool(value.get("tool_calls") or value.get("function_call")),
+        )
+        return value
 
     def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
         """Filter native function tools and remove absent optional function fields."""
@@ -220,7 +215,7 @@ class ChatCompletionsDecoder(BaseDecoder):
         return result
 
     def _messages(
-        self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
+        self, messages: Iterable[dict], profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         """Render middleware history as Chat messages with separate tool results.
 
@@ -230,11 +225,6 @@ class ChatCompletionsDecoder(BaseDecoder):
         values that Chat cannot preserve as semantic losses.
         """
         result = []
-        pad_reasoning = (
-            profile is not None
-            and feedback_reasoning(profile, has_tool_calls=True)
-            and thinking_enabled(profile, parameters)
-        )
         for index, message, feedback in message_feedback(messages, profile):
             name_supported = message.get("name") is None or content_capability(
                 message["name"],
@@ -280,8 +270,14 @@ class ChatCompletionsDecoder(BaseDecoder):
                 if calls:
                     value["tool_calls"] = calls
                 reasoning_text = "".join(reasoning)
-                if reasoning_text or (pad_reasoning and calls and message["role"] == "assistant"):
+                if reasoning_text:
                     value["reasoning_content"] = reasoning_text
+                pad_reasoning(
+                    value,
+                    "reasoning_content",
+                    feedback=profile is not None and feedback,
+                    has_tool_calls=bool(calls),
+                )
                 result.append(value)
             result.extend(tool_results)
         return result

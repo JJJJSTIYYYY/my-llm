@@ -116,11 +116,12 @@ def history(protocol):
             "content": "Checking",
             "tool_calls": [
                 {
+                    "id": "call_1",
                     "function": {"name": "weather", "arguments": {"city": "上海"}},
                 }
             ],
         },
-        {"role": "tool", "tool_name": "weather", "content": "Sunny"},
+        {"role": "tool", "tool_call_id": "call_1", "tool_name": "weather", "content": "Sunny"},
     ]
 
 

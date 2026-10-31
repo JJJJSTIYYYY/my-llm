@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from my_llm import MyCodec
+from my_llm import MessageValidationError, MyCodec
 from my_llm.codec.shared.conversion import validate_history
 from tests.helpers.protocols import CHAT_HISTORY, PROTOCOLS, history, tools
 
@@ -17,12 +17,19 @@ def test_every_message_conversion_preserves_text_and_tool_associations(source, t
     before = deepcopy(incoming)
     converted = codec.convert(incoming, input_format=source, target_format=target)["messages"]
     intermediate = codec.encode(converted, input_format=target)["messages"]
-    validate_history(intermediate)
+    if target == "ollama":
+        with pytest.raises(MessageValidationError, match="matching call ID"):
+            validate_history(intermediate)
+    else:
+        validate_history(intermediate)
     chat = codec.decode(intermediate, target_format="openai_chat")["messages"]
     assert chat[0]["content"] == "Weather?"
     assistant = next(m for m in chat if m.get("tool_calls"))
     result = next(m for m in chat if m["role"] == "tool")
-    assert assistant["tool_calls"][0]["id"] == result["tool_call_id"]
+    if target == "ollama":
+        assert result["tool_call_id"] is None  # Do not infer a lost association.
+    else:
+        assert assistant["tool_calls"][0]["id"] == result["tool_call_id"]
     assert assistant["tool_calls"][0]["function"]["name"] == "weather"
     assert "Sunny" in str(result["content"])
     assert incoming == before

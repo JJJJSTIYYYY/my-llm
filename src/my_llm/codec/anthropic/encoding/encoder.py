@@ -10,7 +10,14 @@ from my_llm.basic.semantic_loss import originated
 from my_llm.codec.anthropic.content import intermediate_block, native_block
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.shared.conversion import mapping_list, select
-from my_llm.codec.shared.stream import BlockRef, encode_batch, metadata, record
+from my_llm.codec.shared.stream import (
+    BlockRef,
+    encode_batch,
+    metadata,
+    optional_usage,
+    project_metadata,
+    record,
+)
 from my_llm.profile.resolution import ResolvedProfile
 
 PROTOCOL = "anthropic"
@@ -41,6 +48,10 @@ class AnthropicEncoder(BaseEncoder):
                 for block in content:
                     if not isinstance(block, dict):
                         continue
+                    if block.get("type") == "tool_result" and (
+                        not isinstance(block.get("tool_use_id"), str) or not block["tool_use_id"]
+                    ):
+                        continue  # Discarded by the shared canonical history validator.
                     value = native_block(block)
                     if value is None or (
                         value.get("type") == "image" and message.get("role") != "user"
@@ -181,7 +192,9 @@ class AnthropicEncoder(BaseEncoder):
             index = event.get("index", 0)
             ops = []
             if kind == "message_start":
-                message = event["message"]
+                message = event.get("message")
+                if not isinstance(message, dict):
+                    message = {}
                 ops.append(metadata(self._metadata(message)))
                 if message.get("usage") is not None:
                     ops.append({"type": "usage", "usage": message["usage"]})
@@ -278,6 +291,7 @@ class AnthropicEncoder(BaseEncoder):
             result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
         return result
 
+    @optional_usage
     def usage(self, value: dict | None) -> dict | None:
         """Normalize reported Anthropic token counters, retaining absent usage as None."""
         if value is None:
@@ -294,8 +308,4 @@ class AnthropicEncoder(BaseEncoder):
 
     def _metadata(self, event: dict) -> dict:
         """Project supported Anthropic response identity and model metadata."""
-        return {
-            "response_id" if key == "id" else key: event[key]
-            for key in ("id", "model")
-            if isinstance(event.get(key), (str, int, float))
-        }
+        return project_metadata(event, (("id", "response_id"), ("model", "model")))

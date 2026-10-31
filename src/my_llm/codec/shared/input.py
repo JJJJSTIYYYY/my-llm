@@ -7,15 +7,58 @@ from my_llm.codec.shared.conversion import select
 from my_llm.profile.resolution import ResolvedProfile
 
 
-def input_reasoning(
-    value: object,
-    profile: ResolvedProfile | None,
-    *,
-    feedback: bool = True,
-    path: str | None = None,
-) -> bool:
-    """Report unavailable reasoning capability before applying history policy."""
-    return content_capability(value, "thinking", profile, path=path) and feedback
+def _keeps_reasoning(mode: str, has_tool_calls: bool) -> bool:
+    """Apply the shared reasoning-feedback mode to one message or native group."""
+    return mode == "always" or mode == "when_tool_calls" and has_tool_calls
+
+
+class InputPolicy:
+    """Resolve model capabilities once for one native-message filtering pass.
+
+    This request-local policy caches configuration decisions, never message
+    validity. Every original, translated or transformed value still passes through
+    allows; unsupported values retain their source paths and semantic-loss policy.
+    """
+
+    __slots__ = ("profile", "supported", "feedback_mode", "requires_tool_calls")
+
+    def __init__(self, profile: ResolvedProfile | None) -> None:
+        """Snapshot the fixed model capabilities and reasoning-feedback mode."""
+        self.profile = profile
+        self.supported = {
+            kind: supports_content(kind, profile)
+            for kind in ("image", "thinking", "tool_use", "message_name")
+        }
+        self.supported["tool_result"] = self.supported["tool_use"]
+        self.feedback_mode = (
+            "always" if profile is None else profile.get("feedback_reasoning_content", "none")
+        )
+        self.requires_tool_calls = (
+            self.supported["thinking"] and self.feedback_mode == "when_tool_calls"
+        )
+
+    def reasoning_feedback(self, *, has_tool_calls: bool = False) -> bool:
+        """Whether reasoning is retained for this message or native item group."""
+        return self.supported["thinking"] and _keeps_reasoning(self.feedback_mode, has_tool_calls)
+
+    def allows(
+        self, value: object, kind: str, *, feedback: bool = True, path: str | None = None
+    ) -> bool:
+        """Check one value, reporting unsupported capabilities only on failure."""
+        if not self.supported.get(kind, True):
+            return content_capability(value, kind, self.profile, path=path)
+        return kind != "thinking" or feedback
+
+
+def pad_reasoning(message: dict, field: str, *, feedback: bool, has_tool_calls: bool) -> None:
+    """Fill an absent scalar reasoning field only when tool feedback is requested."""
+    if (
+        feedback
+        and has_tool_calls
+        and message.get("role") == "assistant"
+        and message.get(field) is None
+    ):
+        message[field] = ""
 
 
 def feedback_reasoning(profile: ResolvedProfile | None, *, has_tool_calls: bool) -> bool:
@@ -25,7 +68,7 @@ def feedback_reasoning(profile: ResolvedProfile | None, *, has_tool_calls: bool)
     if profile is None:
         return True
     mode = profile.get("feedback_reasoning_content", "none")
-    return mode == "always" or mode == "when_tool_calls" and has_tool_calls
+    return _keeps_reasoning(mode, has_tool_calls)
 
 
 def _message_groups(messages: Iterable[dict]) -> Iterator[list[tuple[int, dict]]]:

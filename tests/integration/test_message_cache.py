@@ -10,7 +10,6 @@ from my_llm import (
     AssistantMessage,
     ConfigurationError,
     ItemIdentity,
-    MessageValidationError,
     MyLLM,
     ReasoningContent,
     SemanticLossError,
@@ -187,15 +186,16 @@ async def test_system_only_deltas_remain_invalid_without_caching(upstream):
         assert len(sdk.requests) == 1
 
 
-async def test_tool_associations_only_scan_current_batches_and_reject_invalid_deltas(monkeypatch):
+async def test_tool_associations_only_scan_current_batches_and_repair_invalid_deltas(monkeypatch):
     calls = []
-    original = decoder_module.validate_history
+    original = decoder_module.validate_messages
 
     def validate(messages, **kwargs):
-        calls.append(deepcopy(messages))
+        if kwargs.get("history") is not None:
+            calls.append(deepcopy(messages))
         return original(messages, **kwargs)
 
-    monkeypatch.setattr(decoder_module, "validate_history", validate)
+    monkeypatch.setattr(decoder_module, "validate_messages", validate)
     provider, model = profiles("openai_chat")
     with LocalSDK(
         "openai_chat", wire_frames("openai_chat", stream_events("openai_chat"), 61)
@@ -211,13 +211,12 @@ async def test_tool_associations_only_scan_current_batches_and_reject_invalid_de
             delta[0]["tool_calls"][0]["id"] = "call_2"
             delta[1]["tool_call_id"] = "call_2"
             await llm.generate(messages=delta)
-            with pytest.raises(MessageValidationError, match="unknown call"):
-                await llm.generate(
-                    messages=[{"role": "tool", "tool_call_id": "missing", "content": "bad"}]
-                )
+            await llm.generate(
+                messages=[{"role": "tool", "tool_call_id": "missing", "content": "bad"}]
+            )
             await llm.generate(messages=[{"role": "user", "content": "next-input"}])
         assert [len(batch) for batch in calls] == [3, 2, 1, 1]
-        assert len(sdk.requests) == 3
+        assert len(sdk.requests) == 4
         latest = json.loads(sdk.requests[-1].content)["messages"]
         assert len(latest) == 6
         assert "missing" not in json.dumps(latest)
@@ -460,13 +459,14 @@ async def test_idless_tool_deltas_keep_distinct_paired_ids_without_old_validatio
         ]
 
     validated_lengths = []
-    original = decoder_module.validate_history
+    original = decoder_module.validate_messages
 
     def validate(messages, **kwargs):
-        validated_lengths.append(len(messages))
+        if kwargs.get("history") is not None:
+            validated_lengths.append(len(messages))
         return original(messages, **kwargs)
 
-    monkeypatch.setattr(decoder_module, "validate_history", validate)
+    monkeypatch.setattr(decoder_module, "validate_messages", validate)
     protocol = "openai_chat"
     provider, model = profiles(protocol)
     with LocalSDK(protocol, wire_frames(protocol, stream_events(protocol), 61)) as sdk:

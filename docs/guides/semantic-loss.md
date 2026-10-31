@@ -24,6 +24,9 @@ decoder 完整翻译后统一报出本批损失，请求在发送前处理，响
 `reasoning_enable.supports=False` 时，所有思考内容都记录为不支持的损失。
 `feedback_reasoning_content` 只决定回传全部历史思考、工具调用消息中的思考或不回传，
 因回传策略排除的内容不记录损失；例如 `when_tool_calls` 会静默跳过没有工具调用的历史思考。
+Chat / Ollama 在回传策略启用且 assistant 含工具调用时，如果缺少思考正文，分别补
+`reasoning_content=""` / `thinking=""`，不依赖本次生成是否开启 reasoning。
+`none`、`omit` 或模型声明不支持 reasoning 时不补。Anthropic / Gemini 仍要求真实原生签名，不伪造空签名。
 
 创建 `MyLLM` 时选择策略，也可以在实例上二次设置：
 
@@ -78,6 +81,8 @@ usage 不出现在公开事件或非流式结果中。流成功结束后，`llm.
 `Usage`，包含 `input`、`output`、`total`、`cached`、`reasoning`；未返回的字段为 `None`，
 不推导未报告的 total。提前关闭或失败不替换上次成功记录。关闭消息缓存后的并发调用中，
 它代表最后完成的调用；每个调用仍有独立的内部累积状态。
+无法解析的 usage 样本返回空；非法计数、嵌套计数结构和辅助元数据不会中断有效回复。
+未知计数保持未知，不补造 token 数。元数据更新失败时整次更新丢弃，不保留部分写入。
 
 自定义 codec 现在注册工厂：`MyCodec.register(CustomCodec)`。工厂必须每次创建独立的
 codec、encoder、decoder 和 transport，并调用 `BaseCodec.__init__()`。

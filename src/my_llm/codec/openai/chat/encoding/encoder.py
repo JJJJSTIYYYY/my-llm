@@ -18,7 +18,14 @@ from my_llm.codec.shared.conversion import (
     select,
     tool_result_content,
 )
-from my_llm.codec.shared.stream import BlockRef, encode_batch, metadata, record
+from my_llm.codec.shared.stream import (
+    BlockRef,
+    encode_batch,
+    metadata,
+    optional_usage,
+    project_metadata,
+    record,
+)
 from my_llm.profile.resolution import ResolvedProfile
 
 PROTOCOL = "openai_chat"
@@ -37,6 +44,10 @@ class ChatCompletionsEncoder(BaseEncoder):
         """Project supported Chat Completions message fields before native schema validation."""
         result = []
         for message in messages:
+            if message.get("role") in ("tool", "function") and (
+                not isinstance(message.get("tool_call_id"), str) or not message["tool_call_id"]
+            ):
+                continue  # The canonical history validator discards this entire message.
             value = select(message, "role", "name", "tool_call_id", "function_call")
             content = message.get("content")
             if message.get("role") in ("tool", "function"):
@@ -159,7 +170,7 @@ class ChatCompletionsEncoder(BaseEncoder):
                 content = [
                     {
                         "type": "tool_result",
-                        "tool_use_id": message.get("tool_call_id") or legacy_call_id,
+                        "tool_use_id": message.get("tool_call_id"),
                         "content": encode_content(native_content, path=f"{path}.content")
                         if isinstance(native_content, list)
                         else native_content,
@@ -290,6 +301,7 @@ class ChatCompletionsEncoder(BaseEncoder):
             result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
         return result
 
+    @optional_usage
     def usage(self, value: dict | None) -> dict | None:
         """Normalize reported Chat Completions token counters, retaining absent usage as None."""
         if value is None:
@@ -304,12 +316,6 @@ class ChatCompletionsEncoder(BaseEncoder):
 
     def _metadata(self, event: dict) -> dict:
         """Project supported Chat response identity, model and creation metadata."""
-        return {
-            target: event[native]
-            for native, target in (
-                ("id", "response_id"),
-                ("model", "model"),
-                ("created", "created_at"),
-            )
-            if isinstance(event.get(native), (str, int, float))
-        }
+        return project_metadata(
+            event, (("id", "response_id"), ("model", "model"), ("created", "created_at"))
+        )

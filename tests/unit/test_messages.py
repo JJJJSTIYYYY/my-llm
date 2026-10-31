@@ -50,7 +50,7 @@ def test_non_message_input_is_rejected():
 
 @pytest.mark.parametrize("protocol", ["gemini", "ollama"])
 @pytest.mark.parametrize("first_result,second_result", [("first", "second"), ("second", "first")])
-def test_explicit_result_ids_are_removed_from_name_matching_queue(
+def test_explicit_result_ids_do_not_fill_ids_on_other_results(
     protocol, first_result, second_result
 ):
     if protocol == "gemini":
@@ -99,9 +99,10 @@ def test_explicit_result_ids_are_removed_from_name_matching_queue(
             {"role": "tool", "tool_name": "weather", "content": second_result},
         ]
     intermediate = MyCodec().encode(messages, input_format=protocol)["messages"]
-    validate_history(intermediate)
     results = [b for m in intermediate for b in m["content"] if b.get("type") == "tool_result"]
-    assert [b["tool_use_id"] for b in results] == [first_result, second_result]
+    assert [b["tool_use_id"] for b in results] == [first_result, None]
+    with pytest.raises(MessageValidationError, match="matching call ID"):
+        validate_history(intermediate)
 
 
 @pytest.mark.parametrize("protocol", ["gemini", "ollama"])
@@ -137,36 +138,12 @@ def test_generated_optional_call_ids_do_not_collide_with_explicit_ids(protocol):
         ]
     converter = MyCodec()
     intermediate = converter.encode(messages, input_format=protocol)["messages"]
-    validate_history(intermediate)
-    calls = [
-        block["id"]
-        for message in intermediate
-        for block in message["content"]
-        if block.get("type") == "tool_use"
-    ]
+    calls = [b["id"] for m in intermediate for b in m["content"] if b["type"] == "tool_use"]
     results = [
-        block["tool_use_id"]
-        for message in intermediate
-        for block in message["content"]
-        if block.get("type") == "tool_result"
+        b["tool_use_id"] for m in intermediate for b in m["content"] if b["type"] == "tool_result"
     ]
     assert calls[0] == "call_0_1"
     assert calls[1] != calls[0]
-    assert results == calls
-    decoded = converter.decode(intermediate, target_format=protocol)["messages"]
-    normalized = converter.encode(decoded, input_format=protocol)["messages"]
-    validate_history(normalized)
-    next_calls = [
-        block["id"]
-        for message in normalized
-        for block in message["content"]
-        if block["type"] == "tool_use"
-    ]
-    next_results = [
-        block["tool_use_id"]
-        for message in normalized
-        for block in message["content"]
-        if block["type"] == "tool_result"
-    ]
-    assert len(next_calls) == len(set(next_calls)) == 2
-    assert next_results == next_calls
+    assert results == ["call_0_1", None]
+    with pytest.raises(MessageValidationError, match="matching call ID"):
+        validate_history(intermediate)

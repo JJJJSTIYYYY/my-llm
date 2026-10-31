@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Literal
 
 from my_llm.middleware.models import (
@@ -12,6 +12,7 @@ from my_llm.middleware.models import (
     content_from_validated_wire,
     messages_from_validated_wire,
 )
+from my_llm.middleware.usage import normalize_usage
 from my_llm.middleware.validation import validate_events, validate_operations
 
 
@@ -29,7 +30,12 @@ class Usage:
         if value is None:
             return None
         if isinstance(value, cls):
-            return replace(value)
+            value = value.to_record()
+        if isinstance(value, dict) and not value:
+            return cls()
+        value = normalize_usage(value)
+        if value is None:
+            return None
 
         def count(name):
             """Read one flat or grouped usage counter, including additive counts."""
@@ -130,6 +136,6 @@ class MessageEvent(ProtocolValue):
 
 
 def stream_from_wire(values: list) -> list[StreamBatch]:
-    """Wrap owned encoder operations; unknown canonical operations are errors."""
-    validate_operations(values)
+    """Check core operations; optional accounting/metadata is parsed by runtime handlers."""
+    validate_operations(values, tolerate_auxiliary=True)
     return [StreamBatch(value["protocol"], value["events"]) for value in values]

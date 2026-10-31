@@ -205,6 +205,88 @@ def test_native_scalar_reasoning_feedback_matches_message_policy(
     assert request == before
 
 
+@pytest.mark.parametrize(
+    "protocol,field", [("openai_chat", "reasoning_content"), ("ollama", "thinking")]
+)
+@pytest.mark.parametrize("mode", ["always", "when_tool_calls", "none", omit])
+@pytest.mark.parametrize("reasoning", [None, False, True])
+@pytest.mark.parametrize("has_calls", [False, True])
+def test_empty_reasoning_feedback_depends_on_history_policy_not_generation_enablement(
+    profile_factory, protocol, field, mode, reasoning, has_calls
+):
+    message = AssistantMessage("assistant", [TextContent("answer")])
+    messages = [message]
+    if has_calls:
+        message.content.append(ToolCall("c", "f"))
+        messages.append(UserMessage("user", [ToolResult("c", [TextContent("ok")])]))
+    before = deepcopy(messages)
+    codec = MyCodec()
+    profile = profile_factory(
+        protocol,
+        feedback_reasoning_content=omit if mode is omit else config(mode),
+        supports_function_calling=config(True),
+    )
+    request = codec.prepare(
+        {"messages": messages, "tools": omit, "stream": False, "reasoning": reasoning},
+        profile,
+        input_format="middleware",
+        client={},
+    )["request"]
+    expected = has_calls and mode in ("always", "when_tool_calls")
+    assert (field in request["messages"][0]) is expected
+    if expected:
+        assert request["messages"][0][field] == ""
+    assert messages == before
+
+
+@pytest.mark.parametrize(
+    "protocol,field", [("openai_chat", "reasoning_content"), ("ollama", "thinking")]
+)
+@pytest.mark.parametrize("explicit_none", [False, True])
+def test_native_tool_messages_get_empty_reasoning_without_a_generation_reasoning_flag(
+    profile_factory, protocol, field, explicit_none
+):
+    call = {"function": {"name": "f", "arguments": {} if protocol == "ollama" else "{}"}}
+    if protocol == "openai_chat":
+        call.update(id="c", type="function")
+    request = {"messages": [{"role": "assistant", "tool_calls": [call], "content": ""}]}
+    if explicit_none:
+        request["messages"][0][field] = None
+    before = deepcopy(request)
+    profile = profile_factory(
+        protocol,
+        feedback_reasoning_content=config("when_tool_calls"),
+        supports_function_calling=config(True),
+    )
+    assert MyCodec().decoder(protocol).native_request(request, profile)["messages"][0][field] == ""
+    assert request == before
+
+
+@pytest.mark.parametrize(
+    "protocol,field", [("openai_chat", "reasoning_content"), ("ollama", "thinking")]
+)
+def test_empty_reasoning_is_not_injected_when_reasoning_is_unsupported(
+    profile_factory, protocol, field
+):
+    profile = profile_factory(
+        protocol,
+        feedback_reasoning_content=config("when_tool_calls"),
+        supports_function_calling=config(True),
+        reasoning_enable=parameter("reasoning_enable", protocol=protocol, supports=False),
+    )
+    request = MyCodec().prepare(
+        {
+            "messages": [AssistantMessage("assistant", [ToolCall("c", "f")])],
+            "tools": omit,
+            "stream": False,
+        },
+        profile,
+        input_format="middleware",
+        client={},
+    )["request"]
+    assert field not in request["messages"][0]
+
+
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 @pytest.mark.parametrize("mode", ["always", "when_tool_calls", "none", omit])
 @pytest.mark.parametrize("policy", ["raise", "ignore", "hook"])

@@ -1,12 +1,12 @@
 """Target rendering with complete drafts and collected semantic losses."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import replace
 from functools import wraps
 from typing import Any, final
 
-from my_llm.basic.data import capture
+from my_llm.basic.data import capture, dictionary_views
 from my_llm.basic.exceptions import ConfigurationError, MessageValidationError
 from my_llm.basic.semantic_loss import (
     SemanticLossContext,
@@ -24,6 +24,7 @@ from my_llm.cache.compiled_cache import (
 )
 from my_llm.codec.shared.capabilities import content_capability, supports_content
 from my_llm.codec.shared.conversion import validate_history
+from my_llm.codec.shared.input import InputPolicy
 from my_llm.codec.shared.options import (
     PreparedOptions,
     delete_path,
@@ -33,8 +34,13 @@ from my_llm.codec.shared.options import (
     set_path,
 )
 from my_llm.codec.shared.output import output_chunks, output_messages
+from my_llm.middleware.history import HistoryNormalizer
 from my_llm.middleware.protocol import wire_values
-from my_llm.middleware.validation import validate_events, validate_messages, validate_tools
+from my_llm.middleware.validation import (
+    validate_events,
+    validate_messages,
+    validate_tools,
+)
 from my_llm.profile.paths import path_keys
 from my_llm.profile.resolution import ResolvedProfile, client_parameters
 from my_llm.profile.types import Omit, Parameter
@@ -74,6 +80,7 @@ class BaseDecoder(ABC):
 
     usage_modes = ("none", "native")
     supports_previous_response_id = False
+    message_delegated_paths: tuple[tuple[str, ...], ...] = ()
 
     @property
     @abstractmethod
@@ -148,7 +155,6 @@ class BaseDecoder(ABC):
         profile: ResolvedProfile,
         *,
         history: list | None = None,
-        _translated: bool = False,
         **parameters: Any,
     ) -> dict:
         """Filter and validate the final native SDK request without performing I/O.
@@ -161,8 +167,9 @@ class BaseDecoder(ABC):
 
         Unknown target values may record semantic losses during filtering.
         Malformed message/tool structure raises MessageValidationError; invalid
-        request controls raise ConfigurationError. _translated marks values produced
-        by this decoder so protocol hooks can avoid repeating content adaptation.
+        request controls raise ConfigurationError. Every request follows the same
+        filtering path, including messages changed by a translation extension or
+        message_transform. A translation flag never bypasses capability checks.
         """
         if history is not None:
             validate_history(
@@ -182,9 +189,7 @@ class BaseDecoder(ABC):
         key = self.message_path[-1]
         if not isinstance(messages[key], list):
             raise MessageValidationError("native messages must be a list")
-        messages[key] = self.filter_messages(
-            messages[key], profile, _translated=_translated, **parameters
-        )
+        messages[key] = self.filter_messages(messages[key], profile, **parameters)
         self.validate_values(messages[key], self.message_type, filtered=True)
         tools = self._parent(request, self.tool_path)
         if tools is not None and tools.get(self.tool_path[-1]) is not None:
@@ -296,9 +301,54 @@ class BaseDecoder(ABC):
         return request
 
     def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
-        """Return independent message values restricted to the target message schema."""
+        """Filter native messages through one shared per-message pipeline.
+
+        Protocol hooks supply any grouping context and adapt one message at a time.
+        Capability filtering and SDK field projection run in the same outer loop
+        for all protocols, including translated and cached history. Returned values
+        own mutable payloads; native_request validates their final SDK shapes after
+        this hook returns, including changes made by public hook overrides.
+        Model capabilities and reasoning-feedback configuration are resolved once
+        per filtering pass; this does not cache or trust message validity.
+        """
         path = "$" + "".join(f".{key}" for key in self.message_path)
-        return _plan(list[self.message_type]).decode(messages, path)
+        decode = _plan(self.message_type, self.message_delegated_paths).decode
+        policy = InputPolicy(profile)
+        filter_message = self._filter_message
+        result = []
+        for index, message, feedback in self._message_inputs(messages, policy):
+            value = filter_message(
+                message,
+                policy,
+                path=f"{path}[{index}]",
+                decode=decode,
+                feedback=feedback,
+                **parameters,
+            )
+            if value is not None:
+                result.append(value)
+        return result
+
+    def _message_inputs(
+        self, messages: list, policy: InputPolicy
+    ) -> Iterator[tuple[int, dict, bool]]:
+        """Yield native views and optional group-level reasoning feedback context."""
+        for index, message in enumerate(dictionary_views(messages)):
+            yield index, message, False
+
+    def _filter_message(
+        self,
+        message: dict,
+        policy: InputPolicy,
+        *,
+        path: str,
+        decode: Callable,
+        feedback: bool,
+        **parameters: Any,
+    ) -> dict | None:
+        """Project one native message; protocols override their own content adaptation."""
+        value = decode(message, path)
+        return None if value is _MISSING else value
 
     def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
         """Return independent tool declarations restricted to the target tool schema."""
@@ -378,32 +428,33 @@ class BaseDecoder(ABC):
         Supported content that cannot be represented raises SemanticLossError with
         the complete request draft. This method performs no I/O.
 
-        Validate middleware structure and tool-call/result associations before
-        translating any message. Each supplied call needs one later result; only
-        a protocol supporting server history may accept externally stored calls.
-        Association validation does not enforce adjacent tool rounds.
+        Validate middleware structure and repair tool associations in one visit
+        before translation. Deduplicate call IDs, merge result parts, discard
+        whole messages with orphan results, and supply empty missing results.
+        A protocol supporting server history may retain external result IDs.
 
         If message_transform is present, apply it to translated native messages
         before assembly. The message cache uses this hook to append the current
-        complete batch to prior translated history; only this batch is checked by
-        validate_history. Finally native_request filters and validates the assembled
+        batch to prior translated history; only this batch is repaired by the
+        combined structure/association scan. Role failures are reported after
+        tool/control checks so their existing error precedence is preserved.
+        Finally native_request filters and validates the assembled
         SDK arguments. Cache publication and semantic-loss policy belong to BaseCodec.
         """
         messages = wire_values(messages)
         tools = wire_values(tools) if tools is not None else None
-        validate_messages(messages)
+        history = HistoryNormalizer(
+            allow_external_calls=self.allows_external_calls(parameters.get("previous_response_id"))
+        )
+        validate_messages(messages, history=history)
         if tools is not None:
             validate_tools(tools)
-        if tools is not None:
             tools = self._supported_tools(tools, profile)
         if options is None:
             options = self.validate_parameters(profile, **parameters)
         for loss in options.losses:
             report_loss(loss.origin_value, loss.reason, path=loss.origin_path)
-        validate_history(
-            messages,
-            allow_external_calls=self.allows_external_calls(parameters.get("previous_response_id")),
-        )
+        messages = history.finish(has_cached_history=parameters.get("has_cached_history", False))
         # These internal translations borrow intermediate application leaves.
         # native_request establishes the independently mutable SDK ownership.
         native_messages = self._messages(messages, profile, **parameters)
@@ -419,7 +470,7 @@ class BaseDecoder(ABC):
         )
         if options.effort is None and options.losses:
             parameters = {**parameters, "reasoning": None, "reasoning_effort": "none"}
-        return self.native_request(request, profile, _translated=True, **parameters)
+        return self.native_request(request, profile, **parameters)
 
     @final
     @_collect_translation
@@ -546,7 +597,7 @@ class BaseDecoder(ABC):
 
     @abstractmethod
     def _messages(
-        self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
+        self, values: Iterable[dict], profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         """Translate recognized message fields without retaining source envelopes."""
         ...

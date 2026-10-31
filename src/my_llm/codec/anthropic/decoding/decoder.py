@@ -1,5 +1,6 @@
 """anthropic: intermediate to native output."""
 
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from anthropic.resources.messages import AsyncMessages
@@ -12,13 +13,13 @@ from anthropic.types import (
 )
 from pydantic import ValidationError
 
-from my_llm.basic.data import capture, dictionary_views
+from my_llm.basic.data import capture
 from my_llm.basic.exceptions import ConfigurationError, MessageValidationError, ResponseFailedError
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.cache.compiled_cache import _MISSING, _plan, adapter, parameter_types
 from my_llm.codec.anthropic.decoding.content import decode_block, foreign_block
 from my_llm.codec.base.decoder import BaseDecoder
-from my_llm.codec.shared.capabilities import content_capability, supports_content
+from my_llm.codec.shared.capabilities import content_capability
 from my_llm.codec.shared.conversion import (
     decode_functions,
     select_present,
@@ -26,8 +27,7 @@ from my_llm.codec.shared.conversion import (
     split_system_messages,
 )
 from my_llm.codec.shared.input import (
-    feedback_reasoning,
-    input_capability,
+    InputPolicy,
     input_content,
     message_feedback,
 )
@@ -62,64 +62,59 @@ class AnthropicDecoder(BaseDecoder):
 
     request_schema = REQUEST_SCHEMA
 
-    def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
-        """Filter owned Anthropic messages to SDK fields and apply input capability policies."""
-        if parameters.get("_translated") or (
-            feedback_reasoning(profile, has_tool_calls=False)
-            and supports_content("image", profile)
-            and supports_content("tool_use", profile)
-            and supports_content("message_name", profile)
-        ):
-            return super().filter_messages(messages, profile, **parameters)
-        projected = []
-        for index, message in enumerate(dictionary_views(messages)):
-            path = f"$.messages[{index}]"
-            if message.get("name") is not None:
-                content_capability(message["name"], "message_name", profile, path=f"{path}.name")
-            content = message.get("content")
-            if isinstance(content, list):
-                feedback = feedback_reasoning(
-                    profile,
-                    has_tool_calls=any(
-                        isinstance(b, dict) and b.get("type") == "tool_use" for b in content
-                    ),
+    def _filter_message(
+        self,
+        message: dict,
+        policy: InputPolicy,
+        *,
+        path: str,
+        decode: Callable,
+        feedback: bool,
+        **parameters: Any,
+    ) -> dict | None:
+        """Filter Anthropic content and nested tool-result parts before SDK projection."""
+        if message.get("name") is not None:
+            policy.allows(message["name"], "message_name", path=f"{path}.name")
+        content = message.get("content")
+        if isinstance(content, list):
+            feedback = policy.reasoning_feedback(
+                has_tool_calls=policy.requires_tool_calls
+                and any(
+                    isinstance(block, dict) and block.get("type") == "tool_use" for block in content
                 )
-                retained = []
-                for offset, block in enumerate(content):
-                    if not isinstance(block, dict):
-                        retained.append(block)
-                        continue
-                    kind = block.get("type")
-                    block_path = f"{path}.content[{offset}]"
-                    if not input_capability(
-                        block,
-                        "thinking" if kind == "redacted_thinking" else kind,
-                        profile,
-                        feedback=feedback,
-                        path=block_path,
-                    ):
-                        continue
-                    if kind == "tool_result" and isinstance(children := block.get("content"), list):
-                        block = {
-                            **select_present(
-                                block, "type", "tool_use_id", "is_error", "cache_control"
-                            ),
-                            "content": [
-                                child
-                                for child_index, child in enumerate(children)
-                                if not isinstance(child, dict)
-                                or input_capability(
-                                    child,
-                                    child.get("type"),
-                                    profile,
-                                    path=f"{block_path}.content[{child_index}]",
-                                )
-                            ],
-                        }
+            )
+            retained = []
+            for offset, block in enumerate(content):
+                if not isinstance(block, dict):
                     retained.append(block)
-                message = {"role": message.get("role"), "content": retained}
-            projected.append(message)
-        return super().filter_messages(projected, profile, **parameters)
+                    continue
+                kind = block.get("type")
+                block_path = f"{path}.content[{offset}]"
+                if not policy.allows(
+                    block,
+                    "thinking" if kind == "redacted_thinking" else kind,
+                    feedback=feedback,
+                    path=block_path,
+                ):
+                    continue
+                if kind == "tool_result" and isinstance(children := block.get("content"), list):
+                    block = {
+                        **select_present(block, "type", "tool_use_id", "is_error", "cache_control"),
+                        "content": [
+                            child
+                            for child_index, child in enumerate(children)
+                            if not isinstance(child, dict)
+                            or policy.allows(
+                                child,
+                                child.get("type"),
+                                path=f"{block_path}.content[{child_index}]",
+                            )
+                        ],
+                    }
+                retained.append(block)
+            message = {"role": message.get("role"), "content": retained}
+        value = decode(message, path)
+        return None if value is _MISSING else value
 
     def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
         """Filter native tool fields while preserving the complete open input_schema payload."""
@@ -228,7 +223,7 @@ class AnthropicDecoder(BaseDecoder):
         return result
 
     def _messages(
-        self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
+        self, messages: Iterable[dict], profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         """Render middleware history as Anthropic content-block messages.
 

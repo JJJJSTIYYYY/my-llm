@@ -89,6 +89,28 @@ def assert_no_ignored_fields(native, validated):
             assert_no_ignored_fields(value, parsed)
 
 
+def assert_input_native(value, schema):
+    """Validate source fields, including association IDs absent from the Ollama SDK.
+
+    These IDs are declared by the pinned REST schema and explicitly read by the
+    input encoder. Output assertions remain strict about SDK-ignored fields.
+    """
+    if schema is Message:
+        value = {**value}
+        validator("ollama", "request").validate({"model": "test", "messages": [value]})
+        if (identity := value.pop("tool_call_id", None)) is not None:
+            assert isinstance(identity, str) and identity
+        if value.get("tool_calls"):
+            calls = []
+            for call in value["tool_calls"]:
+                call = {**call}
+                if (identity := call.pop("id", None)) is not None:
+                    assert isinstance(identity, str) and identity
+                calls.append(call)
+            value["tool_calls"] = calls
+    assert_native(value, schema)
+
+
 def assert_native(value, schema):
     for protocol, event_schema in EVENT_TYPES.items():
         if schema is event_schema or (

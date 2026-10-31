@@ -11,6 +11,7 @@ from my_llm.basic.exceptions import IncompleteStreamError
 from my_llm.basic.semantic_loss import Originated
 from my_llm.codec.shared.conversion import arguments, source_protocol
 from my_llm.codec.shared.stream import operations
+from my_llm.middleware.usage import normalize_usage
 
 
 def _located(value: dict, source: dict) -> dict:
@@ -172,25 +173,43 @@ class StreamState:
                 self.metadata["source_protocol"] = origin
             for event in operations(chunk):
                 if self.terminal and event["type"] not in self._terminal_tail:
+                    if event["type"] in ("metadata", "usage"):
+                        continue  # Optional tails cannot invalidate a completed response.
                     raise IncompleteStreamError("event received after protocol terminal event")
                 result.extend(_HANDLERS[event["type"]](self, event))
         return result
 
     def _metadata(self, event: dict) -> list[dict]:
-        """Merge owned metadata updates, replacing dictionaries along the addressed path."""
-        target = self.metadata
-        for key in event["path"]:
-            child = dict(target.get(key, {}))
-            target[key] = child
-            target = child
-        target.update(capture(event["values"]))
+        """Merge valid auxiliary updates atomically; ignore unparseable metadata."""
+        path, values = event.get("path"), event.get("values")
+        if (
+            not isinstance(path, (list, tuple))
+            or not isinstance(values, dict)
+            or not all(isinstance(key, str) for key in path)
+        ):
+            return []
+        try:
+            update = capture(values)
+            root = dict(self.metadata)
+            target = root
+            for key in path:
+                previous = target.get(key, {})
+                if not isinstance(previous, dict):
+                    return []
+                child = dict(previous)
+                target[key] = child
+                target = child
+            target.update(update)
+        except Exception:
+            return []
+        self.metadata = root
         return []
 
     def _usage(self, event: dict) -> list[dict]:
         """Merge reported usage counters without clearing previously reported fields."""
-        if event["usage"] is None:
+        update = normalize_usage(event.get("usage"))
+        if update is None:
             return []
-        update = event["usage"]
         usage = dict(self.usage or {})
         for name in ("total", "cached", "cache_write", "reasoning"):
             if name in update:

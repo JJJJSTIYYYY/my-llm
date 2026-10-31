@@ -1,17 +1,19 @@
 """gemini: intermediate to native output."""
 
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from google.genai import types
 from google.genai.models import AsyncModels
+from pydantic import ValidationError
 
-from my_llm.basic.data import capture, dictionary_views
+from my_llm.basic.data import capture
 from my_llm.basic.exceptions import ConfigurationError
 from my_llm.basic.semantic_loss import report_loss
-from my_llm.cache.compiled_cache import parameter_types
+from my_llm.cache.compiled_cache import _MISSING, parameter_types
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.gemini.decoding.content import decode_part
-from my_llm.codec.shared.capabilities import content_capability, supports_content
+from my_llm.codec.shared.capabilities import content_capability
 from my_llm.codec.shared.conversion import (
     decode_functions,
     select,
@@ -20,8 +22,7 @@ from my_llm.codec.shared.conversion import (
     split_system_messages,
 )
 from my_llm.codec.shared.input import (
-    feedback_reasoning,
-    input_capability,
+    InputPolicy,
     input_content,
     message_feedback,
 )
@@ -76,68 +77,63 @@ class GeminiDecoder(BaseDecoder):
         "config": types.GenerateContentConfig,
     }
 
-    def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
-        """Filter owned Gemini messages to SDK fields and apply input capability policies."""
-        if parameters.get("_translated") or (
-            feedback_reasoning(profile, has_tool_calls=False)
-            and supports_content("image", profile)
-            and supports_content("tool_use", profile)
-            and supports_content("message_name", profile)
-        ):
-            return super().filter_messages(messages, profile, **parameters)
-        projected = []
-        for index, message in enumerate(dictionary_views(messages)):
-            path = f"$.contents[{index}]"
-            if message.get("name") is not None:
-                content_capability(message["name"], "message_name", profile, path=f"{path}.name")
-            parts = message.get("parts")
-            if isinstance(parts, list):
-                feedback = feedback_reasoning(
-                    profile,
-                    has_tool_calls=any(
-                        isinstance(b, dict) and b.get("function_call") is not None for b in parts
-                    ),
+    def _filter_message(
+        self,
+        message: dict,
+        policy: InputPolicy,
+        *,
+        path: str,
+        decode: Callable,
+        feedback: bool,
+        **parameters: Any,
+    ) -> dict | None:
+        """Filter Gemini parts and nested function-response media before SDK projection."""
+        if message.get("name") is not None:
+            policy.allows(message["name"], "message_name", path=f"{path}.name")
+        parts = message.get("parts")
+        if isinstance(parts, list):
+            feedback = policy.reasoning_feedback(
+                has_tool_calls=policy.requires_tool_calls
+                and any(
+                    isinstance(block, dict) and block.get("function_call") is not None
+                    for block in parts
                 )
-                retained = []
-                for offset, block in enumerate(parts):
-                    if not isinstance(block, dict):
-                        retained.append(block)
-                        continue
-                    block_path = f"{path}.parts[{offset}]"
-                    kind = input_kind(block)
-                    if not input_capability(
-                        block, kind, profile, feedback=feedback, path=block_path
-                    ):
-                        continue
-                    response = block.get("function_response")
-                    if (
-                        kind == "tool_result"
-                        and isinstance(response, dict)
-                        and isinstance(children := response.get("parts"), list)
-                    ):
-                        block = {
-                            **select(block, *types.Part.model_fields),
-                            "function_response": {
-                                **select(
-                                    block["function_response"], *types.FunctionResponse.model_fields
-                                ),
-                                "parts": [
-                                    child
-                                    for child_index, child in enumerate(children)
-                                    if not isinstance(child, dict)
-                                    or input_capability(
-                                        child,
-                                        input_kind(child),
-                                        profile,
-                                        path=f"{block_path}.function_response.parts[{child_index}]",
-                                    )
-                                ],
-                            },
-                        }
+            )
+            retained = []
+            for offset, block in enumerate(parts):
+                if not isinstance(block, dict):
                     retained.append(block)
-                message = {**select(message, "role"), "parts": retained}
-            projected.append(message)
-        return super().filter_messages(projected, profile, **parameters)
+                    continue
+                block_path = f"{path}.parts[{offset}]"
+                kind = input_kind(block)
+                if not policy.allows(block, kind, feedback=feedback, path=block_path):
+                    continue
+                response = block.get("function_response")
+                if (
+                    kind == "tool_result"
+                    and isinstance(response, dict)
+                    and isinstance(children := response.get("parts"), list)
+                ):
+                    block = {
+                        **select(block, *types.Part.model_fields),
+                        "function_response": {
+                            **select(response, *types.FunctionResponse.model_fields),
+                            "parts": [
+                                child
+                                for child_index, child in enumerate(children)
+                                if not isinstance(child, dict)
+                                or policy.allows(
+                                    child,
+                                    input_kind(child),
+                                    path=f"{block_path}.function_response.parts[{child_index}]",
+                                )
+                            ],
+                        },
+                    }
+                retained.append(block)
+            message = {**select(message, "role"), "parts": retained}
+        value = decode(message, path)
+        return None if value is _MISSING else value
 
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
         """Validate shared controls and protect Gemini fields from extra-body replacement."""
@@ -163,9 +159,12 @@ class GeminiDecoder(BaseDecoder):
             config["candidate_count"] = 1
         # Tool declarations were validated separately in native_request. Validate
         # remaining public config fields without rebuilding every tool schema.
-        thinking = types.GenerateContentConfig(
-            **{key: value for key, value in config.items() if key != "tools"}
-        ).thinking_config
+        try:
+            thinking = types.GenerateContentConfig(
+                **{key: value for key, value in config.items() if key != "tools"}
+            ).thinking_config
+        except (ValidationError, TypeError, ValueError) as exc:
+            raise ConfigurationError("invalid Gemini config") from exc
         if thinking is not None and thinking.thinking_budget == 0 and thinking.include_thoughts:
             raise ConfigurationError("reasoning conflicts with a zero Gemini thinking budget")
         return request
@@ -219,7 +218,7 @@ class GeminiDecoder(BaseDecoder):
         return result
 
     def _messages(
-        self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
+        self, messages: Iterable[dict], profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         """Render middleware history as Gemini Content messages and parts.
 

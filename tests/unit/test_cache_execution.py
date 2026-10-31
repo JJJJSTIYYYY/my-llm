@@ -60,13 +60,13 @@ async def test_warm_incremental_prepare_skips_old_translation_and_type_compilati
         target = llm.codec.decoder(upstream)
         track(target, "_messages", translations)
         track(target, "filter_messages", native_filters)
-        validate = decoder_module.validate_history
+        validate = decoder_module.validate_messages
 
-        def validate_history(messages, **kwargs):
+        def validate_messages(messages, **kwargs):
             associations.append(len(messages))
             return validate(messages, **kwargs)
 
-        monkeypatch.setattr(decoder_module, "validate_history", validate_history)
+        monkeypatch.setattr(decoder_module, "validate_messages", validate_messages)
         encoded = []
         if stdio != "middleware":
             track(llm.codec.codecs[stdio].encoder, "_messages", encoded)

@@ -322,6 +322,7 @@ class MyCodec:
         target = self._codec(profile.protocol)
         batch = None
         if enable_message_cache:
+            intermediate["has_cached_history"] = message_cache_key in self._message_cache
             batch = self._message_cache.batch(
                 message_cache_key, fingerprint=self._message_cache.fingerprint(inputs["messages"])
             )
@@ -459,7 +460,7 @@ class MyCodec:
         if chunks and any(is_batch(chunk) for chunk in chunks):
             if not all(is_batch(chunk) for chunk in chunks):
                 raise MessageValidationError("cannot mix middleware batches and public events")
-            validate_operations(chunks)
+            validate_operations(chunks, tolerate_auxiliary=True)
             # Complete offline streams use the same request-owned accumulation
             # as live calls, regardless of their source and target protocols.
             from my_llm.runtime.state import StreamState

@@ -1,11 +1,12 @@
 """ollama: intermediate to native output."""
 
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from ollama import Image, Message, Options, Tool
 from pydantic import ValidationError
 
-from my_llm.basic.data import capture, dictionary_views, read
+from my_llm.basic.data import capture, dictionary_views
 from my_llm.basic.exceptions import ConfigurationError
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.cache.compiled_cache import _MISSING, _plan
@@ -17,17 +18,16 @@ from my_llm.codec.ollama.decoding.content import (
     tool_text,
 )
 from my_llm.codec.ollama.schema import REQUEST_SCHEMA, validate_ollama_values
-from my_llm.codec.shared.capabilities import content_capability, supports_content
+from my_llm.codec.shared.capabilities import content_capability
 from my_llm.codec.shared.conversion import (
     decode_functions,
     source_protocol,
 )
 from my_llm.codec.shared.input import (
-    feedback_reasoning,
-    input_capability,
+    InputPolicy,
     input_content,
-    input_reasoning,
     message_feedback,
+    pad_reasoning,
 )
 from my_llm.codec.shared.options import PreparedOptions, validate_request_options
 from my_llm.codec.shared.stream import counts, events
@@ -79,14 +79,6 @@ def validate_schema(parameters: dict, *, path: str | None = None) -> dict:
 
 
 PROTOCOL = "ollama"
-
-
-def thinking_enabled(profile: ResolvedProfile, parameters: dict) -> bool:
-    """Whether shared controls or merged Ollama body options enable thinking."""
-    if parameters.get("reasoning") is True or parameters.get("reasoning_effort", "none") != "none":
-        return True
-    body = merge_dicts(profile.get("extra_body", {}), parameters.get("extra_body"))
-    return body.get("think") not in (None, False)
 
 
 class OllamaDecoder(BaseDecoder):
@@ -158,49 +150,63 @@ class OllamaDecoder(BaseDecoder):
             result.append(tool)
         return result
 
-    def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
-        """Filter owned Ollama messages to SDK fields and apply input capability policies."""
-        result = []
-        # Images are normalized below; defer this leaf to avoid copying it first.
-        decode = _plan(self.message_type, delegated_paths=(("images",),)).decode
-        for index, original in enumerate(messages):
-            path = f"$.messages[{index}]"
-            if read(original, "role") == "tool" and not input_capability(
-                original, "tool_result", profile, path=path
-            ):
-                continue
-            value = decode(original, path)
-            images = value.get("images")
-            if images:
-                value["images"] = [
-                    image.model_dump(mode="json") if isinstance(image, Image) else image
-                    for offset, image in enumerate(images)
-                    if input_capability(image, "image", profile, path=f"{path}.images[{offset}]")
-                ]
-                if not value["images"]:
-                    value.pop("images", None)
-            elif "images" in value:
-                value["images"] = capture(images)
-            if not supports_content("tool_use", profile):
-                for offset, call in enumerate(read(original, "tool_calls") or []):
-                    input_capability(call, "tool_use", profile, path=f"{path}.tool_calls[{offset}]")
-                value.pop("tool_calls", None)
-            if read(original, "name") is not None and not content_capability(
-                read(original, "name"), "message_name", profile, path=f"{path}.name"
-            ):
-                value.pop("name", None)
-            if (reasoning := read(original, "thinking")) is not None:
-                if not input_reasoning(
-                    reasoning,
-                    profile,
-                    feedback=feedback_reasoning(
-                        profile, has_tool_calls=bool(value.get("tool_calls"))
-                    ),
-                    path=f"$.messages[{index}].thinking",
-                ):
-                    value.pop("thinking", None)
-            result.append(value)
-        return result
+    message_delegated_paths = (("images",),)
+
+    def _filter_message(
+        self,
+        original: dict,
+        policy: InputPolicy,
+        *,
+        path: str,
+        decode: Callable,
+        feedback: bool,
+        **parameters: Any,
+    ) -> dict | None:
+        """Normalize Ollama images and filter tool/reasoning capabilities per message."""
+        if original.get("role") == "tool" and not policy.allows(original, "tool_result", path=path):
+            return None
+        value = decode(original, path)
+        if value is _MISSING:
+            return None
+        images = value.get("images")
+        if images:
+            retained = []
+            for offset, image in enumerate(images):
+                if policy.allows(image, "image", path=f"{path}.images[{offset}]"):
+                    native = getattr(image, "origin_value", image)
+                    retained.append(
+                        native.model_dump(mode="json") if isinstance(native, Image) else native
+                    )
+            if retained:
+                value["images"] = retained
+            else:
+                value.pop("images", None)
+        elif "images" in value:
+            value["images"] = capture(images)
+        if not policy.supported["tool_use"]:
+            for offset, call in enumerate(original.get("tool_calls") or []):
+                policy.allows(call, "tool_use", path=f"{path}.tool_calls[{offset}]")
+            value.pop("tool_calls", None)
+        if original.get("name") is not None and not policy.allows(
+            original["name"], "message_name", path=f"{path}.name"
+        ):
+            value.pop("name", None)
+        if (reasoning := original.get("thinking")) is not None and (
+            not policy.allows(
+                reasoning,
+                "thinking",
+                feedback=policy.reasoning_feedback(has_tool_calls=bool(value.get("tool_calls"))),
+                path=f"{path}.thinking",
+            )
+        ):
+            value.pop("thinking", None)
+        pad_reasoning(
+            value,
+            "thinking",
+            feedback=policy.reasoning_feedback(has_tool_calls=True),
+            has_tool_calls=bool(value.get("tool_calls")),
+        )
+        return value
 
     def validate_profile(self, profile: ResolvedProfile) -> None:
         """Validate shared parameter roots and require header-based API-key bindings."""
@@ -244,7 +250,7 @@ class OllamaDecoder(BaseDecoder):
         return result
 
     def _messages(
-        self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
+        self, messages: Iterable[dict], profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         """Render middleware history as Ollama messages, images and tool results.
 
@@ -255,11 +261,6 @@ class OllamaDecoder(BaseDecoder):
         """
         result = []
         names = {}
-        pad_reasoning = (
-            profile is not None
-            and feedback_reasoning(profile, has_tool_calls=True)
-            and thinking_enabled(profile, parameters)
-        )
         for index, message, feedback in message_feedback(messages, profile):
             if message.get("name") is not None:
                 content_capability(
@@ -318,8 +319,14 @@ class OllamaDecoder(BaseDecoder):
                 if images:
                     value["images"] = images
                 reasoning_text = "".join(reasoning)
-                if reasoning_text or (pad_reasoning and calls and message["role"] == "assistant"):
+                if reasoning_text:
                     value["thinking"] = reasoning_text
+                pad_reasoning(
+                    value,
+                    "thinking",
+                    feedback=profile is not None and feedback,
+                    has_tool_calls=bool(calls),
+                )
                 result.append(value)
             result.extend(results)
         return result

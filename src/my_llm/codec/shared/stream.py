@@ -2,9 +2,48 @@
 
 from collections.abc import Callable
 from copy import deepcopy
+from functools import wraps
+from math import isfinite
 from typing import NamedTuple
 
 from my_llm.basic.data import dictionary_views
+from my_llm.middleware.usage import normalize_usage
+
+
+def optional_usage(method):
+    """Keep optional native accounting failures out of message conversion."""
+
+    @wraps(method)
+    def convert(self, value):
+        try:
+            return method(self, value)
+        except Exception:
+            return None
+
+    return convert
+
+
+def project_metadata(value: object, fields: tuple[tuple[str, str], ...]) -> dict:
+    """Read optional native metadata; discard invalid identity/time values."""
+    try:
+        if not isinstance(value, dict):
+            return {}
+        result = {}
+        for source, target in fields:
+            item = value.get(source)
+            valid = isinstance(item, str)
+            if target == "created_at":
+                valid = (
+                    isinstance(item, (int, float))
+                    and not isinstance(item, bool)
+                    and item >= 0
+                    and isfinite(item)
+                )
+            if valid:
+                result[target] = item
+        return result
+    except Exception:
+        return {}
 
 
 class BlockRef(NamedTuple):
@@ -17,7 +56,16 @@ class BlockRef(NamedTuple):
 
 def metadata(values: dict, *, path: tuple[str, ...] = ()) -> dict:
     """Update one metadata dictionary with fields projected by the native encoder."""
-    return {"type": "metadata", "values": deepcopy(values), "path": path}
+    try:
+        if (
+            not isinstance(values, dict)
+            or not isinstance(path, (tuple, list))
+            or not all(isinstance(key, str) for key in path)
+        ):
+            values, path = {}, ()
+        return {"type": "metadata", "values": deepcopy(values), "path": path}
+    except Exception:
+        return {"type": "metadata", "values": {}, "path": ()}
 
 
 def batch(operations: list[dict], protocol: str) -> dict:
@@ -34,7 +82,10 @@ def encode_batch(
     """Translate token counts before grouping recognized stream operations."""
     for operation in operations:
         if operation["type"] == "usage":
-            operation["usage"] = usage(operation["usage"])
+            try:
+                operation["usage"] = usage(operation.get("usage"))
+            except Exception:
+                operation["usage"] = None
     return batch(operations, protocol)
 
 
@@ -76,20 +127,28 @@ def record(
     reasoning=None,
 ):
     """Build canonical usage groups while preserving unreported counters as absent."""
-    return compact(
-        {
-            "input": {"base": input_base, "add": input_add} if input_base is not None else None,
-            "output": {"base": output_base, "add": output_add} if output_base is not None else None,
-            "total": total,
-            "cached": cached,
-            "cache_write": cache_write,
-            "reasoning": reasoning,
-        }
+    return normalize_usage(
+        compact(
+            {
+                "input": {"base": input_base, "add": input_add} if input_base is not None else None,
+                "output": {"base": output_base, "add": output_add}
+                if output_base is not None
+                else None,
+                "total": total,
+                "cached": cached,
+                "cache_write": cache_write,
+                "reasoning": reasoning,
+            }
+        )
     )
 
 
 def counts(value):
     """Return flattened usage totals, deriving total only when both token groups are known."""
+
+    value = normalize_usage(value)
+    if value is None:
+        return (None,) * 6
 
     def group(name):
         """Sum one reported base count and its additive counters."""

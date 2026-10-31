@@ -442,7 +442,14 @@ def test_foreign_message_extensions_cannot_become_native_request_fields(
     filtered = (
         MyCodec()
         .decoder(target)
-        .filter_messages(converted, profile_factory(target, supports_function_calling=config(True)))
+        .filter_messages(
+            converted,
+            profile_factory(
+                target,
+                supports_function_calling=config(True),
+                feedback_reasoning_content=config("none"),
+            ),
+        )
     )
     assert all("vendor_metadata" not in message for message in filtered)
     for message in filtered:

@@ -7,13 +7,19 @@ from jsonschema import Draft202012Validator
 
 from my_llm import ReasoningContent, TextContent, ToolCall
 from tests.helpers.schema import validate_request
-from tests.helpers.sdk import EVENT_TYPES, MESSAGE_TYPES, TOOL_TYPES, assert_native
+from tests.helpers.sdk import (
+    EVENT_TYPES,
+    MESSAGE_TYPES,
+    TOOL_TYPES,
+    assert_input_native,
+    assert_native,
+)
 from tests.performance.workloads import PNG, Workload, arguments, parameters
 
 
 def validate_workload(workload: Workload):
     for message in workload.messages:
-        assert_native(message, MESSAGE_TYPES[workload.stdio])
+        assert_input_native(message, MESSAGE_TYPES[workload.stdio])
     for tool in workload.tools:
         assert_native(tool, TOOL_TYPES[workload.stdio])
     for event in workload.events:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from my_llm.basic.exceptions import MessageValidationError
+from my_llm.middleware.history import MESSAGE_ROLES
 from my_llm.middleware.models import (
     FunctionTool,
     ImageContent,
@@ -157,11 +158,13 @@ def _input_origin(part: MessageContent, path: str) -> MessageContent:
     """Attach missing provenance through shallow replacements, including result parts."""
     content = {}
     if isinstance(part, ToolResult):
-        children = [
-            _input_origin(value, f"{path}.content[{index}]")
-            for index, value in enumerate(part.content)
-        ]
-        if any(new is not old for new, old in zip(children, part.content, strict=True)):
+        children = []
+        changed = False
+        for index, value in enumerate(part.content):
+            child = _input_origin(value, f"{path}.content[{index}]")
+            children.append(child)
+            changed |= child is not value
+        if changed:
             content["content"] = children
     if part.origin is None:
         content["origin"] = Origin(path, part)
@@ -179,61 +182,57 @@ def generation_input(messages, tools) -> ProtocolMiddleWare:
     Shallow model envelopes record caller objects without mutating them. JSON
     leaves are borrowed until the decoder captures the independently owned SDK
     request. This function checks typed shapes and roles; call IDs, duplicate
-    results and missing results are checked later by validate_history.
+    results and missing results are repaired during the decoder's structural scan.
     """
     if not isinstance(messages, (list, tuple)) or not messages:
         raise MessageValidationError("messages must be a non-empty list or tuple")
     history = []
     for index, message in enumerate(messages):
-        if not isinstance(message, Message) or message.role not in (
-            "user",
-            "assistant",
-            "system",
-            "developer",
-        ):
+        if not isinstance(message, Message) or message.role not in MESSAGE_ROLES:
             raise MessageValidationError(
                 "middleware messages require Message models and valid roles"
             )
-        if (
-            not _valid_item(message.item)
-            or not isinstance(message.content, list)
-            or not all(_valid_content(part, message.role) for part in message.content)
-        ):
+        if not _valid_item(message.item) or not isinstance(message.content, list):
             raise MessageValidationError("invalid middleware content or content role")
         path = f"$.messages[{index}]"
-        parts = [
-            _input_origin(part, f"{path}.content[{offset}]")
-            for offset, part in enumerate(message.content)
-        ]
+        parts = []
+        changed = message.origin is None
+        for offset, part in enumerate(message.content):
+            if not _valid_content(part, message.role):
+                raise MessageValidationError("invalid middleware content or content role")
+            located = _input_origin(part, f"{path}.content[{offset}]")
+            parts.append(located)
+            changed |= located is not part
         history.append(
             replace(
                 message,
                 content=parts,
                 origin=message.origin if message.origin is not None else Origin(path, message),
             )
-            if message.origin is None
-            or any(new is not old for new, old in zip(parts, message.content, strict=True))
+            if changed
             else message
         )
     values = None
     if tools is not None and not isinstance(tools, Omit):
-        if not isinstance(tools, (list, tuple)) or any(
-            not isinstance(tool, FunctionTool)
-            or not isinstance(tool.name, str)
-            or not tool.name
-            or tool.description is not None
-            and not isinstance(tool.description, str)
-            or tool.parameters is not None
-            and not isinstance(tool.parameters, dict)
-            or tool.strict is not None
-            and not isinstance(tool.strict, bool)
-            for tool in tools
-        ):
+        if not isinstance(tools, (list, tuple)):
             raise MessageValidationError("middleware tools require FunctionTool models")
-        values = [
-            tool
-            if tool.origin is not None
-            else replace(tool, origin=Origin(f"$.tools[{index}]", tool))
-            for index, tool in enumerate(tools)
-        ]
+        values = []
+        for index, tool in enumerate(tools):
+            if (
+                not isinstance(tool, FunctionTool)
+                or not isinstance(tool.name, str)
+                or not tool.name
+                or tool.description is not None
+                and not isinstance(tool.description, str)
+                or tool.parameters is not None
+                and not isinstance(tool.parameters, dict)
+                or tool.strict is not None
+                and not isinstance(tool.strict, bool)
+            ):
+                raise MessageValidationError("middleware tools require FunctionTool models")
+            values.append(
+                tool
+                if tool.origin is not None
+                else replace(tool, origin=Origin(f"$.tools[{index}]", tool))
+            )
     return ProtocolMiddleWare(messages=history, tools=values)

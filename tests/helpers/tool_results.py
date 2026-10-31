@@ -35,8 +35,11 @@ def application_result_history(protocol, payload):
             },
         ]
     return [
-        {"role": "assistant", "tool_calls": [{"function": {"name": "f", "arguments": {}}}]},
-        {"role": "tool", "tool_name": "f", "content": payload},
+        {
+            "role": "assistant",
+            "tool_calls": [{"id": "c", "function": {"name": "f", "arguments": {}}}],
+        },
+        {"role": "tool", "tool_call_id": "c", "tool_name": "f", "content": payload},
     ]
 
 

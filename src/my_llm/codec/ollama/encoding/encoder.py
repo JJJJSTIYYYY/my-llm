@@ -13,13 +13,19 @@ from my_llm.codec.ollama.encoding.content import image_data, media_type, tool_bl
 from my_llm.codec.ollama.schema import validate_ollama_values
 from my_llm.codec.shared.conversion import (
     allocate_call_id,
-    associate_tool_result,
     blocks,
     mapping_list,
     select,
     text_result,
 )
-from my_llm.codec.shared.stream import BlockRef, encode_batch, metadata, record
+from my_llm.codec.shared.stream import (
+    BlockRef,
+    encode_batch,
+    metadata,
+    optional_usage,
+    project_metadata,
+    record,
+)
 from my_llm.profile.resolution import ResolvedProfile
 
 PROTOCOL = "ollama"
@@ -93,13 +99,13 @@ class OllamaEncoder(BaseEncoder):
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        """Normalize Ollama messages and associate tool results with pending calls.
+        """Normalize Ollama messages without inferring tool-result IDs.
 
         Convert images and thinking to canonical content, allocate noncolliding
-        IDs for calls without IDs, and match ID-less results by function name.
-        Explicit result IDs are retained for downstream association validation.
+        IDs for calls without IDs, and preserve result IDs exactly as supplied.
+        The shared request validator discards ID-less result messages before
+        supplying empty results for remaining unanswered calls.
         """
-        pending = []
         result = []
         id_prefix = f"{uuid4().hex}_" if parameters.get("enable_message_cache", False) else ""
         # Reserve explicit IDs first so ID-less calls cannot shadow a later native ID.
@@ -149,11 +155,10 @@ class OllamaEncoder(BaseEncoder):
                 content.append(
                     originated(block, f"$.messages[{index}].tool_calls[{call_index}]", call)
                 )
-                pending.append(block)
             role = message.get("role")
             if role == "tool":
                 name = message.get("tool_name")
-                call_id = associate_tool_result(pending, message.get("tool_call_id"), name)
+                call_id = message.get("tool_call_id")
                 content = [
                     {
                         "type": "tool_result",
@@ -220,13 +225,7 @@ class OllamaEncoder(BaseEncoder):
                 )
             if not any(key in event for key in ("message", "done")):
                 continue
-            ops = [
-                metadata(
-                    {"model": event["model"]}
-                    if isinstance(event.get("model"), (str, int, float))
-                    else {}
-                )
-            ]
+            ops = [metadata(project_metadata(event, (("model", "model"),)))]
             message = event.get("message", {})
             for name, kind, default in (
                 ("content", "text", "$.message.content"),
@@ -275,6 +274,7 @@ class OllamaEncoder(BaseEncoder):
             result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
         return result
 
+    @optional_usage
     def usage(self, value: dict | None) -> dict | None:
         """Normalize reported Ollama token counters, retaining absent usage as None."""
         if value is None:

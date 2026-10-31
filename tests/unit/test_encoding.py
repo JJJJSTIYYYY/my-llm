@@ -224,7 +224,7 @@ def test_invalid_request_parameters(profile_factory, kwargs):
 @pytest.mark.parametrize("feedback", ["always", "when_tool_calls", "none"])
 @pytest.mark.parametrize("has_calls", [True, False])
 @pytest.mark.parametrize("visible", [None, "reason"])
-def test_reasoning_replay_only_pads_tool_calls_when_thinking(
+def test_reasoning_replay_pads_tool_calls_according_to_feedback(
     protocol, key, thinking, feedback, has_calls, visible, tool_call
 ):
     from my_llm import MyCodec
@@ -250,7 +250,7 @@ def test_reasoning_replay_only_pads_tool_calls_when_thinking(
         reasoning=thinking,
     )["messages"][0]
     result = MyCodec().decoder(protocol).filter_messages([result], profile, reasoning=thinking)[0]
-    assert (key in result) is (replay and (bool(visible) or (has_calls and thinking)))
+    assert (key in result) is (replay and (bool(visible) or has_calls))
     if key in result:
         assert result[key] == (visible or "")
 

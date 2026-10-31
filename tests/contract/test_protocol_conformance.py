@@ -61,6 +61,11 @@ def canonical_history(messages, protocol):
                     block["id"] = "call_1"
                 elif block["type"] == "tool_result":
                     block["tool_use_id"] = "call_1"
+        elif protocol == "ollama":
+            # The installed SDK cannot carry association IDs in translated history.
+            message.pop("tool_call_id", None)
+            for call in message.get("tool_calls", []):
+                call.pop("id", None)
         elif protocol == "gemini":
             for part in message["parts"]:
                 for field in ("function_call", "function_response"):

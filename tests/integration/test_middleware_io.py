@@ -371,14 +371,16 @@ async def test_output_loss_policy_still_applies_to_typed_drafts(streaming, polic
         assert all(body.closed for body in sdk.bodies)
 
 
-async def test_decoder_retains_history_and_generation_validation():
+async def test_decoder_repairs_history_and_retains_generation_validation():
     provider, model = profiles("openai_chat")
     async with MyLLM(provider=provider, model=model, stdio_protocol="middleware") as llm:
-        with pytest.raises(MessageValidationError, match="exactly one result"):
-            await llm.generate(messages=[AssistantMessage("assistant", [ToolCall("a", "f")])])
-        with pytest.raises(MessageValidationError, match="unknown call"):
+        stream = await llm.generate(
+            messages=[AssistantMessage("assistant", [ToolCall("a", "f")])], stream=True
+        )
+        await stream.aclose()
+        with pytest.raises(MessageValidationError, match="no usable history"):
             await llm.generate(
-                messages=[UserMessage("user", [ToolResult("a", [TextContent("x")])])]
+                messages=[UserMessage("user", [ToolResult("a", [TextContent("x")])])], stream=True
             )
         with pytest.raises(ConfigurationError):
             await llm.generate(messages=[UserMessage("user", [TextContent("x")])], max_tokens=-1)

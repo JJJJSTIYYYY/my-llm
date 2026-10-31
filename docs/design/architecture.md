@@ -49,7 +49,7 @@ src/my_llm/
     │   ├── decoder.py          # 中间协议 → client / request / local
     │   └── transport.py        # SDK 执行契约及共用响应关闭辅助
     ├── shared/
-    │   ├── conversion.py       # 消息、媒体、工具转换及历史关联验证
+    │   ├── conversion.py       # 消息、媒体、工具转换及独立历史关联检查入口
     │   ├── options.py          # 请求选项、参数路径及优先级
     │   ├── output.py           # 原生与中间输出共用的能力过滤
     │   └── stream.py           # 流操作、块身份及用量
@@ -151,6 +151,15 @@ Decoder.request 调用只读私有翻译钩子，将借入的中间叶交给最�
 MessageStream.result 返回本调用最终 draft 本身，保证 output hook 的原位对象身份；get_last_usage 返回独立副本。
 
 根 Schema 计划委派 message_path / tool_path 叶，由 filter_messages / filter_tools 过滤一次；
+五种内置协议的消息过滤共用基类外层循环，各协议在 _filter_message 中处理一条消息。
+结构校验与工具关联修复在同一次中间消息遍历中完成。HistoryNormalizer 去重调用与结果、
+补空结果，并整条丢弃包含孤立结果的消息；丢弃时撤销本条已收集的关联与合并修改。
+独立 HistoryValidator 保留严格校验用途。原始输入不被修改。
+空结果在调用块的校验访问中预留，后续有效结果撤销该占位；无 ID 结果不推断关联。
+重复结果内容在原有结果部件校验访问中合并。finish 仅执行常数时间检查，
+原生翻译的既有循环惰性读取有效输出，不另行扫描工具表或重建消息列表。
+已知 usage / metadata 操作在流入口允许进入防御性处理器，未知核心操作仍严格拒绝。
+翻译结果、message_transform 改写和缓存历史都经过过滤循环及最终 SDK 校验。
 Anthropic 的开放 input_schema 再委派为应用数据，只复制完整 JSON Schema 一次。
 TypedDict / Pydantic 只处理声明的结构字段；开放 dict / Any 中的工具参数、结果和 Schema 约束完整保留。
 Profile 显式声明的兼容叶字段按路径处理，未知字段不会通过缓存学习或透传。
@@ -166,8 +175,8 @@ cache/compiled_cache.py 集中管理 SDK 类型分析、计划编译、过滤与
 以上游 OpenAI Chat 为例：首次提交 `[system, user]`，下次提交 `[assistant, user]`，两批分别走原有翻译流程；
 MessageCache 按原始输入哈希判断是否追加当前消息翻译列表，
 返回包含四条消息的独立快照供 Decoder 组装本次请求。
-增量可以包含 system、user、assistant 或完整工具调用与结果批次；只验证当前批的工具关联，
-旧缓存中的对应关系不重复校验。system 消息也保留在消息列表里，
+增量可以包含 system、user、assistant 或完整工具调用与结果批次；只修复当前批的工具关联，
+旧缓存中的对应关系不重复解析或修复。system 消息也保留在消息列表里，
 Decoder 组装请求时将其放入 Anthropic 的 system、Gemini 的 system_instruction 等原生位置。
 缓存不读取、提取或回填这些请求字段，也不需要 Decoder 声明缓存路径。
 缓存只保存输入历史；模型输出需要调用方显式加入下一批增量，工具声明、生成控制和请求选项仍按次准备。

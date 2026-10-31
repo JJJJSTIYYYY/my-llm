@@ -8,6 +8,7 @@ from typing import Any
 from my_llm.basic.data import _MISSING, dictionary_views
 from my_llm.basic.exceptions import MessageValidationError
 from my_llm.basic.semantic_loss import report_loss
+from my_llm.middleware.validation import HistoryValidator
 
 FUNCTIONS = "functions"
 
@@ -81,33 +82,6 @@ def allocate_call_id(used: set[str], preferred: str) -> str:
         candidate = f"{preferred}_{suffix}"
     used.add(candidate)
     return candidate
-
-
-def associate_tool_result(pending: list[dict], call_id: str | None, name: str | None) -> str | None:
-    """Consume a pending call by explicit ID, or by name when no ID is supplied.
-
-    Used by protocols with optional call IDs. Name-only results consume the first
-    matching call in order. An unknown explicit ID is returned unchanged so history
-    validation can reject it; it never falls back to another same-name call.
-    A supplied name that contradicts a matched ID raises MessageValidationError.
-    """
-    match = next(
-        (
-            call
-            for call in pending
-            if (call["id"] == call_id if call_id else name is None or call.get("name") == name)
-        ),
-        None,
-    )
-    # An explicit unmatched ID must not fall back to a same-name call; history
-    # validation will reject the unmatched result at the message boundary.
-    if match is None:
-        return call_id
-    if name and name != match.get("name"):
-        raise MessageValidationError("tool result name does not match its call ID")
-    # Remove explicit matches too, or a later ID-less result could reuse them.
-    pending.remove(match)
-    return call_id or match["id"]
 
 
 def mapping_list(value) -> bool:
@@ -219,33 +193,15 @@ def validate_history(messages: list[dict], *, allow_external_calls: bool = False
     not enforce adjacency, turn boundaries, or tool-argument JSON Schema validity.
     The function reads messages without modifying them.
     """
+    validator = HistoryValidator(allow_external_calls=allow_external_calls)
     if not messages:
-        raise MessageValidationError("messages must be non-empty")
-    calls = set()
-    used = set()
+        validator.finish()
     for message in dictionary_views(messages):
-        if message.get("role") not in ("system", "developer", "user", "assistant"):
-            raise MessageValidationError("invalid message role")
+        validator.observe_message(message)
+        if validator.error is not None:
+            raise MessageValidationError(validator.error)
         for block in message.get("content", []):
-            if block.get("type") == "tool_use":
-                call_id = block.get("id")
-                if not isinstance(call_id, str) or not call_id:
-                    raise MessageValidationError("tool call requires an ID")
-                if call_id in calls or call_id in used:
-                    raise MessageValidationError("duplicate tool call ID")
-                calls.add(call_id)
-            elif block.get("type") == "tool_result":
-                call_id = block.get("tool_use_id")
-                if not isinstance(call_id, str) or not call_id:
-                    raise MessageValidationError("tool result requires a matching call ID")
-                if call_id in used:
-                    raise MessageValidationError("duplicate tool result")
-                # Responses may reference calls stored in server-side history.
-                # Duplicate results are still invalid in that mode.
-                if call_id not in calls and not allow_external_calls:
-                    raise MessageValidationError("tool result refers to an unknown call ID")
-                used.add(call_id)
-    if calls - used:
-        raise MessageValidationError(
-            "tool calls require exactly one result before generating again"
-        )
+            validator.observe_content(block)
+            if validator.error is not None:
+                raise MessageValidationError(validator.error)
+    validator.finish()

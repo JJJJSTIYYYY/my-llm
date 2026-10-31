@@ -450,6 +450,11 @@ def test_official_sdk_plans_preserve_native_fields_and_prune_protocol_extensions
         (tools(protocol), bound.tool_type),
     ]:
         original = deepcopy(values)
+        if protocol == "ollama" and schema is bound.message_type:
+            for message in original:
+                message.pop("tool_call_id", None)
+                for call in message.get("tool_calls", []):
+                    call.pop("id", None)
         for value in values:
             value["vendor_extension"] = {"nested": [1, None]}
         assert [schema_plans.supported(value, schema) for value in values] == original

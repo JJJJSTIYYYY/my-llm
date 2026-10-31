@@ -305,10 +305,19 @@ def assistant_turn(protocol: str, index: int, calls: list, native: bool):
             "content": value,
             **({"thinking": value} if native else {}),
             "tool_calls": [
-                {"function": {"name": call["name"], "arguments": call["input"]}} for call in calls
+                {"id": call["id"], "function": {"name": call["name"], "arguments": call["input"]}}
+                for call in calls
             ],
         },
-        *[{"role": "tool", "tool_name": call["name"], "content": rendered} for call in calls],
+        *[
+            {
+                "role": "tool",
+                "tool_call_id": call["id"],
+                "tool_name": call["name"],
+                "content": rendered,
+            }
+            for call in calls
+        ],
     ]
 
 

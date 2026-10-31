@@ -462,8 +462,10 @@ def test_gemini_checks_known_config_values_beyond_thinking(profile_factory):
         "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
         "config": {"temperature": "invalid"},
     }
-    with pytest.raises(ValidationError, match="temperature"):
+    with pytest.raises(ConfigurationError, match="invalid Gemini config") as caught:
         MyCodec().decoder("gemini").native_request(request, profile_factory("gemini"))
+    assert isinstance(caught.value.__cause__, ValidationError)
+    assert "temperature" in str(caught.value.__cause__)
 
 
 def test_direct_ollama_request_preserves_sdk_options_explicit_none(profile_factory):

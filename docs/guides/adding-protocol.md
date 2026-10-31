@@ -47,6 +47,8 @@ client 是 SDK 构造参数，request 是 SDK 调用参数，local 包含 stream
 离线 Decoder.request 可自行准备一次 options；已提供 options 时直接复用。
 
 request 依次翻译消息／工具、request_parameters、assemble_request、native_request。
+`_messages` 接收已验证的 `Iterable[dict]`，在原有循环中读取即可；不要预先转成列表或重复消费。
+修复视图会在该次迭代中省略已丢弃消息，并呈现必要的空工具结果。
 assemble_request(messages, tools, profile, *, request: dict, **parameters) 只写入消息和工具，
 不重新调用 request_parameters；协议控制通过 _request_parameters(request, profile, options) 补充。
 布局通过 body_container、headers_field、body_overlay、omit_empty_body 声明。
@@ -60,6 +62,9 @@ assemble_request(messages, tools, profile, *, request: dict, **parameters) 只�
 | validate_parameters | 共同选项每次准备一次，协议检查能力、保护字段和路径。 |
 | native_request | 固定流程：历史关联 → 根过滤并委派消息／工具 → 叶过滤与验证 → validate_request → 显式兼容叶。 |
 | filter_messages / filter_tools | 只读借入原生叶，返回可独立修改的 SDK 值；根计划不会重复过滤同一叶。 |
+| _filter_message(message, policy, *, path, decode, feedback, **parameters) | 在基类的共同消息循环中处理一条消息；通过 InputPolicy 检查能力并调用 decode 建立 SDK 字段副本，返回 None 表示省略。 |
+| _message_inputs(messages, policy) | 默认逐条产生 (index, message, feedback)；需要跨原生 item 判断推理反馈时可覆盖分组逻辑。 |
+| message_delegated_paths | 消息过滤中需要由协议钩子捕获的叶路径，例如 Ollama 的 images。 |
 | validate_request | 可覆盖的原生选项和组合约束检查，返回字典。 |
 | validate_profile / usage_modes | 构造期检查 SDK 路径与协议连接配置；声明支持的用量模式，不兼容模式在 Decoder 准备请求时记录损失。 |
 | client_parameters(profile) | 构造期把已解析连接配置映射到 SDK 构造 kwargs，不创建 SDK 客户端。 |
@@ -69,6 +74,11 @@ assemble_request(messages, tools, profile, *, request: dict, **parameters) 只�
 不覆盖 final 的 request / prepare / native_request。tools=None 省略，tools=[] 显式发送空列表。
 BaseCodec.validate_profile 委托 Decoder；MyLLM 在构造时调用，并准备连接字典。
 MyCodec.request 是离线原生请求入口，共用 Decoder 请求流程；完整调用使用 MyCodec.prepare。
+中间消息的结构检查与工具关联收集共用一次遍历，关联错误在工具定义和控制项检查后报告。
+五种内置协议共用 BaseDecoder.filter_messages 的外层循环，不根据翻译标记跳过能力处理。
+InputPolicy 在本次过滤开始时读取固定的模型能力和推理反馈配置，逐条检查仍保留损失来源与路径。
+message_transform、缓存和扩展 Decoder 产生的消息都经过该循环；返回后仍做最终 SDK Schema 校验，
+也会检查 filter_messages 自定义覆盖所作的修改。
 usage_mode 是开放字符串，接受的具体值由 Decoder.usage_modes 声明。
 不支持的非空模式不在构造期拒绝，而在准备请求时记录语义损失；空字符串或错误类型仍是配置错误。
 

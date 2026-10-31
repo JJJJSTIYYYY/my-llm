@@ -44,7 +44,7 @@ async def test_previous_response_id_allows_external_tool_results(monkeypatch):
         stdio_protocol="openai_responses",
     )
     result = [{"type": "function_call_output", "call_id": "server_call", "output": "ok"}]
-    with pytest.raises(MessageValidationError):
+    with pytest.raises(MessageValidationError, match="no usable history"):
         await llm.generate(messages=result)
     await llm.generate(messages=result, previous_response_id="resp_previous")
     assert client.requests[0]["input"] == [
@@ -55,6 +55,7 @@ async def test_previous_response_id_allows_external_tool_results(monkeypatch):
         }
     ]
     assert client.requests[0]["previous_response_id"] == "resp_previous"
+    await llm.aclose()
 
 
 async def test_stdio_protocol_matches_tools_before_ambiguous_messages(monkeypatch):

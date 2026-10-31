@@ -12,12 +12,17 @@ from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.gemini.encoding.content import encode_part, image_part, json_schema
 from my_llm.codec.shared.conversion import (
     allocate_call_id,
-    associate_tool_result,
     mapping_list,
     select,
     text_result,
 )
-from my_llm.codec.shared.stream import encode_batch, metadata, record
+from my_llm.codec.shared.stream import (
+    encode_batch,
+    metadata,
+    optional_usage,
+    project_metadata,
+    record,
+)
 from my_llm.profile.resolution import ResolvedProfile
 from my_llm.profile.types import Omit
 
@@ -97,15 +102,14 @@ class GeminiEncoder(BaseEncoder):
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
-        """Normalize Gemini parts and associate optional-ID function responses.
+        """Normalize Gemini parts while preserving explicit function-response IDs.
 
         Map model to assistant, allocate noncolliding IDs for ID-less calls, and
-        consume pending calls by explicit ID or function name. Preserve supported
-        signatures and source provenance. The decoder rejects incomplete or
-        duplicate call/result associations after normalization.
+        retain missing result IDs for the shared history validator to discard.
+        Preserve supported signatures and source provenance. Request preparation
+        repairs incomplete and duplicate associations in its structural scan.
         """
         result = []
-        pending: list[dict] = []
         id_prefix = f"{uuid4().hex}_" if parameters.get("enable_message_cache", False) else ""
         # Reserve IDs from later messages too, before synthesizing any missing IDs.
         used_ids = {
@@ -127,12 +131,6 @@ class GeminiEncoder(BaseEncoder):
                 block = encode_part(part, call_id, path=f"$.messages[{index}].parts[{part_index}]")
                 if block is None:
                     continue
-                if block.get("type") == "tool_use":
-                    pending.append(block)
-                elif block.get("type") == "tool_result":
-                    block["tool_use_id"] = associate_tool_result(
-                        pending, block.get("tool_use_id"), block.get("name")
-                    )
                 content.append(originated(block, f"$.messages[{index}].parts[{part_index}]", part))
             result.append(
                 {
@@ -213,14 +211,9 @@ class GeminiEncoder(BaseEncoder):
                 )
             ops = [
                 metadata(
-                    {
-                        target: event[native]
-                        for native, target in (
-                            ("response_id", "response_id"),
-                            ("model_version", "model"),
-                        )
-                        if isinstance(event.get(native), (str, int, float))
-                    }
+                    project_metadata(
+                        event, (("response_id", "response_id"), ("model_version", "model"))
+                    )
                 )
             ]
             if event.get("usage_metadata") is not None:
@@ -310,6 +303,7 @@ class GeminiEncoder(BaseEncoder):
             result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
         return result
 
+    @optional_usage
     def usage(self, value: dict | None) -> dict | None:
         """Normalize reported Gemini token counters, retaining absent usage as None."""
         if value is None:

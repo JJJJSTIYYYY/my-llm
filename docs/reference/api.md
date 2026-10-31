@@ -93,12 +93,13 @@ async def cached_conversation(provider, model):
 
 第二次实际发送首批 user 消息、`reply` 和新增 user 消息。返回的 assistant 回复由调用者放入
 下一批列表；Responses 的返回 items 使用 `[*reply, ...]` 展开。增量也可以包含 system、developer、
-assistant 或一整批工具调用及结果；每批工具调用与结果必须完整对应，已缓存的对应关系不会重复校验。
+assistant 或一整批工具调用及结果；工具回合应放在同一批。工具关联只在当前批次修复，
+已缓存的对应关系不会重复解析或修复，具体规则见[工具回合](../guides/middleware-io.md#模型与工具回合)。
 Anthropic、Gemini 已有普通消息缓存时，可以单独追加 system 消息。
 
 缓存保存消息翻译得到的列表，不保存 SDK 请求字段。当前批次先与历史合并，再由 Decoder 组装、
 校验完整请求；请求准备完成后，在调用语义损失 adaptor 之前保存这份翻译结果。
-格式、工具关联或请求校验失败不会写入缓存；此后的 raise 策略、hook 或网络调用抛错不会撤销已保存的输入。
+格式或请求校验失败不会写入缓存；此后的 raise 策略、hook 或网络调用抛错不会撤销已保存的输入。
 hook 修改只影响本次请求，不会自动回写消息缓存。使用者负责 hook 的全部行为，
 包括修改翻译结果后需要进行的缓存维护。
 流尚未消费或调用失败后，连续重发相同消息批次会复用已有历史，不再追加一次。
@@ -427,8 +428,8 @@ async def add_round_trip(provider, model_id):
         return await llm.generate(messages=history, tools=tools)
 ```
 
-重复调用 ID、重复结果、未知结果 ID 和缺少结果均会报错。
-Gemini / Ollama 的无 ID 调用与结果须保持历史顺序与名称对应。
+重复调用 ID 去重，重复结果合并，缺少结果补空；包含孤立或无 ID 结果的消息整条丢弃。
+结果 ID 不按名称或历史顺序推断。全部输入丢弃且没有缓存时抛出 `MessageValidationError`，不补造 user 提示。
 `previous_response_id` 用于 Responses 上游时，可仅发送新增消息或结果，并引用服务端已有的调用。
 其他协议收到合法的非空 ID 时记录语义损失并省略；空字符串或错误类型仍属于无效参数。
 
@@ -441,6 +442,7 @@ Gemini / Ollama 的无 ID 调用与结果须保持历史顺序与名称对应。
 
 流事件过滤接口返回的 usage；成功结束后调用 `get_last_usage()` 获取独立的 `Usage`。
 未报告字段为 `None`，非流式结果不含 usage。关闭消息缓存后的并发调用中，该接口代表最后完成的流式调用。
+无法解析的 usage 样本和辅助元数据静默忽略，不影响正文生成；没有可用用量时返回空。
 
 ## `MyCodec` 协议转换
 

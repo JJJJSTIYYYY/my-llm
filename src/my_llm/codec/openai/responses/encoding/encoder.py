@@ -17,7 +17,14 @@ from my_llm.codec.shared.conversion import (
     select,
     tool_result_content,
 )
-from my_llm.codec.shared.stream import BlockRef, encode_batch, metadata, record
+from my_llm.codec.shared.stream import (
+    BlockRef,
+    encode_batch,
+    metadata,
+    optional_usage,
+    project_metadata,
+    record,
+)
 from my_llm.profile.resolution import ResolvedProfile
 
 PROTOCOL = "openai_responses"
@@ -39,6 +46,10 @@ class ResponsesEncoder(BaseEncoder):
         result = []
         for message in messages:
             kind = message.get("type", "message")
+            if kind == "function_call_output" and (
+                not isinstance(message.get("call_id"), str) or not message["call_id"]
+            ):
+                continue  # Association repair owns missing result IDs, not SDK shape validation.
             if kind == "message":
                 value = select(message, "type", "role", "id", "status")
                 content = message.get("content")
@@ -446,6 +457,7 @@ class ResponsesEncoder(BaseEncoder):
             result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
         return result
 
+    @optional_usage
     def usage(self, value: dict | None) -> dict | None:
         """Normalize reported Responses token counters, retaining absent usage as None."""
         if value is None:
@@ -461,19 +473,15 @@ class ResponsesEncoder(BaseEncoder):
 
     def _metadata(self, event: dict) -> dict:
         """Project recognized response metadata into a middleware metadata operation."""
-        return {
-            "response_id" if key == "id" else key: event[key]
-            for key in ("id", "model", "created_at")
-            if isinstance(event.get(key), (str, int, float))
-        }
+        return project_metadata(
+            event, (("id", "response_id"), ("model", "model"), ("created_at", "created_at"))
+        )
 
     def _item_metadata(self, item: dict) -> dict:
         """Record native output-item headers for identity-preserving stream rendering."""
-        return {
-            key: item[key]
-            for key in ("id", "type", "status", "name", "call_id")
-            if isinstance(item.get(key), str)
-        }
+        return project_metadata(
+            item, tuple((key, key) for key in ("id", "type", "status", "name", "call_id"))
+        )
 
     def _snapshot(
         self,

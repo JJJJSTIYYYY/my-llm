@@ -321,6 +321,10 @@ plan.project(second)
 把投影和独立副本的建立交给后续钩子一次完成。委派只用于 Decoder 的请求组装过程；
 普通 `supported(value, schema)` 没有委派路径，继续返回隔离结果。
 
+五种协议共用 `BaseDecoder.filter_messages` 的逐条循环，通过 `_filter_message` 在同一次
+外层遍历中处理能力规则并调用 SDK 字段投影；Responses 的推理反馈按需由 `_message_inputs`
+提供分组上下文。翻译标记不会跳过处理。循环结束后仍校验 SDK Schema，以覆盖公开过滤钩子的修改。
+
 Anthropic 的开放 `input_schema` 同样委派后一次捕获，避免先按 SDK TypedDict 复制再覆盖完整 JSON Schema。
 
 例如 Gemini 的 `config` 信封仍按 `GenerateContentConfig` 过滤、复制，

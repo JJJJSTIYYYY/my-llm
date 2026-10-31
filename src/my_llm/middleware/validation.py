@@ -5,9 +5,12 @@ content-kind and reasoning-mark sets keep their semantic restrictions aligned.
 Error paths are assembled only while propagating a validation failure.
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable
 
 from my_llm.basic.exceptions import MessageValidationError
+from my_llm.middleware.history import MESSAGE_ROLES, HistoryNormalizer
 
 RESULT_CONTENT_TYPES = ("text", "image")
 REASONING_MARKS = ("raw", "summary", "encrypted")
@@ -61,10 +64,10 @@ class _InvalidWire(Exception):
         self.path = path
 
 
-def _validate(value, check: Callable, path: str) -> None:
-    """Translate internal validation failures into path-qualified MessageValidationError."""
+def _validate(value, check: Callable, path: str, *context: object) -> None:
+    """Translate internal failures into path-qualified MessageValidationError."""
     try:
-        check(value)
+        check(value, *context)
     except _InvalidWire as error:
         raise MessageValidationError(f"{path}{error.path}: {error}") from None
 
@@ -94,21 +97,21 @@ def _fields(value, names: tuple[str, ...]) -> None:
     _required(value, names)
 
 
-def _member(value: dict, name: str, check: Callable) -> None:
-    """Check one field and prepend its name to any internal error path."""
+def _member(value: dict, name: str, check: Callable, *context: object) -> None:
+    """Check one field and prepend its name to an internal error path."""
     try:
-        check(value[name])
+        check(value[name], *context)
     except _InvalidWire as error:
         error.path = f".{name}{error.path}"
         raise
 
 
-def _each(values, check: Callable) -> None:
-    """Check a sequence and prepend the failing item index to its error path."""
+def _each(values, check: Callable, *context: object) -> None:
+    """Visit a sequence once, forwarding its request-local validation context."""
     _sequence(values)
     for index, value in enumerate(values):
         try:
-            check(value)
+            check(value, *context)
         except _InvalidWire as error:
             error.path = f"[{index}]{error.path}"
             raise
@@ -137,21 +140,28 @@ def _image_source(value) -> None:
         raise _InvalidWire("unknown middleware image source", ".type")
 
 
-def _result_part(value: dict) -> None:
+def _result_part(value: dict, history: HistoryNormalizer | None = None) -> None:
     """Restrict tagged tool-result parts to text and images."""
     _content(value)
     if value["type"] not in RESULT_CONTENT_TYPES:
         raise _InvalidWire("middleware tool results require text or image content")
+    if history is not None:
+        history.observe_result_part(value)
 
 
-def _result(value) -> None:
+def _result(value, history: HistoryNormalizer | None = None) -> None:
     # Untagged application objects and arrays are serialized as text by readers.
     """Check tagged result parts; leave untagged application data to result readers."""
     if isinstance(value, list) and all(isinstance(v, dict) and "type" in v for v in value):
-        _each(value, _result_part)
+        _each(value, _result_part, history)
+    elif history is not None:
+        if isinstance(value, str):
+            history.observe_result_part({"type": "text", "text": value})
+        elif value is not None:
+            history.observe_result_value(value)
 
 
-def _content(value) -> None:
+def _content(value, history: HistoryValidator | HistoryNormalizer | None = None) -> None:
     """Check required content fields, reasoning marks and nested tool-result parts."""
     kind = _kind(value, _CONTENT_FIELDS, "content type")
     if value.get("item") is not None:
@@ -161,25 +171,36 @@ def _content(value) -> None:
     elif kind == "thinking" and value["mark"] not in REASONING_MARKS:
         raise _InvalidWire("unknown middleware reasoning mark", ".mark")
     elif kind == "tool_result":
-        _member(value, "content", _result)
+        normalizer = history if isinstance(history, HistoryNormalizer) else None
+        if normalizer is not None:
+            normalizer.observe_content(value)
+        _member(value, "content", _result, normalizer)
+    if history is not None and not (
+        kind == "tool_result" and isinstance(history, HistoryNormalizer)
+    ):
+        history.observe_content(value)
 
 
-def _message(value) -> None:
+def _message(value, history: HistoryValidator | HistoryNormalizer | None = None) -> None:
     """Require role/content fields and check each canonical content block."""
     _fields(value, ("role", "content"))
     if value.get("item") is not None:
         _member(value, "item", _object)
-    _member(value, "content", _contents)
+    if history is not None:
+        history.observe_message(value)
+    _member(value, "content", _contents, history)
+    if isinstance(history, HistoryNormalizer):
+        history.end_message()
 
 
-def _contents(values) -> None:
+def _contents(values, history: HistoryValidator | HistoryNormalizer | None = None) -> None:
     """Check a sequence of canonical content blocks."""
-    _each(values, _content)
+    _each(values, _content, history)
 
 
-def _messages(values) -> None:
-    """Check canonical message structures without validating history associations."""
-    _each(values, _message)
+def _messages(values, history: HistoryValidator | HistoryNormalizer | None = None) -> None:
+    """Check message structures and optionally collect associations in the same scan."""
+    _each(values, _message, history)
 
 
 def _function(value) -> None:
@@ -221,8 +242,14 @@ def _snapshot(values) -> None:
     _each(values, _snapshot_entry)
 
 
-def _operation(value) -> None:
+def _operation(value, tolerate_auxiliary: bool = False) -> None:
     """Check an operation tag, required fields and supported nested structures."""
+    if (
+        tolerate_auxiliary
+        and isinstance(value, dict)
+        and value.get("type") in ("metadata", "usage")
+    ):
+        return  # Optional data is parsed defensively by its state-machine handler.
     kind = _kind(value, _OPERATION_FIELDS, "operation")
     if kind == "block_delta":
         if value["field"] not in ("text", "thinking", "arguments", "signature"):
@@ -239,20 +266,20 @@ def _operation(value) -> None:
         _member(value, "blocks", _snapshot)
 
 
-def _operations(values) -> None:
+def _operations(values, tolerate_auxiliary: bool = False) -> None:
     """Check every operation in an encoded stream batch."""
-    _each(values, _operation)
+    _each(values, _operation, tolerate_auxiliary)
 
 
-def _batch(value) -> None:
+def _batch(value, tolerate_auxiliary: bool = False) -> None:
     """Require a source protocol and structurally valid stream operations."""
     _fields(value, ("protocol", "events"))
-    _member(value, "events", _operations)
+    _member(value, "events", _operations, tolerate_auxiliary)
 
 
-def _batches(values) -> None:
+def _batches(values, tolerate_auxiliary: bool = False) -> None:
     """Check encoded stream batches before state-machine dispatch."""
-    _each(values, _batch)
+    _each(values, _batch, tolerate_auxiliary)
 
 
 def _output_entry(value) -> None:
@@ -292,24 +319,91 @@ def _events(values) -> None:
     _each(values, _event)
 
 
+class HistoryValidator:
+    """Accumulate tool associations while structural validation visits each block.
+
+    Association errors are deferred until finish so structural errors anywhere in
+    the batch, tool definitions and generation controls retain their precedence.
+    Keep this state local to one validation call; mutable middleware models never
+    retain a trusted-validation flag.
+    """
+
+    __slots__ = ("allow_external_calls", "calls", "used", "count", "error")
+
+    def __init__(self, *, allow_external_calls: bool = False) -> None:
+        """Initialize independent call/result state for one complete input batch."""
+        self.allow_external_calls = allow_external_calls
+        self.calls: set[str] = set()
+        self.used: set[str] = set()
+        self.count = 0
+        self.error: str | None = None
+
+    def observe_message(self, message: dict) -> None:
+        """Record the first invalid role while continuing structural checks."""
+        self.count += 1
+        if self.error is None and message.get("role") not in MESSAGE_ROLES:
+            self.error = "invalid message role"
+
+    def observe_content(self, block: dict) -> None:
+        """Record the first call/result association error without rescanning content."""
+        if self.error is not None:
+            return
+        kind = block.get("type")
+        if kind == "tool_use":
+            call_id = block.get("id")
+            if not isinstance(call_id, str) or not call_id:
+                self.error = "tool call requires an ID"
+            elif call_id in self.calls or call_id in self.used:
+                self.error = "duplicate tool call ID"
+            else:
+                self.calls.add(call_id)
+        elif kind == "tool_result":
+            call_id = block.get("tool_use_id")
+            if not isinstance(call_id, str) or not call_id:
+                self.error = "tool result requires a matching call ID"
+            elif call_id in self.used:
+                self.error = "duplicate tool result"
+            elif call_id not in self.calls and not self.allow_external_calls:
+                self.error = "tool result refers to an unknown call ID"
+            else:
+                self.used.add(call_id)
+
+    def finish(self) -> None:
+        """Reject empty history, a deferred error or calls missing a later result."""
+        error = self.error
+        if not self.count:
+            error = "messages must be non-empty"
+        elif error is None and self.calls - self.used:
+            error = "tool calls require exactly one result before generating again"
+        if error is not None:
+            raise MessageValidationError(error)
+
+
 def validate_content(value: dict, path: str = "$") -> None:
     """Check canonical content structure; raise MessageValidationError with its path."""
     _validate(value, _content, path)
 
 
-def validate_messages(values: list, path: str = "$.messages") -> None:
+def validate_messages(
+    values: list,
+    path: str = "$.messages",
+    *,
+    history: HistoryValidator | HistoryNormalizer | None = None,
+) -> None:
     """Check canonical message structure without copying or building models.
 
     Require role/content fields and supported content tags, including required
-    block fields and valid tagged tool-result parts. This is a structural check:
-    it does not enforce role-specific content types or call/result pairing.
-    Typed generation input adds role/content checks in generation_input;
-    BaseDecoder.request checks history associations with validate_history.
+    block fields and valid tagged tool-result parts. By default this checks only
+    structure, without enforcing role-specific content types or call/result pairing.
+    Typed generation input adds role/content checks in generation_input. Supplying
+    history also collects roles and tool associations in this traversal; call its
+    finish method after other request checks to report association errors.
+    A HistoryNormalizer instead repairs associations during this same visit.
 
     Raise MessageValidationError with the failing middleware path. Input values
     remain unchanged, and an empty sequence is structurally valid here.
     """
-    _validate(values, _messages, path)
+    _validate(values, _messages, path, history)
 
 
 def validate_tools(values: list, path: str = "$.tools") -> None:
@@ -317,12 +411,16 @@ def validate_tools(values: list, path: str = "$.tools") -> None:
     _validate(values, _tools, path)
 
 
-def validate_operations(values: list, path: str = "$.chunks") -> None:
+def validate_operations(
+    values: list, path: str = "$.chunks", *, tolerate_auxiliary: bool = False
+) -> None:
     """Check encoded batches and their operations before state-machine dispatch.
 
     Partial block updates stay partial; finish may reuse an earlier reason.
+    Runtime conversion enables tolerate_auxiliary so usage/metadata payloads are
+    left to their defensive handlers. Explicit validation is strict by default.
     """
-    _validate(values, _batches, path)
+    _validate(values, _batches, path, tolerate_auxiliary)
 
 
 def validate_events(values: list, path: str = "$.chunks") -> None:

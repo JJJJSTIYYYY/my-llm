@@ -250,7 +250,7 @@ class MyLLM:
 
         Raises:
             RuntimeError: This instance is closed.
-            MessageValidationError: Input or tool-call/result associations are invalid,
+            MessageValidationError: Input structure or roles are invalid,
                 or the input/output protocol cannot be inferred uniquely.
             ConfigurationError: A generation option is invalid or conflicts.
             SemanticLossError: A supported value or requested control is unsupported
@@ -262,12 +262,16 @@ class MyLLM:
         in the next history, or in the next incremental batch when caching is enabled.
 
         Request preparation binds the input protocol, validates its native or typed
-        message structure, checks tool-call/result associations, and translates the
-        history into upstream SDK arguments. Every supplied call must have exactly
-        one later result with the same ID before generating again. Responses with
-        previous_response_id may reference calls in server-side history. With message
-        caching enabled, each incremental batch must contain complete tool rounds;
-        previously cached messages are not association-validated again.
+        message structure, repairs tool-call/result associations, and translates the
+        history into upstream SDK arguments. Missing results become empty results;
+        duplicate call IDs are collapsed and duplicate result contents are merged.
+        Entire messages containing orphan or ID-less results are discarded,
+        including their text; result IDs are never inferred from names/order.
+        If no usable history or cached history remains, validation fails without
+        creating a new user prompt.
+        Responses with previous_response_id may reference calls in server history.
+        With message caching enabled, repairs apply only to the incremental batch;
+        supply complete tool rounds together. Cached history is not repaired again.
 
         Both return modes consume an upstream SDK stream. Streaming returns after
         preparation; client creation and network I/O start on iteration. Non-streaming
@@ -344,9 +348,9 @@ class MyLLM:
         both modes render the same completed assistant message.
 
         Publish result and usage after upstream cleanup succeeds. StreamError gains
-        a rendered partial message before propagation; transport/SDK failures retain
-        their types. Closing this generator exits the response context without closing
-        the reusable client.
+        a rendered partial message when possible; rendering failures become notes
+        on the original error. Transport/SDK failures retain their types. Closing
+        this generator exits the response context without closing the reusable client.
         """
         profile = self.resolved_profile
         streaming = prepared["local"]["stream"]
@@ -380,12 +384,15 @@ class MyLLM:
             state.result = converted
             self._last_usage = Usage.from_record(state.usage) if streaming else None
         except StreamError as exc:
-            exc.partial_message = self.codec.result(
-                state.messages(partial=True),
-                target_format=stdio_protocol,
-                input_format=profile.protocol,
-                origin_source="output",
-            )
+            try:
+                exc.partial_message = self.codec.result(
+                    state.messages(partial=True),
+                    target_format=stdio_protocol,
+                    input_format=profile.protocol,
+                    origin_source="output",
+                )
+            except Exception as render_error:
+                exc.add_note(f"Failed to render partial_message: {render_error!r}")
             raise
 
 

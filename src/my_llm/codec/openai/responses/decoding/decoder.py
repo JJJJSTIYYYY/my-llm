@@ -1,12 +1,13 @@
 """openai/responses: intermediate to native output."""
 
+from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 from uuid import uuid4
 
 from openai.resources.responses import AsyncResponses
 from openai.types.responses import ResponseInputItemParam, ToolParam
 
-from my_llm.basic.data import dictionaries, dictionary_views
+from my_llm.basic.data import dictionary_views
 from my_llm.basic.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.cache.compiled_cache import _MISSING, _plan, parameter_types
@@ -17,7 +18,7 @@ from my_llm.codec.openai.responses.decoding.content import (
     reasoning_summary,
     render_content,
 )
-from my_llm.codec.shared.capabilities import content_capability, supports_content
+from my_llm.codec.shared.capabilities import content_capability
 from my_llm.codec.shared.conversion import (
     decode_functions,
     json_arguments,
@@ -26,8 +27,7 @@ from my_llm.codec.shared.conversion import (
     source_protocol,
 )
 from my_llm.codec.shared.input import (
-    feedback_reasoning,
-    input_capability,
+    InputPolicy,
     input_content,
     message_feedback,
 )
@@ -56,65 +56,69 @@ class ResponsesDecoder(BaseDecoder):
 
     request_schema = parameter_types(AsyncResponses.create)
 
-    def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
-        """Filter owned Responses messages to SDK fields and apply input capability policies."""
-        if parameters.get("_translated") or (
-            feedback_reasoning(profile, has_tool_calls=False)
-            and supports_content("image", profile)
-            and supports_content("tool_use", profile)
-            and supports_content("message_name", profile)
-        ):
-            return super().filter_messages(messages, profile, **parameters)
-        projected = []
+    def _message_inputs(
+        self, messages: list, policy: InputPolicy
+    ) -> Iterator[tuple[int, dict, bool]]:
+        """Group native assistant items only when reasoning feedback needs later calls."""
+        unconditional = policy.reasoning_feedback(has_tool_calls=False)
+        conditional = policy.reasoning_feedback(has_tool_calls=True)
+        if unconditional or not conditional:
+            for index, message in enumerate(dictionary_views(messages)):
+                yield (index, message, unconditional)
+            return
         pending = []
         has_calls = False
-        envelope = _plan(self.message_type, delegated_paths=(("content",), ("output",))).decode
-
-        def flush():
-            """Filter the buffered native item group under its shared reasoning-feedback policy."""
-            feedback = feedback_reasoning(profile, has_tool_calls=has_calls)
-            for index, message in pending:
-                path = f"$.input[{index}]"
-                kind = {
-                    "reasoning": "thinking",
-                    "function_call": "tool_use",
-                    "function_call_output": "tool_result",
-                }.get(message.get("type"), "text")
-                if not input_capability(message, kind, profile, feedback=feedback, path=path):
-                    continue
-                if message.get("name") is not None and kind == "text":
-                    content_capability(
-                        message["name"], "message_name", profile, path=f"{path}.name"
-                    )
-                field = "output" if kind == "tool_result" else "content"
-                if isinstance(content := message.get(field), list):
-                    retained = [
-                        block
-                        for offset, block in enumerate(content)
-                        if not isinstance(block, dict)
-                        or block.get("type") != "input_image"
-                        or input_capability(
-                            block, "image", profile, path=f"{path}.{field}[{offset}]"
-                        )
-                    ]
-                    if len(retained) != len(content):
-                        message = envelope(message, path)
-                        if message is _MISSING:
-                            continue
-                        message[field] = retained
-                projected.append(message)
-            pending.clear()
-
         for index, message in enumerate(dictionary_views(messages)):
             kind = message.get("type")
             assistant = kind in ("reasoning", "function_call") or message.get("role") == "assistant"
             if not assistant:
-                flush()
+                for item_index, item in pending:
+                    yield (item_index, item, has_calls)
+                pending = []
                 has_calls = False
             pending.append((index, message))
             has_calls = has_calls or kind == "function_call"
-        flush()
-        return super().filter_messages(projected, profile, **parameters)
+        for index, message in pending:
+            yield (index, message, has_calls)
+
+    def _filter_message(
+        self,
+        message: dict,
+        policy: InputPolicy,
+        *,
+        path: str,
+        decode: Callable,
+        feedback: bool,
+        **parameters: Any,
+    ) -> dict | None:
+        """Filter one Responses item using its assistant-group reasoning context."""
+        kind = {
+            "reasoning": "thinking",
+            "function_call": "tool_use",
+            "function_call_output": "tool_result",
+        }.get(message.get("type"), "text")
+        if not policy.allows(message, kind, feedback=feedback, path=path):
+            return None
+        if message.get("name") is not None and kind == "text":
+            policy.allows(message["name"], "message_name", path=f"{path}.name")
+        field = "output" if kind == "tool_result" else "content"
+        if isinstance(content := message.get(field), list):
+            retained = [
+                block
+                for offset, block in enumerate(content)
+                if not isinstance(block, dict)
+                or block.get("type") != "input_image"
+                or policy.allows(block, "image", path=f"{path}.{field}[{offset}]")
+            ]
+            if len(retained) != len(content):
+                message = _plan(
+                    self.message_type, delegated_paths=(("content",), ("output",))
+                ).decode(message, path)
+                if message is _MISSING:
+                    return None
+                message[field] = retained
+        value = decode(message, path)
+        return None if value is _MISSING else value
 
     def allows_external_calls(self, previous_response_id) -> bool:
         """Allow unmatched local result IDs when previous_response_id supplies server history."""
@@ -165,7 +169,7 @@ class ResponsesDecoder(BaseDecoder):
         return result
 
     def _messages(
-        self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
+        self, messages: Iterable[dict], profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
         """Render history as Responses message, reasoning and function items.
 
@@ -179,9 +183,7 @@ class ResponsesDecoder(BaseDecoder):
         # Each incremental batch needs distinct generated identities; explicit
         # native item IDs below continue to take precedence over these fallbacks.
         id_prefix = f"{uuid4().hex}_" if parameters.get("enable_message_cache", False) else ""
-        for index, message, feedback in message_feedback(
-            dictionaries(messages), profile, coalesce=False
-        ):
+        for index, message, feedback in message_feedback(messages, profile, coalesce=False):
             if message.get("name") is not None:
                 content_capability(
                     message["name"],

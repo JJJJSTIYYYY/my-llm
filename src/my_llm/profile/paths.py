@@ -17,6 +17,7 @@ def path_keys(path: str) -> tuple[str | int, ...]:
 
 @lru_cache(maxsize=512)
 def _parsed_path(path: str) -> tuple[str | int, ...]:
+    """Cache validated SDK-rooted field names and nonnegative list indices."""
     if not path.startswith("$."):
         raise ConfigurationError(f"parameter path must start with '$.': {path!r}")
     keys: list[str | int] = []

@@ -115,6 +115,7 @@ def merge_parameters(*layers: dict | Omit | None) -> dict:
 
 
 def _parameter_copy(value: Any) -> Any:
+    """Copy a control value while consuming nested omit markers."""
     if isinstance(value, dict):
         return merge_parameters(value)
     if isinstance(value, list):
@@ -132,7 +133,17 @@ def resolve_options(
     reasoning_effort: str = "none",
     **local: Any,
 ) -> PreparedOptions:
-    """Validate controls once, independently of their native parameter paths."""
+    """Resolve and validate generation controls independently of native SDK paths.
+
+    Combine per-call token/reasoning settings with profile defaults, validate
+    control types and conflicts, map supported reasoning effort, and merge
+    headers/body into independent dictionaries. Omit markers remove configured
+    values. Return immutable PreparedOptions carrying the resolved controls.
+
+    Invalid controls raise ConfigurationError. Unsupported model capabilities
+    are collected as loss items for later reporting with a complete request
+    draft; they do not invoke the semantic-loss adaptor here.
+    """
     if reasoning_effort not in EFFORTS:
         raise ConfigurationError(f"unsupported reasoning_effort: {reasoning_effort!r}")
     if reasoning is not None and not isinstance(reasoning, bool):
@@ -202,6 +213,7 @@ def resolve_options(
 
 
 def check_protected(body: dict, protected: set[str]) -> None:
+    """Reject non-dictionary bodies and attempts to replace managed protocol fields."""
     if not isinstance(body, dict):
         raise ConfigurationError("request body parameters must be dictionaries")
     if any(key in body for key in protected):
@@ -215,7 +227,7 @@ def validate_parameter_paths(
     protected: set[str],
     containers: tuple[str, ...] = (),
 ) -> None:
-    """Check declared output routes without traversing native input fields."""
+    """Reject request-parameter routes that would overwrite managed protocol fields."""
     for name, parameter in profile.request_parameters:
         path = parameter.path
         if name in ("reasoning_enable", "reasoning_effort") and options.effort is None:
@@ -273,7 +285,14 @@ def request_parameters(
     overlay: str | None = None,
     omit_empty_body: bool = False,
 ) -> dict:
-    """Build SDK keyword dictionaries using every declared request parameter."""
+    """Build SDK keyword arguments from resolved controls and profile declarations.
+
+    Start from owned body/header options in the protocol's declared containers.
+    Apply reasoning enablement, ordinary parameters and mapped effort in order.
+    Explicit generated controls override supplied values; existing native values
+    override defaults. Honor omit markers and any protocol-declared body overlay.
+    Model, messages and tools are inserted later by assemble_request.
+    """
     body = deepcopy(options.body)
     request = {body_container: body} if body_container is not None else body
     if omit_empty_body and not body:

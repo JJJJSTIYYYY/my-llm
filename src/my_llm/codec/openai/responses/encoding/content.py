@@ -8,6 +8,7 @@ from my_llm.codec.shared.stream import BlockRef
 
 
 def encode_content(content: Any, *, path: str = "$.content") -> list[dict]:
+    """Normalize supported Responses text/images and retain source provenance."""
     result = []
     for index, block in enumerate(blocks(content)):
         kind = block.get("type")
@@ -24,6 +25,7 @@ def encode_content(content: Any, *, path: str = "$.content") -> list[dict]:
 
 
 def tool_operations(ref: BlockRef, *, call_id=None, name=None, arguments=None) -> list[dict]:
+    """Build identity updates and argument deltas for a source-addressed function call."""
     block = {"type": "tool_use"}
     if call_id:
         block["id"] = call_id

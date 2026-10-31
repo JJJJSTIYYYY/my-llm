@@ -24,6 +24,7 @@ def split_system_messages(messages: list[dict]) -> tuple[list[dict], list[dict]]
 
 
 def blocks(content: Any) -> list[dict]:
+    """Normalize absent, string or structured native content into block dictionaries."""
     if content is None:
         return []
     if isinstance(content, str):
@@ -44,6 +45,7 @@ def uri_source(uri: str) -> dict:
 
 
 def text(content: list[dict]) -> str:
+    """Concatenate text blocks while ignoring other content kinds."""
     return "".join(b.get("text", "") for b in content if b.get("type") == "text")
 
 
@@ -61,10 +63,12 @@ def arguments(value: Any) -> dict:
 
 
 def json_arguments(value: Any) -> str:
+    """Preserve a native argument string or JSON-serialize an argument object."""
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
 
 def source_protocol(value: dict) -> str | None:
+    """Read source provenance used to select native replay behavior."""
     return value.get("protocol")
 
 
@@ -80,7 +84,13 @@ def allocate_call_id(used: set[str], preferred: str) -> str:
 
 
 def associate_tool_result(pending: list[dict], call_id: str | None, name: str | None) -> str | None:
-    """Consume the matching pending call, preferring an explicit result ID."""
+    """Consume a pending call by explicit ID, or by name when no ID is supplied.
+
+    Used by protocols with optional call IDs. Name-only results consume the first
+    matching call in order. An unknown explicit ID is returned unchanged so history
+    validation can reject it; it never falls back to another same-name call.
+    A supplied name that contradicts a matched ID raises MessageValidationError.
+    """
     match = next(
         (
             call
@@ -101,10 +111,12 @@ def associate_tool_result(pending: list[dict], call_id: str | None, name: str | 
 
 
 def mapping_list(value) -> bool:
+    """Whether a value is a list containing only dictionaries."""
     return isinstance(value, list) and all(isinstance(item, dict) for item in value)
 
 
 def match_all(values, predicate) -> bool:
+    """Match a nonempty normalized batch, treating malformed input as a non-match."""
     try:
         items = list(dictionary_views(values))
         return bool(items) and all(predicate(item) for item in items)
@@ -122,6 +134,7 @@ def select(value: dict, *fields: str) -> dict:
 
 
 def select_present(value: dict, *fields: str) -> dict:
+    """Project specified fields while omitting missing and None values."""
     return {
         key: child
         for key in fields
@@ -130,6 +143,7 @@ def select_present(value: dict, *fields: str) -> dict:
 
 
 def project_message(message: dict, project, *, fields: tuple[str, ...] = ("role",)) -> dict:
+    """Project each content block, skipping unsupported blocks and retaining named fields."""
     content = []
     for block in message["content"]:
         rendered = project(block)
@@ -162,6 +176,7 @@ def tool_result_content(value: Any, *, native_types: frozenset[str]) -> Any:
 
 
 def encode_functions(tools, unwrap) -> list[dict]:
+    """Unwrap supported native function declarations into middleware groups."""
     result = []
     for tool in tools:
         functions = unwrap(tool)
@@ -172,6 +187,7 @@ def encode_functions(tools, unwrap) -> list[dict]:
 
 
 def decode_functions(tools, wrap) -> list[dict]:
+    """Wrap canonical function groups as native tools and report unsupported groups."""
     result = []
     for tool in dictionary_views(tools):
         functions = tool.get(FUNCTIONS)
@@ -183,6 +199,26 @@ def decode_functions(tools, wrap) -> list[dict]:
 
 
 def validate_history(messages: list[dict], *, allow_external_calls: bool = False) -> None:
+    """Require nonempty canonical history with one later result per tool call.
+
+    Args:
+        messages: Middleware messages, with native tool calls/results already
+            normalized to tool_use/tool_result blocks. With translated-history
+            caching, this is only the current incremental batch.
+        allow_external_calls: Allow result IDs absent from earlier local calls,
+            for Responses requests backed by previous_response_id. This trusts
+            server history; it does not verify that those external calls exist.
+
+    Raises:
+        MessageValidationError: History is empty, a role or call/result ID is
+            invalid, a call ID or result repeats, a result has no earlier call
+            without the server-history exemption, or any local call lacks a result.
+
+    Matching uses IDs rather than result order: parallel results may arrive in any
+    order after their calls. Ordinary messages may intervene; this function does
+    not enforce adjacency, turn boundaries, or tool-argument JSON Schema validity.
+    The function reads messages without modifying them.
+    """
     if not messages:
         raise MessageValidationError("messages must be non-empty")
     calls = set()

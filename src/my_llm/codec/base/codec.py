@@ -30,6 +30,7 @@ class BaseCodec(ABC):
     __slots__ = ("semantic_loss_adaptor",)
 
     def __init__(self, semantic_loss_adaptor: BaseSemanticLossAdaptor | None = None) -> None:
+        """Own the supplied semantic-loss adaptor, or create the default raising policy."""
         self.semantic_loss_adaptor = (
             BaseSemanticLossAdaptor() if semantic_loss_adaptor is None else semantic_loss_adaptor
         )
@@ -43,7 +44,19 @@ class BaseCodec(ABC):
         enable_message_cache: bool = False,
         message_cache_batch: MessageCacheBatch | None = None,
     ):
-        """Publish translated messages before invoking the semantic-loss adaptor."""
+        """Run a conversion and apply this codec's semantic-loss policy to its draft.
+
+        Nested decoder operations share one loss collection. The outer owner checks
+        accumulated losses after a complete draft exists; draft_key selects a nested
+        payload such as request or chunks for the adaptor. Structural validation
+        and unrelated exceptions propagate without invoking the adaptor.
+
+        When caching is enabled, publish the staged translation after successful
+        conversion or before handling SemanticLossError. This preserves translation
+        results even if the loss policy raises, while excluding adaptor/hook edits
+        and requests that fail ordinary validation. Hooks mutate the selected draft
+        in place; their return values do not replace it.
+        """
         if enable_message_cache and message_cache_batch is None:
             raise ConfigurationError("message caching requires a translated batch")
         draft = None

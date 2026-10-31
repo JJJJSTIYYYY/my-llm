@@ -57,6 +57,7 @@ class ResponsesDecoder(BaseDecoder):
     request_schema = parameter_types(AsyncResponses.create)
 
     def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
+        """Filter owned Responses messages to SDK fields and apply input capability policies."""
         if parameters.get("_translated") or (
             feedback_reasoning(profile, has_tool_calls=False)
             and supports_content("image", profile)
@@ -70,6 +71,7 @@ class ResponsesDecoder(BaseDecoder):
         envelope = _plan(self.message_type, delegated_paths=(("content",), ("output",))).decode
 
         def flush():
+            """Filter the buffered native item group under its shared reasoning-feedback policy."""
             feedback = feedback_reasoning(profile, has_tool_calls=has_calls)
             for index, message in pending:
                 path = f"$.input[{index}]"
@@ -115,15 +117,18 @@ class ResponsesDecoder(BaseDecoder):
         return super().filter_messages(projected, profile, **parameters)
 
     def allows_external_calls(self, previous_response_id) -> bool:
+        """Allow unmatched local result IDs when previous_response_id supplies server history."""
         return previous_response_id is not None and not isinstance(previous_response_id, Omit)
 
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
+        """Validate shared controls and protect Responses fields from extra-body replacement."""
         options = super().validate_parameters(profile, **parameters)
         return validate_request_options(
             profile, options, protected=PROTECTED, containers=("extra_body",)
         )
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
+        """Validate output-token limits and the types of supported reasoning controls."""
         if "max_output_tokens" in request:
             validate_max_tokens(request["max_output_tokens"])
         reasoning = request.get("reasoning")
@@ -148,6 +153,7 @@ class ResponsesDecoder(BaseDecoder):
         request: dict,
         **parameters: Any,
     ) -> dict:
+        """Assemble streaming Responses input, optional tools and server-history reference."""
         previous = parameters.pop("previous_response_id", None)
         has_previous = previous is not None and not isinstance(previous, Omit)
         result = request
@@ -161,6 +167,14 @@ class ResponsesDecoder(BaseDecoder):
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Render history as Responses message, reasoning and function items.
+
+        Preserve native item identity and ordering rather than coalescing assistant
+        fragments. Foreign blocks pass through Responses compatibility handling.
+        Generate fallback item identities independently for cached incremental
+        batches; explicit native IDs take precedence. Tool results become separate
+        function_call_output items keyed by the original call ID.
+        """
         result = []
         # Each incremental batch needs distinct generated identities; explicit
         # native item IDs below continue to take precedence over these fallbacks.
@@ -190,6 +204,7 @@ class ResponsesDecoder(BaseDecoder):
             pending = []
 
             def flush():
+                """Render buffered text/image blocks while retaining compatible native message identity."""
                 if pending:
                     media = any(block.get("type") == "image" for block in pending)
                     input_media = media and profile is not None
@@ -297,6 +312,7 @@ class ResponsesDecoder(BaseDecoder):
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Render canonical function declarations as Responses tools and report unsupported fields."""
         return decode_functions(
             tools,
             lambda functions: [
@@ -313,6 +329,13 @@ class ResponsesDecoder(BaseDecoder):
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Render public middleware events as native Responses stream events.
+
+        Text/reasoning deltas are already assembled into ordered public events;
+        tool events contain complete calls validated at successful source EOF.
+        Use source metadata for native identity where available and report
+        content that the target protocol cannot express as semantic losses.
+        """
         result = []
         for event in events(chunks):
             kind = event.get("type")
@@ -528,6 +551,7 @@ class ResponsesDecoder(BaseDecoder):
         return result
 
     def usage(self, value: dict | None) -> dict | None:
+        """Render canonical token counters in the Responses usage format."""
         if value is None:
             return None
         input_tokens, output_tokens, total, cached, cache_write, reasoning = counts(value)
@@ -545,10 +569,12 @@ class ResponsesDecoder(BaseDecoder):
         }
 
     def result(self, messages: list) -> list:
+        """Return all completed Responses output items rather than only the first one."""
         return messages
 
     def _response_envelope(self, **parameters: Any) -> dict:
         # Required native envelope defaults carry no unsupported source metadata.
+        """Build a minimal native response envelope from supported metadata."""
         return {
             "access_programs": None,
             "error": None,
@@ -567,6 +593,7 @@ class ResponsesDecoder(BaseDecoder):
         }
 
     def _output_item(self, block: dict, index: int, origin: str | None) -> dict:
+        """Render one completed assistant block with a stable native or fallback item ID."""
         item = self._messages([{"role": "assistant", "content": [block], "protocol": origin}])[0]
         if origin != PROTOCOL:
             item["id"] = f"item_{index}"
@@ -575,6 +602,7 @@ class ResponsesDecoder(BaseDecoder):
         return item
 
     def _completed_output(self, event: dict, origin: str | None, parameters: dict) -> list[dict]:
+        """Reconstruct completed output items, preserving source item grouping when available."""
         entries = event.get("output_blocks", [])
         if not self._native_items(parameters):
             return [
@@ -623,11 +651,13 @@ class ResponsesDecoder(BaseDecoder):
         return result
 
     def _native_items(self, parameters: dict) -> bool:
+        """Whether source Responses metadata supports preserving native item identities."""
         return parameters.get("source_protocol") == PROTOCOL and bool(
             parameters.get("response_items")
         )
 
     def _address(self, event: dict, parameters: dict) -> tuple[int, int, str, bool]:
+        """Resolve output/part indices and item ID from source references or fallback indices."""
         index, part = event.get("index", 0), 0
         ref = event.get("source_ref")
         if self._native_items(parameters) and ref is not None:
@@ -637,6 +667,7 @@ class ResponsesDecoder(BaseDecoder):
         return index, part, f"item_{index}", False
 
     def _added_item(self, item: dict) -> dict:
+        """Build an in-progress item header with empty content, summary or arguments."""
         result = select(item, "type", "id", "role", "status", "call_id", "name")
         result["status"] = "in_progress"
         if item["type"] == "message":

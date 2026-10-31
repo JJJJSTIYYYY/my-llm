@@ -47,6 +47,7 @@ PROTOCOL = "gemini"
 
 
 def input_kind(part: dict) -> str:
+    """Classify a native Gemini part for input-capability filtering."""
     if part.get("function_call") is not None:
         return "tool_use"
     if part.get("function_response") is not None:
@@ -76,6 +77,7 @@ class GeminiDecoder(BaseDecoder):
     }
 
     def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
+        """Filter owned Gemini messages to SDK fields and apply input capability policies."""
         if parameters.get("_translated") or (
             feedback_reasoning(profile, has_tool_calls=False)
             and supports_content("image", profile)
@@ -138,12 +140,14 @@ class GeminiDecoder(BaseDecoder):
         return super().filter_messages(projected, profile, **parameters)
 
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
+        """Validate shared controls and protect Gemini fields from extra-body replacement."""
         options = super().validate_parameters(profile, **parameters)
         return validate_request_options(
             profile, options, protected=PROTECTED, containers=("config",)
         )
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
+        """Validate non-system contents and config, recording unsupported candidate settings."""
         if not request["contents"]:
             raise ConfigurationError("a non-system message is required")
         config = request.get("config")
@@ -170,6 +174,7 @@ class GeminiDecoder(BaseDecoder):
     headers_field = "$.config.http_options.headers"
 
     def client_parameters(self, profile: ResolvedProfile) -> dict:
+        """Prepare Gemini HTTP options and map provider settings to SDK constructor fields."""
         values = client_parameters(profile, headers_field="headers")
         options = {key: value for key, value in values.items() if key in ("base_url", "headers")}
         if "timeout" in values:
@@ -184,6 +189,7 @@ class GeminiDecoder(BaseDecoder):
     def _request_parameters(
         self, request: dict, profile: ResolvedProfile, options: PreparedOptions
     ) -> dict:
+        """Build Gemini config and disable automatic SDK tool execution."""
         config = request["config"]
         config["automatic_function_calling"] = {"disable": True}
         if options.effort and profile.parameter("reasoning_effort", "input") is not None:
@@ -201,6 +207,7 @@ class GeminiDecoder(BaseDecoder):
         request: dict,
         **parameters: Any,
     ) -> dict:
+        """Extract system instructions into config and assemble Gemini contents and tools."""
         result = request
         config = result["config"]
         system, history = split_system_messages(messages)
@@ -214,6 +221,13 @@ class GeminiDecoder(BaseDecoder):
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Render middleware history as Gemini Content messages and parts.
+
+        Map assistant to model, apply content and reasoning-feedback policies, and
+        retain compatible native thought signatures. Track tool-call names by ID
+        so later function responses can include the required function name. Record
+        foreign content that Gemini cannot replay as semantic losses.
+        """
         result = []
         names = {}
         for index, message, feedback in message_feedback(messages, profile):
@@ -258,6 +272,7 @@ class GeminiDecoder(BaseDecoder):
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Render canonical function declarations as Gemini tools and report unsupported fields."""
         return decode_functions(
             tools,
             lambda functions: [
@@ -279,6 +294,13 @@ class GeminiDecoder(BaseDecoder):
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Render public middleware events as native Gemini stream events.
+
+        Text/reasoning deltas are already assembled into ordered public events;
+        tool events contain complete calls validated at successful source EOF.
+        Use source metadata for native identity where available and report
+        content that the target protocol cannot express as semantic losses.
+        """
         result = []
         for event in events(chunks):
             kind = event.get("type")
@@ -375,6 +397,7 @@ class GeminiDecoder(BaseDecoder):
         return result
 
     def usage(self, value: dict | None) -> dict | None:
+        """Render canonical token counters in the Gemini usage format."""
         if value is None:
             return None
         input_tokens, output_tokens, total, cached, cache_write, reasoning = counts(value)

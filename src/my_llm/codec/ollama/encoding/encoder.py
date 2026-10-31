@@ -34,9 +34,11 @@ class OllamaEncoder(BaseEncoder):
     tool_type = Tool
 
     def validate_values(self, values: list, schema: Any, *, filtered: bool = False) -> None:
+        """Validate Ollama values with the SDK image-normalization boundary."""
         validate_ollama_values(values, schema, filtered=filtered)
 
     def _validation_messages(self, messages: list) -> list:
+        """Project supported Ollama message fields before native schema validation."""
         result = []
         for message in messages:
             value = select(
@@ -58,6 +60,7 @@ class OllamaEncoder(BaseEncoder):
         return result
 
     def _validation_tools(self, tools: list) -> list:
+        """Project supported Ollama function declarations before native schema validation."""
         return [
             {
                 "type": "function",
@@ -68,6 +71,7 @@ class OllamaEncoder(BaseEncoder):
         ]
 
     def match_item(self, item: dict) -> bool:
+        """Whether a native message or tool has a recognizable Ollama shape."""
         if item.get("type") == "function":
             return isinstance(item.get("function"), dict)
         if item.get("role") not in ("user", "assistant", "system", "tool"):
@@ -89,6 +93,12 @@ class OllamaEncoder(BaseEncoder):
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Normalize Ollama messages and associate tool results with pending calls.
+
+        Convert images and thinking to canonical content, allocate noncolliding
+        IDs for calls without IDs, and match ID-less results by function name.
+        Explicit result IDs are retained for downstream association validation.
+        """
         pending = []
         result = []
         id_prefix = f"{uuid4().hex}_" if parameters.get("enable_message_cache", False) else ""
@@ -164,6 +174,7 @@ class OllamaEncoder(BaseEncoder):
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Project supported Ollama function declarations into canonical tool groups."""
         return [
             {
                 "functions": [
@@ -194,6 +205,13 @@ class OllamaEncoder(BaseEncoder):
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Translate native Ollama events into middleware operation batches.
+
+        Extract supported content, metadata and usage; represent block identity
+        and protocol completion explicitly for StreamState. Provider failures
+        propagate as stream errors. Tool-argument assembly and public tool-event
+        delivery belong to StreamState rather than this protocol parser.
+        """
         result = []
         for event_index, event in enumerate(chunks):
             if event.get("type") == "error" or event.get("error"):
@@ -258,6 +276,7 @@ class OllamaEncoder(BaseEncoder):
         return result
 
     def usage(self, value: dict | None) -> dict | None:
+        """Normalize reported Ollama token counters, retaining absent usage as None."""
         if value is None:
             return None
         return record(

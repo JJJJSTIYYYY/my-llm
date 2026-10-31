@@ -36,6 +36,7 @@ class AnthropicCodec(BaseCodec):
     )
 
     def __init__(self) -> None:
+        """Create independent Anthropic defaults, encoder, decoder and transport."""
         super().__init__()
         self._defaults = deepcopy(self._DEFAULTS)
         self.encoder = AnthropicEncoder()
@@ -44,4 +45,5 @@ class AnthropicCodec(BaseCodec):
 
     @property
     def defaults(self) -> ProtocolDefaults:
+        """Return the protocol defaults owned by this Anthropic codec instance."""
         return self._defaults

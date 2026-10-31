@@ -51,6 +51,7 @@ class _ModelView(dict):
     __slots__ = ("model", "_raw", "_values")
 
     def __init__(self, model: BaseModel):
+        """Bind an SDK model and initialize lazy raw-field and projected-value caches."""
         self.model = model
         self._raw = {}
         self._values = {}
@@ -61,6 +62,7 @@ class _ModelView(dict):
         return self.model
 
     def _field(self, key):
+        """Read and cache a public field, distinguishing explicit None from an unset default."""
         value = self._raw.get(key, _UNREAD)
         if value is _UNREAD:
             value = getattr(self.model, key, _MISSING)
@@ -71,15 +73,18 @@ class _ModelView(dict):
         return value
 
     def __contains__(self, key):
+        """Whether the SDK model supplies this field."""
         return self._field(key) is not _MISSING
 
     def __getitem__(self, key):
+        """Read a projected field or raise KeyError when absent."""
         value = self.get(key, _MISSING)
         if value is _MISSING:
             raise KeyError(key)
         return value
 
     def get(self, key, default=None):
+        """Lazily project one requested field without serializing unrelated SDK fields."""
         value = self._values.get(key, _UNREAD)
         if value is _UNREAD:
             raw = self._field(key)
@@ -88,25 +93,32 @@ class _ModelView(dict):
         return default if value is _MISSING else value
 
     def __iter__(self):
+        """Iterate declared fields that are actually present in the SDK model."""
         return (key for key in type(self.model).model_fields if key in self)
 
     def __len__(self):
+        """Count present declared model fields."""
         return sum(1 for _ in self)
 
     def keys(self):
+        """Expose dictionary-style keys for present model fields."""
         return dict.fromkeys(self).keys()
 
     def items(self):
+        """Lazily iterate present fields and their projected values."""
         return ((key, self[key]) for key in self)
 
     def copy(self):
+        """Build a shallow dictionary projection of present declared fields."""
         return dict(self)
 
     def __deepcopy__(self, memo):
+        """Copy present projected model fields with the caller's deepcopy memo."""
         return {key: deepcopy(self[key], memo) for key in self}
 
 
 def _view(value: Any) -> Any:
+    """Wrap SDK models lazily and normalize list elements and enum values."""
     if isinstance(value, BaseModel):
         return _ModelView(value)
     if isinstance(value, list):
@@ -117,10 +129,12 @@ def _view(value: Any) -> Any:
 
 
 def read(value: Any, key: str, default: Any = None) -> Any:
+    """Read one dictionary key or SDK attribute with a shared default."""
     return value.get(key, default) if isinstance(value, dict) else getattr(value, key, default)
 
 
 def plain(value: Any) -> Any:
+    """Project one SDK model or shallow-copy an ordinary container."""
     if isinstance(value, BaseModel):
         return dict(_ModelView(value))
     return value.copy() if isinstance(value, (dict, list)) else value

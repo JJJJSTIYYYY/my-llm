@@ -32,6 +32,7 @@ class AnthropicEncoder(BaseEncoder):
     tool_type = ToolParam
 
     def _validation_messages(self, messages: list) -> list:
+        """Project supported Anthropic message fields before native schema validation."""
         result = []
         for message in messages:
             content = message.get("content")
@@ -57,6 +58,7 @@ class AnthropicEncoder(BaseEncoder):
         return result
 
     def _validation_tools(self, tools: list) -> list:
+        """Project supported Anthropic function declarations before native schema validation."""
         return [
             select(tool, "name", "description", "input_schema", "strict")
             for tool in tools
@@ -64,6 +66,7 @@ class AnthropicEncoder(BaseEncoder):
         ]
 
     def match_item(self, item: dict) -> bool:
+        """Whether a native message or tool has a recognizable Anthropic shape."""
         if "input_schema" in item:
             return isinstance(item["input_schema"], dict) and isinstance(item.get("name"), str)
         if item.get("role") not in ("user", "assistant", "system") or "content" not in item:
@@ -111,6 +114,7 @@ class AnthropicEncoder(BaseEncoder):
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Normalize supported Anthropic blocks and reasoning provenance into middleware messages."""
         result = []
         for index, message in enumerate(messages):
             path = f"$.messages[{index}].content"
@@ -135,6 +139,7 @@ class AnthropicEncoder(BaseEncoder):
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Project supported Anthropic function declarations into canonical tool groups."""
         return [
             {
                 "functions": [
@@ -159,6 +164,13 @@ class AnthropicEncoder(BaseEncoder):
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Translate native Anthropic events into middleware operation batches.
+
+        Extract supported content, metadata and usage; represent block identity
+        and protocol completion explicitly for StreamState. Provider failures
+        propagate as stream errors. Tool-argument assembly and public tool-event
+        delivery belong to StreamState rather than this protocol parser.
+        """
         result = []
         for event_index, event in enumerate(chunks):
             if event.get("type") == "error" or event.get("error"):
@@ -267,6 +279,7 @@ class AnthropicEncoder(BaseEncoder):
         return result
 
     def usage(self, value: dict | None) -> dict | None:
+        """Normalize reported Anthropic token counters, retaining absent usage as None."""
         if value is None:
             return None
         cached = value.get("cache_read_input_tokens")
@@ -280,6 +293,7 @@ class AnthropicEncoder(BaseEncoder):
         )
 
     def _metadata(self, event: dict) -> dict:
+        """Project supported Anthropic response identity and model metadata."""
         return {
             "response_id" if key == "id" else key: event[key]
             for key in ("id", "model")

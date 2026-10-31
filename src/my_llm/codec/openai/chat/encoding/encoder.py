@@ -34,6 +34,7 @@ class ChatCompletionsEncoder(BaseEncoder):
     tool_type = ChatCompletionToolParam
 
     def _validation_messages(self, messages: list) -> list:
+        """Project supported Chat Completions message fields before native schema validation."""
         result = []
         for message in messages:
             value = select(message, "role", "name", "tool_call_id", "function_call")
@@ -68,6 +69,7 @@ class ChatCompletionsEncoder(BaseEncoder):
         return result
 
     def _validation_tools(self, tools: list) -> list:
+        """Project supported Chat Completions function declarations before native schema validation."""
         return [
             {
                 "type": "function",
@@ -80,6 +82,7 @@ class ChatCompletionsEncoder(BaseEncoder):
         ]
 
     def match_item(self, item: dict) -> bool:
+        """Whether a native message or tool has a recognizable Chat Completions shape."""
         if item.get("type") == "function":
             return isinstance(item.get("function"), dict)
         if item.get("role") not in ("user", "assistant", "system", "developer", "tool"):
@@ -109,6 +112,13 @@ class ChatCompletionsEncoder(BaseEncoder):
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Normalize Chat messages and legacy function rounds into middleware history.
+
+        Parse function arguments as JSON objects, turn role=tool/function messages
+        into user-role tool_result blocks and attach source provenance. Unsupported
+        source fields/content are omitted. Legacy call IDs are unique per batch
+        when caching is enabled; association validation happens in the decoder.
+        """
         result = []
         legacy_call_id = (
             f"legacy_function_call_{uuid4().hex}"
@@ -174,6 +184,7 @@ class ChatCompletionsEncoder(BaseEncoder):
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Project supported Chat Completions function declarations into canonical tool groups."""
         return [
             {
                 "functions": [
@@ -204,6 +215,13 @@ class ChatCompletionsEncoder(BaseEncoder):
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Translate native Chat Completions events into middleware operation batches.
+
+        Extract supported content, metadata and usage; represent block identity
+        and protocol completion explicitly for StreamState. Provider failures
+        propagate as stream errors. Tool-argument assembly and public tool-event
+        delivery belong to StreamState rather than this protocol parser.
+        """
         result = []
         for event_index, event in enumerate(chunks):
             if event.get("type") == "error" or event.get("error"):
@@ -273,6 +291,7 @@ class ChatCompletionsEncoder(BaseEncoder):
         return result
 
     def usage(self, value: dict | None) -> dict | None:
+        """Normalize reported Chat Completions token counters, retaining absent usage as None."""
         if value is None:
             return None
         return record(
@@ -284,6 +303,7 @@ class ChatCompletionsEncoder(BaseEncoder):
         )
 
     def _metadata(self, event: dict) -> dict:
+        """Project supported Chat response identity, model and creation metadata."""
         return {
             target: event[native]
             for native, target in (

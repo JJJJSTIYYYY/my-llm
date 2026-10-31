@@ -26,6 +26,7 @@ def image_data(value) -> str:
 
 
 def media_type(value: str) -> str:
+    """Identify PNG/JPEG/GIF/WebP base64 data, rejecting invalid or unknown images."""
     try:
         data = base64.b64decode(value, validate=True)
     except (ValueError, TypeError, binascii.Error) as exc:
@@ -42,6 +43,7 @@ def media_type(value: str) -> str:
 
 
 def tool_block(call: dict, *, call_id: str | None = None) -> dict:
+    """Normalize an Ollama function call into canonical identity, name and argument fields."""
     fn = call["function"]
     return {
         "type": "tool_use",

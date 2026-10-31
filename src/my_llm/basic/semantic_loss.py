@@ -27,9 +27,11 @@ class SemanticLossGroup:
     origin_source: LossDirection = "input"
 
     def __iter__(self):
+        """Iterate collected losses in their reporting order."""
         return iter(self.items)
 
     def __len__(self):
+        """Count collected semantic losses."""
         return len(self.items)
 
 
@@ -50,11 +52,13 @@ class Originated(dict):
     __slots__ = ("origin_path", "origin_value")
 
     def __init__(self, value: dict, path: str, origin_value: object):
+        """Attach a source path and original value outside the projected dictionary keys."""
         super().__init__(value)
         self.origin_path = path
         self.origin_value = getattr(origin_value, "origin_value", origin_value)
 
     def __deepcopy__(self, memo):
+        """Capture projected payloads while retaining original provenance references."""
         from my_llm.basic.data import capture
 
         result = Originated({}, self.origin_path, self.origin_value)
@@ -65,6 +69,7 @@ class Originated(dict):
 
 
 def originated(value: dict, path: str, origin_value: object = None) -> dict:
+    """Wrap a projection with source provenance, using the projection itself when unspecified."""
     return Originated(value, path, value if origin_value is None else origin_value)
 
 
@@ -74,6 +79,7 @@ class _LossCollection:
     items: dict[tuple[str, str], SemanticLossItem] = field(default_factory=dict)
 
     def complete(self, draft: object) -> object:
+        """Return the finished draft or raise all deduplicated losses with that draft."""
         if self.items:
             raise SemanticLossError(
                 draft,
@@ -113,10 +119,12 @@ def report_loss(value: object, reason: str, *, path: str | None = None) -> None:
 
 
 def _raise(draft, losses, context):
+    """Implement the raising policy with the complete draft and loss context."""
     raise SemanticLossError(draft, losses, context)
 
 
 def _ignore(draft, losses, context):
+    """Leave the translated draft unchanged when semantic losses are ignored."""
     return None
 
 
@@ -129,6 +137,7 @@ class BaseSemanticLossAdaptor:
         input_semantic_loss_hook: SemanticLossHook | None = None,
         output_semantic_loss_hook: SemanticLossHook | None = None,
     ):
+        """Validate the policy and select separate synchronous input/output handlers."""
         if semantic_loss_protocol not in ("raise", "ignore", "hook"):
             raise ConfigurationError("semantic_loss_protocol must be raise, ignore or hook")
         for hook in (input_semantic_loss_hook, output_semantic_loss_hook):
@@ -148,6 +157,13 @@ class BaseSemanticLossAdaptor:
             )
 
     def handle(self, error: SemanticLossError) -> object:
+        """Apply the directional loss policy and return the same translated draft.
+
+        Select the input or output hook from the loss group, passing the complete
+        draft, collected losses and translation context. Hooks may mutate the draft
+        in place; their return values are ignored. The raising policy propagates
+        SemanticLossError, and application hook exceptions retain their own types.
+        """
         hook = (
             self.input_semantic_loss_hook
             if error.losses.origin_source == "input"

@@ -48,11 +48,13 @@ class _CodecInstances(MutableMapping[str, BaseCodec]):
     """Instance-owned factory snapshot; unused protocols allocate no components."""
 
     def __init__(self, adaptor: BaseSemanticLossAdaptor):
+        """Initialize a lazy registry whose codecs share this converter's adaptor."""
         self.factories = registered_codec_factories()
         self.instances: dict[str, BaseCodec] = {}
         self.adaptor = adaptor
 
     def __getitem__(self, protocol: str) -> BaseCodec:
+        """Return an owned codec, constructing it lazily from its registered factory."""
         if protocol not in self.instances:
             codec = self.factories[protocol]()
             codec.semantic_loss_adaptor = self.adaptor
@@ -60,21 +62,26 @@ class _CodecInstances(MutableMapping[str, BaseCodec]):
         return self.instances[protocol]
 
     def __setitem__(self, protocol: str, codec: BaseCodec) -> None:
+        """Attach this converter's adaptor and store an explicitly supplied codec."""
         codec.semantic_loss_adaptor = self.adaptor
         self.instances[protocol] = codec
         self.factories.setdefault(protocol, type(codec))
 
     def __delitem__(self, protocol: str) -> None:
+        """Remove an owned codec instance and its local factory entry."""
         del self.factories[protocol]
         self.instances.pop(protocol, None)
 
     def __iter__(self):
+        """Iterate protocol names available through registered factories."""
         return iter(self.factories)
 
     def __len__(self):
+        """Count available protocol factories without instantiating codecs."""
         return len(self.factories)
 
     def __contains__(self, protocol):
+        """Check protocol availability without instantiating its codec."""
         return protocol in self.factories
 
 
@@ -97,6 +104,7 @@ class MyCodec:
         input_semantic_loss_hook: SemanticLossHook | None = None,
         output_semantic_loss_hook: SemanticLossHook | None = None,
     ) -> None:
+        """Create instance-owned protocol components, loss policy and translated-history cache."""
         self.semantic_loss_adaptor = BaseSemanticLossAdaptor(
             semantic_loss_protocol, input_semantic_loss_hook, output_semantic_loss_hook
         )
@@ -113,6 +121,7 @@ class MyCodec:
         input_semantic_loss_hook: SemanticLossHook | None = None,
         output_semantic_loss_hook: SemanticLossHook | None = None,
     ) -> None:
+        """Replace the adaptor shared by all current and future codecs of this converter."""
         adaptor = BaseSemanticLossAdaptor(
             semantic_loss_protocol, input_semantic_loss_hook, output_semantic_loss_hook
         )
@@ -154,6 +163,7 @@ class MyCodec:
         register_codec(factory, protocol=protocol)
 
     def _codec(self, protocol: str) -> BaseCodec:
+        """Resolve a supported native codec, rejecting middleware or unknown protocol names."""
         try:
             return self.codecs[protocol]
         except (KeyError, TypeError) as exc:
@@ -220,6 +230,11 @@ class MyCodec:
             MessageValidationError: Inference is ambiguous or has no match.
 
         This method does not remember the selected protocol between calls.
+
+        An explicit protocol skips inference; its message schemas are validated
+        during prepare. Middleware models require the explicit middleware protocol.
+        Native inference inspects the whole message/tool batch and retains the
+        inspected views in inputs so a one-shot sequence is not consumed twice.
         """
         if protocol == "middleware":
             return protocol
@@ -281,6 +296,16 @@ class MyCodec:
             MessageValidationError: Messages, tools or their associations are invalid.
             SemanticLossError: Content or controls are unsupported by the target and
                 the active loss policy is "raise".
+
+        Native input goes through its source encoder; typed middleware input goes
+        through generation_input instead. Both paths converge on the upstream
+        decoder, which checks canonical structure and call/result associations,
+        translates messages/tools, and validates final SDK arguments.
+
+        Message caching stages only the current batch's native translation, after
+        association validation. It joins prior translated history during assembly
+        and publishes it through BaseCodec.translate before semantic-loss adaptation.
+        No SDK client is created and no network request is sent here.
         """
         if enable_message_cache and message_cache_key is None:
             raise ConfigurationError("message caching requires an instance key")
@@ -343,6 +368,7 @@ class MyCodec:
             source = self._codec(input_format)
 
             def render():
+                """Validate canonical result structure and apply output capability filtering."""
                 values = wire_values(messages)
                 validate_messages(values)
                 return messages_from_validated_wire(output_messages(values, semantic_profile))[0]
@@ -452,6 +478,7 @@ class MyCodec:
             semantic_profile = parameters.pop("semantic_profile", None)
 
             def render_middleware():
+                """Validate and project selected middleware outputs with source capability rules."""
                 result = {}
                 if messages is not None:
                     values = wire_values(messages)
@@ -480,6 +507,7 @@ class MyCodec:
         codec = self._codec(target_format)
 
         def render():
+            """Delegate each requested output collection to its target-protocol decoder."""
             result = {}
             for kind, values in (("messages", messages), ("tools", tools), ("chunks", chunks)):
                 if values is not None:

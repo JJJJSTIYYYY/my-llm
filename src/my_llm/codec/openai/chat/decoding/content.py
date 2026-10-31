@@ -9,6 +9,7 @@ from my_llm.profile.resolution import ResolvedProfile
 
 
 def render_content(content: list[dict], *, role: str = "user") -> Any:
+    """Render text and user images as Chat content, compacting text-only messages."""
     result = []
     for block in content:
         kind = block.get("type")
@@ -29,6 +30,7 @@ def render_content(content: list[dict], *, role: str = "user") -> Any:
 
 
 def foreign_block(block: dict) -> dict | None:
+    """Retain representable foreign content and report opaque reasoning/signature losses."""
     kind = block.get("type")
     if kind == "thinking" and (
         block.get("redacted")
@@ -45,6 +47,7 @@ def foreign_block(block: dict) -> dict | None:
 
 
 def tool_text(block: dict, profile: ResolvedProfile | None = None) -> str:
+    """Render tool-result text and report result images that Chat cannot represent."""
     content = block.get("content")
     if isinstance(content, list):
         retained = []
@@ -60,6 +63,7 @@ def tool_text(block: dict, profile: ResolvedProfile | None = None) -> str:
 
 
 def chat_call(block: dict) -> dict:
+    """Render a canonical call with JSON-string arguments in Chat tool_calls format."""
     return {
         "id": block["id"],
         "type": "function",

@@ -32,6 +32,7 @@ class ResponsesCodec(BaseCodec):
     )
 
     def __init__(self) -> None:
+        """Create independent Responses defaults, encoder, decoder and transport."""
         super().__init__()
         self._defaults = deepcopy(self._DEFAULTS)
         self.encoder = ResponsesEncoder()
@@ -40,4 +41,5 @@ class ResponsesCodec(BaseCodec):
 
     @property
     def defaults(self) -> ProtocolDefaults:
+        """Return the protocol defaults owned by this Responses codec instance."""
         return self._defaults

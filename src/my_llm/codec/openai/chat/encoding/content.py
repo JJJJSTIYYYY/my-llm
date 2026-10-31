@@ -8,6 +8,7 @@ from my_llm.codec.shared.stream import BlockRef
 
 
 def encode_content(content: Any, *, path: str = "$.content") -> list[dict]:
+    """Normalize supported Chat text/images and attach their source paths."""
     result = []
     for index, block in enumerate(blocks(content)):
         kind = block.get("type")
@@ -28,6 +29,7 @@ def encode_content(content: Any, *, path: str = "$.content") -> list[dict]:
 
 
 def tool_block(call: dict, *, call_id: str | None = None) -> dict:
+    """Build a canonical tool call, requiring arguments to decode to a JSON object."""
     fn = call.get("function", call)
     return {
         "type": "tool_use",

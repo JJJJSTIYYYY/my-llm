@@ -53,12 +53,21 @@ class BaseEncoder(ABC):
 
     @final
     def request(self, inputs: dict, profile: ResolvedProfile) -> dict:
-        """Return encoded messages/tools alongside a complete call's generation options.
+        """Validate native input and build the middleware request envelope.
 
-        inputs must include messages and tools. profile supplies upstream settings;
-        the returned envelope contains profile and a typed middleware field for
-        BaseDecoder.prepare. Unknown source fields never enter that middleware.
-        Invalid input raises MessageValidationError.
+        inputs must contain messages and tools. Normalize dictionaries or supported
+        SDK models into readable views, validate recognized input against this
+        protocol's schemas, and project supported fields into typed middleware
+        messages/tools. Unknown source fields do not enter the middleware.
+
+        The returned dictionary preserves generation options and adds profile and
+        middleware for BaseDecoder.prepare. Input projection uses standard source
+        fields; profile supplies upstream settings to the target decoder instead.
+        Tool-call/result associations are checked later by BaseDecoder.request,
+        after all source protocols share the same canonical representation.
+
+        Raises MessageValidationError for invalid native or middleware structure.
+        This method creates no SDK client and performs no network I/O.
         """
         history = list(dictionary_views(inputs["messages"]))
         tools = inputs["tools"]
@@ -98,9 +107,11 @@ class BaseEncoder(ABC):
             ) from exc
 
     def _validation_messages(self, messages: list) -> list:
+        """Select native message fields to check against the source SDK schema."""
         return messages
 
     def _validation_tools(self, tools: list) -> list:
+        """Select native tool declarations to check against the source SDK schema."""
         return tools
 
     @final

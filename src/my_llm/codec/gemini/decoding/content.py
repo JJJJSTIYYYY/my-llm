@@ -9,6 +9,13 @@ from my_llm.profile.resolution import ResolvedProfile
 def decode_part(
     block: dict, *, foreign: bool = False, profile: ResolvedProfile | None = None
 ) -> dict | None:
+    """Render one canonical block as a Gemini part or record its semantic loss.
+
+    Preserve thought signatures only for Gemini-owned content. Tool results
+    require text/object responses; images inside them are reported as losses.
+    Signed native reasoning can be replayed, while opaque or unsigned foreign
+    reasoning is omitted with a recorded loss.
+    """
     kind = block.get("type")
     owner = block.get("protocol")
     native_signature = not foreign if owner is None else owner == "gemini"

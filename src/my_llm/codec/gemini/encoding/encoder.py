@@ -34,6 +34,7 @@ class GeminiEncoder(BaseEncoder):
     tool_type = types.Tool
 
     def _validation_messages(self, messages: list) -> list:
+        """Project supported Gemini message fields before native schema validation."""
         result = []
         for message in messages:
             parts = []
@@ -70,6 +71,7 @@ class GeminiEncoder(BaseEncoder):
         return result
 
     def _validation_tools(self, tools: list) -> list:
+        """Project supported Gemini function declarations before native schema validation."""
         return [
             {
                 "function_declarations": [
@@ -82,6 +84,7 @@ class GeminiEncoder(BaseEncoder):
         ]
 
     def match_item(self, item: dict) -> bool:
+        """Whether a native message or tool has a recognizable Gemini shape."""
         if "function_declarations" in item:
             return mapping_list(item["function_declarations"])
         return item.get("role", "user") in (
@@ -94,6 +97,13 @@ class GeminiEncoder(BaseEncoder):
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Normalize Gemini parts and associate optional-ID function responses.
+
+        Map model to assistant, allocate noncolliding IDs for ID-less calls, and
+        consume pending calls by explicit ID or function name. Preserve supported
+        signatures and source provenance. The decoder rejects incomplete or
+        duplicate call/result associations after normalization.
+        """
         result = []
         pending: list[dict] = []
         id_prefix = f"{uuid4().hex}_" if parameters.get("enable_message_cache", False) else ""
@@ -143,6 +153,7 @@ class GeminiEncoder(BaseEncoder):
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Project supported Gemini function declarations into canonical tool groups."""
         result = []
         for index, tool in enumerate(tools):
             functions = []
@@ -169,6 +180,13 @@ class GeminiEncoder(BaseEncoder):
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Translate native Gemini events into middleware operation batches.
+
+        Extract supported content, metadata and usage; represent block identity
+        and protocol completion explicitly for StreamState. Provider failures
+        propagate as stream errors. Tool-argument assembly and public tool-event
+        delivery belong to StreamState rather than this protocol parser.
+        """
         result = []
         for event_index, event in enumerate(chunks):
             if event.get("type") == "error" or event.get("error"):
@@ -293,6 +311,7 @@ class GeminiEncoder(BaseEncoder):
         return result
 
     def usage(self, value: dict | None) -> dict | None:
+        """Normalize reported Gemini token counters, retaining absent usage as None."""
         if value is None:
             return None
         thoughts = value.get("thoughts_token_count")

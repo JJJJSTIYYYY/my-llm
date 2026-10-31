@@ -28,6 +28,7 @@ class MessageStream(AsyncIterator[dict[str, Any] | MessageEvent]):
     def __init__(
         self, iterator: AsyncGenerator[dict[str, Any] | MessageEvent, None], state: StreamState
     ) -> None:
+        """Bind a response generator and its state without starting network I/O."""
         self._iterator = iterator
         self._state = state
         self._closed = False

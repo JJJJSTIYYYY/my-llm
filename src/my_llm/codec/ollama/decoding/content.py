@@ -7,6 +7,7 @@ from my_llm.profile.resolution import ResolvedProfile
 
 
 def foreign_block(block: dict) -> dict | None:
+    """Adapt foreign Ollama input, reporting remote images and opaque reasoning losses."""
     kind = block.get("type")
     if kind == "image" and block.get("source", {}).get("type") != "base64":
         report_loss(block, "Ollama images require base64 data")
@@ -27,6 +28,7 @@ def foreign_block(block: dict) -> dict | None:
 
 
 def tool_text(block: dict, profile: ResolvedProfile | None = None) -> str:
+    """Render tool-result text and report images that Ollama tool messages cannot carry."""
     content = block.get("content")
     if isinstance(content, list):
         retained = []
@@ -42,10 +44,12 @@ def tool_text(block: dict, profile: ResolvedProfile | None = None) -> str:
 
 
 def chat_call(block: dict) -> dict:
+    """Render an Ollama tool call with its native argument object."""
     return {"function": {"name": block["name"], "arguments": block["input"]}}
 
 
 def function_tool(function: dict) -> dict:
+    """Render a native function declaration with an object schema when none was supplied."""
     return {
         "type": "function",
         "function": {

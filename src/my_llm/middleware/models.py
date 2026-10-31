@@ -23,6 +23,7 @@ class Origin:
 
     @classmethod
     def from_value(cls, value: object, path: str) -> Origin:
+        """Preserve existing provenance or locate an unannotated canonical value."""
         return cls(
             getattr(value, "origin_path", path),
             getattr(value, "origin_value", value),
@@ -35,19 +36,24 @@ class ProtocolValue(Mapping[str, object]):
     __slots__ = ()
 
     def to_wire(self) -> dict:
+        """Return the canonical dictionary projection implemented by each model."""
         raise NotImplementedError
 
     def __getitem__(self, key: str):
+        """Read a field from this model's canonical mapping projection."""
         return self.to_wire()[key]
 
     def __iter__(self) -> Iterator[str]:
+        """Iterate field names in this model's canonical mapping projection."""
         return iter(self.to_wire())
 
     def __len__(self) -> int:
+        """Count fields in this model's canonical mapping projection."""
         return len(self.to_wire())
 
 
 def _located(value: dict, origin: Origin | None) -> dict:
+    """Attach optional source provenance outside the wire payload keys."""
     return originated(value, origin.path, origin.value) if origin is not None else value
 
 
@@ -59,15 +65,18 @@ class ItemIdentity:
     status: str | None = None
 
     def to_wire(self) -> dict:
+        """Project present item identity fields, omitting None values."""
         return {key: value for key in ("id", "status") if (value := getattr(self, key)) is not None}
 
 
 def _item(value: dict) -> ItemIdentity | None:
+    """Read optional native item identity from a canonical dictionary."""
     item = value.get("item")
     return ItemIdentity(item.get("id"), item.get("status")) if item is not None else None
 
 
 def _with_item(value: dict, item: ItemIdentity | None) -> dict:
+    """Attach an item identity projection to a newly built wire envelope."""
     if item is not None:
         value["item"] = item.to_wire()
     return value
@@ -81,6 +90,7 @@ class ImageSource:
     media_type: str | None = None
 
     def to_wire(self) -> dict:
+        """Project the source tag and present URL/base64 metadata."""
         return {
             "type": self.type,
             **{
@@ -103,6 +113,7 @@ class TextContent(ProtocolValue):
     item: ItemIdentity | None = None
 
     def to_wire(self) -> dict:
+        """Project text with optional item identity and source provenance."""
         return _located(_with_item({"type": "text", "text": self.text}, self.item), self.origin)
 
 
@@ -114,6 +125,7 @@ class ImageContent(ProtocolValue):
     item: ItemIdentity | None = None
 
     def to_wire(self) -> dict:
+        """Project image source with optional item identity and provenance."""
         value = {"type": "image", "source": self.source.to_wire()}
         return _located(_with_item(value, self.item), self.origin)
 
@@ -132,6 +144,7 @@ class ReasoningContent(ProtocolValue):
     redacted: bool = False
 
     def to_wire(self) -> dict:
+        """Project recognized reasoning text, opaque data, signatures and native ownership."""
         value = {"type": "thinking", "thinking": self.reasoning, "mark": self.mark}
         for key in ("encrypted_content", "signature", "summary"):
             if (child := getattr(self, key)) is not None:
@@ -155,6 +168,7 @@ class ToolCall(ProtocolValue):
     item: ItemIdentity | None = None
 
     def to_wire(self) -> dict:
+        """Project tool identity/name while borrowing the argument object inside the pipeline."""
         value = {"type": "tool_use", "id": self.call_id, "name": self.name, "input": self.arguments}
         if self.signature is not None:
             value["signature"] = self.signature
@@ -176,6 +190,7 @@ class ToolResult(ProtocolValue):
     item: ItemIdentity | None = None
 
     def to_wire(self) -> dict:
+        """Project the associated call ID and canonical text/image result parts."""
         value = {
             "type": "tool_result",
             "tool_use_id": self.call_id,
@@ -190,6 +205,7 @@ type MessageContent = TextContent | ImageContent | ReasoningContent | ToolCall |
 
 
 def _result_content(value: object, path: str, protocol: str | None) -> list[ResultContent]:
+    """Normalize tool results to typed parts, JSON-serializing untagged application data."""
     if value is None:
         return []
     if isinstance(value, str):
@@ -268,6 +284,7 @@ class Message(ProtocolValue):
     origin: Origin | None = dataclass_field(default=None, repr=False)
 
     def to_wire(self) -> dict:
+        """Project the message envelope and typed content while retaining source metadata."""
         result = {"role": self.role, "content": [part.to_wire() for part in self.content]}
         for key in ("name", "protocol"):
             if (value := getattr(self, key)) is not None:
@@ -302,11 +319,18 @@ class ToolMessage(Message):
 
     @property
     def call_id(self) -> str | None:
+        """Read the first tool-result call ID, or None when no result exists."""
         return next((p.call_id for p in self.content if isinstance(p, ToolResult)), None)
 
 
 def messages_from_wire(values: list) -> list[Message]:
-    """Read canonical history; invalid structure raises MessageValidationError."""
+    """Validate canonical message structure and build typed middleware models.
+
+    Preserve source paths and protocol/item identity. Model readers capture
+    mutable argument/schema data where required; untagged tool-result values
+    become text parts. This boundary checks wire structure, while generation
+    history association checks remain in BaseDecoder.request.
+    """
     validate_messages(values)
     return messages_from_validated_wire(values)
 
@@ -354,6 +378,7 @@ class FunctionTool(ProtocolValue):
     origin: Origin | None = dataclass_field(default=None, repr=False)
 
     def to_wire(self) -> dict:
+        """Project a function as a canonical function group with its source provenance."""
         function = {"name": self.name}
         for key in ("description", "parameters", "strict"):
             if (value := getattr(self, key)) is not None:

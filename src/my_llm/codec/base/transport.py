@@ -51,7 +51,13 @@ async def owned_stream(
     *,
     close_stream: str = "close",
 ) -> AsyncIterator[Any]:
-    """Close one response stream without closing its borrowed SDK client."""
+    """Own one SDK response stream for the lifetime of an asynchronous context.
+
+    Await create lazily when the context is entered, register the SDK close
+    method named by close_stream, and yield the native iterator. Normal exit,
+    early exit, errors and cancellation run its cleanup. The SDK client used
+    by create remains borrowed and is closed by MyLLM instead.
+    """
     async with AsyncExitStack() as resources:
         upstream = await create()
         resources.push_async_callback(getattr(upstream, close_stream))

@@ -14,6 +14,7 @@ from my_llm.codec.shared.stream import operations
 
 
 def _located(value: dict, source: dict) -> dict:
+    """Carry source provenance into a newly assembled event or content dictionary."""
     if isinstance(source, Originated):
         return Originated(value, source.origin_path, source.origin_value)
     return value
@@ -36,6 +37,7 @@ class BlockState:
 
     @property
     def text_field(self) -> str | None:
+        """Return the incremental text field, excluding opaque reasoning."""
         kind = self.content.get("type")
         if kind == "thinking" and (
             self.content.get("redacted")
@@ -64,9 +66,11 @@ class BlockState:
         return self._materialized
 
     def invalidate(self) -> None:
+        """Discard the materialized snapshot after a block changes."""
         self._materialized = None
 
     def replace(self, content: dict) -> None:
+        """Replace a block snapshot, rejecting contradictions with text already emitted."""
         name = self.text_field
         if name and self.text_sent:
             previous = (self.content.get(name, "") + "".join(self.fragments.get(name, ())))[
@@ -88,6 +92,7 @@ class StreamState:
     """
 
     def __init__(self, model: str) -> None:
+        """Initialize isolated response metadata, block state and completion markers."""
         self.metadata: dict[str, Any] = {"response_id": f"generated_{uuid4().hex}", "model": model}
         self._blocks: list[BlockState] = []
         self._references: dict[tuple[str, int, int], BlockState] = {}
@@ -104,6 +109,7 @@ class StreamState:
         self._final_messages: list[dict] | None = None
 
     def _new_block(self, content: dict) -> BlockState:
+        """Append an owned block and defer output from the first tool call onward."""
         block = BlockState(len(self._blocks), capture(content))
         self._blocks.append(block)
         if content.get("type") == "tool_use" and self._deferred_from is None:
@@ -111,6 +117,7 @@ class StreamState:
         return block
 
     def _block(self, ref: tuple[str, int, int] | list, kind: str) -> BlockState:
+        """Resolve a source reference, allocating an empty block on its first update."""
         # JSON round trips turn the named tuple into a list.
         ref = tuple(ref)
         if ref not in self._references:
@@ -124,20 +131,35 @@ class StreamState:
         return self._references[ref]
 
     def _capture_origin(self, block: BlockState, event: dict) -> None:
+        """Attach source provenance when a referenced block first acquires it."""
         if isinstance(event, Originated) and not isinstance(block.content, Originated):
             block.content = Originated(block.content, event.origin_path, event.origin_value)
             block.invalidate()
 
     def _start(self) -> list[dict]:
+        """Emit the public start event at most once."""
         if self.started:
             return []
         self.started = True
         return [{"type": "start"}]
 
     def _deferred(self, block: BlockState) -> bool:
+        """Whether this block must wait until successful stream finalization."""
         return self._deferred_from is not None and block.index >= self._deferred_from
 
     def feed(self, chunks: list[dict]) -> list[dict]:
+        """Apply encoded operations and return public events ready for delivery.
+
+        chunks contains middleware batches already checked by the encoder boundary.
+        Keep one source protocol per response and dispatch operations to block,
+        metadata, usage and completion handlers. Emit eligible text incrementally;
+        tool calls and all following blocks remain deferred until finish succeeds.
+
+        Raise IncompleteStreamError for mixed source protocols, updates after an
+        incompatible terminal event, contradictory snapshots or a finalized state.
+        A protocol terminal operation records completion but does not finalize the
+        response; the caller must invoke finish after upstream exhaustion.
+        """
         if self.finished:
             raise IncompleteStreamError("stream has already been finalized")
         result = []
@@ -155,6 +177,7 @@ class StreamState:
         return result
 
     def _metadata(self, event: dict) -> list[dict]:
+        """Merge owned metadata updates, replacing dictionaries along the addressed path."""
         target = self.metadata
         for key in event["path"]:
             child = dict(target.get(key, {}))
@@ -164,6 +187,7 @@ class StreamState:
         return []
 
     def _usage(self, event: dict) -> list[dict]:
+        """Merge reported usage counters without clearing previously reported fields."""
         if event["usage"] is None:
             return []
         update = event["usage"]
@@ -178,9 +202,11 @@ class StreamState:
         return []
 
     def _begin(self, event: dict) -> list[dict]:
+        """Handle an upstream start operation through the shared one-time start event."""
         return self._start()
 
     def _reason(self, event: dict) -> list[dict]:
+        """Record the finish reason and, for finish operations, allowed trailing updates."""
         self.reason = event.get("reason") or self.reason
         if event["type"] == "finish":
             self.terminal = True
@@ -188,6 +214,7 @@ class StreamState:
         return []
 
     def _snapshot(self, event: dict) -> list[dict]:
+        """Replace final source-addressed blocks, rejecting omitted streamed references."""
         references = {tuple(entry["ref"]) for entry in event["blocks"]}
         if self._references.keys() - references:
             raise IncompleteStreamError("final snapshot omits streamed blocks")
@@ -198,6 +225,7 @@ class StreamState:
         return []
 
     def _set_block(self, event: dict) -> list[dict]:
+        """Replace a referenced block, supply a missing tool ID and publish eligible output."""
         content = event["block"]
         block = self._block(event["ref"], content["type"])
         block.replace(content)
@@ -206,6 +234,7 @@ class StreamState:
         return self._publish(block)
 
     def _append_block(self, event: dict) -> list[dict]:
+        """Append a complete independent block and publish it when ordering permits."""
         block = self._new_block(event["block"])
         if block.content.get("type") == "tool_use" and not block.content.get("id"):
             block.content["id"] = f"call_{uuid4().hex}"
@@ -213,6 +242,7 @@ class StreamState:
         return self._publish(block)
 
     def _update_block(self, event: dict) -> list[dict]:
+        """Merge partial tool identity fields without publishing an incomplete call."""
         patch = {
             key: event["block"][key] for key in ("type", "id", "name") if key in event["block"]
         }
@@ -223,6 +253,7 @@ class StreamState:
         return []
 
     def _delta(self, event: dict) -> list[dict]:
+        """Buffer argument/signature fragments and emit eligible text or reasoning deltas."""
         name, value = event["field"], event["value"]
         block = self._block(event["ref"], event["kind"])
         self._capture_origin(block, event)
@@ -240,6 +271,7 @@ class StreamState:
         return self._emit_text(block, value)
 
     def _stop_block(self, event: dict) -> list[dict]:
+        """Record source closure and close a visible text block unless output is deferred."""
         block = self._references.get(tuple(event["ref"]))
         if block is None:
             return []
@@ -247,6 +279,7 @@ class StreamState:
         return [] if self._deferred(block) else self._close(block)
 
     def _emit_text(self, block: BlockState, value: str) -> list[dict]:
+        """Emit start/block-start as needed, then the next visible text fragment."""
         result = self._start()
         if not block.emitted:
             block.emitted = True
@@ -278,6 +311,7 @@ class StreamState:
         return result
 
     def _close(self, block: BlockState) -> list[dict]:
+        """Emit block-stop once for a previously emitted text or reasoning block."""
         if not block.emitted or block.closed or block.text_field is None:
             return []
         block.closed = True
@@ -296,6 +330,7 @@ class StreamState:
     def _publish(
         self, block: BlockState, *, final: bool = False, tool_index: int = 0
     ) -> list[dict]:
+        """Render unsent block content while preserving deferred tool-call output order."""
         if not final and self._deferred(block):
             return []
         if block.text_field is not None:
@@ -321,6 +356,12 @@ class StreamState:
         return [*self._start(), _located(event, block.content)]
 
     def messages(self, *, partial: bool = False) -> list[dict]:
+        """Return an independent canonical assistant-message snapshot.
+
+        Completed snapshots reuse finalized content before copying it for the
+        caller. partial=True excludes tool calls so an original stream failure is
+        not obscured by parsing unfinished argument JSON.
+        """
         if self._final_messages is not None and not partial:
             return capture(self._final_messages)
         # Never parse unfinished tool JSON while reporting the original failure.
@@ -334,6 +375,19 @@ class StreamState:
         )
 
     def finish(self) -> list[dict]:
+        """Finalize a successfully exhausted upstream stream and release deferred events.
+
+        Require a protocol terminal operation and a state that has not already
+        finished. Materialize every block, parsing tool arguments as JSON objects,
+        before publishing any deferred calls. Then flush remaining blocks in output
+        order and append a finish event with canonical messages and indexed blocks.
+        A tool-bearing response defaults to the tool_calls reason when needed.
+
+        Cache the canonical final messages and mark the state finished. The caller
+        still owns result rendering and publication of the public result/usage.
+        Missing completion raises IncompleteStreamError; malformed tool arguments
+        raise MessageValidationError before tool events are returned.
+        """
         if self.finished:
             raise IncompleteStreamError("stream has already been finalized")
         if not self.terminal:

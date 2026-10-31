@@ -32,6 +32,7 @@ class ProtocolMiddleWare(ProtocolValue):
     usage: Usage | None = None
 
     def __iter__(self):
+        """Yield the wire keys of the collections present in this envelope."""
         for key, value in (
             ("messages", self.messages),
             ("tools", self.tools),
@@ -42,11 +43,13 @@ class ProtocolMiddleWare(ProtocolValue):
                 yield key
 
     def __len__(self):
+        """Count the collections present in this envelope."""
         return sum(
             value is not None for value in (self.messages, self.tools, self.stream, self.usage)
         )
 
     def __getitem__(self, key):
+        """Project one present collection to wire values, or raise KeyError."""
         if key == "messages" and self.messages is not None:
             return [value.to_wire() for value in self.messages]
         if key == "tools" and self.tools is not None:
@@ -58,10 +61,19 @@ class ProtocolMiddleWare(ProtocolValue):
         raise KeyError(key)
 
     def to_wire(self) -> dict:
+        """Project all present collections to their canonical wire representation."""
         return {key: self[key] for key in self}
 
 
 def wire_values(values: list) -> list:
+    """Project typed or raw middleware collections into a list of dictionaries.
+
+    Accept a list or tuple containing ProtocolValue models or dictionaries.
+    Models create wire envelopes; raw dictionaries and nested application
+    leaves remain borrowed. Reject invalid containers/items with
+    MessageValidationError. Callers still need the appropriate structural
+    validator before interpreting the projected values.
+    """
     if not isinstance(values, (list, tuple)):
         raise MessageValidationError("$: expected a middleware list or tuple")
     result = []
@@ -74,6 +86,7 @@ def wire_values(values: list) -> list:
 
 
 def _valid_content(part: MessageContent, role: str) -> bool:
+    """Check a typed content model and whether its role permits that content."""
     if not isinstance(part, (TextContent, ImageContent, ReasoningContent, ToolCall, ToolResult)):
         return False
     if not _valid_item(part.item):
@@ -132,6 +145,7 @@ def _valid_content(part: MessageContent, role: str) -> bool:
 
 
 def _valid_item(item: ItemIdentity | None) -> bool:
+    """Accept absent item identity or string-valued identity fields."""
     return (
         item is None
         or isinstance(item, ItemIdentity)
@@ -140,6 +154,7 @@ def _valid_item(item: ItemIdentity | None) -> bool:
 
 
 def _input_origin(part: MessageContent, path: str) -> MessageContent:
+    """Attach missing provenance through shallow replacements, including result parts."""
     content = {}
     if isinstance(part, ToolResult):
         children = [
@@ -156,9 +171,15 @@ def _input_origin(part: MessageContent, path: str) -> MessageContent:
 def generation_input(messages, tools) -> ProtocolMiddleWare:
     """Validate typed generation input and attach request-local provenance.
 
+    Require a nonempty list/tuple of Message models with valid roles and
+    role-appropriate content. Tools must be FunctionTool models; None or Omit
+    leaves tools absent, while an empty collection stays explicitly empty.
+    Malformed models or content raise MessageValidationError.
+
     Shallow model envelopes record caller objects without mutating them. JSON
     leaves are borrowed until the decoder captures the independently owned SDK
-    request; no additional application-data copy is needed here.
+    request. This function checks typed shapes and roles; call IDs, duplicate
+    results and missing results are checked later by validate_history.
     """
     if not isinstance(messages, (list, tuple)) or not messages:
         raise MessageValidationError("messages must be a non-empty list or tuple")

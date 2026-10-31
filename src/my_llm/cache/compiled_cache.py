@@ -37,6 +37,7 @@ class CompiledCache(Generic[P, T]):
     """
 
     def __init__(self, compiler: Callable[P, T]) -> None:
+        """Wrap a type-only compiler in its own bounded LRU cache."""
         self._compiled = lru_cache(maxsize=512)(compiler)
         update_wrapper(self, compiler)
 
@@ -54,6 +55,7 @@ class CompiledCache(Generic[P, T]):
 
 
 def _same_schema(left, right):
+    """Compare schemas recursively while retaining declared Union member order."""
     if left is right:
         return True
     if left != right:
@@ -72,6 +74,7 @@ class SchemaKey:
     __slots__ = ("schema", "_hash", "_hashable")
 
     def __init__(self, schema):
+        """Build a hashable schema key, falling back to identity for unhashable metadata."""
         self.schema = schema
         try:
             self._hash = hash(schema)
@@ -81,9 +84,11 @@ class SchemaKey:
             self._hashable = False
 
     def __hash__(self):
+        """Return the schema hash or its identity-based fallback."""
         return self._hash
 
     def __eq__(self, other):
+        """Compare schema identity or ordered schema equality when hashes are supported."""
         if not isinstance(other, SchemaKey):
             return NotImplemented
         return self.schema is other.schema or (
@@ -93,17 +98,20 @@ class SchemaKey:
 
 @CompiledCache
 def fields(schema):
+    """Cache declared SDK model/TypedDict annotations without inspecting request data."""
     if isinstance(schema, type) and issubclass(schema, BaseModel):
         return {name: field.annotation for name, field in schema.model_fields.items()}
     return get_type_hints(schema, include_extras=True)
 
 
 def adapter(schema):
+    """Return a cached Pydantic validator keyed only by its schema."""
     return _cached_adapter(SchemaKey(schema))
 
 
 @CompiledCache
 def _cached_adapter(key):
+    """Compile one Pydantic TypeAdapter for a schema key."""
     return TypeAdapter(key.schema)
 
 
@@ -120,22 +128,26 @@ def parameter_types(method):
 
 
 def _unwrap(schema):
+    """Remove Annotated and requiredness wrappers before compiling protocol rules."""
     while get_origin(schema) in (Annotated, Required, NotRequired):
         schema = get_args(schema)[0]
     return schema
 
 
 def _structured(schema):
+    """Whether an annotation declares named SDK model or TypedDict fields."""
     return isinstance(schema, type) and (
         hasattr(schema, "__required_keys__") or issubclass(schema, BaseModel)
     )
 
 
 def _copy_payload(value):
+    """Capture independent application data at a filtering ownership boundary."""
     return capture(value)
 
 
 def _borrow_payload(value):
+    """Borrow application data for read-only projection or delegated filtering."""
     return value
 
 
@@ -189,16 +201,26 @@ def _literal_routes(choices):
 
 
 def _plan(schema, delegated_paths=()):
+    """Resolve the cached filtering plan for a schema and delegated leaf paths."""
     return _compiled_plan(SchemaKey(schema), delegated_paths)
 
 
 @CompiledCache
 def _compiled_plan(key, delegated_paths):
+    """Compile type-only filtering rules for an SDK schema.
+
+    Build a recursive graph of owned-copy, borrowed-projection, decoding and
+    branch-scoring operations. Named protocol fields are filtered; open JSON
+    dictionaries remain atomic application data. Union routing respects
+    literal discriminators and declared branch order. Delegated leaf paths
+    defer ownership to message/tool hooks. Cache only rules, never payloads.
+    """
     # SDK models can be recursive. Register each node before its children so
     # recursive annotations refer to the same plan without storing request data.
     plans = {}
 
     def compile(annotation, delegated_paths=()):
+        """Compile or reuse a recursive graph node before visiting its child schemas."""
         annotation = _unwrap(annotation)
         key = (id(annotation), delegated_paths)
         if key in plans:
@@ -231,6 +253,7 @@ def _compiled_plan(key, delegated_paths):
             routes = _literal_routes(choices)
 
             def select(value):
+                """Select a compatible Union branch by literal routes and stable score order."""
                 if len(choices) == 1:
                     return choices[0]
                 if routes:
@@ -274,6 +297,7 @@ def _compiled_plan(key, delegated_paths):
             node.project = lambda value: None if value is None else select(value).project(value)
 
             def decode_union(value, path):
+                """Decode the selected branch or record a semantic loss for unsupported values."""
                 if value is None:
                     return None
                 try:
@@ -296,6 +320,7 @@ def _compiled_plan(key, delegated_paths):
             )
 
             def decode_list(value, path):
+                """Decode list elements, omitting items recorded as unsupported target values."""
                 if not isinstance(value, list):
                     return _copy_payload(value)
                 return [
@@ -321,6 +346,7 @@ def _compiled_plan(key, delegated_paths):
             }
 
             def structured_score(value):
+                """Score declared fields while rejecting incompatible literal discriminators."""
                 if isinstance(value, dict):
                     for name, literals in literal_fields:
                         item = value.get(name, _MISSING)
@@ -336,6 +362,7 @@ def _compiled_plan(key, delegated_paths):
                 return sum(_field_value(value, name) is not _MISSING for name in children) + 1
 
             def structured_copy(value):
+                """Copy supported named fields and independently own their payloads."""
                 if isinstance(value, dict):
                     return {
                         name: child.apply(item)
@@ -351,6 +378,7 @@ def _compiled_plan(key, delegated_paths):
                 }
 
             def structured_projection(value):
+                """Project supported fields while borrowing atomic validation payloads."""
                 if isinstance(value, dict):
                     return {
                         name: child.project(item)
@@ -366,6 +394,7 @@ def _compiled_plan(key, delegated_paths):
                 }
 
             def decode_structure(value, path):
+                """Decode named SDK fields and report losses through their child plans."""
                 if not isinstance(value, (dict, BaseModel)):
                     return _copy_payload(value)
                 return {
@@ -418,6 +447,7 @@ def declared_path(schema, keys):
 
 @CompiledCache
 def _declared_path(key, keys):
+    """Resolve a cached schema-path membership check across containers and Union branches."""
     schema = _unwrap(key.schema)
     if not keys or schema in (Any, object):
         return True
@@ -452,6 +482,17 @@ def path_item(value, keys):
 
 
 def validate_values(values: list, schema: Any, *, filtered: bool = False) -> None:
+    """Validate native message/tool items against a cached SDK schema.
+
+    By default, project only declared protocol fields before validation and
+    borrow atomic application payloads. filtered=True skips projection for
+    values already processed by a target filter. Neither mode mutates input.
+
+    Validate each item with Pydantic, then serialize the parsed value to force
+    lazy nested Iterable validation. Wrap validation/type/value failures in
+    MessageValidationError with the original cause. Schema adapters and filter
+    plans are cached independently of request values.
+    """
     try:
         if not isinstance(values, list):
             raise TypeError("protocol values must be a list")

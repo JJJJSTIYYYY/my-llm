@@ -39,14 +39,17 @@ def encode_batch(
 
 
 def is_batch(value: dict) -> bool:
+    """Whether this value wraps encoded operations rather than one public event."""
     return value.get("type") == "batch"
 
 
 def operations(value: dict) -> list[dict]:
+    """Read a batch operation list, or wrap one standalone operation."""
     return value["events"] if is_batch(value) else [value]
 
 
 def events(chunks: list):
+    """Yield public events from dictionaries/SDK views, flattening nested batches."""
     for chunk in dictionary_views(chunks):
         if is_batch(chunk):
             yield from events(operations(chunk))
@@ -55,6 +58,7 @@ def events(chunks: list):
 
 
 def compact(value):
+    """Recursively omit None-valued dictionary fields from a usage record."""
     if isinstance(value, dict):
         return {key: compact(child) for key, child in value.items() if child is not None}
     return value
@@ -71,6 +75,7 @@ def record(
     cache_write=None,
     reasoning=None,
 ):
+    """Build canonical usage groups while preserving unreported counters as absent."""
     return compact(
         {
             "input": {"base": input_base, "add": input_add} if input_base is not None else None,
@@ -84,7 +89,10 @@ def record(
 
 
 def counts(value):
+    """Return flattened usage totals, deriving total only when both token groups are known."""
+
     def group(name):
+        """Sum one reported base count and its additive counters."""
         data = value.get(name, {})
         base = data.get("base")
         return base + sum(data.get("add", {}).values()) if base is not None else None

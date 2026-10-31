@@ -48,6 +48,7 @@ PROTOCOL = "openai_chat"
 
 
 def thinking_enabled(profile: ResolvedProfile, parameters: dict) -> bool:
+    """Whether shared controls or merged Chat body options enable reasoning."""
     if parameters.get("reasoning") is True or parameters.get("reasoning_effort", "none") != "none":
         return True
     body = merge_dicts(profile.get("extra_body", {}), parameters.get("extra_body"))
@@ -73,6 +74,7 @@ class ChatCompletionsDecoder(BaseDecoder):
     request_schema = parameter_types(AsyncCompletions.create)
 
     def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
+        """Filter owned Chat Completions messages to SDK fields and apply input capability policies."""
         result = []
         decode = _plan(self.message_type).decode
         envelope = _plan(
@@ -143,6 +145,7 @@ class ChatCompletionsDecoder(BaseDecoder):
         return result
 
     def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
+        """Filter native function tools and remove absent optional function fields."""
         result = super().filter_tools(tools, profile)
         for tool in result:
             function = tool.get("function", {})
@@ -152,12 +155,14 @@ class ChatCompletionsDecoder(BaseDecoder):
         return result
 
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
+        """Validate shared controls and protect Chat Completions fields from extra-body replacement."""
         options = super().validate_parameters(profile, **parameters)
         return validate_request_options(
             profile, options, protected=PROTECTED, containers=("extra_body",)
         )
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
+        """Validate token/reasoning controls and record unsupported multiple-candidate requests."""
         for field in ("max_tokens", "max_completion_tokens"):
             if field in request:
                 validate_max_tokens(request[field])
@@ -184,6 +189,7 @@ class ChatCompletionsDecoder(BaseDecoder):
     def _request_parameters(
         self, request: dict, profile: ResolvedProfile, options: PreparedOptions
     ) -> dict:
+        """Add requested Chat streaming-usage options to prepared parameters."""
         if profile.get("usage_mode", "none") == "stream_options":
             request["stream_options"] = {"include_usage": True}
             body = request.get("extra_body", {})
@@ -205,6 +211,7 @@ class ChatCompletionsDecoder(BaseDecoder):
         request: dict,
         **parameters: Any,
     ) -> dict:
+        """Insert model, native messages and optional tools into a streaming Chat request."""
         result = request
         result.update(model=profile.model, stream=True, messages=messages)
         if tools is not None:
@@ -215,6 +222,13 @@ class ChatCompletionsDecoder(BaseDecoder):
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Render middleware history as Chat messages with separate tool results.
+
+        Apply capability and reasoning-feedback policies, collect assistant calls
+        under tool_calls and emit tool_result blocks as role=tool messages. Convert
+        foreign reasoning/media through Chat content helpers and record supported
+        values that Chat cannot preserve as semantic losses.
+        """
         result = []
         pad_reasoning = (
             profile is not None
@@ -275,6 +289,7 @@ class ChatCompletionsDecoder(BaseDecoder):
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Render canonical function declarations as Chat Completions tools and report unsupported fields."""
         return decode_functions(
             tools,
             lambda functions: [
@@ -289,6 +304,13 @@ class ChatCompletionsDecoder(BaseDecoder):
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Render public middleware events as native Chat Completions stream events.
+
+        Text/reasoning deltas are already assembled into ordered public events;
+        tool events contain complete calls validated at successful source EOF.
+        Use source metadata for native identity where available and report
+        content that the target protocol cannot express as semantic losses.
+        """
         result = []
         tool_chunk = None
         for event in events(chunks):
@@ -355,6 +377,7 @@ class ChatCompletionsDecoder(BaseDecoder):
         return result
 
     def usage(self, value: dict | None) -> dict | None:
+        """Render canonical token counters in the Chat Completions usage format."""
         if value is None:
             return None
         input_tokens, output_tokens, total, cached, cache_write, reasoning = counts(value)
@@ -372,6 +395,7 @@ class ChatCompletionsDecoder(BaseDecoder):
         return result
 
     def _envelope(self, **parameters: Any) -> dict:
+        """Build one Chat completion chunk with response identity and optional usage."""
         return {
             "id": parameters.get("response_id", "generated"),
             "model": parameters.get("model", ""),

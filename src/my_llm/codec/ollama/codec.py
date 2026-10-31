@@ -33,6 +33,7 @@ class OllamaCodec(BaseCodec):
     )
 
     def __init__(self) -> None:
+        """Create independent Ollama defaults, encoder, decoder and transport."""
         super().__init__()
         self._defaults = deepcopy(self._DEFAULTS)
         self.encoder = OllamaEncoder()
@@ -41,4 +42,5 @@ class OllamaCodec(BaseCodec):
 
     @property
     def defaults(self) -> ProtocolDefaults:
+        """Return the protocol defaults owned by this Ollama codec instance."""
         return self._defaults

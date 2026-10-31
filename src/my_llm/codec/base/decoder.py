@@ -41,8 +41,11 @@ from my_llm.profile.types import Omit, Parameter
 
 
 def _collect_translation(method):
+    """Collect nested decoder losses and raise only after a complete draft is available."""
+
     @wraps(method)
     def call(self, *args, **kwargs):
+        """Join the active loss scope or complete a new outer decoder scope."""
         context = SemanticLossContext(None, self.protocol)
         with collect_losses(context) as (losses, owner):
             draft = method(self, *args, **kwargs)
@@ -148,7 +151,19 @@ class BaseDecoder(ABC):
         _translated: bool = False,
         **parameters: Any,
     ) -> dict:
-        """Filter native payloads and validate their owned request envelopes."""
+        """Filter and validate the final native SDK request without performing I/O.
+
+        Optional history is canonical input for association validation. The regular
+        request path has already checked it before translation and omits it here.
+        Filter the request envelope, messages and tools to their declared SDK
+        schemas, preserving independent ownership of mutable application data.
+        Then validate native values and protocol-specific request semantics.
+
+        Unknown target values may record semantic losses during filtering.
+        Malformed message/tool structure raises MessageValidationError; invalid
+        request controls raise ConfigurationError. _translated marks values produced
+        by this decoder so protocol hooks can avoid repeating content adaptation.
+        """
         if history is not None:
             validate_history(
                 history,
@@ -272,6 +287,7 @@ class BaseDecoder(ABC):
                 )
 
     def _parent(self, request: dict, path: tuple[str, ...]) -> dict | None:
+        """Find the dictionary containing a request path's final key, if present."""
         for key in path[:-1]:
             child = request.get(key)
             if not isinstance(child, dict):
@@ -361,6 +377,17 @@ class BaseDecoder(ABC):
         Invalid controls or history raise ConfigurationError or MessageValidationError.
         Supported content that cannot be represented raises SemanticLossError with
         the complete request draft. This method performs no I/O.
+
+        Validate middleware structure and tool-call/result associations before
+        translating any message. Each supplied call needs one later result; only
+        a protocol supporting server history may accept externally stored calls.
+        Association validation does not enforce adjacent tool rounds.
+
+        If message_transform is present, apply it to translated native messages
+        before assembly. The message cache uses this hook to append the current
+        complete batch to prior translated history; only this batch is checked by
+        validate_history. Finally native_request filters and validates the assembled
+        SDK arguments. Cache publication and semantic-loss policy belong to BaseCodec.
         """
         messages = wire_values(messages)
         tools = wire_values(tools) if tools is not None else None
@@ -402,6 +429,11 @@ class BaseDecoder(ABC):
         intermediate is the dictionary from BaseEncoder.request; client contains
         prepared connection arguments. local contains stream and a client_key.
         This method creates no SDK clients and sends no network request.
+
+        Validate generation controls once, derive request-specific connection
+        settings, and pass the typed middleware plus any translated-history
+        transform into request(). Return separate client, request and local
+        dictionaries so transport execution needs no profile or raw user options.
         """
         profile = intermediate["profile"]
         parameters = {

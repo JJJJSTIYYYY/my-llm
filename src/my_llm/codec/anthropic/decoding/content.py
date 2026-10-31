@@ -8,6 +8,7 @@ from my_llm.profile.resolution import ResolvedProfile
 
 
 def foreign_block(block: dict) -> dict | None:
+    """Adapt foreign content for Anthropic and report reasoning/signature losses."""
     kind = block.get("type")
     if kind == "thinking":
         if block.get("protocol") == "anthropic":
@@ -30,6 +31,7 @@ def foreign_block(block: dict) -> dict | None:
 
 
 def decode_block(block: dict, *, profile: ResolvedProfile | None = None) -> dict | None:
+    """Render canonical blocks with Anthropic signatures and nested result capabilities."""
     if block["type"] == "tool_result" and isinstance(block.get("content"), list):
         return {
             **select(block, "type", "tool_use_id"),

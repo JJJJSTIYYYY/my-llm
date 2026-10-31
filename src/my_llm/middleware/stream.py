@@ -25,12 +25,14 @@ class Usage:
 
     @classmethod
     def from_record(cls, value: dict | Usage | None) -> Usage | None:
+        """Flatten reported usage groups into a new Usage model, preserving absent counters."""
         if value is None:
             return None
         if isinstance(value, cls):
             return replace(value)
 
         def count(name):
+            """Read one flat or grouped usage counter, including additive counts."""
             group = value.get(name)
             if isinstance(group, int):
                 return group
@@ -43,6 +45,7 @@ class Usage:
         return cls(incoming, outgoing, total, value.get("cached"), value.get("reasoning"))
 
     def to_record(self) -> dict:
+        """Project reported usage counters into canonical base-count groups."""
         result = {}
         for name in ("input", "output"):
             if (value := getattr(self, name)) is not None:
@@ -66,6 +69,7 @@ class StreamBatch(ProtocolValue):
     events: list[dict]
 
     def to_wire(self) -> dict:
+        """Expose the batch envelope while borrowing its already-owned operations."""
         return {"type": "batch", "protocol": self.protocol, "events": self.events}
 
 
@@ -113,6 +117,7 @@ class MessageEvent(ProtocolValue):
         )
 
     def to_wire(self) -> dict:
+        """Project present public event fields and nested typed content/messages."""
         result = {"type": self.type}
         for name in ("index", "source_ref", "tool_index", "field", "value", "reason"):
             if (value := getattr(self, name)) is not None:

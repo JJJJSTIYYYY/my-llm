@@ -13,6 +13,7 @@ REQUEST_SCHEMA = {**parameter_types(AsyncClient.chat), "options": Options}
 
 
 def validate_ollama_values(values: list, schema: Any, *, filtered: bool = False) -> None:
+    """Normalize native image wrappers for validation without changing conversion input."""
     if schema is Message and isinstance(values, list):
         # The public chat API wraps wire-format base64 strings in Image
         # before validating Message. Mirror that SDK boundary without

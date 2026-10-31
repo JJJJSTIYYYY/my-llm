@@ -35,6 +35,7 @@ class ResponsesEncoder(BaseEncoder):
     tool_type = ToolParam
 
     def _validation_messages(self, messages: list) -> list:
+        """Project supported Responses message fields before native schema validation."""
         result = []
         for message in messages:
             kind = message.get("type", "message")
@@ -88,6 +89,7 @@ class ResponsesEncoder(BaseEncoder):
         return result
 
     def _validation_tools(self, tools: list) -> list:
+        """Project supported Responses function declarations before native schema validation."""
         return [
             select(tool, "type", "name", "description", "parameters", "strict")
             for tool in tools
@@ -95,6 +97,7 @@ class ResponsesEncoder(BaseEncoder):
         ]
 
     def match_item(self, item: dict) -> bool:
+        """Whether a native message or tool has a recognizable Responses shape."""
         kind = item.get("type")
         if kind == "function":
             return "function" not in item and isinstance(item.get("name"), str)
@@ -137,6 +140,13 @@ class ResponsesEncoder(BaseEncoder):
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Normalize Responses input items into ordered middleware messages.
+
+        Preserve native item identity, split reasoning and function items into
+        canonical blocks, and parse function arguments as JSON objects. Mark
+        compatible assistant fragments for downstream grouping while retaining
+        their original item metadata. The decoder checks call/result associations.
+        """
         result = []
         for index, item in enumerate(messages):
             path = f"$.messages[{index}]"
@@ -221,6 +231,7 @@ class ResponsesEncoder(BaseEncoder):
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Project supported Responses function declarations into canonical tool groups."""
         return [
             {
                 "functions": [
@@ -251,6 +262,13 @@ class ResponsesEncoder(BaseEncoder):
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Translate native Responses events into middleware operation batches.
+
+        Extract supported content, metadata and usage; represent block identity
+        and protocol completion explicitly for StreamState. Provider failures
+        propagate as stream errors. Tool-argument assembly and public tool-event
+        delivery belong to StreamState rather than this protocol parser.
+        """
         result = []
         for event_index, event in enumerate(chunks):
             kind = event.get("type")
@@ -429,6 +447,7 @@ class ResponsesEncoder(BaseEncoder):
         return result
 
     def usage(self, value: dict | None) -> dict | None:
+        """Normalize reported Responses token counters, retaining absent usage as None."""
         if value is None:
             return None
         return record(
@@ -441,6 +460,7 @@ class ResponsesEncoder(BaseEncoder):
         )
 
     def _metadata(self, event: dict) -> dict:
+        """Project recognized response metadata into a middleware metadata operation."""
         return {
             "response_id" if key == "id" else key: event[key]
             for key in ("id", "model", "created_at")
@@ -448,6 +468,7 @@ class ResponsesEncoder(BaseEncoder):
         }
 
     def _item_metadata(self, item: dict) -> dict:
+        """Record native output-item headers for identity-preserving stream rendering."""
         return {
             key: item[key]
             for key in ("id", "type", "status", "name", "call_id")
@@ -500,4 +521,5 @@ class ResponsesEncoder(BaseEncoder):
         return {"type": "snapshot", "blocks": blocks}
 
     def _response_metadata(self, response: dict) -> list[dict]:
+        """Project response-level and indexed output-item metadata from a snapshot."""
         return [metadata(self._metadata(response))]

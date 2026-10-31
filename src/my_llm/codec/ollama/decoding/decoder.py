@@ -50,6 +50,7 @@ def validate_schema(parameters: dict, *, path: str | None = None) -> dict:
         return {"type": "object"}
 
     def preserves(expected, actual):
+        """Whether SDK-normalized schema data preserves each supplied constraint."""
         if isinstance(expected, dict):
             return (
                 isinstance(actual, dict)
@@ -81,6 +82,7 @@ PROTOCOL = "ollama"
 
 
 def thinking_enabled(profile: ResolvedProfile, parameters: dict) -> bool:
+    """Whether shared controls or merged Ollama body options enable thinking."""
     if parameters.get("reasoning") is True or parameters.get("reasoning_effort", "none") != "none":
         return True
     body = merge_dicts(profile.get("extra_body", {}), parameters.get("extra_body"))
@@ -101,13 +103,16 @@ class OllamaDecoder(BaseDecoder):
     request_schema = REQUEST_SCHEMA
 
     def validate_values(self, values: list, schema: Any, *, filtered: bool = False) -> None:
+        """Validate Ollama values with SDK-compatible image normalization."""
         validate_ollama_values(values, schema, filtered=filtered)
 
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
+        """Validate shared controls and protect Ollama fields from extra-body replacement."""
         options = super().validate_parameters(profile, **parameters)
         return validate_request_options(profile, options, protected=PROTECTED, containers=())
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
+        """Validate thinking/options and record retry settings unsupported by the Ollama SDK."""
         retries = profile.get("max_retries")
         if isinstance(retries, int) and not isinstance(retries, bool) and retries > 0:
             report_loss(
@@ -136,6 +141,7 @@ class OllamaDecoder(BaseDecoder):
         return request
 
     def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
+        """Filter native tools while reporting schema constraints the installed SDK would discard."""
         decode = _plan(self.tool_type, delegated_paths=(("function", "parameters"),)).decode
         result = []
         for index, original in enumerate(dictionary_views(tools)):
@@ -153,6 +159,7 @@ class OllamaDecoder(BaseDecoder):
         return result
 
     def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
+        """Filter owned Ollama messages to SDK fields and apply input capability policies."""
         result = []
         # Images are normalized below; defer this leaf to avoid copying it first.
         decode = _plan(self.message_type, delegated_paths=(("images",),)).decode
@@ -196,6 +203,7 @@ class OllamaDecoder(BaseDecoder):
         return result
 
     def validate_profile(self, profile: ResolvedProfile) -> None:
+        """Validate shared parameter roots and require header-based API-key bindings."""
         super().validate_profile(profile)
         api_key = profile.parameter("api_key")
         if api_key is not None and api_key.path == "$.api_key":
@@ -204,6 +212,7 @@ class OllamaDecoder(BaseDecoder):
     headers_field = None
 
     def client_parameters(self, profile: ResolvedProfile) -> dict:
+        """Map provider settings to Ollama host, timeout and merged headers."""
         values = client_parameters(profile, headers_field="headers")
         result = {key: value for key, value in values.items() if key == "timeout"}
         result["host"] = values.get("base_url")
@@ -211,9 +220,11 @@ class OllamaDecoder(BaseDecoder):
         return result
 
     def request_client(self, client: dict, options: PreparedOptions) -> dict:
+        """Merge per-call headers into independent Ollama client settings."""
         return {**client, "headers": merge_dicts(client.get("headers"), options.headers)}
 
     def client_key(self, client: dict) -> tuple:
+        """Key reusable Ollama clients by their effective header values."""
         return tuple(sorted(client["headers"].items()))
 
     def assemble_request(
@@ -225,6 +236,7 @@ class OllamaDecoder(BaseDecoder):
         request: dict,
         **parameters: Any,
     ) -> dict:
+        """Insert model, native messages and optional tools into a streaming Ollama request."""
         result = request
         result.update(model=profile.model, stream=True, messages=messages)
         if tools is not None:
@@ -234,6 +246,13 @@ class OllamaDecoder(BaseDecoder):
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Render middleware history as Ollama messages, images and tool results.
+
+        Apply capability and reasoning-feedback policies, retain representable
+        content and record foreign media/signature losses. Track call names for
+        role=tool messages; native tool calls carry argument objects rather than
+        JSON strings. Reasoning padding follows the active model/request policy.
+        """
         result = []
         names = {}
         pad_reasoning = (
@@ -308,7 +327,10 @@ class OllamaDecoder(BaseDecoder):
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Render canonical function declarations as Ollama tools and report unsupported fields."""
+
         def wrap(functions):
+            """Validate and render each canonical function as a native Ollama tool."""
             result = []
             for function in functions:
                 tool = function_tool(function)
@@ -321,6 +343,13 @@ class OllamaDecoder(BaseDecoder):
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Render public middleware events as native Ollama stream events.
+
+        Text/reasoning deltas are already assembled into ordered public events;
+        tool events contain complete calls validated at successful source EOF.
+        Use source metadata for native identity where available and report
+        content that the target protocol cannot express as semantic losses.
+        """
         result = []
         tool_chunk = None
         for event in events(chunks):
@@ -367,6 +396,7 @@ class OllamaDecoder(BaseDecoder):
         return result
 
     def usage(self, value: dict | None) -> dict | None:
+        """Render canonical token counters in the Ollama usage format."""
         if value is None:
             return None
         input_tokens, output_tokens, total, cached, cache_write, reasoning = counts(value)

@@ -63,6 +63,7 @@ class AnthropicDecoder(BaseDecoder):
     request_schema = REQUEST_SCHEMA
 
     def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
+        """Filter owned Anthropic messages to SDK fields and apply input capability policies."""
         if parameters.get("_translated") or (
             feedback_reasoning(profile, has_tool_calls=False)
             and supports_content("image", profile)
@@ -121,6 +122,7 @@ class AnthropicDecoder(BaseDecoder):
         return super().filter_messages(projected, profile, **parameters)
 
     def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
+        """Filter native tool fields while preserving the complete open input_schema payload."""
         # The SDK's InputSchema TypedDict names only some JSON Schema keys.
         # Delegate this open leaf so it is captured once rather than filtered
         # and copied before replacing it with the full application schema.
@@ -138,10 +140,12 @@ class AnthropicDecoder(BaseDecoder):
         return result
 
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
+        """Validate shared controls and protect Anthropic fields from extra-body replacement."""
         options = super().validate_parameters(profile, **parameters)
         return validate_request_options(profile, options, protected=PROTECTED, containers=())
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
+        """Validate required history/token limits, system blocks and thinking configuration."""
         if not request["messages"]:
             raise ConfigurationError("a non-system message is required")
         tokens = profile.parameters.get("max_tokens")
@@ -205,6 +209,7 @@ class AnthropicDecoder(BaseDecoder):
         request: dict,
         **parameters: Any,
     ) -> dict:
+        """Extract system blocks and assemble a streaming Anthropic messages request."""
         result = request
         system, history = split_system_messages(messages)
         result.update(model=profile.model, stream=True, messages=history)
@@ -225,6 +230,13 @@ class AnthropicDecoder(BaseDecoder):
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Render middleware history as Anthropic content-block messages.
+
+        Apply capabilities and reasoning-feedback policy, replay native signatures
+        only where representable, and record foreign reasoning/name losses.
+        Tool calls and results stay as tool_use/tool_result content blocks; request
+        assembly later separates system instructions from the conversation.
+        """
         result = []
         for index, message, feedback in message_feedback(messages, profile):
             if message.get("name") is not None:
@@ -254,6 +266,7 @@ class AnthropicDecoder(BaseDecoder):
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Render canonical function declarations as Anthropic tools and report unsupported fields."""
         return decode_functions(
             tools,
             lambda functions: [
@@ -270,6 +283,13 @@ class AnthropicDecoder(BaseDecoder):
     def _chunks(
         self, chunks: list, profile: ResolvedProfile | None = None, **parameters: Any
     ) -> list[dict]:
+        """Render public middleware events as native Anthropic stream events.
+
+        Text/reasoning deltas are already assembled into ordered public events;
+        tool events contain complete calls validated at successful source EOF.
+        Use source metadata for native identity where available and report
+        content that the target protocol cannot express as semantic losses.
+        """
         result = []
         for event in events(chunks):
             kind = event.get("type")
@@ -401,6 +421,7 @@ class AnthropicDecoder(BaseDecoder):
         return result
 
     def usage(self, value: dict | None) -> dict | None:
+        """Render canonical token counters in the Anthropic usage format."""
         if value is None:
             return None
         input_tokens, output_tokens, total, cached, cache_write, reasoning = counts(value)

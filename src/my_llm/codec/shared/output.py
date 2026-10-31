@@ -9,6 +9,7 @@ from my_llm.profile.types import Parameter
 
 
 def _filters_output(profile: ResolvedProfile | None) -> bool:
+    """Whether output declarations or model capabilities require content filtering."""
     return profile is not None and (
         profile.parameter("content", "output") is None
         or profile.parameter("reasoning_content", "output") is None
@@ -18,6 +19,7 @@ def _filters_output(profile: ResolvedProfile | None) -> bool:
 
 
 def _output_content(value: object, kind: str, profile: ResolvedProfile) -> bool:
+    """Report unsupported output content and return whether it can be retained."""
     if kind in ("thinking", "tool_use", "tool_result") and not content_capability(
         value, kind, profile
     ):
@@ -51,6 +53,7 @@ def _filter_items(values: list[dict], project: Callable[[dict], dict | None]) ->
 
 
 def _output_message(message: dict, profile: ResolvedProfile) -> dict:
+    """Filter one message, borrowing its envelope when content is unchanged."""
     content = message["content"]
     filtered = _filter_items(
         content, lambda block: block if _output_content(block, block["type"], profile) else None
@@ -59,12 +62,14 @@ def _output_message(message: dict, profile: ResolvedProfile) -> dict:
 
 
 def output_messages(values: list, profile: ResolvedProfile | None) -> list:
+    """Apply output capability rules while preserving unchanged message containers."""
     if not _filters_output(profile):
         return values
     return _filter_items(values, lambda message: _output_message(message, profile))
 
 
 def _output_event(event: dict, profile: ResolvedProfile) -> dict | None:
+    """Filter an event and its final snapshots, dropping unsupported block events."""
     if "block" in event and not _output_content(event["block"], event["block"]["type"], profile):
         return None
     if event.get("type") == "delta":
@@ -93,6 +98,7 @@ def _output_event(event: dict, profile: ResolvedProfile) -> dict | None:
 
 
 def output_chunks(values: list, profile: ResolvedProfile | None) -> list:
+    """Apply output capability rules to public events before protocol rendering."""
     if not _filters_output(profile):
         return values
     return _filter_items(values, lambda event: _output_event(event, profile))

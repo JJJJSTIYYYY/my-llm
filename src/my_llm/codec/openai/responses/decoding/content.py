@@ -25,6 +25,7 @@ def reasoning_summary(block: dict) -> list[dict]:
 def render_content(
     content: list[dict], *, role: str = "user", profile: ResolvedProfile | None = None
 ) -> list[dict]:
+    """Render role-specific Responses text/images while applying image capabilities."""
     result = []
     for block in content:
         kind = block.get("type")
@@ -51,6 +52,7 @@ def render_content(
 
 
 def foreign_block(block: dict) -> dict | None:
+    """Adapt foreign result/reasoning blocks and report unrepresentable signatures."""
     kind = block.get("type")
     if kind == "tool_result":
         value = block.get("content")

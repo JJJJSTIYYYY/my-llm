@@ -68,6 +68,7 @@ def image_part(part: dict) -> dict | None:
 
 
 def encode_part(part: dict, call_id: str, *, path: str = "$") -> dict | None:
+    """Normalize supported Gemini content, function parts and native thought signatures."""
     common = (
         {"signature": part["thought_signature"]}
         if "thought_signature" in part

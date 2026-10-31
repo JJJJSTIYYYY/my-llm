@@ -16,6 +16,7 @@ from my_llm.basic.exceptions import ConfigurationError
 
 
 def _fingerprint_value(value: Any) -> Any:
+    """Normalize message values for hashing without provenance or object identity."""
     if isinstance(value, Enum):
         return _fingerprint_value(value.value)
     if isinstance(value, BaseModel):
@@ -50,6 +51,7 @@ class MessageCache:
     """
 
     def __init__(self) -> None:
+        """Initialize the per-instance translated-history registry."""
         self._histories: dict[str, _History] = {}
 
     def fingerprint(self, messages: Any) -> bytes | None:
@@ -65,6 +67,7 @@ class MessageCache:
         return sha256(encoded.encode("utf-8")).digest()
 
     def __contains__(self, key: str) -> bool:
+        """Whether a translated history has been published under this key."""
         return key in self._histories
 
     def batch(self, key: str, *, fingerprint: bytes | None = None) -> MessageCacheBatch:
@@ -72,6 +75,7 @@ class MessageCache:
         return MessageCacheBatch(self, key, fingerprint)
 
     def _extend(self, key: str, messages: list, fingerprint: bytes | None) -> _History:
+        """Stage owned appended history, or reuse it for a consecutive duplicate batch."""
         if not isinstance(messages, list):
             raise ConfigurationError("message cache requires a translated message list")
         previous = self._histories.get(key)
@@ -112,13 +116,20 @@ class MessageCacheBatch:
     """
 
     def __init__(self, cache: MessageCache, key: str, fingerprint: bytes | None) -> None:
+        """Create unpublished staging state for one instance and input fingerprint."""
         self._cache = cache
         self._key = key
         self._fingerprint = fingerprint
         self._history: _History | None = None
 
     def append(self, messages: list) -> list:
-        """Combine this translated batch with history and return an owned snapshot."""
+        """Stage this translated batch with prior history and return an owned snapshot.
+
+        Called after association validation of the current middleware batch. Prior
+        native history is reused without retranslation or association validation.
+        A matching last-input fingerprint reuses history for a retry. Publication
+        waits for commit; mutating the returned request cannot alter staged history.
+        """
         self._history = self._cache._extend(self._key, messages, self._fingerprint)
         return capture(self._history.messages)
 

@@ -139,10 +139,17 @@ class MyLLM:
         return replace(self._last_usage) if self._last_usage is not None else None
 
     def _check_open(self) -> None:
+        """Reject operations after this instance has released its resources."""
         if self._closed:
             raise RuntimeError("MyLLM is closed")
 
     def _get_client(self, prepared: dict) -> Any:
+        """Reuse or create the SDK client selected by the prepared request.
+
+        Clients belong to this MyLLM instance and are registered for asynchronous
+        cleanup immediately after construction. Called only when response iteration
+        starts, after request preparation and input validation have succeeded.
+        """
         self._check_open()
         profile = self.resolved_profile
         transport = self.codec.transport(profile.protocol)
@@ -253,6 +260,18 @@ class MyLLM:
         SDK errors retain their original types. Input messages and mutable options
         are isolated when this coroutine is awaited. Include the completed result
         in the next history, or in the next incremental batch when caching is enabled.
+
+        Request preparation binds the input protocol, validates its native or typed
+        message structure, checks tool-call/result associations, and translates the
+        history into upstream SDK arguments. Every supplied call must have exactly
+        one later result with the same ID before generating again. Responses with
+        previous_response_id may reference calls in server-side history. With message
+        caching enabled, each incremental batch must contain complete tool rounds;
+        previously cached messages are not association-validated again.
+
+        Both return modes consume an upstream SDK stream. Streaming returns after
+        preparation; client creation and network I/O start on iteration. Non-streaming
+        consumes and closes that same stream here before returning its final result.
         """
         self._check_open()
 
@@ -300,6 +319,7 @@ class MyLLM:
     def _render(
         self, events: list[dict], state: StreamState, protocol: Protocol
     ) -> list[dict | MessageEvent]:
+        """Render public middleware events and advance the output sequence number."""
         output = self.codec.decode(
             chunks=events,
             target_format=protocol,
@@ -315,6 +335,19 @@ class MyLLM:
     async def _stream(
         self, prepared: dict, state: StreamState, stdio_protocol: Protocol
     ) -> AsyncGenerator[dict | MessageEvent, None]:
+        """Execute one prepared request and accumulate its response in shared state.
+
+        Borrow an instance-owned SDK client and keep the response inside the
+        transport's cleanup context. Native events become validated middleware
+        operations, then StreamState emits text incrementally and holds tool calls
+        until successful finalization. Render those events only for streaming calls;
+        both modes render the same completed assistant message.
+
+        Publish result and usage after upstream cleanup succeeds. StreamError gains
+        a rendered partial message before propagation; transport/SDK failures retain
+        their types. Closing this generator exits the response context without closing
+        the reusable client.
+        """
         profile = self.resolved_profile
         streaming = prepared["local"]["stream"]
         try:

@@ -17,6 +17,7 @@ TOOL_RESULT_PARTS = frozenset(
 
 
 def native_block(block: dict, *, path: str | None = None) -> dict | None:
+    """Project a supported Anthropic block, recursively restricting tool-result parts."""
     kind = block.get("type")
     fields = FIELDS.get(kind)
     if fields is None:
@@ -43,6 +44,7 @@ def native_block(block: dict, *, path: str | None = None) -> dict | None:
 
 
 def intermediate_block(block: dict, *, path: str | None = None) -> dict | None:
+    """Normalize Anthropic reasoning and supported native blocks into canonical content."""
     value = native_block(block, path=path)
     if value is None:
         return None

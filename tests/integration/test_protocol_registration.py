@@ -267,10 +267,10 @@ async def test_new_protocol_reuses_caches_with_unhashable_annotations(registered
             "hint": Annotated[Hint, {"vendor": "hint"}],
         }
 
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class ExtendedModel(ModelProfile):
         vendor: Parameter[str] = field(
-            default=Parameter(path="$.hint.vendor", default_value="extra"),
+            default_factory=lambda: Parameter(path="$.hint.vendor", default_value="extra"),
             metadata={"source": "input"},
         )
 
@@ -680,13 +680,13 @@ def test_external_encoder_inherits_output_routes_and_missing_value_semantics(
 
 
 def test_external_protocol_inherits_generic_input_parameters_and_source_isolation(registered):
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class ExtensionModel(ModelProfile):
         vendor_limit: Parameter[int] = field(
-            default=Parameter(path="$.hint.vendor", default_value=7), metadata={"source": "input"}
+            default_factory=lambda: Parameter(path="$.hint.vendor", default_value=7), metadata={"source": "input"}
         )
         encoder_only: Parameter[str] = field(
-            default=Parameter(
+            default_factory=lambda: Parameter(
                 path="$.hint.leak",
                 default_value="must not leak",
             ),

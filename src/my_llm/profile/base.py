@@ -11,7 +11,7 @@ from my_llm.basic.exceptions import ConfigurationError
 from my_llm.profile.types import Attribute, Config, Omit, Parameter
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(kw_only=True)
 class Profile:
     """Enumerate declared members, including inherited, unset and omitted fields.
 

@@ -194,10 +194,10 @@ def test_unsupported_token_limit_removes_public_and_native_values(profile_factor
 def test_custom_unsupported_parameter_cannot_be_restored_by_native_body(protocol, path, body):
     from my_llm.codec.shared.options import path_value
 
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class Model(ModelProfile):
         temperature: Parameter[float] = field(
-            default=Parameter(path=path, supports=False), metadata={"source": "input"}
+            default_factory=lambda: Parameter(path=path, supports=False), metadata={"source": "input"}
         )
 
     profile = resolve_profiles(

@@ -18,9 +18,9 @@ from my_llm.profile.provider_profile import ProviderProfile
 from my_llm.profile.types import Attribute, Config, Omit, Parameter
 
 
-@dataclass(frozen=True)
+@dataclass
 class ResolvedProfile:
-    """Read-only configuration snapshot returned by resolve_profiles.
+    """Configuration snapshot returned by resolve_profiles.
 
     Attributes:
         protocol: Selected upstream protocol name.
@@ -149,10 +149,10 @@ def resolve_profiles(
                 values[name] = merge_dicts(values.get(name), value.default_value)
             else:
                 values[name] = value.default_value
-    # Snapshot payloads once; immutable bindings only change for copied defaults.
+    # Snapshot payloads once and isolate mutable parameter bindings.
     values = deepcopy(values)
     for name, parameter in parameters.items():
-        if isinstance(parameter, Parameter) and parameter.default_value is not values[name]:
+        if isinstance(parameter, Parameter):
             parameters[name] = copy(parameter)
             object.__setattr__(parameters[name], "default_value", values[name])
     if values.get("protocol") != protocol:

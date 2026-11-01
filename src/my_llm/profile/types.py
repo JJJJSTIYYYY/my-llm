@@ -48,7 +48,7 @@ class Omit:
 omit = Omit()
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(kw_only=True)
 class Attribute(Generic[_T]):
     """Descriptive or identity data owned by a profile, without parameter routing.
 
@@ -57,7 +57,7 @@ class Attribute(Generic[_T]):
         comment: Optional description for display.
 
     Read the data through default_value. Attributes do not participate in
-    configuration inheritance. Instances are frozen keyword-only dataclasses.
+    configuration inheritance. Instances are mutable keyword-only dataclasses.
     """
 
     default_value: _T
@@ -67,7 +67,7 @@ class Attribute(Generic[_T]):
         _validate_comment(self.comment)
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(kw_only=True)
 class Parameter(Generic[_T]):
     """Declare a parameter's path, default value and capability support.
 
@@ -80,12 +80,12 @@ class Parameter(Generic[_T]):
         comment: Optional description for display.
 
     Attributes:
-        name: Read-only field name assigned by the containing profile.
-        source: Read-only "input" or "output" assigned by the profile declaration.
+        name: Field name assigned by the containing profile.
+        source: "input" or "output" assigned by the profile declaration.
 
     Input parameters configure requests; output parameters select response values.
     The containing profile determines the source; callers cannot pass name/source
-    to this frozen keyword-only dataclass. Invalid paths, comments or support flags
+    to this keyword-only dataclass. Invalid paths, comments or support flags
     raise ConfigurationError.
     """
 
@@ -105,7 +105,7 @@ class Parameter(Generic[_T]):
         path_keys(self.path)
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(kw_only=True)
 class Config(Generic[_T]):
     """Declare a behavior setting or a group of native options.
 
@@ -115,9 +115,9 @@ class Config(Generic[_T]):
         comment: Optional description for display.
 
     Attributes:
-        name: Read-only field name assigned by the containing profile.
+        name: Field name assigned by the containing profile.
 
-    Instances are frozen keyword-only dataclasses. Unlike Parameter, Config has
+    Instances are mutable keyword-only dataclasses. Unlike Parameter, Config has
     no field path; supported setting names determine its meaning.
     """
 

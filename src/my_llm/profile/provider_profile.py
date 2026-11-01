@@ -10,7 +10,7 @@ from my_llm.profile.model_profile import ModelProfile
 from my_llm.profile.types import Attribute, Config, Omit, Parameter
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(kw_only=True)
 class ProviderProfile(OverridableProfile):
     """Provider connection, upstream protocol and optional model catalogue.
 
@@ -28,7 +28,7 @@ class ProviderProfile(OverridableProfile):
         models: Optional Attribute containing a list of ModelProfile entries.
             It does not select a model automatically.
 
-    This is a frozen keyword-only dataclass with explicit catalogue mutation
+    This is a mutable keyword-only dataclass with explicit catalogue mutation
     methods. None inherits a setting; omit disables it. Parameter overrides
     replace a whole declaration; Config dictionaries merge by key.
     Additional keyword fields are inherited from OverridableProfile.

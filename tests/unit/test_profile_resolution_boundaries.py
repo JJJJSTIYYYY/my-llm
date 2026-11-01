@@ -22,6 +22,40 @@ from my_llm.profile.defaults import protocol_defaults
 from tests.helpers.protocols import PROTOCOLS
 
 
+def test_mutable_parameter_bindings_are_isolated_between_profile_snapshots():
+    provider = ProviderProfile(protocol=Config(default_value="openai_chat"))
+    model = ModelProfile(
+        model=Attribute(default_value="demo"),
+        max_tokens=Parameter(path="$.max_completion_tokens", default_value=128),
+    )
+    first = resolve_profiles(provider, model)
+    second = resolve_profiles(provider, model)
+    model.max_tokens.path = "$.changed"
+    model.max_tokens.default_value = 256
+    model.max_tokens.supports = False
+    for snapshot in (first, second):
+        binding = snapshot.parameter("max_tokens")
+        assert binding.path == "$.max_completion_tokens"
+        assert binding.default_value == snapshot.get("max_tokens") == 128
+        assert dict(snapshot.request_parameters)["max_tokens"] is binding
+    first.parameter("max_tokens").path = "$.first_only"
+    assert second.parameter("max_tokens").path == "$.max_completion_tokens"
+
+
+def test_mutable_profile_defaults_are_independent_between_instances():
+    first_model = ModelProfile(model=Attribute(default_value="first"))
+    second_model = ModelProfile(model=Attribute(default_value="second"))
+    first_model.max_context_window.default_value = 1024
+    assert second_model.max_context_window.default_value == 256000
+
+    first_defaults = ProtocolDefaults(feedback_reasoning_content=Config(default_value="none"))
+    second_defaults = ProtocolDefaults(feedback_reasoning_content=Config(default_value="none"))
+    first_defaults.supports_stream.default_value = False
+    first_defaults.api_key.path = "$.extra_headers.authorization"
+    assert second_defaults.supports_stream.default_value is True
+    assert second_defaults.api_key.path == "$.api_key"
+
+
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_standard_defaults_are_preserved_in_independent_profile_snapshots(protocol):
     defaults = protocol_defaults(protocol)
@@ -74,13 +108,13 @@ def test_llm_preserves_profile_type_errors_before_reading_defaults(provider, mod
         MyLLM(provider=provider, model=model)
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(kw_only=True)
 class SamplingDefaults(ProtocolDefaults):
     temperature: Parameter[float | None] | Omit = field(
-        default=Parameter(path="$.extra_body.temperature", default_value=0.25),
+        default_factory=lambda: Parameter(path="$.extra_body.temperature", default_value=0.25),
         metadata={"source": "input"},
     )
-    custom_mode: Config[str] = Config(default_value="standard")
+    custom_mode: Config[str] = field(default_factory=lambda: Config(default_value="standard"))
 
 
 def test_inherited_protocol_defaults_are_discovered_without_a_central_table(monkeypatch):
@@ -127,7 +161,7 @@ def test_inherited_protocol_none_default_and_omit_are_preserved(monkeypatch):
 def test_unclassified_protocol_default_is_rejected(monkeypatch):
     from my_llm.basic.protocols import codec_for
 
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class BadDefaults(ProtocolDefaults):
         accidental: int = 1
 

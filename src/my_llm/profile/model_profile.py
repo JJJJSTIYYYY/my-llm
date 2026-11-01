@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import ClassVar
 
 from my_llm.basic.exceptions import ConfigurationError
@@ -10,7 +10,7 @@ from my_llm.profile.configuration import OverridableProfile
 from my_llm.profile.types import Attribute, Config, Omit
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(kw_only=True)
 class ModelProfile(OverridableProfile):
     """Model identity, descriptive metadata and provider-setting overrides.
 
@@ -24,7 +24,7 @@ class ModelProfile(OverridableProfile):
             Unsupported images are removed and reported as semantic losses.
         supports_message_name: Config controlling message-name support.
 
-    This is a frozen keyword-only dataclass. None inherits provider settings;
+    This is a mutable keyword-only dataclass. None inherits provider settings;
     omit disables an override. supported_roles is the fixed class attribute
     ("system", "user", "assistant", "tool"), not a constructor option.
     Additional keyword fields are inherited from OverridableProfile.
@@ -32,7 +32,9 @@ class ModelProfile(OverridableProfile):
     """
 
     model: Attribute[str]
-    max_context_window: Attribute[int] = Attribute(default_value=256000)
+    max_context_window: Attribute[int] = field(
+        default_factory=lambda: Attribute(default_value=256000)
+    )
     supports_function_calling: Config[bool] | Omit | None = None
     supports_vision: Config[bool] | Omit | None = None
     supports_message_name: Config[bool] | Omit | None = None

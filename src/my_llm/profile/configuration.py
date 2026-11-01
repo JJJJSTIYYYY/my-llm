@@ -15,7 +15,7 @@ type ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
 EFFORTS = ("none", "low", "medium", "high", "xhigh", "max")
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(kw_only=True)
 class ProtocolDefaults(Profile):
     """Declare default settings for a registered protocol.
 
@@ -26,14 +26,14 @@ class ProtocolDefaults(Profile):
 
     Parameter field metadata fixes source="input" or "output"; scope="client"
     marks connection parameters such as api_key. Config and Parameter names are
-    assigned from field names. Extend this frozen keyword-only dataclass for
+    assigned from field names. Extend this keyword-only dataclass for
     custom protocol settings; applications normally use ProviderProfile and
     ModelProfile to override protocol defaults.
     """
 
     feedback_reasoning_content: Config[Literal["when_tool_calls", "always", "none"]] | Omit
     api_key: Parameter[str] | Omit = field(
-        default=Parameter(path="$.api_key", default_value=omit),
+        default_factory=lambda: Parameter(path="$.api_key", default_value=omit),
         repr=False,
         metadata={"scope": "client", "source": "input"},
     )
@@ -53,18 +53,24 @@ class ProtocolDefaults(Profile):
             default_value={effort: effort for effort in EFFORTS},
         )
     )
-    supports_stream: Config[bool] | Omit = Config(default_value=True)
-    supports_function_calling: Config[bool] | Omit = Config(default_value=False)
-    supports_vision: Config[bool] | Omit = Config(default_value=False)
-    supports_message_name: Config[bool] | Omit = Config(default_value=True)
-    usage_mode: Config[str] | Omit = Config(default_value="none")
+    supports_stream: Config[bool] | Omit = field(default_factory=lambda: Config(default_value=True))
+    supports_function_calling: Config[bool] | Omit = field(
+        default_factory=lambda: Config(default_value=False)
+    )
+    supports_vision: Config[bool] | Omit = field(
+        default_factory=lambda: Config(default_value=False)
+    )
+    supports_message_name: Config[bool] | Omit = field(
+        default_factory=lambda: Config(default_value=True)
+    )
+    usage_mode: Config[str] | Omit = field(default_factory=lambda: Config(default_value="none"))
 
     @set_attr
     def __post_init__(self) -> None:
         pass
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(kw_only=True)
 class OverridableProfile(Profile):
     """Shared provider/model overrides, all keyword-only and defaulting to None.
 

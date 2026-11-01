@@ -1,6 +1,6 @@
-"""Typed profile extensions, declaration markers and immutable wrappers."""
+"""Typed profile extensions, declaration markers and mutable wrappers."""
 
-from dataclasses import FrozenInstanceError, dataclass, field
+from dataclasses import dataclass, field
 
 import pytest
 
@@ -19,16 +19,16 @@ from my_llm.profile.resolution import resolve_profiles
 from tests.helpers.profiles import config
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(kw_only=True)
 class SamplingProvider(ProviderProfile):
     temperature: Parameter[float | None] | Omit | None = field(
-        default=Parameter(path="$.extra_body.temperature", default_value=0.5),
+        default_factory=lambda: Parameter(path="$.extra_body.temperature", default_value=0.5),
         metadata={"source": "input"},
     )
-    sampling_enabled: Config[bool] | Omit | None = config(True)
+    sampling_enabled: Config[bool] | Omit | None = field(default_factory=lambda: config(True))
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(kw_only=True)
 class SamplingModel(ModelProfile):
     temperature: Parameter[float | None] | Omit | None = field(
         default=None, metadata={"source": "input"}
@@ -113,7 +113,7 @@ def test_custom_config_type_is_checked():
 
 
 def test_unclassified_extension_is_rejected():
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class Unclassified(ProviderProfile):
         accidental: str = "not-a-declaration"
 
@@ -125,10 +125,10 @@ def test_unclassified_extension_is_rejected():
 
 
 def test_parameter_binds_path_default_and_source_without_a_paired_field():
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class Extension(ModelProfile):
         arbitrary: Parameter[str] = field(
-            default=Parameter(
+            default_factory=lambda: Parameter(
                 path="$.extra_body.vendor",
                 default_value="fallback",
             ),
@@ -143,22 +143,29 @@ def test_parameter_binds_path_default_and_source_without_a_paired_field():
     assert resolved.get("arbitrary") == "fallback"
 
 
-def test_declarations_are_immutable_and_keyword_only():
+def test_declarations_are_mutable_and_keyword_only():
     declaration = Parameter(path="$.value", default_value=None)
-    with pytest.raises(FrozenInstanceError):
-        declaration.path = "$.other"
+    declaration.path = "$.other"
+    declaration.default_value = 42
+    declaration.supports = False
+    assert declaration.path == "$.other"
+    assert declaration.default_value == 42
+    assert declaration.supports is False
     with pytest.raises(TypeError):
         Parameter("Value", "$.value", None, "encode")
     with pytest.raises(TypeError):
         Config("Flag", True)
-    with pytest.raises(FrozenInstanceError):
-        Config(default_value=True).name = "Other"
+    setting = Config(default_value=True)
+    setting.default_value = False
+    setting.name = "Other"
+    assert setting.default_value is False
+    assert setting.name == "Other"
 
 
 def test_profile_marker_cannot_change_between_layers():
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class ConflictingModel(ModelProfile):
-        max_tokens: Config[int] = config(2048)
+        max_tokens: Config[int] = field(default_factory=lambda: config(2048))
 
     with pytest.raises(ConfigurationError, match="same profile marker"):
         resolve_profiles(
@@ -168,10 +175,10 @@ def test_profile_marker_cannot_change_between_layers():
 
 
 def test_a_field_cannot_declare_multiple_responsibilities():
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class AmbiguousProvider(ProviderProfile):
         feature: Config[bool] | Parameter[bool] = field(
-            default=config(True), metadata={"source": "input"}
+            default_factory=lambda: config(True), metadata={"source": "input"}
         )
 
     with pytest.raises(ConfigurationError, match="exactly one"):
@@ -182,7 +189,7 @@ def test_a_field_cannot_declare_multiple_responsibilities():
 
 
 def test_profile_marker_must_describe_the_field_not_a_contained_item():
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class NestedMarker(ProviderProfile):
         feature: list[Config[bool]] = None
 
@@ -194,9 +201,9 @@ def test_profile_marker_must_describe_the_field_not_a_contained_item():
 
 
 def test_a_field_cannot_nest_different_profile_markers():
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class NestedResponsibilities(ProviderProfile):
-        feature: Config[Parameter[bool]] = field(default=config(True), metadata={"source": "input"})
+        feature: Config[Parameter[bool]] = field(default_factory=lambda: config(True), metadata={"source": "input"})
 
     with pytest.raises(ConfigurationError, match="exactly one"):
         resolve_profiles(

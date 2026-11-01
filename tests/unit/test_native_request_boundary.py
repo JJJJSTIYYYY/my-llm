@@ -254,10 +254,10 @@ def test_request_projection_addresses_sdk_fields_without_reading_extensions(
 
 
 def test_profile_extension_restores_only_its_declared_unknown_sdk_leaf():
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class ExtendedModel(ModelProfile):
         vendor_limit: Parameter[int | None] = field(
-            default=Parameter(path="$.reasoning.vendor_limit", default_value=None),
+            default_factory=lambda: Parameter(path="$.reasoning.vendor_limit", default_value=None),
             metadata={"source": "input"},
         )
 
@@ -530,10 +530,10 @@ def test_direct_chat_request_preserves_explicit_none_extra_body(profile_factory)
 
 
 def test_declared_unknown_sdk_root_reports_configuration_error():
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class ExtendedModel(ModelProfile):
         vendor: Parameter[int] = field(
-            default=Parameter(path="$.vendor", default_value=1), metadata={"source": "input"}
+            default_factory=lambda: Parameter(path="$.vendor", default_value=1), metadata={"source": "input"}
         )
 
     profile = resolve_profiles(

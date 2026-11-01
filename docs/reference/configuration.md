@@ -28,7 +28,7 @@ llm = MyLLM(
 
 ## 参数与行为配置
 
-以下类型均可从 `my_llm` 导入，`Attribute`、`Parameter` 与 `Config` 都是 frozen、kw_only dataclass：
+以下类型均可从 `my_llm` 导入，`Attribute`、`Parameter` 与 `Config` 都是可变的 kw_only dataclass：
 
 | 类型 | 字段 | 职责 |
 | --- | --- | --- |
@@ -37,7 +37,7 @@ llm = MyLLM(
 | `Config[T]` | default_value、comment=None；name 由 Profile 固定 | 控制 Encoder / Decoder / Transport 的代码行为或 SDK 连接 |
 | `Omit` / `omit` | 显式省略标记 | 不依赖任何 SDK 的 Omit，复制保持标记身份 |
 
-`Parameter.name`、`Parameter.source` 和 `Config.name` 不接受构造参数，也不能二次赋值。
+`Parameter.name`、`Parameter.source` 和 `Config.name` 不接受构造参数，初始化时由 Profile 赋值；解析时会校验它们与声明一致。
 Profile 的 `@set_attr` 在初始化时检查并绑定字段名；Parameter 的 source 在 Profile 字段 metadata 中硬编码。
 各层的同名参数必须保持相同 source/scope；解析时也会检查身份是否已正确绑定。
 已有同一身份的 wrapper 可复用，不会重新赋值；不能把已绑定 wrapper 换到另一个字段。
@@ -100,7 +100,8 @@ Profile 的参数与行为字段都使用 `Parameter[T] | Omit | None` 或 `Conf
 
 Parameter 整体覆盖，路径、支持状态和默认值作为一份声明更新，不与上一层分别拼接。
 Config 字典按键合并，嵌套值整体替换，字典中的 omit 删除该键。
-Profiles 是 frozen dataclass；使用 `dataclasses.replace()` 创建新配置，再创建 MyLLM。
+Profiles 是可变 dataclass，可直接重新赋值字段，也可使用 `dataclasses.replace()` 创建新配置。
+重新赋值 Config 或 Parameter 后，调用 `__post_init__()` 绑定声明身份，再创建 MyLLM。
 MyLLM 构造时隔离配置的嵌套可变数据；请求只在需要独立所有权的边界复制数据。
 
 ```python
@@ -293,17 +294,17 @@ from dataclasses import dataclass, field
 from my_llm import Config, Omit, Parameter, ProviderProfile
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(kw_only=True)
 class CompatibleProvider(ProviderProfile):
     vendor_budget: Parameter[int] | Omit | None = field(
-        default=Parameter(
+        default_factory=lambda: Parameter(
             path="$.extra_body.vendor_budget",
             default_value=256,
             comment="仅在请求未提供该字段时使用",
         ),
         metadata={"source": "input"},
     )
-    vendor_mode: Config[bool] | Omit | None = Config(default_value=True)
+    vendor_mode: Config[bool] | Omit | None = field(default_factory=lambda: Config(default_value=True))
 
 
 provider = CompatibleProvider()  # 使用扩展类声明的预算配置
@@ -324,10 +325,10 @@ from dataclasses import dataclass, field
 from my_llm import Parameter, ProviderProfile
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(kw_only=True)
 class HeaderProvider(ProviderProfile):
     authentication: Parameter[str] = field(
-        default=Parameter(path="$.extra_headers.x-auth", default_value="offline-token"),
+        default_factory=lambda: Parameter(path="$.extra_headers.x-auth", default_value="offline-token"),
         metadata={"scope": "client", "source": "input"},
     )
 ```

@@ -106,10 +106,10 @@ async def test_complete_call_passes_through_codec_with_explicit_destinations(
 
 
 def test_client_scope_is_declared_instead_of_inferred_from_field_name():
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class AuthProvider(ProviderProfile):
         authentication: Parameter[str] = field(
-            default=Parameter(
+            default_factory=lambda: Parameter(
                 path="$.extra_headers.x-auth",
                 default_value="offline-token",
             ),

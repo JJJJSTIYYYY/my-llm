@@ -1,6 +1,6 @@
 """Profile identity, integrated capabilities and generated-control precedence."""
 
-from dataclasses import FrozenInstanceError, dataclass, field, replace
+from dataclasses import dataclass, field, replace
 
 import pytest
 
@@ -44,14 +44,17 @@ def test_profile_fixes_names_and_sources_across_every_layer(protocol):
 
 
 @pytest.mark.parametrize("attribute,value", [("name", "other"), ("source", "output")])
-def test_parameter_identity_cannot_be_supplied_or_reassigned(attribute, value):
+def test_parameter_identity_is_init_false_and_reassigned_identity_is_validated(attribute, value):
     with pytest.raises(TypeError, match=attribute):
         Parameter(path="$.limit", **{attribute: value})
-    bound = ModelProfile(
+    model = ModelProfile(
         model=Attribute(default_value="demo"), max_tokens=Parameter(path="$.limit")
-    ).max_tokens
-    with pytest.raises(FrozenInstanceError):
-        setattr(bound, attribute, value)
+    )
+    bound = model.max_tokens
+    setattr(bound, attribute, value)
+    assert getattr(bound, attribute) == value
+    with pytest.raises(ConfigurationError, match="identity must be bound"):
+        resolve_profiles(ProviderProfile(protocol=Config(default_value="openai_chat")), model)
     # Supported Python versions differ in the exception raised for init=False.
     with pytest.raises((TypeError, ValueError), match=rf"field {attribute} .*init=False"):
         replace(bound, **{attribute: value})
@@ -84,17 +87,19 @@ def test_reusable_unbound_declaration_gets_independent_fixed_identity():
 
 
 def test_custom_parameters_require_source_in_profile_declaration():
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class MissingSource(ModelProfile):
-        vendor: Parameter[int] = Parameter(path="$.extra_body.vendor")
+        vendor: Parameter[int] = field(
+            default_factory=lambda: Parameter(path="$.extra_body.vendor")
+        )
 
     with pytest.raises(ConfigurationError, match="source in Profile"):
         MissingSource(model=Attribute(default_value="demo"))
 
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class Vendor(ModelProfile):
         vendor: Parameter[int] = field(
-            default=Parameter(path="$.extra_body.vendor", default_value=7),
+            default_factory=lambda: Parameter(path="$.extra_body.vendor", default_value=7),
             metadata={"source": "input"},
         )
 
@@ -106,10 +111,10 @@ def test_custom_parameters_require_source_in_profile_declaration():
 
 
 def test_client_parameters_must_be_inputs():
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class InvalidClient(ProviderProfile):
         credential: Parameter[str] = field(
-            default=Parameter(path="$.api_key"),
+            default_factory=lambda: Parameter(path="$.api_key"),
             metadata={"scope": "client", "source": "output"},
         )
 
@@ -123,10 +128,10 @@ def test_client_parameters_must_be_inputs():
 @pytest.mark.parametrize("value", [None, Parameter(path="$.max_completion_tokens")])
 @pytest.mark.parametrize("source,scope", [("output", "request"), ("input", "client")])
 def test_parameter_source_and_scope_cannot_change_between_profile_layers(value, source, scope):
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class ChangedModel(ModelProfile):
         max_tokens: Parameter[int] | None = field(
-            default=value, metadata={"source": source, "scope": scope}
+            default_factory=lambda: value, metadata={"source": source, "scope": scope}
         )
 
     with pytest.raises(ConfigurationError, match="max_tokens must keep the same source and scope"):
@@ -137,7 +142,7 @@ def test_parameter_source_and_scope_cannot_change_between_profile_layers(value, 
 
 
 def test_profile_overriding_post_init_cannot_silently_skip_identity_binding():
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class UnboundModel(ModelProfile):
         def __post_init__(self):
             pass

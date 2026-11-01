@@ -1,6 +1,6 @@
 """Profile member enumeration preserves declaration categories and live values."""
 
-from dataclasses import FrozenInstanceError, dataclass, field, fields
+from dataclasses import dataclass, field, fields
 from typing import ClassVar
 
 import pytest
@@ -23,12 +23,12 @@ from tests.helpers.protocols import PROTOCOLS
 type Label = Attribute[str] | None
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(kw_only=True)
 class DescriptiveProvider(ProviderProfile):
     label: Label = None
     feature: Config[bool] | Omit = omit
     vendor_limit: Parameter[int] = field(
-        default=Parameter(path="$.extra_body.vendor_limit", supports=False),
+        default_factory=lambda: Parameter(path="$.extra_body.vendor_limit", supports=False),
         metadata={"source": "input"},
     )
     catalogue_kind: ClassVar[Config[str]] = Config(default_value="descriptive")
@@ -67,7 +67,7 @@ def test_enumeration_uses_declarations_for_inherited_unset_and_omitted_members()
     assert "catalogue_kind" not in attributes | configs | parameters
 
 
-def test_model_attributes_are_wrappers_and_enumeration_preserves_frozen_identity():
+def test_model_attributes_are_wrappers_and_enumeration_reads_reassigned_fields():
     model = ModelProfile(model=Attribute(default_value="demo"))
     attributes = model.get_attributes()
     assert attributes == {"model": model.model, "max_context_window": model.max_context_window}
@@ -75,8 +75,9 @@ def test_model_attributes_are_wrappers_and_enumeration_preserves_frozen_identity
     assert "supported_roles" not in attributes
     attributes.clear()
     assert model.get_attributes()["model"].default_value == "demo"
-    with pytest.raises(FrozenInstanceError):
-        model.model = Attribute(default_value="changed")
+    model.model = Attribute(default_value="changed")
+    assert model.get_attributes()["model"] is model.model
+    assert model.model.default_value == "changed"
 
 
 def test_each_call_reads_current_members_without_caching_values_or_copying_payloads():
@@ -107,9 +108,11 @@ def test_protocol_defaults_include_all_declared_parameters_and_configs(protocol)
 
 
 def test_enumeration_reuses_resolution_rules_for_ambiguous_declarations():
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class Ambiguous(ProviderProfile):
-        feature: Attribute[str] | Config[str] = Attribute(default_value="ambiguous")
+        feature: Attribute[str] | Config[str] = field(
+            default_factory=lambda: Attribute(default_value="ambiguous")
+        )
 
     with pytest.raises(ConfigurationError, match="feature.*exactly one"):
         Ambiguous().get_attributes()

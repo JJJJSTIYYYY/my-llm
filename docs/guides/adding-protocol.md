@@ -108,7 +108,7 @@ MyLLM 根据 Decoder 生成的 client_key 管理实例缓存和最终关闭。
 ## Codec 组合
 
 BaseCodec 必须提供 protocol_or_api_style、defaults、encoder、decoder、transport。
-defaults 使用 frozen dataclass ProtocolDefaults。feedback_reasoning_content 通过 Config 明确声明；
+defaults 使用可变 dataclass ProtocolDefaults。feedback_reasoning_content 通过 Config 明确声明；
 max_tokens、content、reasoning_content、reasoning_enable、reasoning_effort 使用 Parameter 声明，不用的字段保留默认 omit。
 max_tokens / reasoning_enable / reasoning_effort source 固定为 input，content / reasoning_content source 固定为 output。
 路径从根字典定位，使用 $. 前缀，$ 表示 **parameters 解包字典的根；事件类型不是参数路径。

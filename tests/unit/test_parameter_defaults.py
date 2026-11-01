@@ -19,12 +19,12 @@ from tests.helpers.profiles import config, parameter
 from tests.helpers.requests import encode_request
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(kw_only=True)
 class TemperatureProvider(ProviderProfile):
     temperature: Parameter[float | None] = field(
-        default=Parameter(path="$.temperature", default_value=0.4), metadata={"source": "input"}
+        default_factory=lambda: Parameter(path="$.temperature", default_value=0.4), metadata={"source": "input"}
     )
-    trace_enabled: Config[bool] = config(True)
+    trace_enabled: Config[bool] = field(default_factory=lambda: config(True))
 
 
 CASES = [

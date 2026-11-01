@@ -210,10 +210,10 @@ async def test_sdk_http_errors_retain_their_type_and_preserve_client(monkeypatch
 async def test_inherited_parameter_defaults_and_vendor_effort_reach_official_sdk(
     monkeypatch, protocol
 ):
-    @dataclass(frozen=True, kw_only=True)
+    @dataclass(kw_only=True)
     class VendorModel(ModelProfile):
         vendor_limit: Parameter[int | None] = field(
-            default=Parameter(
+            default_factory=lambda: Parameter(
                 path="$.extra_body.vendor_limit",
                 default_value=None,
             ),

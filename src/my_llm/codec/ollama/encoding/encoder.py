@@ -116,22 +116,27 @@ class OllamaEncoder(BaseEncoder):
             if call.get("id")
         }
         for index, message in enumerate(messages):
+            role = message.get("role")
             native_content = message.get("content")
-            if message.get("role") == "tool" and not isinstance(native_content, (str, type(None))):
+            if role == "tool" and not isinstance(native_content, (str, type(None))):
                 native_content = text_result(native_content)
             content = [
                 originated(block, f"$.messages[{index}].content", message.get("content"))
                 for block in blocks(native_content)
+                if role in ("user", "tool") or block.get("type") != "image"
             ]
             for image_index, native_image in enumerate(message.get("images") or []):
                 image = image_data(native_image)
+                mime = media_type(image)
+                if role not in ("user", "tool"):
+                    continue
                 content.append(
                     originated(
                         {
                             "type": "image",
                             "source": {
                                 "type": "base64",
-                                "media_type": media_type(image),
+                                "media_type": mime,
                                 "data": image,
                             },
                         },
@@ -155,7 +160,6 @@ class OllamaEncoder(BaseEncoder):
                 content.append(
                     originated(block, f"$.messages[{index}].tool_calls[{call_index}]", call)
                 )
-            role = message.get("role")
             if role == "tool":
                 name = message.get("tool_name")
                 call_id = message.get("tool_call_id")
@@ -169,11 +173,6 @@ class OllamaEncoder(BaseEncoder):
                 ]
                 role = "user"
             result.append({"protocol": PROTOCOL, "role": role, "content": content})
-        for message in result:
-            if message.get("role") != "user":
-                message["content"] = [
-                    block for block in message["content"] if block.get("type") != "image"
-                ]
         return result
 
     def _tools(

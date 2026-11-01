@@ -428,7 +428,8 @@ async def add_round_trip(provider, model_id):
         return await llm.generate(messages=history, tools=tools)
 ```
 
-重复调用 ID 去重，重复结果合并，缺少结果补空；包含孤立或无 ID 结果的消息整条丢弃。
+重复调用 ID 去重，相同 ID 的结果按内容出现顺序合并并保留重复内容，缺少结果补空；
+包含孤立或无 ID 结果的消息整条丢弃。
 结果 ID 不按名称或历史顺序推断。全部输入丢弃且没有缓存时抛出 `MessageValidationError`，不补造 user 提示。
 `previous_response_id` 用于 Responses 上游时，可仅发送新增消息或结果，并引用服务端已有的调用。
 其他协议收到合法的非空 ID 时记录语义损失并省略；空字符串或错误类型仍属于无效参数。

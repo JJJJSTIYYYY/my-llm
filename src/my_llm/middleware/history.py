@@ -41,8 +41,10 @@ class HistoryNormalizer:
     Results without an explicit ID or earlier call discard their entire message.
     Every accepted call reserves an empty result while its block is visited. A
     later valid result suppresses that reservation; discarded results leave it
-    empty. Duplicate result parts merge as the nested structural validator visits
-    them. No final tool-table scan or message-list rebuild is needed.
+    empty. Result parts append in order, including repeated content, as the nested
+    structural validator visits them. No final tool-table scan or message-list
+    rebuild is needed. Calls register by ID; later results resolve through that
+    map without looking ahead or rewinding the source-message iterator.
 
     Native translation consumes this request-local iterable in its existing
     message loop. Inactive discarded/duplicate messages and superseded padding
@@ -207,11 +209,11 @@ class HistoryNormalizer:
         self.current_result = tool
 
     def observe_result_part(self, part: dict) -> None:
-        """Merge a part as its existing nested validation visit completes."""
+        """Append a part without deduplication during its existing validation visit."""
         if self.current_result is None:
             return
         content = self.current_result.result["content"]
-        if not self.current_result.opaque and isinstance(content, list) and part not in content:
+        if not self.current_result.opaque and isinstance(content, list):
             content.append(part)
 
     def observe_result_value(self, value: object) -> None:

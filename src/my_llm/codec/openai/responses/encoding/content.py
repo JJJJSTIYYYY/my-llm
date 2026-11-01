@@ -7,14 +7,16 @@ from my_llm.codec.shared.conversion import blocks, select, uri_source
 from my_llm.codec.shared.stream import BlockRef
 
 
-def encode_content(content: Any, *, path: str = "$.content") -> list[dict]:
-    """Normalize supported Responses text/images and retain source provenance."""
+def encode_content(
+    content: Any, *, path: str = "$.content", allow_images: bool = True
+) -> list[dict]:
+    """Normalize Responses content with image-role filtering and source provenance."""
     result = []
     for index, block in enumerate(blocks(content)):
         kind = block.get("type")
         if kind in ("input_text", "output_text", "text"):
             value = {"type": "text", **select(block, "text")}
-        elif kind == "input_image" and isinstance(block.get("image_url"), str):
+        elif kind == "input_image" and allow_images and isinstance(block.get("image_url"), str):
             value = {"type": "image", "source": uri_source(block["image_url"])}
         else:
             continue

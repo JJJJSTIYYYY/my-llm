@@ -43,7 +43,11 @@ def test_orphan_results_are_discarded_and_valid_duplicates_merge_without_mutatin
     assert [m["role"] for m in result] == ["assistant", "user", "user"]
     assert result[0]["content"][0]["name"] == "weather"
     assert result[0]["content"][0]["input"] == {"city": "Shanghai"}
-    assert [p["text"] for p in result[1]["content"][0]["content"]] == ["first", "second"]
+    assert [p["text"] for p in result[1]["content"][0]["content"]] == [
+        "first",
+        "first",
+        "second",
+    ]
     assert result[1]["content"][0]["name"] == "weather"
     assert result[-1]["content"][0]["text"] == "tail"
     assert messages == before
@@ -133,7 +137,7 @@ def test_missing_call_ids_are_distinct_but_never_assigned_to_idless_results():
     assert all(result[i]["content"][0]["content"] == [] for i in (1, 2))
 
 
-def test_external_result_references_stay_external_and_deduplicate():
+def test_external_result_references_stay_external_and_merge_repeated_content():
     result = normalize(
         [
             UserMessage("user", [ToolResult("server", [TextContent("first")])]),
@@ -143,6 +147,7 @@ def test_external_result_references_stay_external_and_deduplicate():
     )
     assert len(result) == 1
     assert result[0]["role"] == "user"
+    assert [part["text"] for part in result[0]["content"][0]["content"]] == ["first", "first"]
     validate_history(result, allow_external_calls=True)
 
 
@@ -176,6 +181,87 @@ def test_repairs_share_the_structural_message_and_content_scan():
     normalizer = HistoryNormalizer()
     validate_messages(messages, history=normalizer)
     assert list(normalizer.finish(has_cached_history=True)) == []
+
+
+@pytest.mark.parametrize("rounds", [1, 128])
+def test_tool_pairing_reads_each_message_once_without_scanning_prior_calls(rounds):
+    class SingleVisit(list):
+        def __init__(self, values):
+            super().__init__(values)
+            self.reads = set()
+
+        def __iter__(self):
+            return (self[index] for index in range(len(self)))
+
+        def __getitem__(self, index):
+            assert isinstance(index, int), "pairing must not rescan a history slice"
+            assert index not in self.reads, "pairing must not revisit a consumed message/block"
+            self.reads.add(index)
+            return super().__getitem__(index)
+
+    class Associations(dict):
+        lookups = 0
+
+        def get(self, *args):
+            self.lookups += 1
+            return super().get(*args)
+
+        def __contains__(self, key):
+            self.lookups += 1
+            return super().__contains__(key)
+
+        def setdefault(self, *args):
+            self.lookups += 1
+            return super().setdefault(*args)
+
+        def __iter__(self):
+            raise AssertionError("pairing must resolve IDs without scanning prior calls")
+
+        keys = items = values = __iter__
+
+    messages = []
+    contents = []
+    expected = []
+    for round_index in range(rounds):
+        call_ids = [f"call_{round_index}_a", f"call_{round_index}_b"]
+        calls = SingleVisit(
+            [{"type": "tool_use", "id": key, "name": "f", "input": {}} for key in call_ids]
+        )
+        messages.append({"role": "assistant", "content": calls})
+        contents.append(calls)
+        # Results may arrive in either order; pairing must use IDs rather than positions.
+        for key in call_ids if round_index % 2 == 0 else reversed(call_ids):
+            result = SingleVisit(
+                [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": key,
+                        "content": [{"type": "text", "text": key}],
+                    }
+                ]
+            )
+            messages.append({"role": "user", "content": result})
+            contents.append(result)
+            expected.append(key)
+    messages = SingleVisit(messages)
+    normalizer = HistoryNormalizer()
+    normalizer.tools = Associations()
+    validate_messages(messages, history=normalizer)
+    repaired = list(normalizer.finish())
+    validate_history(repaired)
+    assert len(messages.reads) == len(messages)
+    assert all(len(content.reads) == len(content) for content in contents)
+    assert normalizer.tools.lookups <= 12 * rounds
+    results = [
+        block
+        for message in repaired
+        for block in message["content"]
+        if block["type"] == "tool_result"
+    ]
+    assert [block["tool_use_id"] for block in results] == expected
+    assert all(
+        block["content"] == [{"type": "text", "text": block["tool_use_id"]}] for block in results
+    )
 
 
 @pytest.mark.parametrize("source", PROTOCOLS)
@@ -352,7 +438,40 @@ def test_finish_does_not_scan_and_translation_consumes_repaired_slots_once(profi
         ._messages(repaired, profile_factory(supports_function_calling=config(True)))
     )
     assert normalizer.messages.visits == 1
-    assert translated[-1]["content"] == "firstsecond"
+    assert translated[-1]["content"] == "firstfirstsecond"
+
+
+def test_result_parts_append_in_order_without_equality_checks():
+    class Part(dict):
+        def __eq__(self, other):
+            raise AssertionError("merging result parts must not compare their content")
+
+    first = [Part(type="text", text=str(index // 2)) for index in range(512)]
+    second = [Part(type="text", text="0"), Part(type="text", text="tail")]
+    messages = [
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "c", "name": "f", "input": {}}],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "c", "content": first}],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "c", "content": second}],
+        },
+    ]
+    result = normalize(messages)
+    validate_history(result)
+    merged = result[1]["content"][0]["content"]
+    assert len(result) == 2
+    assert len(merged) == len(first) + len(second)
+    assert all(
+        actual is expected for actual, expected in zip(merged, [*first, *second], strict=True)
+    )
+    assert messages[1]["content"][0]["content"] is first
+    assert messages[2]["content"][0]["content"] is second
 
 
 def test_idless_result_is_discarded_even_with_a_unique_matching_tool_name():

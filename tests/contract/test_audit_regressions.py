@@ -25,6 +25,7 @@ from tests.helpers.sdk import (
     assert_output_native,
 )
 from tests.helpers.streaming import render
+from tests.helpers.tool_results import application_result_history
 
 PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="
 JPEG = "/9j/wAALCAABAAEBAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9sAQwACAgICAgIDAgIDBQMDAwUGBQUFBQYIBgYGBgYICggICAgICAoKCgoKCgoKDAwMDAwMDg4ODg4PDw8PDw8PDw8P/90ABAAB/9oACAEBAAA/AP38r//Z"
@@ -786,6 +787,89 @@ def test_response_stream_metadata_does_not_alias_request_state():
     output[0]["response"]["metadata"]["source"] = "changed"
     assert state.metadata == before
     assert created["response"]["metadata"] == {"source": "original"}
+
+
+@pytest.mark.parametrize("role", ["user", "assistant", "system", "tool"])
+@pytest.mark.parametrize(
+    "protocol, incoming",
+    [
+        (
+            "openai_chat",
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "before"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{PNG}"}},
+                    {"type": "text", "text": "after"},
+                ],
+            },
+        ),
+        (
+            "openai_responses",
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "before"},
+                    {"type": "input_image", "image_url": f"data:image/png;base64,{PNG}"},
+                    {"type": "input_text", "text": "after"},
+                ],
+            },
+        ),
+        (
+            "anthropic",
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "before"},
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": "image/png", "data": PNG},
+                    },
+                    {"type": "text", "text": "after"},
+                ],
+            },
+        ),
+        (
+            "gemini",
+            {
+                "role": "user",
+                "parts": [
+                    {"text": "before"},
+                    {"inline_data": {"mime_type": "image/png", "data": PNG}},
+                    {"text": "after"},
+                ],
+            },
+        ),
+        ("ollama", {"role": "user", "content": "beforeafter", "images": [PNG]}),
+    ],
+)
+def test_source_image_roles_preserve_text_order_tool_images_and_origins(protocol, incoming, role):
+    incoming = deepcopy(incoming)
+    if role == "tool":
+        payload = {"result": "beforeafter"} if protocol == "gemini" else incoming["content"]
+        messages = application_result_history(protocol, payload)
+        if protocol == "gemini":
+            messages[-1]["parts"][0]["function_response"]["parts"] = [incoming["parts"][1]]
+        elif protocol == "ollama":
+            messages[-1]["images"] = incoming["images"]
+    else:
+        incoming["role"] = "model" if protocol == "gemini" and role == "assistant" else role
+        messages = [incoming]
+    original = deepcopy(messages)
+    message = MyCodec().encode(messages, input_format=protocol).messages[-1]
+    content = message.content[0].content if role == "tool" else message.content
+    assert "".join(part.text for part in content if part.type == "text") == (
+        '{"result": "beforeafter"}' if protocol == "gemini" and role == "tool" else "beforeafter"
+    )
+    images = [part for part in content if part.type == "image"]
+    assert len(images) == (1 if role in ("user", "tool") else 0)
+    if role in ("user", "tool") and protocol not in ("gemini", "ollama"):
+        assert [part.type for part in content] == ["text", "image", "text"]
+    if role != "tool" and protocol != "ollama":
+        field = "parts" if protocol == "gemini" else "content"
+        assert content[-1].origin.path == f"$.messages[0].{field}[2]"
+        assert content[-1].origin.value is incoming[field][2]
+    assert messages == original
 
 
 def test_assistant_image_history_is_outside_the_supported_field_set(

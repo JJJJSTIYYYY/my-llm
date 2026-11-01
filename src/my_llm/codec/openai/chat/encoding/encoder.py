@@ -145,7 +145,9 @@ class ChatCompletionsEncoder(BaseEncoder):
             content = (
                 []
                 if role in ("tool", "function")
-                else encode_content(native_content, path=f"{path}.content")
+                else encode_content(
+                    native_content, path=f"{path}.content", allow_images=role == "user"
+                )
             )
             if message.get("reasoning_content"):
                 content.append(
@@ -185,11 +187,6 @@ class ChatCompletionsEncoder(BaseEncoder):
                 **select(message, "name"),
             }
             result.append(value)
-        for message in result:
-            if message.get("role") != "user":
-                message["content"] = [
-                    block for block in message["content"] if block.get("type") != "image"
-                ]
         return result
 
     def _tools(

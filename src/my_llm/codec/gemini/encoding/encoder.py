@@ -119,6 +119,7 @@ class GeminiEncoder(BaseEncoder):
             if part.get("function_call", {}).get("id")
         }
         for index, message in enumerate(messages):
+            role = "assistant" if message.get("role") == "model" else message.get("role", "user")
             content = []
             for part_index, part in enumerate(message["parts"]):
                 call = part.get("function_call")
@@ -129,23 +130,16 @@ class GeminiEncoder(BaseEncoder):
                     else ""
                 )
                 block = encode_part(part, call_id, path=f"$.messages[{index}].parts[{part_index}]")
-                if block is None:
+                if block is None or block.get("type") == "image" and role != "user":
                     continue
                 content.append(originated(block, f"$.messages[{index}].parts[{part_index}]", part))
             result.append(
                 {
                     "protocol": PROTOCOL,
-                    "role": "assistant"
-                    if message.get("role") == "model"
-                    else message.get("role", "user"),
+                    "role": role,
                     "content": content,
                 }
             )
-        for message in result:
-            if message.get("role") != "user":
-                message["content"] = [
-                    block for block in message["content"] if block.get("type") != "image"
-                ]
         return result
 
     def _tools(

@@ -284,7 +284,11 @@ class StreamState:
                 block.argument_parts = []
             block.argument_parts.append(value)
             return []
-        block.fragments.setdefault(name, []).append(value)
+        parts = block.fragments.get(name)
+        if parts is None:
+            parts = []
+            block.fragments[name] = parts
+        parts.append(value)
         if name != block.text_field or self._deferred(block):
             return []
         return self._emit_text(block, value)

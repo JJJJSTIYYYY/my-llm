@@ -128,6 +128,7 @@ class AnthropicEncoder(BaseEncoder):
         """Normalize supported Anthropic blocks and reasoning provenance into middleware messages."""
         result = []
         for index, message in enumerate(messages):
+            role = message.get("role")
             path = f"$.messages[{index}].content"
             value = message.get("content")
             content = (
@@ -137,14 +138,10 @@ class AnthropicEncoder(BaseEncoder):
                     block
                     for part_index, item in enumerate(dictionary_views(value or []))
                     if (block := intermediate_block(item, path=f"{path}[{part_index}]")) is not None
+                    and (role == "user" or block.get("type") != "image")
                 ]
             )
-            result.append({"protocol": PROTOCOL, "role": message.get("role"), "content": content})
-        for message in result:
-            if message.get("role") != "user":
-                message["content"] = [
-                    block for block in message["content"] if block.get("type") != "image"
-                ]
+            result.append({"protocol": PROTOCOL, "role": role, "content": content})
         return result
 
     def _tools(

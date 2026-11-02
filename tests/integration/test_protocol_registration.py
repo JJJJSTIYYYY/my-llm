@@ -683,7 +683,8 @@ def test_external_protocol_inherits_generic_input_parameters_and_source_isolatio
     @dataclass(kw_only=True)
     class ExtensionModel(ModelProfile):
         vendor_limit: Parameter[int] = field(
-            default_factory=lambda: Parameter(path="$.hint.vendor", default_value=7), metadata={"source": "input"}
+            default_factory=lambda: Parameter(path="$.hint.vendor", default_value=7),
+            metadata={"source": "input"},
         )
         encoder_only: Parameter[str] = field(
             default_factory=lambda: Parameter(

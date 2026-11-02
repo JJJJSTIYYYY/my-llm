@@ -533,7 +533,8 @@ def test_declared_unknown_sdk_root_reports_configuration_error():
     @dataclass(kw_only=True)
     class ExtendedModel(ModelProfile):
         vendor: Parameter[int] = field(
-            default_factory=lambda: Parameter(path="$.vendor", default_value=1), metadata={"source": "input"}
+            default_factory=lambda: Parameter(path="$.vendor", default_value=1),
+            metadata={"source": "input"},
         )
 
     profile = resolve_profiles(

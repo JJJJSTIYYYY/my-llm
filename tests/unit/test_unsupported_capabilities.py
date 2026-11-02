@@ -197,7 +197,8 @@ def test_custom_unsupported_parameter_cannot_be_restored_by_native_body(protocol
     @dataclass(kw_only=True)
     class Model(ModelProfile):
         temperature: Parameter[float] = field(
-            default_factory=lambda: Parameter(path=path, supports=False), metadata={"source": "input"}
+            default_factory=lambda: Parameter(path=path, supports=False),
+            metadata={"source": "input"},
         )
 
     profile = resolve_profiles(

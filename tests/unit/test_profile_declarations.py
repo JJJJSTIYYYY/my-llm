@@ -203,7 +203,9 @@ def test_profile_marker_must_describe_the_field_not_a_contained_item():
 def test_a_field_cannot_nest_different_profile_markers():
     @dataclass(kw_only=True)
     class NestedResponsibilities(ProviderProfile):
-        feature: Config[Parameter[bool]] = field(default_factory=lambda: config(True), metadata={"source": "input"})
+        feature: Config[Parameter[bool]] = field(
+            default_factory=lambda: config(True), metadata={"source": "input"}
+        )
 
     with pytest.raises(ConfigurationError, match="exactly one"):
         resolve_profiles(

@@ -9,7 +9,12 @@ from my_llm.profile.configuration import (
 )
 from my_llm.profile.model_profile import ModelProfile
 from my_llm.profile.provider_profile import ProviderProfile
-from my_llm.profile.resolution import ResolvedProfile, resolve_profiles
+from my_llm.profile.resolution import (
+    ResolvedProfile,
+    merge_profiles,
+    resolve_profiles,
+    resolve_profiles_with_hash,
+)
 from my_llm.profile.types import Attribute, Config, Omit, Parameter, omit
 
 __all__ = [
@@ -22,7 +27,9 @@ __all__ = [
     "ProviderProfile",
     "ReasoningEffort",
     "ResolvedProfile",
+    "merge_profiles",
     "resolve_profiles",
+    "resolve_profiles_with_hash",
     "Parameter",
     "Config",
     "Omit",

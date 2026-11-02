@@ -14,7 +14,7 @@ from statistics import median
 from time import perf_counter_ns
 
 import my_llm
-from my_llm import resolve_profiles
+from my_llm import MyLLM, resolve_profiles, resolve_profiles_with_hash
 from tests.helpers.protocols import PROTOCOLS
 from tests.performance.workloads import profiles
 
@@ -47,6 +47,8 @@ def run(options):
     cases = []
     for protocol in PROTOCOLS:
         provider, model = profiles(protocol)
+        precomputed = resolve_profiles_with_hash(provider, model)
+        llm = MyLLM(provider=provider, model=model, resolve_profile_with_hash=precomputed)
         cases.append(
             {
                 "protocol": protocol,
@@ -56,12 +58,32 @@ def run(options):
                 "resolution": measure(
                     lambda: resolve_profiles(provider, model), options.batches, options.iterations
                 ),
+                "resolution_with_hash": measure(
+                    lambda: resolve_profiles_with_hash(provider, model),
+                    options.batches,
+                    options.iterations,
+                ),
+                "comparison_unchanged": measure(
+                    lambda: llm.compare(provider, model), options.batches, options.iterations
+                ),
+                "instance_setup": measure(
+                    lambda: MyLLM(provider=provider, model=model),
+                    options.batches,
+                    options.iterations,
+                ),
+                "instance_setup_reused": measure(
+                    lambda: MyLLM(
+                        provider=provider, model=model, resolve_profile_with_hash=precomputed
+                    ),
+                    options.batches,
+                    options.iterations,
+                ),
                 "declaration_memory": memory(lambda: profiles(protocol)),
                 "resolution_memory": memory(lambda: resolve_profiles(provider, model)),
             }
         )
     report = {
-        "definition": "Profile/Parameter/Config creation and resolve_profiles measured separately; prebuilt fixtures excluded from resolution; 100 warmups; default GC; per-operation microseconds averaged within each batch; separate tracemalloc probes retain 100 values after gc.collect, tracing is off during timing; no SDK construction or requests",
+        "definition": "Profile declarations, resolution, resolution with hashing, unchanged comparison, and MyLLM setup with/without precomputed results measured separately; prebuilt fixtures excluded; comparison reuses an initialized codec; 100 warmups; default GC; per-operation microseconds averaged within each batch; separate tracemalloc probes retain 100 values after gc.collect, tracing is off during timing; no SDK client construction or requests",
         "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "source_sha256": hashlib.sha256(
             b"".join(

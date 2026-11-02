@@ -36,6 +36,7 @@ async def session():
 | --- | --- | --- |
 | `provider` | `ProviderProfile` | 必填，连接配置和明确指定的上游协议 |
 | `model` | `ModelProfile` | 必填，模型 ID 和模型配置 |
+| `resolve_profile_with_hash` | `tuple[ResolvedProfile, int] \| None` | 默认 `None`；传入同一配置的预解析结果，跳过解析和哈希，复制快照后仍检查协议约束 |
 | `stdio_protocol` | `Protocol \| None` | 输入消息、工具和输出共用的协议；默认尝试唯一推断 |
 | `enable_message_cache` | `bool` | 默认 `False`；开启后缓存已翻译的增量输入，同一实例必须串行使用 |
 
@@ -50,9 +51,36 @@ async def session():
 | --- | --- |
 | `provider` / `model` | 构造时传入配置的副本 |
 | `resolved_profile` | 已解析的 `ResolvedProfile` |
+| `profile_hash` | 构造时配置快照的整数哈希，只读 |
 | `stdio_protocol` | 绑定的输入输出协议，推断前可为 `None` |
 | `codec` | 当前实例的 `MyCodec` |
 | `client_parameters` | 已准备的连接参数，供高级集成使用 |
+
+### `MyLLM.compare(provider, model)`
+
+返回 `True` 表示解析后的配置哈希与构造时一致；不一致时返回
+`tuple[ResolvedProfile, int]`，供创建新实例复用。比较不更新当前实例配置或客户端，
+每次使用当前实例的协议默认值重新解析、计算哈希；无效配置仍抛出解析异常。
+元组也是真值，判断结果时应使用 `result is True` 或 `result is not True`。
+
+```python
+async def replace_if_changed(llm, provider, model):
+    result = llm.compare(provider, model)
+    if result is not True:
+        replacement = MyLLM(
+            provider=provider,
+            model=model,
+            resolve_profile_with_hash=result,
+        )
+        await llm.aclose()
+        return replacement
+    return llm
+```
+
+复用结果时必须传入对应的 provider/model，并保留原快照与哈希的配对。
+构造函数信任该配对，不再次计算哈希或核对原始配置；为隔离实例而复制快照，仍进行协议校验。
+快照按只读数据使用，同一结果可用于创建多个实例。
+比较范围仅为解析后的 provider/model 配置，不包含 stdio_protocol、语义损失策略或消息缓存开关。
 
 ### `await MyLLM.generate(...)`
 
@@ -366,6 +394,13 @@ Provider 与 Model 共享以下覆盖项，均默认 `None`，表示继承：
 直接集成时再调用 `MyCodec.validate_profile(resolved)` 检查协议约束；MyLLM 自动完成这些检查。
 `defaults_for(protocol)` 可提供已有实例的 ProtocolDefaults；MyLLM 使用自身 MyCodec.defaults，
 与后续验证和请求共用同一个协议组件实例。省略时独立创建所选注册 codec 读取默认声明。
+
+`resolve_profiles_with_hash(provider, model, *, defaults_for=None) -> tuple[ResolvedProfile, int]`
+先调用上述解析函数，再对完整快照计算 SHA-256 并转为整数。包含连接配置和 Parameter 的所有字段；
+不额外包含已被覆盖的原始值或未进入快照的 Attribute。字典键、绑定元组和列表的顺序均保留，
+顺序改变可能使哈希改变，即使两个字典用 `==` 比较相等。
+快照值支持 JSON 标量、字典、列表、元组、bytes、集合、Enum 和 dataclass 实例；
+不支持的对象或循环引用抛出 `ConfigurationError`。哈希仅用于配置指纹，不作为配置版本或认证凭据。
 
 | 属性 / 方法 | 含义 |
 | --- | --- |

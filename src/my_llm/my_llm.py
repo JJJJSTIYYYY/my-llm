@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator, Hashable, Sequence
 from contextlib import AsyncExitStack, aclosing
 from copy import deepcopy
 from dataclasses import replace
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from my_llm.basic.data import _MISSING
@@ -18,7 +18,7 @@ from my_llm.middleware.stream import MessageEvent, Usage
 from my_llm.profile.configuration import Protocol, ReasoningEffort
 from my_llm.profile.model_profile import ModelProfile
 from my_llm.profile.provider_profile import ProviderProfile
-from my_llm.profile.resolution import ResolvedProfile, resolve_profiles
+from my_llm.profile.resolution import ResolvedProfile, resolve_profiles_with_hash
 from my_llm.profile.types import Attribute, omit
 from my_llm.runtime.message_stream import MessageStream
 from my_llm.runtime.state import StreamState
@@ -30,6 +30,10 @@ class MyLLM:
     Args:
         provider: Connection settings and an explicitly configured upstream protocol.
         model: Model identity and overrides for provider defaults.
+        resolve_profile_with_hash: Precomputed (ResolvedProfile, int) for the same
+            provider/model, from compare or resolve_profiles_with_hash. Skip
+            resolution and hashing; copy the snapshot and validate the protocol.
+            The caller must supply an unmodified snapshot and its matching hash.
         stdio_protocol: Protocol used by both messages and tools, and by results.
             If None, the first generation must uniquely identify a protocol.
             Set "middleware" explicitly for typed Message/FunctionTool input and
@@ -51,6 +55,7 @@ class MyLLM:
         provider: Copy of the supplied provider profile.
         model: Copy of the supplied model profile.
         resolved_profile: Read-only configuration snapshot for this instance.
+        profile_hash: Read-only fingerprint of the construction-time snapshot.
         stdio_protocol: Read-only input/output protocol, or None before inference.
         codec: Converter available for the registered protocols.
         client_parameters: Prepared connection settings; treat as read-only.
@@ -73,6 +78,7 @@ class MyLLM:
         *,
         provider: ProviderProfile,
         model: ModelProfile,
+        resolve_profile_with_hash: tuple[ResolvedProfile, int] | None = None,
         stdio_protocol: Protocol | None = None,
         semantic_loss_protocol: LossPolicy = "raise",
         input_semantic_loss_hook: SemanticLossHook | None = None,
@@ -95,7 +101,22 @@ class MyLLM:
             and stdio_protocol not in self.codec.codecs
         ):
             raise ConfigurationError(f"unsupported stdio_protocol: {stdio_protocol!r}")
-        self._resolved_profile = resolve_profiles(provider, model, defaults_for=self.codec.defaults)
+        if resolve_profile_with_hash is None:
+            self._resolved_profile, self._profile_hash = resolve_profiles_with_hash(
+                provider, model, defaults_for=self.codec.defaults
+            )
+        else:
+            if not isinstance(provider, ProviderProfile) or not isinstance(model, ModelProfile):
+                raise ConfigurationError("provider and model must be profile instances")
+            if (
+                not isinstance(resolve_profile_with_hash, tuple)
+                or len(resolve_profile_with_hash) != 2
+                or not isinstance(resolve_profile_with_hash[0], ResolvedProfile)
+                or type(resolve_profile_with_hash[1]) is not int
+            ):
+                raise ConfigurationError("resolve_profile_with_hash must be (ResolvedProfile, int)")
+            resolved, self._profile_hash = resolve_profile_with_hash
+            self._resolved_profile = deepcopy(resolved)
         self.codec.validate_profile(self.resolved_profile)
         self.client_parameters = self.codec.client_parameters(self.resolved_profile)
         self.provider = deepcopy(provider)
@@ -110,6 +131,24 @@ class MyLLM:
     def resolved_profile(self) -> ResolvedProfile:
         """Read-only snapshot binding this instance's upstream protocol and model."""
         return self._resolved_profile
+
+    @property
+    def profile_hash(self) -> int:
+        """Fingerprint of the read-only construction-time configuration."""
+        return self._profile_hash
+
+    def compare(
+        self, provider: ProviderProfile, model: ModelProfile
+    ) -> Literal[True] | tuple[ResolvedProfile, int]:
+        """Return True for a matching hash, otherwise a reusable snapshot and hash.
+
+        Resolve using this instance's protocol defaults without updating its
+        configuration or clients. Pass a changed result to a new MyLLM through
+        resolve_profile_with_hash, with the same provider/model, to avoid resolving
+        and hashing again. Invalid profiles raise the usual resolution errors.
+        """
+        result = resolve_profiles_with_hash(provider, model, defaults_for=self.codec.defaults)
+        return True if result[1] == self.profile_hash else result
 
     @property
     def stdio_protocol(self) -> Protocol | None:

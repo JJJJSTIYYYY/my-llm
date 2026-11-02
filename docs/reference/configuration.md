@@ -101,8 +101,18 @@ Profile 的参数与行为字段都使用 `Parameter[T] | Omit | None` 或 `Conf
 Parameter 整体覆盖，路径、支持状态和默认值作为一份声明更新，不与上一层分别拼接。
 Config 字典按键合并，嵌套值整体替换，字典中的 omit 删除该键。
 Profiles 是可变 dataclass，可直接重新赋值字段，也可使用 `dataclasses.replace()` 创建新配置。
+`from my_llm import merge_profiles` 可合并两个具体类型相同的 Profile：
+`merge_profiles(older, newer)` 返回独立副本，`None` 继承旧值，`omit` 禁用字段，
+其他新值整体替换旧字段（包括 Config 字典），旧字段为 `None` 或 `omit` 也不阻止覆盖。
+返回结果与两个输入的嵌套可变数据隔离。
 重新赋值 Config 或 Parameter 后，调用 `__post_init__()` 绑定声明身份，再创建 MyLLM。
 MyLLM 构造时隔离配置的嵌套可变数据；请求只在需要独立所有权的边界复制数据。
+
+`llm.compare(provider, model)` 比较解析后配置的哈希：相同返回 `True`，不同返回
+`(ResolvedProfile, int)`。可将后者传给新实例的 `resolve_profile_with_hash`，
+避免再次解析和计算哈希；复用时保持快照、哈希和对应输入配置一致。
+比较不修改当前实例。字典和参数绑定的顺序参与哈希，结果元组也是真值，需用 `result is True` 判断。
+接口细节见 [MyLLM.compare](api.md#myllmcompareprovider-model)。
 
 ```python
 from my_llm import (

@@ -3,9 +3,9 @@
 import json
 from typing import Any
 
-from my_llm.basic.semantic_loss import originated, report_loss
+from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.shared.conversion import select, text_result
-from my_llm.codec.shared.input import input_content
+from my_llm.codec.shared.input import input_content, without_feedback
 from my_llm.profile.resolution import ResolvedProfile
 
 
@@ -16,10 +16,8 @@ def _tool_output(value: Any) -> Any:
 
 def reasoning_summary(block: dict) -> list[dict]:
     """Project canonical reasoning text parts into native summary entries."""
-    summary = block.get("summary")
-    if summary is None:
-        summary = [block["thinking"]] if block["thinking"] else []
-    return [{"type": "summary_text", "text": text} for text in summary]
+    reasoning = block.get("reasoning")
+    return [{"type": "summary_text", "text": reasoning}] if reasoning else []
 
 
 def render_content(
@@ -64,20 +62,8 @@ def foreign_block(block: dict) -> dict | None:
             if isinstance(value, list)
             else text_result(value),
         }
-    if kind == "thinking" and block.get("redacted"):
-        report_loss(block, "Responses cannot represent opaque reasoning from another protocol")
-        return None
-    if kind == "thinking" and block.get("protocol") == "openai_responses":
-        return block
-    if kind in ("thinking", "text", "tool_use") and any(
-        block.get(key) for key in ("signature", "encrypted_content")
-    ):
-        report_loss(block, "Responses cannot preserve another protocol's reasoning signature")
     if kind == "thinking":
-        value = select(block, "type", "thinking", "mark", "summary", "item")
-        return (
-            originated(value, block.origin_path, block.origin_value)
-            if hasattr(block, "origin_path")
-            else value
-        )
-    return block if kind in ("text", "image", "thinking", "tool_use") else None
+        return without_feedback(block)
+    if kind in ("text", "tool_use") and block.get("signature"):
+        report_loss(block, "Responses cannot preserve another protocol's reasoning signature")
+    return block if kind in ("text", "image", "tool_use") else None

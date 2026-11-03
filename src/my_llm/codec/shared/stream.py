@@ -6,7 +6,7 @@ from functools import wraps
 from math import isfinite
 from typing import NamedTuple
 
-from my_llm.basic.data import dictionary_views
+from my_llm.basic.data import capture, dictionary_views
 from my_llm.middleware.usage import normalize_usage
 
 
@@ -52,6 +52,23 @@ class BlockRef(NamedTuple):
     scope: str
     index: int = 0
     part: int = 0
+
+
+def feedback_operation(ref: BlockRef, value: object) -> dict:
+    """Accumulate scalar feedback privately or retain a completed opaque object."""
+    if isinstance(value, str):
+        return {
+            "type": "block_delta",
+            "ref": ref,
+            "kind": "thinking",
+            "field": "feedback_item",
+            "value": value,
+        }
+    return {
+        "type": "block_update",
+        "ref": ref,
+        "block": {"type": "thinking", "feedback_item": capture(value)},
+    }
 
 
 def metadata(values: dict, *, path: tuple[str, ...] = ()) -> dict:

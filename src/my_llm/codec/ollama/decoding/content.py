@@ -2,7 +2,7 @@
 
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.shared.conversion import select_present, text_result
-from my_llm.codec.shared.input import input_content
+from my_llm.codec.shared.input import input_content, without_feedback
 from my_llm.profile.resolution import ResolvedProfile
 
 
@@ -12,18 +12,10 @@ def foreign_block(block: dict) -> dict | None:
     if kind == "image" and block.get("source", {}).get("type") != "base64":
         report_loss(block, "Ollama images require base64 data")
         return None
-    if kind == "thinking" and (
-        block.get("redacted")
-        or block.get("mark") == "encrypted"
-        and not block.get("thinking")
-        and not block.get("summary")
-    ):
-        report_loss(block, "Ollama cannot represent opaque reasoning from another protocol")
-        return None
-    if kind in ("thinking", "text", "tool_use") and any(
-        block.get(key) for key in ("signature", "encrypted_content")
-    ):
-        report_loss(block, "Ollama cannot preserve another protocol's reasoning signature")
+    if kind == "thinking":
+        block = without_feedback(block)
+    elif kind in ("text", "tool_use") and block.get("signature") is not None:
+        report_loss(block, "Ollama cannot preserve another protocol's thought signature")
     return block if kind in ("text", "image", "tool_use", "tool_result", "thinking") else None
 
 

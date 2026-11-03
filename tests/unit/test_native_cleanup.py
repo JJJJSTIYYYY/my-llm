@@ -188,7 +188,8 @@ def test_gemini_native_signature_spelling_stays_at_the_codec_boundary():
     ]
     middleware = codec.encode(messages=messages, input_format="gemini")
     blocks = middleware["messages"][0]["content"]
-    assert all(block["signature"] == "c2ln" for block in blocks)
+    assert blocks[0]["feedback_item"]["thought_signature"] == "c2ln"
+    assert blocks[1]["signature"] == "c2ln"
     assert all("thought_signature" not in block for block in blocks)
     restored = codec.decode(messages=middleware.messages, target_format="gemini")["messages"]
     assert all(part["thought_signature"] == "c2ln" for part in restored[0]["parts"])

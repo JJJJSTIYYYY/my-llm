@@ -303,7 +303,7 @@ def test_native_thinking_events_use_only_target_supported_fields(target):
     for event in incoming:
         assert_native(event, EVENT_TYPES["anthropic"][event["type"]])
     if target != "anthropic":
-        with pytest.raises(SemanticLossError, match="signature"):
+        with pytest.raises(SemanticLossError, match="feedback"):
             render("anthropic", target, incoming)
         return
     converted, _ = render("anthropic", target, incoming)

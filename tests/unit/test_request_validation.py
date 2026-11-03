@@ -77,9 +77,9 @@ def test_later_structural_error_precedes_an_earlier_association_error():
             "role": "user",
             "content": [{"type": "tool_result", "tool_use_id": "unknown", "content": []}],
         },
-        {"role": "assistant", "content": [{"type": "thinking", "thinking": "missing mark"}]},
+        {"role": "assistant", "content": [{"type": "thinking", "thinking": "missing reasoning"}]},
     ]
-    with pytest.raises(MessageValidationError, match=r"messages\[1\].content\[0\].mark"):
+    with pytest.raises(MessageValidationError, match=r"messages\[1\].content\[0\].reasoning"):
         validate_messages(values, history=HistoryValidator())
 
 
@@ -200,8 +200,8 @@ def test_public_request_revalidates_mutated_middleware_models():
     reasoning = next(
         part for part in encoded.messages[0].content if isinstance(part, ReasoningContent)
     )
-    reasoning.mark = "invalid"
-    with pytest.raises(MessageValidationError, match="reasoning mark"):
+    reasoning.reasoning = 123
+    with pytest.raises(MessageValidationError, match="reasoning"):
         llm.codec.request(encoded, llm.resolved_profile)
 
 

@@ -2,9 +2,24 @@
 
 from collections.abc import Iterable, Iterator
 
+from my_llm.basic.semantic_loss import Originated, report_loss
 from my_llm.codec.shared.capabilities import content_capability, supports_content
 from my_llm.codec.shared.conversion import select
 from my_llm.profile.resolution import ResolvedProfile
+
+
+def without_feedback(block: dict) -> dict:
+    """Discard an untranslatable native reasoning item at the decoder boundary."""
+    if block.get("feedback_item") is None:
+        return block
+    report_loss(block, "target protocol cannot preserve another protocol's reasoning feedback_item")
+    result = (
+        Originated(block, block.origin_path, block.origin_value)
+        if isinstance(block, Originated)
+        else dict(block)
+    )
+    del result["feedback_item"]
+    return result
 
 
 def _keeps_reasoning(mode: str, has_tool_calls: bool) -> bool:
@@ -31,7 +46,7 @@ class InputPolicy:
         }
         self.supported["tool_result"] = self.supported["tool_use"]
         self.feedback_mode = (
-            "always" if profile is None else profile.get("feedback_reasoning_content", "none")
+            "always" if profile is None else profile.get("should_feedback_reasoning_item", "none")
         )
         self.requires_tool_calls = (
             self.supported["thinking"] and self.feedback_mode == "when_tool_calls"
@@ -67,7 +82,7 @@ def feedback_reasoning(profile: ResolvedProfile | None, *, has_tool_calls: bool)
         return False
     if profile is None:
         return True
-    mode = profile.get("feedback_reasoning_content", "none")
+    mode = profile.get("should_feedback_reasoning_item", "none")
     return _keeps_reasoning(mode, has_tool_calls)
 
 
@@ -99,7 +114,7 @@ def message_feedback(
     tool_feedback = (
         profile is not None
         and supports_content("thinking", profile)
-        and profile.get("feedback_reasoning_content") == "when_tool_calls"
+        and profile.get("should_feedback_reasoning_item") == "when_tool_calls"
     )
     if not coalesce and not tool_feedback:
         feedback = feedback_reasoning(profile, has_tool_calls=False)

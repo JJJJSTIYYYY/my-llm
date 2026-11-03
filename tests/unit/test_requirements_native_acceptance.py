@@ -272,55 +272,66 @@ def test_chat_custom_calls_drop_without_affecting_function_partials(target):
 
 
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_explicit_opaque_owner_cannot_be_overridden_by_the_message_protocol(target):
+def test_foreign_feedback_owner_is_taken_from_the_message_protocol(target):
     from my_llm import AssistantMessage, ReasoningContent
 
     owner = "gemini" if target == "anthropic" else "anthropic"
     message = AssistantMessage(
         role="assistant",
-        protocol=target,
-        content=[ReasoningContent(reasoning="reason", signature="signed", opaque_protocol=owner)],
+        protocol=owner,
+        content=[
+            ReasoningContent(
+                reasoning="reason",
+                feedback_item={"type": "thinking", "thinking": "reason", "signature": "signed"},
+            )
+        ],
     )
     with pytest.raises(SemanticLossError):
         MyCodec().decode([message], target_format=target)
 
 
 @pytest.mark.parametrize("target", ["anthropic", "gemini", "openai_responses"])
-@pytest.mark.parametrize("owner", ["explicit", "context"])
-def test_native_owner_and_missing_owner_use_the_correct_context(target, owner):
+@pytest.mark.parametrize("owner", ["message", "context"])
+def test_native_feedback_uses_the_message_or_source_context(target, owner):
     from my_llm import AssistantMessage, ReasoningContent
 
+    feedback = {
+        "anthropic": {"type": "thinking", "thinking": "reason", "signature": "signed"},
+        "gemini": {"text": "reason", "thought": True, "thought_signature": "c2lnbmVk"},
+        "openai_responses": {
+            "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": "reason"}],
+            "encrypted_content": "opaque",
+        },
+    }[target]
     message = AssistantMessage(
         role="assistant",
-        protocol=target,
-        content=[
-            ReasoningContent(
-                reasoning="reason",
-                signature="signed" if target != "openai_responses" else None,
-                encrypted_content="opaque" if target == "openai_responses" else None,
-                opaque_protocol=target if owner == "explicit" else None,
-            )
-        ],
+        protocol=target if owner == "message" else None,
+        content=[ReasoningContent(reasoning="reason", feedback_item=feedback)],
     )
-    result = MyCodec().decode([message], target_format=target)
+    result = MyCodec().decode([message], target_format=target, source_protocol=target)
     assert "reason" in str(result)
-    assert ("opaque" if target == "openai_responses" else "signed") in str(result)
+    assert (
+        "opaque"
+        if target == "openai_responses"
+        else "signed"
+        if target == "anthropic"
+        else "c2lnbmVk"
+    ) in str(result)
 
 
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_foreign_opaque_owner_is_checked_on_public_response_blocks(target):
+def test_foreign_feedback_owner_is_checked_on_public_response_blocks(target):
     block = {
         "type": "thinking",
-        "thinking": "reason",
-        "mark": "raw",
-        "signature": "signed",
-        "protocol": "gemini" if target == "anthropic" else "anthropic",
+        "reasoning": "reason",
+        "feedback_item": {"type": "thinking", "thinking": "reason", "signature": "signed"},
     }
     with pytest.raises(SemanticLossError):
         MyCodec().decode(
             chunks=[{"type": "block_stop", "index": 0, "block": block}],
             target_format=target,
-            source_protocol=target,
+            source_protocol="gemini" if target == "anthropic" else "anthropic",
         )
 
 

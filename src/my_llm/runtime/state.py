@@ -29,6 +29,8 @@ class BlockState:
     content: dict
     source_ref: tuple[str, int, int] | None = None
     fragments: dict[str, list[str]] = field(default_factory=dict)
+    feedback_fragments: dict[tuple[str, ...], list[str]] | None = None
+    feedback_text_field: str | None = None
     argument_parts: list[str] | None = None
     emitted: bool = False
     closed: bool = False
@@ -38,15 +40,15 @@ class BlockState:
 
     @property
     def text_field(self) -> str | None:
-        """Return the incremental text field, excluding opaque reasoning."""
+        """Return the user-visible text field; opaque feedback has no delta output."""
         kind = self.content.get("type")
-        if kind == "thinking" and (
-            self.content.get("redacted")
-            or self.content.get("mark") == "encrypted"
-            and not self.content.get("thinking")
-        ):
-            return None
-        return kind if kind in ("text", "thinking") else None
+        if kind == "text":
+            return "text"
+        return (
+            "reasoning"
+            if kind == "thinking" and self.content.get("reasoning") is not None
+            else None
+        )
 
     def materialize(self) -> dict:
         """Borrow this version's materialized content within the request.
@@ -58,7 +60,24 @@ class BlockState:
         if self._materialized is None:
             block = _located(self.content.copy(), self.content)
             for name, parts in self.fragments.items():
-                block[name] = block.get(name, "") + "".join(parts)
+                block[name] = (block.get(name) or "") + "".join(parts)
+            if self.feedback_fragments or self.feedback_text_field is not None:
+                feedback = block.get("feedback_item")
+                if isinstance(feedback, dict):
+                    feedback = feedback.copy()
+                for path, parts in (self.feedback_fragments or {}).items():
+                    if path:
+                        target = feedback
+                        for key in path[:-1]:
+                            child = target.get(key, {}).copy()
+                            target[key] = child
+                            target = child
+                        target[path[-1]] = (target.get(path[-1]) or "") + "".join(parts)
+                    else:
+                        feedback = (feedback or "") + "".join(parts)
+                if self.feedback_text_field is not None:
+                    feedback[self.feedback_text_field] = block.get("reasoning") or ""
+                block["feedback_item"] = feedback
             if block.get("type") == "tool_use":
                 if self.argument_parts is not None:
                     block["input"] = arguments("".join(self.argument_parts) or "{}")
@@ -74,13 +93,15 @@ class BlockState:
         """Replace a block snapshot, rejecting contradictions with text already emitted."""
         name = self.text_field
         if name and self.text_sent:
-            previous = (self.content.get(name, "") + "".join(self.fragments.get(name, ())))[
+            previous = ((self.content.get(name) or "") + "".join(self.fragments.get(name, ())))[
                 : self.text_sent
             ]
-            if not content.get(name, "").startswith(previous):
+            if not (content.get(name) or "").startswith(previous):
                 raise IncompleteStreamError("final block contradicts already emitted text")
         self.content = capture(content)
         self.fragments.clear()
+        self.feedback_fragments = None
+        self.feedback_text_field = None
         self.argument_parts = None
         self.invalidate()
 
@@ -124,9 +145,7 @@ class StreamState:
         if ref not in self._references:
             content = {"type": kind}
             if kind in ("text", "thinking"):
-                content[kind] = ""
-            if kind == "thinking":
-                content["mark"] = "raw"
+                content["text" if kind == "text" else "reasoning"] = "" if kind == "text" else None
             self._references[ref] = self._new_block(content)
             self._references[ref].source_ref = ref
         return self._references[ref]
@@ -248,6 +267,7 @@ class StreamState:
         content = event["block"]
         block = self._block(event["ref"], content["type"])
         block.replace(content)
+        block.feedback_text_field = event.get("feedback_text_field")
         if content.get("type") == "tool_use" and not block.content.get("id"):
             block.content["id"] = f"call_{uuid4().hex}"
         return self._publish(block)
@@ -261,24 +281,39 @@ class StreamState:
         return self._publish(block)
 
     def _update_block(self, event: dict) -> list[dict]:
-        """Merge partial tool identity fields without publishing an incomplete call."""
+        """Merge recognized identity or feedback fields without emitting a delta."""
         patch = {
-            key: event["block"][key] for key in ("type", "id", "name") if key in event["block"]
+            key: capture(event["block"][key])
+            for key in ("type", "id", "name", "feedback_item")
+            if key in event["block"]
         }
         block = self._block(event["ref"], patch["type"])
         self._capture_origin(block, event)
-        block.content.update(patch)
+        block.content = _located({**block.content, **patch}, block.content)
+        if "feedback_item" in patch:
+            block.feedback_fragments = None
+            block.feedback_text_field = None
         block.invalidate()
         return []
 
     def _delta(self, event: dict) -> list[dict]:
-        """Buffer argument/signature fragments and emit eligible text or reasoning deltas."""
+        """Accumulate native feedback privately and emit eligible visible text deltas."""
         name, value = event["field"], event["value"]
         block = self._block(event["ref"], event["kind"])
         self._capture_origin(block, event)
-        if "mark" in event:
-            block.content["mark"] = event["mark"]
+        if name == "reasoning" and block.content.get("reasoning") is None:
+            block.content["reasoning"] = ""
         block.invalidate()
+        if name == "feedback_item":
+            path = tuple(event.get("path", ()))
+            if block.feedback_fragments is None:
+                block.feedback_fragments = {}
+            parts = block.feedback_fragments.get(path)
+            if parts is None:
+                parts = []
+                block.feedback_fragments[path] = parts
+            parts.append(value)
+            return []
         if name == "arguments":
             if block.argument_parts is None:
                 block.argument_parts = []
@@ -358,7 +393,9 @@ class StreamState:
             return []
         if block.text_field is not None:
             content = block.materialize()
-            result = self._emit_text(block, content.get(block.text_field, "")[block.text_sent :])
+            result = self._emit_text(
+                block, (content.get(block.text_field) or "")[block.text_sent :]
+            )
             if final or block.source_closed:
                 result.extend(self._close(block))
             return result

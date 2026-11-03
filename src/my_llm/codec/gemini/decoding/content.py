@@ -2,7 +2,7 @@
 
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.shared.conversion import text_result
-from my_llm.codec.shared.input import input_content
+from my_llm.codec.shared.input import input_content, without_feedback
 from my_llm.profile.resolution import ResolvedProfile
 
 
@@ -13,8 +13,8 @@ def decode_part(
 
     Preserve thought signatures only for Gemini-owned content. Tool results
     require text/object responses; images inside them are reported as losses.
-    Signed native reasoning can be replayed, while opaque or unsigned foreign
-    reasoning is omitted with a recorded loss.
+    Request history replays native feedback items. Output can render visible
+    reasoning independently; foreign feedback is discarded with a recorded loss.
     """
     kind = block.get("type")
     owner = block.get("protocol")
@@ -52,19 +52,19 @@ def decode_part(
             },
         }
     if kind == "thinking":
-        if block.get("redacted") or block.get("mark") == "encrypted":
-            report_loss(block, "Gemini cannot represent opaque reasoning from another protocol")
-            return None
-        if not native_signature or not block.get("signature"):
-            report_loss(
-                block, "Gemini cannot replay reasoning without its native thought signature"
+        item = block.get("feedback_item")
+        if foreign:
+            block = without_feedback(block)
+            item = None
+        if not isinstance(item, dict):
+            if item is not None:
+                report_loss(block, "Gemini reasoning requires a native feedback item")
+            return (
+                {"text": block["reasoning"], "thought": True}
+                if profile is None and block.get("reasoning") is not None
+                else None
             )
-            return None
-        return {
-            **common,
-            "text": block["thinking"] or "\n".join(block.get("summary", ())),
-            "thought": True,
-        }
+        return item
     if kind == "text":
         return {**common, "text": block.get("text", "")}
     if kind == "image":

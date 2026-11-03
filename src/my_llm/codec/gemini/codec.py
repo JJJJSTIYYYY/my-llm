@@ -20,7 +20,7 @@ class GeminiCodec(BaseCodec):
     __slots__ = ("encoder", "decoder", "transport", "_defaults")
     protocol_or_api_style = "gemini"
     _DEFAULTS = ProtocolDefaults(
-        feedback_reasoning_content=Config(default_value="always"),
+        should_feedback_reasoning_item=Config(default_value="always"),
         max_tokens=Parameter(path="$.config.max_output_tokens", default_value=omit),
         content=Parameter(
             path="$.candidates[0].content.parts[0].text",
@@ -29,6 +29,9 @@ class GeminiCodec(BaseCodec):
         reasoning_content=Parameter(
             path="$.candidates[0].content.parts[0].text",
             default_value=omit,
+        ),
+        feedback_reasoning_item=Parameter(
+            path="$.candidates[0].content.parts[0]", default_value=omit
         ),
         reasoning_enable=Parameter(
             path="$.config.thinking_config",

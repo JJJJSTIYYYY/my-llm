@@ -54,7 +54,9 @@ Profile 提供明确的兼容入口：参数路径和缺失默认值、extra_bod
 
 Anthropic thinking.signature、redacted_thinking、Gemini thought_signature、Responses
 encrypted_content 和工具关联 ID 都属于有明确语义的标准字段，由对应协议实现处理。
-同协议路径保留实现支持的原生值；外来思考保持独立语义，无法表达时报告 SemanticLossError，不伪造签名或解密密文。
+思维文本统一保存到 `ReasoningContent.reasoning`，原生回传项保存到 `feedback_item`。
+同协议回传完整原生值；跨协议由 Decoder 丢弃 `feedback_item` 并报告 SemanticLossError，
+可见思维独立处理，不伪造签名或解密密文。
 
 不在其他协议输出中附加原始对象、剩余字段或恢复快照。A → B → A 只处理每一步明确支持的语义，
 不能用未修改结果的隐藏记录恢复 B 无法表达的原生信息。

@@ -129,7 +129,23 @@ async def test_retry_idless_tool_round_keeps_cached_call_ids_and_matching_result
 
 
 async def test_retry_anonymous_middleware_assistant_keeps_responses_item_ids(monkeypatch):
-    batch = [AssistantMessage("assistant", [TextContent("visible"), ReasoningContent("reason")])]
+    batch = [
+        AssistantMessage(
+            "assistant",
+            [
+                TextContent("visible"),
+                ReasoningContent(
+                    "reason",
+                    feedback_item={
+                        "type": "reasoning",
+                        "id": "rs_history",
+                        "summary": [{"type": "summary_text", "text": "reason"}],
+                    },
+                ),
+            ],
+            protocol="openai_responses",
+        )
+    ]
     client = FakeClient(stream_events("openai_responses"), failure=RuntimeError("retry request"))
     monkeypatch.setattr(
         "my_llm.codec.openai.responses.transport.AsyncOpenAI", lambda **kwargs: client

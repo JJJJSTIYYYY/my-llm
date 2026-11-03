@@ -19,7 +19,7 @@ EFFORTS = ("none", "low", "medium", "high", "xhigh", "max")
 class ProtocolDefaults(Profile):
     """Declare default settings for a registered protocol.
 
-    Required keyword argument feedback_reasoning_content is a Config
+    Required keyword argument should_feedback_reasoning_item is a Config
     or omit. Other fields provide default parameter routes, extra_headers,
     extra_body, reasoning_effort_mapping, capability flags and usage_mode.
     See OverridableProfile for the shared setting meanings.
@@ -31,7 +31,7 @@ class ProtocolDefaults(Profile):
     ModelProfile to override protocol defaults.
     """
 
-    feedback_reasoning_content: Config[Literal["when_tool_calls", "always", "none"]] | Omit
+    should_feedback_reasoning_item: Config[Literal["when_tool_calls", "always", "none"]] | Omit
     api_key: Parameter[str] | Omit = field(
         default_factory=lambda: Parameter(path="$.api_key", default_value=omit),
         repr=False,
@@ -40,6 +40,9 @@ class ProtocolDefaults(Profile):
     max_tokens: Parameter[int] | Omit = field(default=omit, metadata={"source": "input"})
     content: Parameter[Any] | Omit = field(default=omit, metadata={"source": "output"})
     reasoning_content: Parameter[Any] | Omit = field(default=omit, metadata={"source": "output"})
+    feedback_reasoning_item: Parameter[Any] | Omit = field(
+        default=omit, metadata={"source": "output"}
+    )
     reasoning_enable: Parameter[Any] | Omit = field(default=omit, metadata={"source": "input"})
     reasoning_effort: Parameter[Any] | Omit = field(default=omit, metadata={"source": "input"})
     extra_headers: Config[dict[str, Any]] | Omit = field(
@@ -83,9 +86,10 @@ class OverridableProfile(Profile):
         max_tokens: Input Parameter for the output token limit.
         content: Output Parameter selecting visible text.
         reasoning_content: Output Parameter selecting visible reasoning.
+        feedback_reasoning_item: Output Parameter selecting the native reasoning item.
         reasoning_enable: Input Parameter enabling reasoning.
         reasoning_effort: Input Parameter selecting native reasoning effort.
-        feedback_reasoning_content: Config selecting feedback of reasoning from
+        should_feedback_reasoning_item: Config selecting feedback of reasoning from
             tool-call messages ("when_tool_calls"), all history ("always") or
             no history ("none"). Omit disables feedback.
 
@@ -104,13 +108,16 @@ class OverridableProfile(Profile):
     reasoning_content: Parameter[Any] | Omit | None = field(
         default=None, metadata={"source": "output"}
     )
+    feedback_reasoning_item: Parameter[Any] | Omit | None = field(
+        default=None, metadata={"source": "output"}
+    )
     reasoning_enable: Parameter[Any] | Omit | None = field(
         default=None, metadata={"source": "input"}
     )
     reasoning_effort: Parameter[Any] | Omit | None = field(
         default=None, metadata={"source": "input"}
     )
-    feedback_reasoning_content: (
+    should_feedback_reasoning_item: (
         Config[Literal["when_tool_calls", "always", "none"]] | Omit | None
     ) = None
 

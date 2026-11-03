@@ -97,7 +97,7 @@ def test_encoder_does_not_apply_decoder_capability_policy(monkeypatch, profile_f
         supports_vision=config(False),
         supports_message_name=config(False),
         reasoning_enable=parameter("reasoning_enable", protocol=protocol, supports=False),
-        feedback_reasoning_content=config("none"),
+        should_feedback_reasoning_item=config("none"),
     )
     monkeypatch.setattr("my_llm.codec.shared.capabilities.report_loss", fail)
     monkeypatch.setattr("my_llm.cache.compiled_cache.report_loss", fail)

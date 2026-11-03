@@ -22,7 +22,7 @@ encoder 负责原生投影，decoder 负责目标表达，Transport 只执行 SD
 | `TextContent` | `text`、`origin`、`type`、`item` | 通用文本，`type=text`；`item` 当前保留 Responses 项身份 |
 | `ImageContent` | `source`、`origin`、`type`、`item` | 通用图片，`type=image`；`item` 当前保留 Responses 项身份 |
 | `ImageSource` | `type`、`url`、`data`、`media_type` | 通用；`type=url` 使用 URL，`type=base64` 使用数据与媒体类型；不下载 URL |
-| `ReasoningContent` | `reasoning`、`mark`、`signature`、`encrypted_content`、`opaque_protocol`、`item`、`origin`、`type`、`summary`、`redacted` | `reasoning/mark` 通用，`type=thinking`；`summary: list[str]` 用于 Responses 摘要；`signature` 用于 Anthropic / Gemini 回放；`encrypted_content` 用于 Responses / Anthropic 密文；`redacted` 用于 Anthropic 隐去思维；`opaque_protocol` 标识签名或密文所属协议 |
+| `ReasoningContent` | `reasoning`、`feedback_item`、`item`、`origin`、`type` | `reasoning: str \| None` 保存可见思维；`feedback_item: Any \| None` 保存原生回传值；固定 `type=thinking`，来源协议由消息或流批次标识 |
 | `ToolCall` | `call_id`、`name`、`arguments`、`signature`、`opaque_protocol`、`origin`、`type`、`item` | 通用完整调用，`type=tool_use`、`arguments: JsonObject`；`signature/opaque_protocol` 用于 Gemini 回放；`item` 当前保留 Responses 项身份 |
 | `ToolResult` | `call_id`、`content`、`name`、`origin`、`type`、`item` | 通用结果，`type=tool_result`；有序文本 / 图片；`item` 当前保留 Responses 结果项身份 |
 | `FunctionTool` | `name`、`description`、`parameters`、`strict`、`origin` | 通用函数声明；`parameters: JsonObject` 保留应用 Schema；`strict` 按上文协议集合处理 |
@@ -41,12 +41,12 @@ Responses decoder 按内容项边界分组，内容未提供身份时使用消�
 序列化成工具文本。audio、file、refusal、citations、用户 metadata、cache_control 等
 不在支持集合的结构在 encoder 投影时静默删除，随后仅验证支持结构。
 
-`ReasoningContent.mark=raw / summary / encrypted` 在中间投影中显式保留。
-原生 encoder 根据源语义设置标记，模型构造时补齐默认值；middleware 公共读取入口先检查结构和必需字段，
-例如缺少 `mark` 时抛出带字段路径的 `MessageValidationError`，不推断原生格式或补齐缺失字段。
-通过检查后的内部投影直接读取已确定字段。
-隐去思维也使用同一 `type=thinking` 结构和 `redacted=True`，摘要为字符串列表；
-对应的原生块类型、摘要对象和回放格式均由各自 codec 构造。标记不写入原生 SDK 字段。
+`ReasoningContent.reasoning` 统一保存接口返回的可见思维文本，包括完整思维或摘要，流式文本实时累积。
+`feedback_item` 保存下一轮接口需要的原始回传值：Responses 的完整 reasoning item、
+Anthropic 的完整 `thinking` / `redacted_thinking` 块、Gemini 的原生 thought part，
+或 Chat / Ollama 的原始思维文本。完整回传值保留到块和响应终态，不产生公开字段增量。
+同协议按回传策略使用该值；跨协议由 decoder 丢弃并记录语义损失，可见文本单独处理。
+源协议编码时不产生损失记录。
 
 ## 模型投影与内部流操作
 
@@ -56,8 +56,8 @@ Responses decoder 按内容项边界分组，内容未提供身份时使用消�
 `origin` 不成为 wire 键，仅附在内部来源包装上用于定位错误。
 字段级往返测试覆盖全部模型字段；增加字段而未补充映射及用例时会失败。
 
-模型属性与少量 wire 键有明确映射：`ReasoningContent.reasoning → thinking`、
-`opaque_protocol → protocol`、`ToolCall.call_id → id`、`arguments → input`、
+模型属性与少量 wire 键有明确映射：`ReasoningContent` 使用同名的 `reasoning` 和 `feedback_item`；
+`ToolCall.opaque_protocol → protocol`、`ToolCall.call_id → id`、`arguments → input`、
 `ToolResult.call_id → tool_use_id`；工具声明使用 `functions` 分组。
 这些键属于中间契约，不接受旧版字段别名。`JsonObject` 是 `dict[str, JsonValue]` 的类型别名，
 运行时仍使用普通字典。
@@ -83,19 +83,19 @@ Responses decoder 按内容项边界分组，内容未提供身份时使用消�
 codec 只依赖公开接口；需要先校验再做能力过滤时，使用 `messages_from_validated_wire` /
 `MessageEvent.from_validated_wire` 投影已检查的结果，不重复校验。
 成功路径不构造错误路径字符串、路径节点或闭包；校验失败后才逐层补充字段名和数组索引。
-工具结果允许的内容种类、reasoning 标记集合由 wire 与模型输入校验共享。
+工具结果允许的内容种类由 wire 与模型输入校验共享；可见 reasoning 只允许字符串或 None。
 事件必需字段和可选字段分别列于规则表中，`finish` 的 `reason`、`messages`、`output_blocks`
 均可缺省；结构字段只能用于对应事件种类。
 
-显式投影会借用嵌套应用字典、摘要列表及内部操作，不能把 `to_wire()` 视作独立深拷贝。
+显式投影会借用嵌套应用字典、原生回传值及内部操作，不能把 `to_wire()` 视作独立深拷贝。
 输入在准备 SDK 请求时完成隔离；公开生成结果和各公开事件拥有自己的可变数据，
 调用者修改历史或已收到的事件不会影响别的结果、事件或请求。
 
 ## 翻译与错误边界
 
 encoder 只读取源协议，不接收目标协议。decoder 只实现自己的目标表达规则；
-opaque 签名所属协议是值的类型约束，不能跨协议套用或伪造。
-中间签名统一为 `signature`；Gemini 原生 `thought_signature` 的入出映射仅由其 encoder / decoder 负责。
+`feedback_item` 的归属使用消息或流的来源协议，跨协议翻译时丢弃并记录损失。
+工具调用上的签名仍使用 `ToolCall.signature`；Gemini 原生 `thought_signature` 映射由其 codec 负责。
 
 decoder 把无法表达的支持值记为 `SemanticLossItem(origin_value, origin_path, reason)`，
 继续处理全部消息、工具或本批输出。完成原生 draft 后统一抛出
@@ -113,7 +113,8 @@ hook 可任意原地编辑 draft，进入 transport 或返回用户的对象身�
 图片、思考、工具与消息名称能力由 `codec.shared.capabilities` 统一判断并记录原因，
 各协议在现有消息和内容循环内调用，损失保留原始来源信息；
 工具结果中的图片在子内容翻译时处理。`reasoning_enable.supports=False` 时所有思考内容记录为不支持的损失。
-`feedback_reasoning_content` 只选择回传范围，策略排除的历史思考不记录损失。
+`should_feedback_reasoning_item` 只选择 `feedback_item` 的回传范围，策略排除的历史思考不记录损失。
+输出 Parameter `feedback_reasoning_item` 选择原生回传值的提取路径，`None` 继承，`omit` 禁用提取。
 历史消息按轮合并和回传判断共用一次分组；输出过滤只在内容实际改变时创建容器，公开出口继续保证结果独立。
 `MessageStream.result` 返回该调用最终 draft 本身；重复读取不另做复制，也不与其他调用共享。
 hook 未传时为空函数，但不会改变默认的 `raise` 策略。

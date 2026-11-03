@@ -13,6 +13,7 @@
 
 - [本地开发规范](guides/development.md)：目录职责、导入、测试辅助代码与结构验证。
 - [generate 性能测试](guides/performance.md)：增量消息缓存、复杂协议负载、无网络 SDK 路径与复测方法。
+- [ReasoningContent 性能复测](performance/2026-11-04-reasoning-content.md)：60 场景、ABBA、最终 Responses 所有权成本和源码范围。
 - [接入新的协议](guides/adding-protocol.md)：Encoder / Decoder 必需接口、固定流程与注册验证。
 - [构建与发行包验证](guides/building.md)：安装、构建和 CI。
 - [完整中间协议](design/protocol-middleware.md)：具体模型、源位置、损失 draft、实例生命周期与缓存边界。
@@ -23,5 +24,5 @@
 - [SDK 客户端生命周期](design/client-lifecycle.md)：实例复用、请求资源隔离和显式关闭。
 
 reference 保存接口、配置与协议模板；guides 保存操作及验证步骤；design 保存实现约束。
-测试与性能结果保存在本机输出目录，复测方法见[开发指南](guides/development.md#验证)和
+常规测试与性能结果保存在本机输出目录，专项报告见对应条目；复测方法见[开发指南](guides/development.md#验证)和
 [性能指南](guides/performance.md)。

@@ -20,12 +20,15 @@ class ChatCompletionsCodec(BaseCodec):
     __slots__ = ("encoder", "decoder", "transport", "_defaults")
     protocol_or_api_style = "openai_chat"
     _DEFAULTS = ProtocolDefaults(
-        feedback_reasoning_content=Config(default_value="always"),
+        should_feedback_reasoning_item=Config(default_value="always"),
         max_tokens=Parameter(path="$.max_completion_tokens", default_value=omit),
         content=Parameter(path="$.choices[0].delta.content", default_value=omit),
         reasoning_content=Parameter(
             path="$.choices[0].delta.reasoning_content",
             default_value=omit,
+        ),
+        feedback_reasoning_item=Parameter(
+            path="$.choices[0].delta.reasoning_content", default_value=omit
         ),
         reasoning_enable=Parameter(
             path="$.reasoning_effort",

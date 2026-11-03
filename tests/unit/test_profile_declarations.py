@@ -272,3 +272,29 @@ def test_parameter_override_replaces_path_and_default_without_changing_source():
     assert resolved.parameter("temperature", "input").path == replacement.path
     assert resolved.parameter("temperature").source == "input"
     assert resolved.get("temperature", "missing") is None
+
+
+def test_reasoning_feedback_parameter_is_an_output_route_with_normal_inheritance():
+    from dataclasses import fields
+
+    from my_llm import OverridableProfile
+
+    declaration = next(
+        field for field in fields(OverridableProfile) if field.name == "feedback_reasoning_item"
+    )
+    assert declaration.default is None
+    assert declaration.metadata["source"] == "output"
+    provider = ProviderProfile(
+        protocol=Config(default_value="openai_responses"),
+        feedback_reasoning_item=Parameter(path="$.vendor.reasoning_item"),
+    )
+    model = ModelProfile(model=Attribute(default_value="demo"))
+    inherited = resolve_profiles(provider, model)
+    assert (
+        inherited.parameter("feedback_reasoning_item", "output").path == "$.vendor.reasoning_item"
+    )
+    assert inherited.parameter("feedback_reasoning_item", "input") is None
+    disabled = resolve_profiles(
+        provider, ModelProfile(model=Attribute(default_value="demo"), feedback_reasoning_item=omit)
+    )
+    assert disabled.parameter("feedback_reasoning_item", "output") is None

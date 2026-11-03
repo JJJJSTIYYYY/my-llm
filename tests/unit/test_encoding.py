@@ -237,12 +237,13 @@ def test_reasoning_replay_pads_tool_calls_according_to_feedback(
     profile = resolve_profiles(
         ProviderProfile(
             protocol=Config(default_value=protocol),
-            feedback_reasoning_content=config(feedback),
+            should_feedback_reasoning_item=config(feedback),
         ),
         ModelProfile(model=Attribute(default_value="demo"), supports_function_calling=config(True)),
     )
     replay = feedback == "always" or feedback == "when_tool_calls" and has_calls
-    result = MyCodec().convert(
+    same_protocol = protocol == "openai_chat"
+    result = MyCodec("ignore").convert(
         [message],
         input_format="openai_chat",
         target_format=protocol,
@@ -250,9 +251,9 @@ def test_reasoning_replay_pads_tool_calls_according_to_feedback(
         reasoning=thinking,
     )["messages"][0]
     result = MyCodec().decoder(protocol).filter_messages([result], profile, reasoning=thinking)[0]
-    assert (key in result) is (replay and (bool(visible) or has_calls))
+    assert (key in result) is (replay and (bool(visible) and same_protocol or has_calls))
     if key in result:
-        assert result[key] == (visible or "")
+        assert result[key] == (visible if visible and same_protocol else "")
 
 
 @pytest.mark.parametrize("protocol", ["anthropic", "gemini", "ollama"])

@@ -337,14 +337,16 @@ def test_unsigned_reasoning_remains_distinct_or_reports_loss(source, target):
     codec = MyCodec()
     incoming = native_reasoning(source)
     codec.codecs[source].encoder.validate_input(incoming)
-    if target in ("anthropic", "gemini"):
+    if source != target:
         with pytest.raises(SemanticLossError) as captured:
             codec.convert(incoming, input_format=source, target_format=target)
-        assert len(captured.value.losses.items) == 1
-        assert captured.value.losses.items[0].origin_path.startswith("$.messages[")
+        assert captured.value.losses.items
+        assert all(
+            loss.origin_path.startswith("$.messages[") for loss in captured.value.losses.items
+        )
         draft = captured.value.draft
         assert "answer" in str(draft)
-        assert "reason" not in str(draft)
+        assert "reason" in str(draft)
     else:
         result = codec.convert(incoming, input_format=source, target_format=target)
         assert "reason" in str(result)
@@ -423,29 +425,27 @@ def test_ollama_schema_loss_preserves_later_tools_and_exact_schema_source():
 
 
 @pytest.mark.parametrize("protocol", ["anthropic", "gemini", "openai_responses"])
-def test_signature_ownership_is_part_of_the_value_when_message_protocol_is_absent(protocol):
-    field, signature = {
-        "anthropic": ("signature", "signed"),
-        "gemini": ("signature", "c2lnbmVk"),
-        "openai_responses": ("encrypted_content", "opaque"),
+def test_feedback_ownership_comes_from_the_message_protocol(protocol):
+    feedback = {
+        "anthropic": {"type": "thinking", "thinking": "reason", "signature": "signed"},
+        "gemini": {"text": "reason", "thought": True, "thought_signature": "c2lnbmVk"},
+        "openai_responses": {"type": "reasoning", "summary": [], "encrypted_content": "opaque"},
     }[protocol]
     values = [
         {
             "role": "assistant",
-            "content": [
-                {
-                    "type": "thinking",
-                    "thinking": "reason",
-                    "mark": "raw",
-                    "protocol": protocol,
-                    field: signature,
-                }
-            ],
+            "protocol": protocol,
+            "content": [{"type": "thinking", "reasoning": "reason", "feedback_item": feedback}],
         }
     ]
     result = MyCodec().decode(values, target_format=protocol)
-    assert signature in str(result)
-    assert "reason" in str(result)
+    assert (
+        "opaque"
+        if protocol == "openai_responses"
+        else "signed"
+        if protocol == "anthropic"
+        else "c2lnbmVk"
+    ) in str(result)
 
 
 @pytest.mark.parametrize("target", PROTOCOLS)
@@ -569,7 +569,7 @@ def test_responses_tool_result_keeps_native_item_identity_for_every_content_form
 
 
 @pytest.mark.parametrize("summary", [[], ["one", "two"]])
-def test_responses_reasoning_uses_summary_strings_and_one_nested_item_identity(summary):
+def test_responses_reasoning_flattens_visible_text_and_keeps_one_native_item_identity(summary):
     native = {
         "type": "reasoning",
         "id": "rs_original",
@@ -580,9 +580,8 @@ def test_responses_reasoning_uses_summary_strings_and_one_nested_item_identity(s
     codec = MyCodec()
     encoded = codec.encode([native], input_format="openai_responses")
     reasoning = encoded.messages[0].content[0]
-    assert reasoning.summary == summary
-    assert reasoning.mark == ("summary" if summary else "encrypted")
-    assert reasoning.to_wire()["summary"] == summary
+    assert reasoning.reasoning == ("\n".join(summary) if summary else None)
+    assert reasoning.feedback_item == native
     assert reasoning.to_wire()["item"] == {"id": "rs_original", "status": "completed"}
     assert codec.decode(encoded.messages, target_format="openai_responses")["messages"] == [native]
 
@@ -646,7 +645,7 @@ def test_responses_final_snapshot_replaces_live_content_item_status():
     assert block["item"] == {"id": "msg_original", "status": "completed"}
 
 
-def test_responses_reasoning_delta_marks_the_first_public_block_as_summary():
+def test_responses_reasoning_delta_starts_one_visible_reasoning_block():
     from my_llm import MessageEvent
     from my_llm.runtime.state import StreamState
 
@@ -662,4 +661,5 @@ def test_responses_reasoning_delta_marks_the_first_public_block_as_summary():
     block = next(
         MessageEvent.from_wire(event).block for event in events if event["type"] == "block_start"
     )
-    assert block.mark == "summary"
+    assert block.reasoning in (None, "")
+    assert block.feedback_item is None

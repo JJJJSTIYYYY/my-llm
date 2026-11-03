@@ -24,10 +24,11 @@ from my_llm.codec.shared.stream import (
     record,
 )
 from my_llm.profile.resolution import ResolvedProfile
-from my_llm.profile.types import Omit
+from my_llm.profile.types import Omit, Parameter
 
 PROTOCOL = "gemini"
 TEXT_PATH = "$.candidates[0].content.parts[0].text"
+FEEDBACK_PATH = "$.candidates[0].content.parts[0]"
 
 
 class GeminiEncoder(BaseEncoder):
@@ -110,6 +111,8 @@ class GeminiEncoder(BaseEncoder):
         repairs incomplete and duplicate associations in its structural scan.
         """
         result = []
+        binding = profile.parameters.get("feedback_reasoning_item") if profile is not None else None
+        custom_feedback = isinstance(binding, Parameter) and binding.path != FEEDBACK_PATH
         id_prefix = f"{uuid4().hex}_" if parameters.get("enable_message_cache", False) else ""
         # Reserve IDs from later messages too, before synthesizing any missing IDs.
         used_ids = {
@@ -132,6 +135,17 @@ class GeminiEncoder(BaseEncoder):
                 block = encode_part(part, call_id, path=f"$.messages[{index}].parts[{part_index}]")
                 if block is None or block.get("type") == "image" and role != "user":
                     continue
+                if block["type"] == "thinking" and custom_feedback:
+                    feedback_item = self.parameter_value(
+                        {"candidates": [{"content": {"parts": [part]}}]},
+                        profile,
+                        "feedback_reasoning_item",
+                        FEEDBACK_PATH,
+                        _MISSING,
+                    )
+                    block.pop("feedback_item", None)
+                    if feedback_item is not _MISSING:
+                        block["feedback_item"] = feedback_item
                 content.append(originated(block, f"$.messages[{index}].parts[{part_index}]", part))
             result.append(
                 {
@@ -180,6 +194,12 @@ class GeminiEncoder(BaseEncoder):
         delivery belong to StreamState rather than this protocol parser.
         """
         result = []
+        feedback_parameter = (
+            profile.parameters.get("feedback_reasoning_item") if profile is not None else None
+        )
+        custom_feedback = (
+            isinstance(feedback_parameter, Parameter) and feedback_parameter.path != FEEDBACK_PATH
+        )
         for event_index, event in enumerate(chunks):
             if event.get("type") == "error" or event.get("error"):
                 raise ResponseFailedError(
@@ -228,13 +248,17 @@ class GeminiEncoder(BaseEncoder):
                             block["input"] = capture(block["input"])
                         # A standard text path uses each native part's thought flag.
                         # An overridden path addresses one exact SDK-root parameter.
+                        if block["type"] == "thinking" and custom_feedback:
+                            block.pop("feedback_item", None)
                         if block["type"] in ("text", "thinking"):
                             name = "reasoning_content" if block["type"] == "thinking" else "content"
                             seen_text.add(name)
                             if profile is not None:
                                 parameter = profile.parameter(name, "output")
                                 if parameter is not None and parameter.path != TEXT_PATH:
-                                    continue
+                                    if block["type"] == "text":
+                                        continue
+                                    block["reasoning"] = None
                         ops.append(
                             {
                                 "type": "block_append",
@@ -259,7 +283,7 @@ class GeminiEncoder(BaseEncoder):
             if profile is not None:
                 for name, kind, field in (
                     ("content", "text", "text"),
-                    ("reasoning_content", "thinking", "thinking"),
+                    ("reasoning_content", "thinking", "reasoning"),
                 ):
                     parameter = profile.parameter(name, "output")
                     if parameter is None:
@@ -285,10 +309,33 @@ class GeminiEncoder(BaseEncoder):
                                 "block": {
                                     "type": kind,
                                     field: value,
-                                    **({"mark": "raw"} if kind == "thinking" else {}),
                                 },
                             },
                         )
+            if custom_feedback:
+                feedback_item = self.parameter_value(
+                    event,
+                    profile,
+                    "feedback_reasoning_item",
+                    FEEDBACK_PATH,
+                    _MISSING,
+                    use_default=has_parts,
+                )
+                if feedback_item is not _MISSING and not isinstance(feedback_item, Omit):
+                    position = next(
+                        (index for index, op in enumerate(ops) if op["type"] == "finish"), len(ops)
+                    )
+                    ops.insert(
+                        position,
+                        {
+                            "type": "block_append",
+                            "block": {
+                                "type": "thinking",
+                                "reasoning": None,
+                                "feedback_item": capture(feedback_item),
+                            },
+                        },
+                    )
             for operation_index, operation in enumerate(ops):
                 event_path = f"$.chunks[{parameters.get('chunk_offset', 0) + event_index}]"
                 if "block" in operation and not hasattr(operation["block"], "origin_path"):

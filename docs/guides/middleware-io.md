@@ -7,9 +7,15 @@ Model 未设置协议时继承 Provider。
 
 ```python
 from my_llm import (
-    Attribute, Config, ModelProfile, MyLLM, ProviderProfile,
-    TextContent, UserMessage,
+    Attribute,
+    Config,
+    ModelProfile,
+    MyLLM,
+    ProviderProfile,
+    TextContent,
+    UserMessage,
 )
+
 
 async def ask():
     # 连接和认证仍按通常方式配置；例如 OpenAI SDK 使用 OPENAI_API_KEY。
@@ -17,7 +23,9 @@ async def ask():
     model = ModelProfile(model=Attribute(default_value="your-model"))
     history = [UserMessage(role="user", content=[TextContent("你好")])]
     async with MyLLM(
-        provider=provider, model=model, stdio_protocol="middleware",
+        provider=provider,
+        model=model,
+        stdio_protocol="middleware",
     ) as llm:
         reply = await llm.generate(messages=history)
         # reply 是 AssistantMessage，仍使用有序的具体内容块。
@@ -65,15 +73,17 @@ reply = await llm.generate(messages=middle.messages, tools=middle.tools)
 ```python
 from my_llm import AssistantMessage, FunctionTool, ToolCall, ToolMessage, ToolResult
 
-tools = [FunctionTool(
-    name="lookup",
-    description="查询名称",
-    parameters={
-        "type": "object",
-        "properties": {"name": {"type": "string"}},
-        "required": ["name"],
-    },
-)]
+tools = [
+    FunctionTool(
+        name="lookup",
+        description="查询名称",
+        parameters={
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+    )
+]
 history = [
     AssistantMessage("assistant", [ToolCall("call_1", "lookup", {"name": "示例"})]),
     ToolMessage("user", [ToolResult("call_1", [TextContent("查询结果")])]),
@@ -100,17 +110,18 @@ history = [
 翻译在既有循环中惰性读取有效消息及必要的空结果。回传思维链补空规则共用同一实现。
 `ToolCall.arguments` 是完整 JSON 对象，结果对象/数组应先序列化为 `TextContent`，图片使用 `ImageContent`。
 图片支持用户消息及工具结果；指令为文本，思维和工具调用属于 assistant。
-opaque 思维的 `opaque_protocol`、签名和加密内容仍需符合上游的原生回放条件。
+思维的 `feedback_item` 保存原生回传值，归属由消息的 `protocol` 或流批次协议确定；跨协议时丢弃并记录语义损失。
 
 `Message` 和所有内容块都可携带 `item=ItemIdentity(id=..., status=...)`，用于保留源输出项身份，
 当前主要用于 Responses 回放。应用通常直接保存 encoder 或生成接口返回的模型，无须手动设置。
 `ToolCall.call_id` / `ToolResult.call_id` 关联工具调用与结果，和源输出项 id 的用途不同。
 流事件的 `source_ref` 是源块地址，`index` 是本次返回内容的顺序。
 
-思维模型始终使用 `ReasoningContent`：正文为 `reasoning`，标记为
-`mark="raw" / "summary" / "encrypted"`，可选摘要为 `summary: list[str]`，
-隐去思维通过 `redacted=True` 表示。原生摘要对象、隐去块和签名字段由相应 codec 转换，
-应用直接使用这些模型字段即可。
+思维模型始终使用 `ReasoningContent`：`reasoning` 为可见文本，`feedback_item` 为原生回传值，
+两者都可为 `None`。Responses 保存完整 reasoning item，Anthropic 保存完整
+`thinking` / `redacted_thinking` 块，应用无需自行拆分摘要、签名或密文。
+`should_feedback_reasoning_item` 决定历史回传时机，输出 Parameter `feedback_reasoning_item`
+决定提取路径。可见正文通过 `field="reasoning"` 实时累积；回传值在完整块或终态保留，不产生公开增量。
 
 ## 流式输出
 
@@ -121,7 +132,7 @@ stream = await llm.generate(messages=history, stream=True)
 async with stream:
     async for event in stream:
         if event.type == "delta":
-            # field 为 text 或 thinking；不会出现工具参数碎片。
+            # field 为 text 或 reasoning；不会出现工具参数碎片。
             print(event.field, event.value)
         elif event.type == "tool":
             call = event.block
@@ -139,7 +150,7 @@ usage = llm.get_last_usage()
 | --- | --- |
 | `start` | 响应开始 |
 | `block_start` | `index`、`source_ref`、初始 `block` |
-| `delta` | `index`、`source_ref`、`field=text / thinking`、`value` |
+| `delta` | `index`、`source_ref`、`field=text / reasoning`、`value` |
 | `block_stop` | `index`、`source_ref`、完整文本/思维 `block` |
 | `block` | `index`、`source_ref`、完整非文本块 |
 | `tool` | `index`、`tool_index`、`source_ref`、完整 `ToolCall` |

@@ -21,12 +21,14 @@ from my_llm.codec.shared.conversion import (
 from my_llm.codec.shared.stream import (
     BlockRef,
     encode_batch,
+    feedback_operation,
     metadata,
     optional_usage,
     project_metadata,
     record,
 )
 from my_llm.profile.resolution import ResolvedProfile
+from my_llm.profile.types import Parameter
 
 PROTOCOL = "openai_chat"
 TOOL_RESULT_PARTS = frozenset(("text", "image_url", "input_audio", "file", "refusal"))
@@ -136,6 +138,13 @@ class ChatCompletionsEncoder(BaseEncoder):
             if parameters.get("enable_message_cache", False)
             else "legacy_function_call"
         )
+        feedback_binding = (
+            profile.parameters.get("feedback_reasoning_item") if profile is not None else None
+        )
+        custom_feedback = (
+            isinstance(feedback_binding, Parameter)
+            and feedback_binding.path != "$.choices[0].delta.reasoning_content"
+        )
         for index, message in enumerate(messages):
             path = f"$.messages[{index}]"
             role = message.get("role")
@@ -149,16 +158,23 @@ class ChatCompletionsEncoder(BaseEncoder):
                     native_content, path=f"{path}.content", allow_images=role == "user"
                 )
             )
-            if message.get("reasoning_content"):
+            reasoning = message.get("reasoning_content")
+            feedback = (
+                self.parameter_value(
+                    {"choices": [{"delta": message}]},
+                    profile,
+                    "feedback_reasoning_item",
+                    "$.choices[0].delta.reasoning_content",
+                )
+                if custom_feedback
+                else reasoning
+            )
+            if reasoning is not None or feedback is not None:
                 content.append(
                     originated(
-                        {
-                            "type": "thinking",
-                            "thinking": message["reasoning_content"],
-                            "mark": "raw",
-                        },
+                        {"type": "thinking", "reasoning": reasoning, "feedback_item": feedback},
                         f"{path}.reasoning_content",
-                        message["reasoning_content"],
+                        message.get("reasoning_content"),
                     )
                 )
             content.extend(
@@ -261,11 +277,20 @@ class ChatCompletionsEncoder(BaseEncoder):
                             {
                                 "type": "block_delta",
                                 "ref": BlockRef(kind),
-                                "field": "text" if kind == "text" else "thinking",
+                                "field": "text" if kind == "text" else "reasoning",
                                 "value": value,
                                 "kind": kind,
                             }
                         )
+                feedback = self.parameter_value(
+                    event,
+                    profile,
+                    "feedback_reasoning_item",
+                    "$.choices[0].delta.reasoning_content",
+                    use_default=choice.get("finish_reason") is None,
+                )
+                if feedback is not None:
+                    ops.append(feedback_operation(BlockRef("thinking"), feedback))
                 for call in delta.get("tool_calls") or []:
                     if call.get("type", "function") == "function":
                         ops.extend(
@@ -286,7 +311,7 @@ class ChatCompletionsEncoder(BaseEncoder):
                 origin_path, origin_value = event_path, event
                 if operation.get("type") == "block_delta" and operation.get("field") in (
                     "text",
-                    "thinking",
+                    "reasoning",
                 ):
                     name = "content" if operation["field"] == "text" else "reasoning_content"
                     binding = profile.parameter(name, "output") if profile is not None else None

@@ -48,8 +48,8 @@ def test_mutable_profile_defaults_are_independent_between_instances():
     first_model.max_context_window.default_value = 1024
     assert second_model.max_context_window.default_value == 256000
 
-    first_defaults = ProtocolDefaults(feedback_reasoning_content=Config(default_value="none"))
-    second_defaults = ProtocolDefaults(feedback_reasoning_content=Config(default_value="none"))
+    first_defaults = ProtocolDefaults(should_feedback_reasoning_item=Config(default_value="none"))
+    second_defaults = ProtocolDefaults(should_feedback_reasoning_item=Config(default_value="none"))
     first_defaults.supports_stream.default_value = False
     first_defaults.api_key.path = "$.extra_headers.authorization"
     assert second_defaults.supports_stream.default_value is True

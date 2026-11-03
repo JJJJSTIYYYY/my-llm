@@ -36,5 +36,6 @@ def test_falsey_callable_hook_receives_the_complete_delivered_draft(direction):
     assert losses.origin_source == context.origin_source == direction
     assert messages[0]["content"] == [
         {"type": "text", "text": "answer"},
+        {"type": "thinking", "thinking": "reason", "signature": ""},
         {"type": "text", "text": "repaired"},
     ]

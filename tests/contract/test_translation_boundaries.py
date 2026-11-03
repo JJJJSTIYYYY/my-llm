@@ -243,7 +243,7 @@ def test_profile_paths_translate_configured_nonstandard_fields_without_sibling_l
         reasoning_content=parameter(
             "reasoning_content", protocol="openai_chat", path="$.choices[0].delta.vendor_reasoning"
         ),
-        feedback_reasoning_content=config("always"),
+        should_feedback_reasoning_item=config("always"),
     )
     incoming = [
         {

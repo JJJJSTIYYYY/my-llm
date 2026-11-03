@@ -238,7 +238,7 @@ class GeminiDecoder(BaseDecoder):
                     native_support=False,
                     path=f"{getattr(message, 'origin_path', f'$.messages[{index}]')}.name",
                 )
-            foreign = source_protocol(message) != PROTOCOL
+            foreign = (source_protocol(message) or parameters.get("source_protocol")) != PROTOCOL
             parts = []
             for block in message["content"]:
                 if not input_content(block, profile, feedback=feedback):
@@ -310,23 +310,11 @@ class GeminiDecoder(BaseDecoder):
                 ) == PROTOCOL
             parts = []
             reason = None
-            if (
-                kind == "block_start"
-                and event.get("block", {}).get("type") == "thinking"
-                and not native_owner
-            ):
-                report_loss(
-                    event["block"],
-                    "Gemini cannot replay reasoning without its native thought signature",
-                )
-                continue
-            if kind == "delta" and event.get("field") in ("text", "thinking"):
-                if event["field"] == "thinking" and parameters.get("source_protocol") != PROTOCOL:
-                    continue
+            if kind == "delta" and event.get("field") in ("text", "reasoning"):
                 parts = [
                     {
                         "text": event["value"],
-                        **({"thought": True} if event["field"] == "thinking" else {}),
+                        **({"thought": True} if event["field"] == "reasoning" else {}),
                     }
                 ]
             elif kind in ("tool", "block"):
@@ -335,6 +323,8 @@ class GeminiDecoder(BaseDecoder):
                 part = decode_part(block, foreign=foreign)
                 if part is None:
                     continue
+                if part is block.get("feedback_item"):
+                    part = capture(part)
                 if "function_call" in part:
                     part["function_call"]["args"] = capture(part["function_call"]["args"])
                 elif "function_response" in part:
@@ -342,23 +332,15 @@ class GeminiDecoder(BaseDecoder):
                     response["response"] = capture(response["response"])
                 parts = [part]
             elif kind == "block_stop":
-                if event["block"].get("type") == "thinking" and not native_owner:
-                    report_loss(
-                        event["block"],
-                        "Gemini cannot replay reasoning without its native thought signature",
-                    )
-                    continue
-                if (
-                    event["block"].get("type") == "thinking"
-                    and not event["block"].get("signature")
-                    and native_owner
-                ):
-                    report_loss(
-                        event["block"], "Gemini reasoning requires a native thought signature"
-                    )
+                block = event["block"]
+                item = (
+                    decode_part(block, foreign=not native_owner)
+                    if block["type"] == "thinking"
+                    else None
+                )
                 metadata = (
-                    {"thought_signature": event["block"]["signature"]}
-                    if "signature" in event["block"]
+                    {"thought_signature": item["thought_signature"]}
+                    if isinstance(item, dict) and "thought_signature" in item
                     else {}
                 )
                 if metadata and native_owner:

@@ -4,6 +4,7 @@ from typing import Any
 
 from openai.types.responses import ResponseInputItemParam, ToolParam
 
+from my_llm.basic.data import capture
 from my_llm.basic.exceptions import ResponseFailedError, ResponseIncompleteError
 from my_llm.basic.semantic_loss import originated
 from my_llm.codec.base.encoder import BaseEncoder
@@ -189,22 +190,20 @@ class ResponsesEncoder(BaseEncoder):
                     }
                 ]
             elif kind == "reasoning":
-                summary = [
+                reasoning = "\n".join(
                     part.get("text", "")
-                    for part in item.get("summary", [])
-                    if part.get("type") == "summary_text"
-                ]
-                reasoning = "".join(summary)
+                    for parts in (item.get("summary", []), item.get("content") or [])
+                    for part in parts
+                    if part.get("type") in ("summary_text", "reasoning_text")
+                )
                 content = [
                     {
                         "type": "thinking",
-                        "thinking": reasoning,
-                        "mark": "encrypted"
-                        if item.get("encrypted_content") is not None and not reasoning
-                        else "summary",
-                        "summary": summary,
+                        "reasoning": reasoning or None,
+                        "feedback_item": self.parameter_value(
+                            {"item": item}, profile, "feedback_reasoning_item", "$.item"
+                        ),
                         **item_identity,
-                        **select(item, "encrypted_content"),
                     }
                 ]
             elif kind == "message":
@@ -324,7 +323,7 @@ class ResponsesEncoder(BaseEncoder):
                 kind == "response.output_item.done"
                 and event.get("item", {}).get("type") == "function_call"
             ):
-                message = self._messages([event["item"]])[0]
+                message = self._messages([event["item"]], profile)[0]
                 block = message["content"][0]
                 ops.append(
                     {
@@ -343,21 +342,27 @@ class ResponsesEncoder(BaseEncoder):
                             "block": encode_content([part])[0],
                         }
                     )
-            elif kind in (
-                "response.reasoning_summary_part.added",
-                "response.reasoning_summary_part.done",
+            elif kind == "response.reasoning_summary_part.added" and event.get("summary_index", 0):
+                ops.append(
+                    {
+                        "type": "block_delta",
+                        "ref": BlockRef("thinking", index),
+                        "kind": "thinking",
+                        "field": "reasoning",
+                        "value": "\n",
+                    }
+                )
+            elif (
+                kind == "response.output_item.done"
+                and event.get("item", {}).get("type") == "reasoning"
             ):
-                part = event["part"]
+                block = self._messages([event["item"]], profile)[0]["content"][0]
+                block["feedback_item"] = capture(block["feedback_item"])
                 ops.append(
                     {
                         "type": "block_set",
-                        "ref": BlockRef("thinking", index, event.get("summary_index", 0)),
-                        "block": {
-                            "type": "thinking",
-                            "thinking": part.get("text", ""),
-                            "mark": "summary",
-                            "summary": [part.get("text", "")],
-                        },
+                        "ref": BlockRef("thinking", index),
+                        "block": block,
                     }
                 )
             elif kind == "response.completed":
@@ -377,6 +382,7 @@ class ResponsesEncoder(BaseEncoder):
                         ),
                         self._snapshot(
                             output,
+                            profile=profile,
                             path=f"$.chunks[{parameters.get('chunk_offset', 0) + event_index}].response.output",
                         ),
                         {
@@ -393,6 +399,7 @@ class ResponsesEncoder(BaseEncoder):
             for name, event_type, block_kind in (
                 ("content", "response.output_text.delta", "text"),
                 ("reasoning_content", "response.reasoning_summary_text.delta", "thinking"),
+                ("reasoning_content", "response.reasoning_text.delta", "thinking"),
             ):
                 if kind != event_type:
                     continue
@@ -404,16 +411,10 @@ class ResponsesEncoder(BaseEncoder):
                             "ref": BlockRef(
                                 block_kind,
                                 index,
-                                event.get(
-                                    "summary_index"
-                                    if block_kind == "thinking"
-                                    else "content_index",
-                                    0,
-                                ),
+                                0 if block_kind == "thinking" else event.get("content_index", 0),
                             ),
                             "kind": block_kind,
-                            "field": "text" if block_kind == "text" else "thinking",
-                            **({"mark": "summary"} if block_kind == "thinking" else {}),
+                            "field": "text" if block_kind == "text" else "reasoning",
                             "value": value,
                         }
                     )
@@ -423,7 +424,7 @@ class ResponsesEncoder(BaseEncoder):
                 if item_id:
                     header = self._item_metadata(item) or {"id": item_id}
                     if not item:
-                        if "reasoning_summary" in kind:
+                        if "reasoning_summary" in kind or "reasoning_text" in kind:
                             header["type"] = "reasoning"
                         elif "function_call_arguments" in kind:
                             header["type"] = "function_call"
@@ -484,12 +485,13 @@ class ResponsesEncoder(BaseEncoder):
         self,
         output: list,
         *,
+        profile: ResolvedProfile | None = None,
         path: str = "$.response.output",
     ) -> dict:
         """Address recognized final blocks with their live item/part coordinates."""
         blocks = []
         for index, item in enumerate(output):
-            encoded = self._messages([item])
+            encoded = self._messages([item], profile)
             if not encoded:
                 continue
             message = encoded[0]
@@ -497,21 +499,13 @@ class ResponsesEncoder(BaseEncoder):
                 kind = block["type"]
                 origin_path = f"{path}[{index}]"
                 if kind == "thinking":
-                    for summary_index, summary in enumerate(block["summary"] or [""]):
-                        blocks.append(
-                            {
-                                "ref": BlockRef(kind, index, summary_index),
-                                "block": originated(
-                                    {
-                                        **block,
-                                        "thinking": summary,
-                                        "summary": [summary] if block["summary"] else [],
-                                    },
-                                    origin_path,
-                                    item,
-                                ),
-                            }
-                        )
+                    block["feedback_item"] = capture(block["feedback_item"])
+                    blocks.append(
+                        {
+                            "ref": BlockRef(kind, index),
+                            "block": originated(block, origin_path, item),
+                        }
+                    )
                 else:
                     origin_value = item
                     if item.get("type") == "message":

@@ -22,7 +22,9 @@ decoder 完整翻译后统一报出本批损失，请求在发送前处理，响
 `MessageValidationError`，无效配置或参数值使用 `ConfigurationError`。
 
 `reasoning_enable.supports=False` 时，所有思考内容都记录为不支持的损失。
-`feedback_reasoning_content` 只决定回传全部历史思考、工具调用消息中的思考或不回传，
+`ReasoningContent.feedback_item` 保存原生回传值，跨协议由 decoder 丢弃并记录语义损失。
+`feedback_reasoning_item` 是输出 Parameter，选择回传值提取路径，`omit` 禁用提取。
+`should_feedback_reasoning_item` 只决定回传全部历史的回传值、工具调用消息的回传值或不回传，
 因回传策略排除的内容不记录损失；例如 `when_tool_calls` 会静默跳过没有工具调用的历史思考。
 Chat / Ollama 在回传策略启用且 assistant 含工具调用时，如果缺少思考正文，分别补
 `reasoning_content=""` / `thinking=""`，不依赖本次生成是否开启 reasoning。

@@ -48,19 +48,14 @@ def intermediate_block(block: dict, *, path: str | None = None) -> dict | None:
     value = native_block(block, path=path)
     if value is None:
         return None
-    if value["type"] == "redacted_thinking":
+    if value["type"] in ("thinking", "redacted_thinking"):
         value = {
             "type": "thinking",
-            "thinking": "",
-            "mark": "encrypted",
-            "redacted": True,
-            "encrypted_content": value["data"],
-            "protocol": "anthropic",
+            "reasoning": value.get("thinking"),
+            "feedback_item": value,
         }
         if path is not None:
             value = originated(value, path, block)
-    elif value["type"] == "thinking":
-        value["mark"] = "raw"
     elif value["type"] == "tool_result":
         value.setdefault("tool_use_id", None)
     return value

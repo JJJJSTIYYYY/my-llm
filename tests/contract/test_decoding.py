@@ -125,7 +125,7 @@ def test_gemini_thought_signature_and_anthropic_signature_survive_stream_collect
         },
     )
     _, anthropic = render("anthropic", "anthropic", incoming)
-    assert anthropic.messages()[0]["content"][0]["signature"] == "signed"
+    assert anthropic.messages()[0]["content"][0]["feedback_item"]["signature"] == "signed"
 
 
 def test_gemini_signatures_on_ordinary_text_are_outside_the_supported_set():
@@ -201,11 +201,8 @@ def test_redacted_anthropic_block_survives_collected_and_streamed_output():
     assert state.messages()[0]["content"] == [
         {
             "type": "thinking",
-            "thinking": "",
-            "mark": "encrypted",
-            "redacted": True,
-            "encrypted_content": "opaque",
-            "protocol": "anthropic",
+            "reasoning": None,
+            "feedback_item": {"type": "redacted_thinking", "data": "opaque"},
         }
     ]
     block_event = next(e for e in output if e["type"] == "content_block_start")

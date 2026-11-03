@@ -71,8 +71,7 @@ def encode_part(part: dict, call_id: str, *, path: str = "$") -> dict | None:
     """Normalize supported Gemini content, function parts and native thought signatures."""
     common = (
         {"signature": part["thought_signature"]}
-        if "thought_signature" in part
-        and ("function_call" in part or "text" in part and part.get("thought"))
+        if "thought_signature" in part and "function_call" in part
         else {}
     )
     if isinstance(common.get("signature"), bytes):
@@ -119,10 +118,20 @@ def encode_part(part: dict, call_id: str, *, path: str = "$") -> dict | None:
         }
     if "text" in part:
         return (
-            {**common, "type": "thinking", "thinking": part["text"], "mark": "raw"}
+            {
+                "type": "thinking",
+                "reasoning": part["text"],
+                "feedback_item": select(part, "text", "thought", "thought_signature"),
+            }
             if part.get("thought")
             else {**common, "type": "text", "text": part["text"]}
         )
+    if part.get("thought") and "thought_signature" in part:
+        return {
+            "type": "thinking",
+            "reasoning": None,
+            "feedback_item": select(part, "text", "thought", "thought_signature"),
+        }
     if "inline_data" in part or "file_data" in part:
         data = part.get("inline_data", part.get("file_data"))
         mime = data.get("mime_type", "application/octet-stream")

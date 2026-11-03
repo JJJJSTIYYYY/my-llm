@@ -3,7 +3,7 @@
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.anthropic.content import native_block
 from my_llm.codec.shared.conversion import select, text_result
-from my_llm.codec.shared.input import input_content
+from my_llm.codec.shared.input import input_content, without_feedback
 from my_llm.profile.resolution import ResolvedProfile
 
 
@@ -11,13 +11,8 @@ def foreign_block(block: dict) -> dict | None:
     """Adapt foreign content for Anthropic and report reasoning/signature losses."""
     kind = block.get("type")
     if kind == "thinking":
-        if block.get("protocol") == "anthropic":
-            return block
-        report_loss(block, "Anthropic cannot replay reasoning without its native signature")
-        return None
-    if kind in ("text", "tool_use") and any(
-        block.get(key) for key in ("signature", "encrypted_content")
-    ):
+        return without_feedback(block)
+    if kind in ("text", "tool_use") and block.get("signature") is not None:
         report_loss(block, "Anthropic cannot preserve another protocol's reasoning signature")
     if kind == "tool_result":
         content = block.get("content")
@@ -43,14 +38,17 @@ def decode_block(block: dict, *, profile: ResolvedProfile | None = None) -> dict
             ],
         }
     if block["type"] == "thinking":
-        if block.get("redacted"):
-            return {"type": "redacted_thinking", "data": block["encrypted_content"]}
-        if not block.get("signature"):
+        item = block.get("feedback_item")
+        if not isinstance(item, dict) or item.get("type") not in ("thinking", "redacted_thinking"):
+            if item is not None:
+                report_loss(block, "Anthropic reasoning requires a native feedback item")
+            return (
+                {"type": "thinking", "thinking": block["reasoning"], "signature": ""}
+                if profile is None and block.get("reasoning") is not None
+                else None
+            )
+        if profile is not None and item["type"] == "thinking" and not item.get("signature"):
             report_loss(block, "Anthropic reasoning requires a native signature")
             return None
-        return {
-            "type": "thinking",
-            "thinking": block["thinking"] or "\n".join(block.get("summary", ())),
-            "signature": block["signature"],
-        }
+        return item
     return native_block(block)

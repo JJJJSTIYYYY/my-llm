@@ -20,7 +20,7 @@ class OllamaCodec(BaseCodec):
     __slots__ = ("encoder", "decoder", "transport", "_defaults")
     protocol_or_api_style = "ollama"
     _DEFAULTS = ProtocolDefaults(
-        feedback_reasoning_content=Config(default_value="always"),
+        should_feedback_reasoning_item=Config(default_value="always"),
         api_key=Parameter(
             path="$.extra_headers.Authorization",
             default_value=omit,
@@ -28,6 +28,7 @@ class OllamaCodec(BaseCodec):
         max_tokens=Parameter(path="$.options.num_predict", default_value=omit),
         content=Parameter(path="$.message.content", default_value=omit),
         reasoning_content=Parameter(path="$.message.thinking", default_value=omit),
+        feedback_reasoning_item=Parameter(path="$.message.thinking", default_value=omit),
         reasoning_enable=Parameter(path="$.think", default_value=True),
         reasoning_effort=Parameter(supports=False, path="$.think", default_value=omit),
     )

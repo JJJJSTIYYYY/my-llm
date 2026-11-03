@@ -262,13 +262,15 @@ async def policy_scenario(upstream, model_id, key, case, *, request_interval=0.0
     prompt = "Reply with exactly SENSENOVA_OK and nothing else."
     messages = [
         UserMessage("user", [TextContent("Remember the test marker.")]),
-        AssistantMessage("assistant", [ReasoningContent(thought), TextContent("Ready.")]),
+        AssistantMessage(
+            "assistant", [ReasoningContent(thought, feedback_item=thought), TextContent("Ready.")]
+        ),
         UserMessage("user", [TextContent(prompt)]),
     ]
     declared = []
     if unsupported:
         settings = {
-            "feedback_reasoning_content": config("none"),
+            "should_feedback_reasoning_item": config("none"),
             "supports_vision": config(False),
             "supports_function_calling": config(False),
             "supports_message_name": config(False),
@@ -285,7 +287,7 @@ async def policy_scenario(upstream, model_id, key, case, *, request_interval=0.0
         messages[-1].content.append(ImageContent(ImageSource("url", url=picture)))
         declared = tools("middleware")
     else:
-        settings = {"feedback_reasoning_content": config(case.removeprefix("feedback_"))}
+        settings = {"should_feedback_reasoning_item": config(case.removeprefix("feedback_"))}
     before = deepcopy((messages, declared))
     input_losses, output_losses, drafts = [], [], []
 

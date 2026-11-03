@@ -21,6 +21,7 @@ from my_llm.codec.ollama.schema import REQUEST_SCHEMA, validate_ollama_values
 from my_llm.codec.shared.capabilities import content_capability
 from my_llm.codec.shared.conversion import (
     decode_functions,
+    scalar_reasoning,
     source_protocol,
 )
 from my_llm.codec.shared.input import (
@@ -270,7 +271,7 @@ class OllamaDecoder(BaseDecoder):
                     native_support=False,
                     path=f"{getattr(message, 'origin_path', f'$.messages[{index}]')}.name",
                 )
-            context_owner = source_protocol(message)
+            context_owner = source_protocol(message) or parameters.get("source_protocol")
             calls = []
             images = []
             reasoning = []
@@ -300,7 +301,9 @@ class OllamaDecoder(BaseDecoder):
                         }
                     )
                 elif kind == "thinking":
-                    reasoning.append(block["thinking"] or "\n".join(block.get("summary", ())))
+                    value = scalar_reasoning(block, feedback=profile is not None)
+                    if value is not None:
+                        reasoning.append(value)
                 elif kind == "text":
                     text_parts.append(block.get("text", ""))
                 elif kind == "image":
@@ -367,14 +370,21 @@ class OllamaDecoder(BaseDecoder):
                     parameters.get("source_protocol") if owner is None else owner
                 ) == PROTOCOL
             message = {"role": "assistant", "content": ""}
-            if kind == "delta" and event["field"] in ("text", "thinking"):
-                field = {"text": "content", "thinking": "thinking"}[event["field"]]
+            if kind == "delta" and event["field"] in ("text", "reasoning"):
+                field = {"text": "content", "reasoning": "thinking"}[event["field"]]
                 message[field] = event["value"]
-            elif kind == "block_stop" and not native_owner:
-                foreign_block(event["block"])
+            elif kind == "block_stop":
+                block = event["block"]
+                if not native_owner:
+                    foreign_block(block)
+                elif block["type"] == "thinking":
+                    scalar_reasoning(block)
                 continue
             elif kind == "block" and event["block"]["type"] == "thinking":
-                foreign_block(event["block"])
+                if not native_owner:
+                    foreign_block(event["block"])
+                else:
+                    scalar_reasoning(event["block"])
                 continue
             elif kind == "tool":
                 block = event["block"]

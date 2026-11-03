@@ -20,10 +20,11 @@ class AnthropicCodec(BaseCodec):
     __slots__ = ("encoder", "decoder", "transport", "_defaults")
     protocol_or_api_style = "anthropic"
     _DEFAULTS = ProtocolDefaults(
-        feedback_reasoning_content=Config(default_value="always"),
+        should_feedback_reasoning_item=Config(default_value="always"),
         max_tokens=Parameter(path="$.max_tokens", default_value=omit),
         content=Parameter(path="$.delta.text", default_value=omit),
         reasoning_content=Parameter(path="$.delta.thinking", default_value=omit),
+        feedback_reasoning_item=Parameter(path="$.content_block", default_value=omit),
         reasoning_enable=Parameter(
             path="$.thinking",
             default_value={"type": "enabled", "budget_tokens": 1024},

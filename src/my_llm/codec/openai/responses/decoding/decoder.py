@@ -7,7 +7,7 @@ from uuid import uuid4
 from openai.resources.responses import AsyncResponses
 from openai.types.responses import ResponseInputItemParam, ToolParam
 
-from my_llm.basic.data import dictionary_views
+from my_llm.basic.data import capture, dictionary_views
 from my_llm.basic.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.cache.compiled_cache import _MISSING, _plan, parameter_types
@@ -193,12 +193,12 @@ class ResponsesDecoder(BaseDecoder):
                     path=f"{getattr(message, 'origin_path', f'$.messages[{index}]')}.name",
                 )
             group_start = len(result)
-            context_owner = source_protocol(message)
+            context_owner = source_protocol(message) or parameters.get("source_protocol")
             content = []
             for block in message["content"]:
                 if not input_content(block, profile, feedback=feedback):
                     continue
-                owner = block.get("protocol")
+                owner = block.get("protocol") if block.get("type") != "thinking" else None
                 if (context_owner if owner is None else owner) != PROTOCOL:
                     block = foreign_block(block)
                 if block is not None:
@@ -278,22 +278,24 @@ class ResponsesDecoder(BaseDecoder):
                         }
                     )
                 else:
-                    item = {
-                        "id": f"rs_{id_prefix}{len(result)}",
-                        **select(block.get("item", {}), "id", "status"),
-                        **select(block, "encrypted_content"),
-                        "type": "reasoning",
-                        "summary": reasoning_summary(block),
-                    }
-                    if (
-                        result
-                        and result[-1].get("type") == "reasoning"
-                        and result[-1].get("id") == item["id"]
-                    ):
-                        result[-1]["summary"].extend(item["summary"])
-                        result[-1].update(select(item, "status", "encrypted_content"))
+                    feedback_item = block.get("feedback_item")
+                    if isinstance(feedback_item, dict):
+                        result.append(feedback_item)
                     else:
-                        result.append(item)
+                        if feedback_item is not None:
+                            report_loss(
+                                block,
+                                "Responses reasoning feedback requires a native reasoning item",
+                            )
+                        if profile is None and block.get("reasoning"):
+                            result.append(
+                                {
+                                    "id": f"rs_{id_prefix}{len(result)}",
+                                    **select(block.get("item", {}), "id", "status"),
+                                    "type": "reasoning",
+                                    "summary": reasoning_summary(block),
+                                }
+                            )
             flush()
             if len(result) == group_start:
                 result.append(
@@ -342,7 +344,11 @@ class ResponsesDecoder(BaseDecoder):
         for event in events(chunks):
             kind = event.get("type")
             if kind in ("block_start", "block_stop", "tool", "block"):
-                owner = event["block"].get("protocol")
+                owner = (
+                    event["block"].get("protocol")
+                    if event["block"].get("type") != "thinking"
+                    else None
+                )
                 native_owner = (
                     parameters.get("source_protocol") if owner is None else owner
                 ) == PROTOCOL
@@ -390,8 +396,8 @@ class ResponsesDecoder(BaseDecoder):
                         else {"type": "output_text", "text": "", "annotations": [], "logprobs": []},
                     }
                 )
-            elif kind == "delta" and event["field"] in ("text", "thinking"):
-                thinking = event["field"] == "thinking"
+            elif kind == "delta" and event["field"] in ("text", "reasoning"):
+                thinking = event["field"] == "reasoning"
                 value = {
                     "type": "response.reasoning_summary_text.delta"
                     if thinking
@@ -408,7 +414,7 @@ class ResponsesDecoder(BaseDecoder):
                 if not native_owner:
                     foreign_block(block)
                 thinking = block.get("type") == "thinking"
-                value = block["thinking" if thinking else "text"]
+                value = block.get("reasoning" if thinking else "text") or ""
                 result.append(
                     {
                         "type": "response.reasoning_summary_text.done"
@@ -485,19 +491,26 @@ class ResponsesDecoder(BaseDecoder):
                         {"type": "response.output_item.done", "output_index": index, "item": item}
                     )
             elif kind == "block":
-                if event["block"].get("redacted"):
-                    report_loss(
-                        event["block"],
-                        "Responses cannot represent opaque reasoning from another protocol",
-                    )
+                block = event["block"]
+                if (
+                    not native_owner
+                    and block.get("type") == "thinking"
+                    and not block.get("reasoning")
+                ):
+                    foreign_block(block)
                     continue
-                item = self._output_item(event["block"], index, parameters.get("source_protocol"))
-                result.extend(
-                    [
-                        {"type": "response.output_item.added", "output_index": index, "item": item},
-                        {"type": "response.output_item.done", "output_index": index, "item": item},
-                    ]
+                item = self._output_item(block, index, parameters.get("source_protocol"))
+                result.append(
+                    {
+                        "type": "response.output_item.added",
+                        "output_index": index,
+                        "item": self._added_item(item),
+                    }
                 )
+                if not native:
+                    result.append(
+                        {"type": "response.output_item.done", "output_index": index, "item": item}
+                    )
             elif kind == "finish":
                 # Truncation and filtering are incomplete Responses, not successful ends.
                 incomplete = {
@@ -597,6 +610,8 @@ class ResponsesDecoder(BaseDecoder):
     def _output_item(self, block: dict, index: int, origin: str | None) -> dict:
         """Render one completed assistant block with a stable native or fallback item ID."""
         item = self._messages([{"role": "assistant", "content": [block], "protocol": origin}])[0]
+        if block.get("type") == "thinking" and isinstance(block.get("feedback_item"), dict):
+            item = capture(item)
         if origin != PROTOCOL:
             item["id"] = f"item_{index}"
         item.setdefault("id", f"item_{index}")
@@ -607,11 +622,18 @@ class ResponsesDecoder(BaseDecoder):
         """Reconstruct completed output items, preserving source item grouping when available."""
         entries = event.get("output_blocks", [])
         if not self._native_items(parameters):
-            return [
-                self._output_item(entry["block"], entry["index"], origin)
-                for entry in entries
-                if origin == PROTOCOL or not entry["block"].get("redacted")
-            ]
+            result = []
+            for entry in entries:
+                block = entry["block"]
+                if (
+                    origin != PROTOCOL
+                    and block.get("type") == "thinking"
+                    and not block.get("reasoning")
+                ):
+                    foreign_block(block)
+                    continue
+                result.append(self._output_item(block, entry["index"], origin))
+            return result
         grouped = {}
         for entry in entries:
             ref = entry.get("source_ref")
@@ -629,21 +651,21 @@ class ResponsesDecoder(BaseDecoder):
                     "role": "assistant",
                     "content": render_content(blocks, role="assistant"),
                 }
-            elif kind == "reasoning":
-                retained = []
-                for block in blocks:
-                    owner = block.get("protocol")
-                    if (origin if owner is None else owner) != PROTOCOL:
-                        block = foreign_block(block)
-                    if block is not None:
-                        retained.append(block)
-                blocks = retained
-                item = {
-                    "type": kind,
-                    "summary": [part for block in blocks for part in reasoning_summary(block)],
-                }
-                for block in blocks:
-                    item.update(select(block, "encrypted_content"))
+            elif kind == "reasoning" and blocks:
+                block = blocks[0]
+                feedback_item = block.get("feedback_item")
+                if feedback_item is not None and not isinstance(feedback_item, dict):
+                    report_loss(
+                        block, "Responses reasoning feedback requires a native reasoning item"
+                    )
+                item = (
+                    capture(feedback_item)
+                    if isinstance(feedback_item, dict)
+                    else {
+                        "type": kind,
+                        "summary": reasoning_summary(block),
+                    }
+                )
             elif kind == "function_call" and blocks:
                 item = self._output_item(blocks[0], int(index), origin)
             else:

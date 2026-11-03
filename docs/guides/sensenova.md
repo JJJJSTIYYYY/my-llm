@@ -30,8 +30,8 @@ Middleware 另在每种上游验证三个策略场景：
 
 - 同时关闭图片、工具、消息名称与思维能力，检查一次输入 hook 收到完整请求及各项不支持原因，
   过滤后的请求仍能完成真实调用，且调用方输入保持不变。
-- `feedback_reasoning_content="none"` 时省略历史思维，不产生输入损失。
-- `feedback_reasoning_content="when_tool_calls"` 时省略没有工具调用的历史思维，不产生输入损失。
+- `should_feedback_reasoning_item="none"` 时省略历史思维，不产生输入损失。
+- `should_feedback_reasoning_item="when_tool_calls"` 时省略没有工具调用的历史思维，不产生输入损失。
 
 一次全部成功共 45 个场景、57 次上游请求；失败和补跑会改变实际请求总数。
 策略场景使用独立实例和 `hook` 策略；其他场景使用命令行指定的损失策略。

@@ -21,7 +21,7 @@ from my_llm.middleware.models import (
     ToolResult,
 )
 from my_llm.middleware.stream import StreamBatch, Usage
-from my_llm.middleware.validation import REASONING_MARKS, RESULT_CONTENT_TYPES
+from my_llm.middleware.validation import RESULT_CONTENT_TYPES
 from my_llm.profile.types import Omit
 
 
@@ -110,21 +110,7 @@ def _valid_content(part: MessageContent, role: str) -> bool:
             )
         )
     if isinstance(part, ReasoningContent):
-        return (
-            role == "assistant"
-            and isinstance(part.reasoning, str)
-            and isinstance(part.redacted, bool)
-            and part.mark in REASONING_MARKS
-            and all(
-                value is None or isinstance(value, str)
-                for value in (part.signature, part.encrypted_content, part.opaque_protocol)
-            )
-            and (
-                part.summary is None
-                or isinstance(part.summary, list)
-                and all(isinstance(value, str) for value in part.summary)
-            )
-        )
+        return role == "assistant" and (part.reasoning is None or isinstance(part.reasoning, str))
     if isinstance(part, ToolCall):
         return (
             role == "assistant"

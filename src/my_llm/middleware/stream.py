@@ -94,7 +94,7 @@ class MessageEvent(ProtocolValue):
     source_ref: tuple[str, int, int] | None = None
     block: MessageContent | None = None
     tool_index: int | None = None
-    field: Literal["text", "thinking"] | None = None
+    field: Literal["text", "reasoning"] | None = None
     value: str | None = None
     reason: str | None = None
     messages: list[Message] | None = None

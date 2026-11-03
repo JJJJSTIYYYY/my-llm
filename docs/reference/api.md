@@ -116,9 +116,7 @@ async def cached_conversation(provider, model):
         enable_message_cache=True,
     ) as llm:
         reply = await llm.generate(messages=[{"role": "user", "content": "Hello"}])
-        return await llm.generate(
-            messages=[reply, {"role": "user", "content": "Please continue"}]
-        )
+        return await llm.generate(messages=[reply, {"role": "user", "content": "Please continue"}])
 ```
 
 第二次实际发送首批 user 消息、`reply` 和新增 user 消息。返回的 assistant 回复由调用者放入
@@ -261,7 +259,7 @@ async def print_stream(llm, prompt):
 | `Message`、`UserMessage`、`AssistantMessage`、`InstructionMessage`、`ToolMessage` | `role` 与有序 `content`；可选 `name`、来源 `protocol`、`item`、`coalesce`、`origin`；具体类型不增加字段 |
 | `TextContent` | `text`；固定 `type="text"`，可选 `item`、`origin` |
 | `ImageContent`、`ImageSource` | 图片内容的 `source`、固定 `type="image"`、可选 `item/origin`；来源的 `type="url" / "base64"` 及 `url/data/media_type`；用户消息和工具结果可使用 |
-| `ReasoningContent` | `reasoning`、`mark="raw" / "summary" / "encrypted"`；可选 `signature`、`encrypted_content`、`opaque_protocol`、`item`、`origin`、`summary: list[str]`，`redacted=False`；固定 `type="thinking"` |
+| `ReasoningContent` | 可选 `reasoning: str \| None`、`feedback_item: Any \| None`、`item`、`origin`；固定 `type="thinking"`。可见文本实时输出，回传值保留原生对象，跨协议丢弃并记录损失 |
 | `ToolCall` | `call_id`、`name`、完整 `arguments: JsonObject`；可选 `signature`、`opaque_protocol`、`item`、`origin`；固定 `type="tool_use"` |
 | `ToolResult` | `call_id`、有序 `content: list[ResultContent]`；可选 `name`、`item`、`origin`；固定 `type="tool_result"` |
 | `FunctionTool` | `name` 及可选 `description`、`parameters: JsonObject`、`strict`、`origin` |
@@ -276,7 +274,7 @@ async def print_stream(llm, prompt):
 
 消息及所有内容块最多各有一个可选 `item: ItemIdentity`。源项合并后内容仍保留自身项身份；
 工具结果通过 `call_id` 对应调用，`ToolMessage.call_id` 是从结果内容读取的只读属性。
-显式 `mark`、摘要列表和 `redacted` 都会在中间投影中保留，原生思维格式由对应 codec 转换。
+`reasoning` 统一保存可见思维文本，`feedback_item` 保存原生回传项；跨协议时仅后者丢弃并记录语义损失。
 
 `to_wire()` 提供显式投影并借用部分嵌套值；它不提供深拷贝或自动校验。
 生成请求在准备阶段隔离输入，公开结果和事件拥有自己的可变数据。
@@ -371,7 +369,8 @@ Provider 与 Model 共享以下覆盖项，均默认 `None`，表示继承：
 | `reasoning_enable` | 输入 `Parameter` | 开启思考的参数；`supports=False` 表示不支持 reasoning，请求开启思考及已有思考内容均记录语义损失 |
 | `reasoning_effort` | 输入 `Parameter` | 思考强度参数及支持状态 |
 | `reasoning_effort_mapping` | `Config[dict]` | 公共强度到原生值的映射；值为 `None` / `omit` 时该级别不可用 |
-| `feedback_reasoning_content` | `Config[Literal["when_tool_calls", "always", "none"]]` | 内置协议默认 `always`；仅回传工具调用消息中的思考、全部历史思考或不回传；`omit` 等同 `none`，策略排除的思考不记录损失 |
+| `feedback_reasoning_item` | `Parameter[Any] \| Omit \| None` | 输出声明；从协议默认或自定义路径提取原生回传项；`None` 继承，`omit` 禁用 |
+| `should_feedback_reasoning_item` | `Config[Literal["when_tool_calls", "always", "none"]]` | 内置协议默认 `always`；仅回传工具调用消息中的思考、全部历史思考或不回传；`omit` 等同 `none`，策略排除的思考不记录损失 |
 
 `ReasoningEffort` 是 `Literal["none", "low", "medium", "high", "xhigh", "max"]` 类型别名。
 可接受的强度还取决于具体模型及其配置。完整字段配置示例见[配置指南](configuration.md)。
@@ -578,7 +577,7 @@ assert converted["messages"] == [{"role": "user", "parts": [{"text": "Hello"}]}]
 | `BaseEncoder` | 将原生消息、工具和事件转换为中间值；协议名、消息及工具 schema 由子类声明 |
 | `BaseDecoder` | 将中间值转换为原生值，验证配置并构造原生请求参数 |
 | `BaseTransport` | 创建、关闭 SDK 客户端并提供原生异步响应事件 |
-| `ProtocolDefaults` | 协议默认配置，冻结且仅限关键字参数；必填 feedback_reasoning_content，其余为标准参数与能力默认值 |
+| `ProtocolDefaults` | 协议默认配置，可变且仅限关键字参数；必填 should_feedback_reasoning_item，其余为标准参数与能力默认值 |
 | `PreparedOptions` | 已验证的生成控制值，通常由 BaseDecoder.validate_parameters 返回 |
 
 `BaseCodec` 提供 `encode_messages` / `decode_messages`、`encode_tools` / `decode_tools`、

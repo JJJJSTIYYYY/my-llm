@@ -21,12 +21,14 @@ from my_llm.codec.shared.conversion import (
 from my_llm.codec.shared.stream import (
     BlockRef,
     encode_batch,
+    feedback_operation,
     metadata,
     optional_usage,
     project_metadata,
     record,
 )
 from my_llm.profile.resolution import ResolvedProfile
+from my_llm.profile.types import Parameter
 
 PROTOCOL = "ollama"
 
@@ -115,6 +117,13 @@ class OllamaEncoder(BaseEncoder):
             for call in (message.get("tool_calls") or [])
             if call.get("id")
         }
+        feedback_binding = (
+            profile.parameters.get("feedback_reasoning_item") if profile is not None else None
+        )
+        custom_feedback = (
+            isinstance(feedback_binding, Parameter)
+            and feedback_binding.path != "$.message.thinking"
+        )
         for index, message in enumerate(messages):
             role = message.get("role")
             native_content = message.get("content")
@@ -144,12 +153,20 @@ class OllamaEncoder(BaseEncoder):
                         native_image,
                     )
                 )
-            if message.get("thinking"):
+            reasoning = message.get("thinking")
+            feedback = (
+                self.parameter_value(
+                    {"message": message}, profile, "feedback_reasoning_item", "$.message.thinking"
+                )
+                if custom_feedback
+                else reasoning
+            )
+            if reasoning is not None or feedback is not None:
                 content.append(
                     originated(
-                        {"type": "thinking", "thinking": message["thinking"], "mark": "raw"},
+                        {"type": "thinking", "reasoning": reasoning, "feedback_item": feedback},
                         f"$.messages[{index}].thinking",
-                        message["thinking"],
+                        message.get("thinking"),
                     )
                 )
             for call_index, call in enumerate(message.get("tool_calls") or []):
@@ -238,11 +255,20 @@ class OllamaEncoder(BaseEncoder):
                         {
                             "type": "block_delta",
                             "ref": BlockRef(kind),
-                            "field": kind,
+                            "field": "text" if kind == "text" else "reasoning",
                             "kind": kind,
                             "value": value,
                         }
                     )
+            feedback = self.parameter_value(
+                event,
+                profile,
+                "feedback_reasoning_item",
+                "$.message.thinking",
+                use_default=not event.get("done"),
+            )
+            if feedback is not None:
+                ops.append(feedback_operation(BlockRef("thinking"), feedback))
             for call in message.get("tool_calls") or []:
                 block = tool_block(call)
                 block["input"] = capture(block["input"])
@@ -262,7 +288,7 @@ class OllamaEncoder(BaseEncoder):
                 origin_path, origin_value = event_path, event
                 if operation.get("type") == "block_delta" and operation.get("field") in (
                     "text",
-                    "thinking",
+                    "reasoning",
                 ):
                     name = "content" if operation["field"] == "text" else "reasoning_content"
                     native_field = "content" if name == "content" else "thinking"

@@ -4,7 +4,7 @@ from typing import Any
 
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.shared.conversion import json_arguments, text_result
-from my_llm.codec.shared.input import input_content
+from my_llm.codec.shared.input import input_content, without_feedback
 from my_llm.profile.resolution import ResolvedProfile
 
 
@@ -32,17 +32,10 @@ def render_content(content: list[dict], *, role: str = "user") -> Any:
 def foreign_block(block: dict) -> dict | None:
     """Retain representable foreign content and report opaque reasoning/signature losses."""
     kind = block.get("type")
-    if kind == "thinking" and (
-        block.get("redacted")
-        or block.get("mark") == "encrypted"
-        and not block.get("thinking")
-        and not block.get("summary")
-    ):
-        report_loss(block, "Chat cannot represent opaque reasoning from another protocol")
-        return None
-    if kind in ("thinking", "text", "tool_use"):
-        if any(block.get(key) for key in ("signature", "encrypted_content")):
-            report_loss(block, "Chat cannot preserve another protocol's reasoning signature")
+    if kind == "thinking":
+        block = without_feedback(block)
+    elif kind in ("text", "tool_use") and block.get("signature") is not None:
+        report_loss(block, "Chat cannot preserve another protocol's thought signature")
     return block if kind in ("text", "image", "tool_use", "tool_result", "thinking") else None
 
 

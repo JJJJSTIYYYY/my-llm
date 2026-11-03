@@ -64,7 +64,7 @@ DELTA_PATHS = {
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 @pytest.mark.parametrize(
-    "semantic,field,index", [("content", "text", 0), ("reasoning_content", "thinking", 1)]
+    "semantic,field,index", [("content", "text", 0), ("reasoning_content", "reasoning", 1)]
 )
 @pytest.mark.parametrize("value", ["translated", None])
 def test_parameter_translation_does_not_rewrite_standard_chunk_output(
@@ -96,7 +96,7 @@ def test_parameter_translation_does_not_rewrite_standard_chunk_output(
     "semantic,field,index",
     [
         ("content", "text", 0),
-        ("reasoning_content", "thinking", 1),
+        ("reasoning_content", "reasoning", 1),
     ],
 )
 @pytest.mark.parametrize("custom_path", [False, True])
@@ -136,7 +136,7 @@ def test_encoder_missing_text_uses_default_at_standard_and_custom_paths(
         if op["type"] == "block_delta"
         and op.get("field") == field
         or op["type"] == "block_append"
-        and op["block"]["type"] == field
+        and op["block"]["type"] == ("thinking" if field == "reasoning" else field)
     ]
     assert values == ["fallback"]
 
@@ -146,7 +146,7 @@ def test_encoder_missing_text_uses_default_at_standard_and_custom_paths(
     "semantic,field",
     [
         ("content", "text"),
-        ("reasoning_content", "thinking"),
+        ("reasoning_content", "reasoning"),
     ],
 )
 def test_encoder_keeps_supported_text_when_a_binding_is_omitted(
@@ -167,7 +167,7 @@ def test_encoder_keeps_supported_text_when_a_binding_is_omitted(
         op["type"] == "block_delta"
         and op.get("field") == field
         or op["type"] == "block_append"
-        and op["block"]["type"] == field
+        and op["block"]["type"] == ("thinking" if field == "reasoning" else field)
         for op in operations
     )
 
@@ -281,7 +281,7 @@ def test_terminal_events_do_not_append_missing_text_defaults(
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 @pytest.mark.parametrize(
-    "semantic,field,index", [("content", "text", 0), ("reasoning_content", "thinking", 1)]
+    "semantic,field,index", [("content", "text", 0), ("reasoning_content", "reasoning", 1)]
 )
 @pytest.mark.parametrize("custom_path", [False, True])
 def test_present_null_response_does_not_use_configured_text_default(

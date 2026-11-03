@@ -1,7 +1,7 @@
 """Public structural validation of canonical middleware values, without copying.
 
 Wire syntax and typed generation constraints serve different boundaries. Shared
-content-kind and reasoning-mark sets keep their semantic restrictions aligned.
+content-kind sets keep their semantic restrictions aligned.
 Error paths are assembled only while propagating a validation failure.
 """
 
@@ -13,12 +13,11 @@ from my_llm.basic.exceptions import MessageValidationError
 from my_llm.middleware.history import MESSAGE_ROLES, HistoryNormalizer
 
 RESULT_CONTENT_TYPES = ("text", "image")
-REASONING_MARKS = ("raw", "summary", "encrypted")
 
 _CONTENT_FIELDS = {
     "text": ("text",),
     "image": ("source",),
-    "thinking": ("thinking", "mark"),
+    "thinking": ("reasoning",),
     "tool_use": ("id", "name", "input"),
     "tool_result": ("tool_use_id", "content"),
 }
@@ -162,14 +161,18 @@ def _result(value, history: HistoryNormalizer | None = None) -> None:
 
 
 def _content(value, history: HistoryValidator | HistoryNormalizer | None = None) -> None:
-    """Check required content fields, reasoning marks and nested tool-result parts."""
+    """Check required content fields and nested tool-result parts."""
     kind = _kind(value, _CONTENT_FIELDS, "content type")
     if value.get("item") is not None:
         _member(value, "item", _object)
     if kind == "image":
         _member(value, "source", _image_source)
-    elif kind == "thinking" and value["mark"] not in REASONING_MARKS:
-        raise _InvalidWire("unknown middleware reasoning mark", ".mark")
+    elif (
+        kind == "thinking"
+        and value["reasoning"] is not None
+        and not isinstance(value["reasoning"], str)
+    ):
+        raise _InvalidWire("expected reasoning text or None", ".reasoning")
     elif kind == "tool_result":
         normalizer = history if isinstance(history, HistoryNormalizer) else None
         if normalizer is not None:
@@ -252,7 +255,7 @@ def _operation(value, tolerate_auxiliary: bool = False) -> None:
         return  # Optional data is parsed defensively by its state-machine handler.
     kind = _kind(value, _OPERATION_FIELDS, "operation")
     if kind == "block_delta":
-        if value["field"] not in ("text", "thinking", "arguments", "signature"):
+        if value["field"] not in ("text", "reasoning", "arguments", "feedback_item"):
             raise _InvalidWire("unknown middleware delta field", ".field")
         _member(value, "kind", _content_kind)
     elif kind in ("block_set", "block_append"):
@@ -303,7 +306,7 @@ _EVENT_STRUCTURES = (
 def _event(value) -> None:
     """Check a public event and the nested structures allowed for its type."""
     kind = _kind(value, _EVENT_FIELDS, "event")
-    if kind == "delta" and value["field"] not in ("text", "thinking"):
+    if kind == "delta" and value["field"] not in ("text", "reasoning"):
         raise _InvalidWire("unknown middleware delta field", ".field")
     for name, check in _EVENT_STRUCTURES:
         if name in value:

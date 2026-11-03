@@ -24,6 +24,7 @@ from my_llm.codec.openai.chat.decoding.content import (
 from my_llm.codec.shared.capabilities import content_capability
 from my_llm.codec.shared.conversion import (
     decode_functions,
+    scalar_reasoning,
     select,
     select_present,
     source_protocol,
@@ -235,7 +236,7 @@ class ChatCompletionsDecoder(BaseDecoder):
                 profile,
                 path=f"{getattr(message, 'origin_path', f'$.messages[{index}]')}.name",
             )
-            context_owner = source_protocol(message)
+            context_owner = source_protocol(message) or parameters.get("source_protocol")
             content = []
             tool_results = []
             calls = []
@@ -262,7 +263,9 @@ class ChatCompletionsDecoder(BaseDecoder):
                 if kind == "tool_use":
                     calls.append(chat_call(block))
                 elif kind == "thinking":
-                    reasoning.append(block["thinking"] or "\n".join(block.get("summary", ())))
+                    value = scalar_reasoning(block, feedback=profile is not None)
+                    if value is not None:
+                        reasoning.append(value)
             if content or not tool_results:
                 value = {
                     **select(message, "role", "name"),
@@ -333,24 +336,31 @@ class ChatCompletionsDecoder(BaseDecoder):
             finish = None
             if kind == "start":
                 delta = {"role": "assistant"}
-            elif kind == "delta" and event["field"] in ("text", "thinking"):
+            elif kind == "delta" and event["field"] in ("text", "reasoning"):
                 field = {
                     "text": "content",
-                    "thinking": "reasoning_content",
+                    "reasoning": "reasoning_content",
                 }[event["field"]]
                 if (
-                    event["field"] == "thinking"
+                    event["field"] == "reasoning"
                     and profile is not None
                     and profile.parameter("reasoning_content", "output") is None
                 ):
                     report_loss(event, "Chat profile cannot express reasoning_content")
                     continue
                 delta = {field: event["value"]}
-            elif kind == "block_stop" and not native_owner:
-                foreign_block(event["block"])
+            elif kind == "block_stop":
+                block = event["block"]
+                if not native_owner:
+                    foreign_block(block)
+                elif block["type"] == "thinking":
+                    scalar_reasoning(block)
                 continue
             elif kind == "block" and event["block"]["type"] == "thinking":
-                foreign_block(event["block"])
+                if not native_owner:
+                    foreign_block(event["block"])
+                else:
+                    scalar_reasoning(event["block"])
                 continue
             elif kind == "tool":
                 block = event["block"]

@@ -22,11 +22,16 @@ from tests.helpers.protocols import PROTOCOLS
 
 def reasoning_history(protocol):
     def reasoning(text):
-        return ReasoningContent(
-            text,
-            signature="c2lnbmVk" if protocol in ("anthropic", "gemini") else None,
-            opaque_protocol=protocol,
-        )
+        item = {
+            "anthropic": {"type": "thinking", "thinking": text, "signature": "c2lnbmVk"},
+            "gemini": {"text": text, "thought": True, "thought_signature": "c2lnbmVk"},
+            "openai_responses": {
+                "type": "reasoning",
+                "id": "rs_" + text.split()[0],
+                "summary": [{"type": "summary_text", "text": text}],
+            },
+        }.get(protocol, text)
+        return ReasoningContent(text, feedback_item=item)
 
     return [
         AssistantMessage(
@@ -57,7 +62,7 @@ async def test_feedback_selects_history_without_semantic_loss(
     codec = MyCodec(policy, input_semantic_loss_hook=lambda *args: observed.append(args))
     profile = profile_factory(
         protocol,
-        feedback_reasoning_content=omit if mode is omit else config(mode),
+        should_feedback_reasoning_item=omit if mode is omit else config(mode),
         supports_function_calling=config(True),
     )
 
@@ -114,19 +119,20 @@ async def test_tool_feedback_keeps_split_responses_reasoning_and_native_item_ids
         {"type": "function_call_output", "call_id": "c", "output": "tool result"},
     ]
     before = deepcopy(messages)
+    codec = MyCodec("ignore") if target != "openai_responses" else MyCodec()
     draft = (
-        await MyCodec().prepare(
+        await codec.prepare(
             {"messages": messages, "tools": omit, "stream": False, "max_tokens": 128},
             profile_factory(
                 target,
-                feedback_reasoning_content=config("when_tool_calls"),
+                should_feedback_reasoning_item=config("when_tool_calls"),
                 supports_function_calling=config(True),
             ),
             input_format="openai_responses",
             client={},
         )
     )["request"]
-    assert "tool reasoning" in str(draft)
+    assert ("tool reasoning" in str(draft)) is (target == "openai_responses")
     assert "plain reasoning" not in str(draft)
     if target == "openai_responses":
         assert all(
@@ -142,7 +148,7 @@ def test_feedback_policy_does_not_filter_generated_reasoning(profile_factory, pr
         [reasoning_history(protocol)[0]],
         input_format=protocol,
         target_format=protocol,
-        semantic_profile=profile_factory(protocol, feedback_reasoning_content=config("none")),
+        semantic_profile=profile_factory(protocol, should_feedback_reasoning_item=config("none")),
     )
     assert "plain reasoning" in str(result)
 
@@ -151,8 +157,8 @@ def test_feedback_policy_does_not_filter_generated_reasoning(profile_factory, pr
     "value", [True, False, "always", config(True), config(False), config("invalid"), config(None)]
 )
 def test_feedback_requires_a_wrapped_policy_value(profile_factory, value):
-    with pytest.raises(ConfigurationError, match="feedback_reasoning_content"):
-        profile_factory(feedback_reasoning_content=value)
+    with pytest.raises(ConfigurationError, match="should_feedback_reasoning_item"):
+        profile_factory(should_feedback_reasoning_item=value)
 
 
 @pytest.mark.parametrize("policy", ["raise", "ignore", "hook"])
@@ -162,7 +168,8 @@ async def test_feedback_cache_commits_filtered_history_without_hook_edits(profil
 
     codec = MyCodec(policy, input_semantic_loss_hook=hook)
     profile = profile_factory(
-        feedback_reasoning_content=config("when_tool_calls"), supports_function_calling=config(True)
+        should_feedback_reasoning_item=config("when_tool_calls"),
+        supports_function_calling=config(True),
     )
     inputs = {"messages": reasoning_history("openai_chat"), "tools": omit, "stream": False}
     for _ in range(2):
@@ -204,7 +211,9 @@ def test_native_scalar_reasoning_feedback_matches_message_policy(
     before = deepcopy(request)
     decoder = MyCodec().decoder(protocol)
     profile = profile_factory(
-        protocol, feedback_reasoning_content=config(mode), supports_function_calling=config(True)
+        protocol,
+        should_feedback_reasoning_item=config(mode),
+        supports_function_calling=config(True),
     )
     if mode == "always" or mode == "when_tool_calls" and has_calls:
         assert decoder.native_request(request, profile)["messages"][0][field] == "native reasoning"
@@ -231,7 +240,7 @@ async def test_empty_reasoning_feedback_depends_on_history_policy_not_generation
     codec = MyCodec()
     profile = profile_factory(
         protocol,
-        feedback_reasoning_content=omit if mode is omit else config(mode),
+        should_feedback_reasoning_item=omit if mode is omit else config(mode),
         supports_function_calling=config(True),
     )
     request = (
@@ -265,7 +274,7 @@ def test_native_tool_messages_get_empty_reasoning_without_a_generation_reasoning
     before = deepcopy(request)
     profile = profile_factory(
         protocol,
-        feedback_reasoning_content=config("when_tool_calls"),
+        should_feedback_reasoning_item=config("when_tool_calls"),
         supports_function_calling=config(True),
     )
     assert MyCodec().decoder(protocol).native_request(request, profile)["messages"][0][field] == ""
@@ -280,7 +289,7 @@ async def test_empty_reasoning_is_not_injected_when_reasoning_is_unsupported(
 ):
     profile = profile_factory(
         protocol,
-        feedback_reasoning_content=config("when_tool_calls"),
+        should_feedback_reasoning_item=config("when_tool_calls"),
         supports_function_calling=config(True),
         reasoning_enable=parameter("reasoning_enable", protocol=protocol, supports=False),
     )
@@ -313,7 +322,7 @@ async def test_unsupported_reasoning_is_loss_regardless_of_feedback(
         protocol,
         supports_function_calling=config(True),
         reasoning_enable=parameter("reasoning_enable", protocol=protocol, supports=False),
-        feedback_reasoning_content=omit if mode is omit else config(mode),
+        should_feedback_reasoning_item=omit if mode is omit else config(mode),
     )
 
     async def prepare():
@@ -378,7 +387,7 @@ def test_native_scalar_unsupported_reasoning_is_loss(profile_factory, protocol, 
     before = deepcopy(request)
     profile = profile_factory(
         protocol,
-        feedback_reasoning_content=config(mode),
+        should_feedback_reasoning_item=config(mode),
         reasoning_enable=parameter("reasoning_enable", protocol=protocol, supports=False),
     )
     with pytest.raises(SemanticLossError) as caught:
@@ -431,7 +440,7 @@ def test_native_block_reasoning_uses_capability_and_feedback_separately(
     decoder = MyCodec().decoder(protocol)
     profile = profile_factory(
         protocol,
-        feedback_reasoning_content=config(mode),
+        should_feedback_reasoning_item=config(mode),
         supports_function_calling=config(True),
         reasoning_enable=parameter("reasoning_enable", protocol=protocol, supports=supports),
     )
@@ -464,15 +473,18 @@ def test_unsupported_reasoning_stream_records_loss_and_keeps_text(profile_factor
         reasoning_enable=parameter("reasoning_enable", protocol=protocol, supports=False),
     )
     event = (
-        {"type": "delta", "field": "thinking", "value": "disabled"}
+        {"type": "delta", "field": "reasoning", "value": "disabled"}
         if kind == "delta"
         else {
             "type": "block_start",
             "block": {
                 "type": "thinking",
-                "thinking": "disabled",
-                "signature": "signed",
-                "mark": "raw",
+                "reasoning": "disabled",
+                "feedback_item": {
+                    "type": "thinking",
+                    "thinking": "disabled",
+                    "signature": "signed",
+                },
             },
         }
     )

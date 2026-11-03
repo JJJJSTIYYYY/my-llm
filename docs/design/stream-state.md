@@ -28,7 +28,7 @@ Encoder 无状态，只翻译本次传入事件中已识别的字段。内部批
 | --- | --- |
 | block_set | 按源引用创建或以完整内容替换一个块，例如 Anthropic 的开始块、Responses 的完成块。 |
 | block_update | 按源引用更新块元数据，例如工具名称与 ID。 |
-| block_delta | 向已引用的块追加 text、thinking、签名或 arguments 片段；是否发布文本由块的文本字段决定。 |
+| block_delta | 向已引用的块追加 text、reasoning、feedback_item 内部字段或 arguments 片段；是否发布文本由块的文本字段决定。 |
 | start | 源协议显式开始响应；在增量前生成目标开始帧。 |
 | block_append | 追加独立完整块，不携带源引用，例如 GenerateContent Part、Ollama 完整工具调用。 |
 | block_stop | 源协议关闭指定块。 |
@@ -64,7 +64,9 @@ Responses Decoder 据此保持原生父 item 身份与内容/摘要索引，不�
 ## 快照与生命周期
 
 最终块按源引用匹配，而非按类型加文本内容搜索。相同文本的两个块可以保有不同引用信息。
-每个摘要部分按原生 summary_index 匹配，最终消息按已识别的 item 身份、摘要和密文字段构造 reasoning item。
+Responses 每个 reasoning item 对应一个可见思维块，多个 summary 部分按顺序以换行连接，
+公开流使用同一个块及 summary_index=0；原生多段摘要、密文和项身份完整保存在 feedback_item，
+同协议终态与下一轮回传使用该原生 item。
 
 快照可以补齐尚未流出的块或文本后缀。若它否定已经发布的文本前缀，或遗漏已累积的块，抛出
 `IncompleteStreamError`，避免对无法撤回的流事件报告成功。
@@ -94,7 +96,7 @@ EOF 本身不代表成功，必须收到源协议的终止操作。重复原生�
 - 最终快照补齐多个缺失块和后缀；相互矛盾的已发布文本、遗漏已有块的快照报错。
 - 空 thinking 签名、redacted_thinking、独立空签名 Part 保留。
 - 工具先于文本时，延迟发布、原始顺序和目标原生结构同时成立。
-- 多个 reasoning summary 部分不混用身份；工具验证失败不会设置完成状态。
+- 多个 reasoning summary 部分合并为一个可见块，原生多段摘要仍由 feedback_item 完整保留；工具验证失败不会设置完成状态。
 
 既有协议 schema、25 对转换、字段边界、官方 SDK 本地 transport、并发隔离和资源关闭
 测试继续覆盖完整路径。测试不调用远端模型服务。

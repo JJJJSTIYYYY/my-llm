@@ -197,24 +197,27 @@ def test_chat_disabled_name_reports_loss_in_offline_and_native_request_paths(pro
     assert messages[0]["name"] == "alice"
 
 
-@pytest.mark.parametrize("mark", ["raw", "summary", "encrypted"])
-def test_reasoning_mark_survives_typed_input_and_wire_roundtrips(mark):
-    part = ReasoningContent(reasoning="reason", mark=mark)
+@pytest.mark.parametrize(
+    "feedback_item", [None, "raw", {"type": "reasoning", "encrypted_content": "opaque"}]
+)
+def test_reasoning_visible_and_feedback_values_survive_typed_wire_roundtrips(feedback_item):
+    part = ReasoningContent(reasoning="reason", feedback_item=feedback_item)
     middle = generation_input([AssistantMessage("assistant", [part])], None)
     wire = middle.to_wire()["messages"][0]["content"][0]
-    assert wire["mark"] == mark
+    assert wire["reasoning"] == "reason"
     restored = content_from_wire(wire)
-    assert restored.mark == mark
+    assert restored.feedback_item == feedback_item
     assert restored.reasoning == part.reasoning
     assert restored.to_wire() == wire
 
 
 @pytest.mark.parametrize(
-    "protocol,native,mark",
+    "protocol,native,visible,feedback",
     [
         (
             "openai_chat",
             {"role": "assistant", "content": "", "reasoning_content": "raw"},
+            "raw",
             "raw",
         ),
         (
@@ -225,43 +228,59 @@ def test_reasoning_mark_survives_typed_input_and_wire_roundtrips(mark):
                 "summary": [{"type": "summary_text", "text": "summary"}],
             },
             "summary",
+            {
+                "type": "reasoning",
+                "id": "reason-1",
+                "summary": [{"type": "summary_text", "text": "summary"}],
+            },
         ),
         (
             "openai_responses",
             {"type": "reasoning", "id": "reason-1", "summary": [], "encrypted_content": "opaque"},
-            "encrypted",
+            None,
+            {"type": "reasoning", "id": "reason-1", "summary": [], "encrypted_content": "opaque"},
         ),
         (
             "anthropic",
             {"role": "assistant", "content": [{"type": "redacted_thinking", "data": "opaque"}]},
-            "encrypted",
+            None,
+            {"type": "redacted_thinking", "data": "opaque"},
         ),
     ],
 )
-def test_native_encoders_assign_reasoning_mark_before_middleware(protocol, native, mark):
+def test_native_encoders_separate_visible_reasoning_from_feedback(
+    protocol, native, visible, feedback
+):
     messages = MyCodec().codecs[protocol].encoder.messages([native])
     reasoning = next(part for part in messages[0].content if isinstance(part, ReasoningContent))
-    assert reasoning.mark == mark
+    assert reasoning.reasoning == visible
+    assert reasoning.feedback_item == feedback
 
 
-def test_reasoning_mark_reaches_decoder_without_becoming_a_native_field(monkeypatch):
+def test_reasoning_feedback_reaches_decoder_as_a_native_item(monkeypatch):
     codec = MyCodec()
     decoder = codec.decoder("openai_responses")
     original = type(decoder)._messages
     observed = []
+    item = {"type": "reasoning", "summary": [{"type": "summary_text", "text": "summary"}]}
 
     def decode(self, values, profile=None, **parameters):
-        observed.append(values[0]["content"][0]["mark"])
+        observed.append(values[0]["content"][0]["feedback_item"])
         return original(self, values, profile, **parameters)
 
     monkeypatch.setattr(type(decoder), "_messages", decode)
     result = codec.decode(
-        messages=[AssistantMessage("assistant", [ReasoningContent("summary", mark="summary")])],
+        messages=[
+            AssistantMessage(
+                "assistant",
+                [ReasoningContent("summary", feedback_item=item)],
+                protocol="openai_responses",
+            )
+        ],
         target_format="openai_responses",
     )
-    assert observed == ["summary"]
-    assert result["messages"][0]["summary"] == [{"type": "summary_text", "text": "summary"}]
-    assert "mark" not in result["messages"][0]
+    assert observed == [item]
+    assert result["messages"][0] == item
 
 
 def test_midpoint_is_concrete_and_models_have_independent_application_values():

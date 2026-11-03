@@ -97,7 +97,7 @@ def test_stream_materialization_keeps_source_location_for_response_losses():
             "type": "block_delta",
             "ref": ("reasoning", 0, 0),
             "kind": "thinking",
-            "field": "thinking",
+            "field": "reasoning",
             "value": "step",
         },
         "$.chunks[7].native_reasoning",
@@ -113,14 +113,14 @@ def test_stream_materialization_keeps_source_location_for_response_losses():
     block = final[-1]["messages"][0]["content"][0]
     assert block.origin_path == delta.origin_path
     assert block.origin_value == source
-    assert block["thinking"] == "step"
+    assert block["reasoning"] == "step"
     with pytest.raises(SemanticLossError) as caught:
         with collect_losses(SemanticLossContext("gemini", "anthropic", "output")) as (losses, _):
             report_loss(block, "signature cannot cross protocols")
             losses.complete([])
     assert caught.value.losses.items[0].origin_value is source
     source["native_reasoning"]["text"] = "after loss"
-    assert block["thinking"] == "step"
+    assert block["reasoning"] == "step"
 
 
 @pytest.mark.parametrize("stdio", PROTOCOLS)

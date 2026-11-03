@@ -136,7 +136,7 @@ async def test_typed_input_never_infers_or_uses_a_native_stdio(stdio):
             omit,
         ),
         ([UserMessage("user", [ToolResult("a", [TextContent(42)])])], omit),
-        ([AssistantMessage("assistant", [ReasoningContent(mark="invalid")])], omit),
+        ([AssistantMessage("assistant", [ReasoningContent(reasoning=123)])], omit),
         ([UserMessage("user", [TextContent("hi")])], [{"name": "f"}]),
         ([UserMessage("user", [TextContent("hi")])], [FunctionTool("f", strict="yes")]),
     ],
@@ -362,7 +362,9 @@ async def test_output_loss_policy_still_applies_to_typed_drafts(streaming, polic
                     await execute()
             else:
                 result = await execute()
-                assert not any(isinstance(part, ReasoningContent) for part in result.content)
+                thoughts = [part for part in result.content if isinstance(part, ReasoningContent)]
+                assert thoughts and all(part.reasoning is None for part in thoughts)
+                assert any(part.feedback_item == "reason" for part in thoughts)
                 if policy == "hook":
                     assert any(draft is result for draft in drafts)
                     assert result.content[-1].text == "hook tail"

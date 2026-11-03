@@ -300,7 +300,10 @@ def test_a08_tool_result_becomes_an_ollama_string(content, expected):
 def test_a09_foreign_thinking_does_not_forge_an_anthropic_signature(source, incoming):
     with pytest.raises(SemanticLossError) as captured:
         MyCodec().convert(incoming, input_format=source, target_format="anthropic")
-    assert "Thinking" not in str(captured.value.draft)
+    blocks = captured.value.draft["messages"][0]["content"]
+    thinking = next(block for block in blocks if block["type"] == "thinking")
+    assert thinking["thinking"] == "Thinking"
+    assert thinking["signature"] == ""
     assert "Thinking" in str(captured.value.losses.items[0].origin_value)
 
 
@@ -412,9 +415,7 @@ def test_foreign_thinking_streams_can_be_consumed_without_forged_signatures(sour
         ]
         for index, event in enumerate(native):
             event["sequence_number"] = index
-    if source != target and (
-        target in ("anthropic", "gemini") or source in ("anthropic", "gemini", "openai_responses")
-    ):
+    if source != target:
         with pytest.raises(SemanticLossError):
             render(source, target, native)
         return
@@ -448,7 +449,7 @@ def test_foreign_message_extensions_cannot_become_native_request_fields(
             profile_factory(
                 target,
                 supports_function_calling=config(True),
-                feedback_reasoning_content=config("none"),
+                should_feedback_reasoning_item=config("none"),
             ),
         )
     )
@@ -729,7 +730,7 @@ def test_native_response_reasoning_and_tool_item_ids_remain_replayable():
         event["summary_index"]
         for event in output
         if event["type"] == "response.reasoning_summary_text.delta"
-    ] == [0, 1]
+    ] == [0, 0, 0]
     assert not any(event["type"] == "response.function_call_arguments.delta" for event in output)
     complete_arguments = [
         event["arguments"]

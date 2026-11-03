@@ -289,9 +289,8 @@ def test_empty_thinking_and_redacted_blocks_keep_order_and_signatures():
     assert signatures == ["signed"]
     assert state.messages()[0]["content"][1] == {
         "type": "thinking",
-        "thinking": "",
-        "signature": "signed",
-        "mark": "raw",
+        "reasoning": "",
+        "feedback_item": {"type": "thinking", "thinking": "", "signature": "signed"},
     }
     reconstructed = StreamState("demo")
     reconstructed.feed(MyCodec().encode(chunks=output, input_format="anthropic")["chunks"])
@@ -377,7 +376,7 @@ def test_signed_empty_gemini_parts_are_not_dropped_or_merged(thinking):
         assert not any(part.get("text") for part in [*streamed, *collected])
 
 
-def test_reasoning_summary_parts_use_their_native_summary_indexes():
+def test_reasoning_summary_parts_share_one_visible_block_and_keep_native_feedback():
     item = {
         "type": "reasoning",
         "id": "rs_1",
@@ -413,7 +412,9 @@ def test_reasoning_summary_parts_use_their_native_summary_indexes():
         event["summary_index"]
         for event in output
         if event["type"] == "response.reasoning_summary_part.done"
-    ] == [0, 1]
+    ] == [0]
+    assert state.messages()[0]["content"][0]["reasoning"] == "first\nsecond"
+    assert state.messages()[0]["content"][0]["feedback_item"] == item
     assert done == output[-1]["response"]["output"]
     assert MyCodec().decode(state.messages(), target_format="openai_responses")["messages"] == [
         item

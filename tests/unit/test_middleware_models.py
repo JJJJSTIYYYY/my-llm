@@ -76,22 +76,16 @@ CONTENT_CASES = [
     *[
         (
             ReasoningContent,
-            {
-                "reasoning": "reason",
-                "mark": mark,
-                "signature": "signature",
-                "encrypted_content": "opaque",
-                "opaque_protocol": "example",
-                "summary": ["first", "second"],
-                "redacted": redacted,
-                "item": identity(),
-            },
+            {"reasoning": reasoning, "feedback_item": feedback_item, "item": identity()},
         )
-        for mark, redacted in (
-            ("raw", False),
-            ("summary", False),
-            ("encrypted", False),
-            ("encrypted", True),
+        for reasoning, feedback_item in (
+            ("reason", "raw reasoning"),
+            (
+                "summary",
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "summary"}]},
+            ),
+            (None, {"type": "redacted_thinking", "data": "opaque"}),
+            ("reason", {"type": "thinking", "thinking": "reason", "signature": "signed"}),
         )
     ],
     (
@@ -259,7 +253,8 @@ OPERATIONS = [
     {
         "type": "block_delta",
         "ref": ("thinking", 2, 0),
-        "field": "signature",
+        "field": "feedback_item",
+        "path": ("signature",),
         "kind": "thinking",
         "value": "signature-fragment",
     },
@@ -319,9 +314,9 @@ def test_tool_result_rejects_non_result_content_instead_of_dropping_it(child):
         content_from_wire({"type": "tool_result", "tool_use_id": "a", "content": [child.to_wire()]})
 
 
-def test_generation_rejects_non_boolean_reasoning_redaction():
+def test_generation_rejects_non_string_visible_reasoning():
     with pytest.raises(MessageValidationError, match="content"):
-        generation_input([AssistantMessage("assistant", [ReasoningContent(redacted="no")])], None)
+        generation_input([AssistantMessage("assistant", [ReasoningContent(reasoning=123)])], None)
 
 
 EVENTS = [
@@ -336,14 +331,14 @@ EVENTS = [
         "type": "delta",
         "index": 0,
         "source_ref": ("thinking", 0, 0),
-        "field": "thinking",
+        "field": "reasoning",
         "value": "reason",
     },
     {"type": "block_stop", "index": 0, "block": TextContent("answer")},
     {
         "type": "block",
         "index": 1,
-        "block": ReasoningContent(mark="encrypted", encrypted_content="opaque", redacted=True),
+        "block": ReasoningContent(feedback_item={"type": "redacted_thinking", "data": "opaque"}),
     },
     {
         "type": "tool",
@@ -400,8 +395,7 @@ def test_internal_stream_dto_is_not_a_public_model():
     [
         ({}, "type"),
         ({"type": "text"}, "text"),
-        ({"type": "thinking"}, "thinking"),
-        ({"type": "thinking", "thinking": ""}, "mark"),
+        ({"type": "thinking"}, "reasoning"),
         ({"type": "image"}, "source"),
         ({"type": "image", "source": {}}, "source.type"),
         ({"type": "tool_use"}, "id"),
@@ -432,8 +426,8 @@ def test_content_reader_reports_missing_canonical_fields(wire, field):
         (MessageEvent.from_wire, {"type": "delta"}, "$.chunks[0].field"),
         (
             MessageEvent.from_wire,
-            {"type": "block", "block": {"type": "thinking", "thinking": ""}},
-            "$.chunks[0].block.mark",
+            {"type": "block", "block": {"type": "thinking", "reasoning": 123}},
+            "$.chunks[0].block.reasoning",
         ),
     ],
 )
@@ -460,7 +454,7 @@ def test_public_wire_readers_report_structural_errors(reader, wire, path):
         {
             "type": "block_set",
             "ref": ("thinking", 0, 0),
-            "block": {"type": "thinking", "thinking": ""},
+            "block": {"type": "thinking", "reasoning": 123},
         },
     ],
 )
@@ -515,9 +509,9 @@ def test_decode_rejects_mixed_batch_and_public_event_streams():
 
 @pytest.mark.parametrize("target", ["openai_chat", "middleware"])
 def test_decode_checks_required_content_before_rendering(target):
-    with pytest.raises(MessageValidationError, match="mark"):
+    with pytest.raises(MessageValidationError, match="reasoning"):
         my_llm.MyCodec().decode(
-            messages=[{"role": "assistant", "content": [{"type": "thinking", "thinking": ""}]}],
+            messages=[{"role": "assistant", "content": [{"type": "thinking", "reasoning": 123}]}],
             target_format=target,
             input_format="openai_chat",
         )
@@ -560,7 +554,7 @@ def test_partial_operations_still_require_a_known_content_kind(operation):
 @pytest.mark.parametrize(
     "name,value",
     [
-        ("validate_content", {"type": "thinking", "thinking": "reason", "mark": "raw"}),
+        ("validate_content", {"type": "thinking", "reasoning": "reason"}),
         (
             "validate_messages",
             [{"role": "user", "content": [{"type": "text", "text": "question"}]}],
@@ -597,8 +591,8 @@ def test_public_validators_do_not_format_success_paths(name, value):
         ),
         (
             "validate_messages",
-            [{"role": "assistant", "content": [{"type": "thinking", "thinking": ""}]}],
-            "$.custom[0].content[0].mark",
+            [{"role": "assistant", "content": [{"type": "thinking", "reasoning": 123}]}],
+            "$.custom[0].content[0].reasoning",
         ),
         ("validate_tools", [{"functions": [{"name": "f"}, {}]}], "$.custom[0].functions[1].name"),
         (
@@ -631,10 +625,12 @@ def test_public_validators_do_not_format_success_paths(name, value):
             [
                 {
                     "type": "finish",
-                    "output_blocks": [{"index": 0, "block": {"type": "thinking", "thinking": ""}}],
+                    "output_blocks": [
+                        {"index": 0, "block": {"type": "thinking", "reasoning": 123}}
+                    ],
                 }
             ],
-            "$.custom[0].output_blocks[0].block.mark",
+            "$.custom[0].output_blocks[0].block.reasoning",
         ),
     ],
 )

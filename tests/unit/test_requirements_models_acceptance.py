@@ -8,13 +8,12 @@ from tests.helpers.protocols import PROTOCOLS, chat_event
 
 
 @pytest.mark.parametrize(
-    "item,mark,reasoning",
+    "item,reasoning",
     [
-        ({"type": "reasoning", "encrypted_content": "opaque"}, "encrypted", ""),
+        ({"type": "reasoning", "encrypted_content": "opaque"}, None),
         (
             {"type": "reasoning", "encrypted_content": "opaque", "summary": []},
-            "encrypted",
-            "",
+            None,
         ),
         (
             {
@@ -23,17 +22,15 @@ from tests.helpers.protocols import PROTOCOLS, chat_event
                 "summary": [{"type": "summary_text", "text": "summary"}],
             },
             "summary",
-            "summary",
         ),
     ],
 )
-def test_encrypted_only_reasoning_has_the_encrypted_mark(item, mark, reasoning):
+def test_reasoning_separates_visible_text_and_native_feedback(item, reasoning):
     codec = MyCodec()
     encoded = codec.encode([item], input_format="openai_responses")
     block = encoded.messages[0].content[0]
-    assert block.mark == mark
     assert block.reasoning == reasoning
-    assert block.encrypted_content == "opaque"
+    assert block.feedback_item == item
     restored = codec.decode(encoded.messages, target_format="openai_responses")["messages"]
     assert restored[0]["encrypted_content"] == "opaque"
 

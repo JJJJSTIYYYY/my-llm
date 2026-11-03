@@ -15,7 +15,6 @@ from pydantic import ValidationError
 
 from my_llm.basic.data import capture
 from my_llm.basic.exceptions import ConfigurationError, MessageValidationError, ResponseFailedError
-from my_llm.basic.semantic_loss import report_loss
 from my_llm.cache.compiled_cache import _MISSING, _plan, adapter, parameter_types
 from my_llm.codec.anthropic.decoding.content import decode_block, foreign_block
 from my_llm.codec.base.decoder import BaseDecoder
@@ -242,7 +241,7 @@ class AnthropicDecoder(BaseDecoder):
                     native_support=False,
                     path=f"{getattr(message, 'origin_path', f'$.messages[{index}]')}.name",
                 )
-            context_owner = source_protocol(message)
+            context_owner = source_protocol(message) or parameters.get("source_protocol")
             content = []
             for block in message["content"]:
                 if not input_content(block, profile, feedback=feedback):
@@ -311,25 +310,18 @@ class AnthropicDecoder(BaseDecoder):
                 )
             elif kind == "block_start":
                 block = event["block"]
-                if block.get("type") == "thinking" and not native_owner:
-                    report_loss(
-                        block, "Anthropic cannot replay reasoning without its native signature"
-                    )
-                    continue
                 result.append(
                     {
                         "type": "content_block_start",
                         "index": index,
                         "content_block": {"type": "thinking", "thinking": "", "signature": ""}
-                        if block["type"] == "thinking" and native_owner
+                        if block["type"] == "thinking"
                         else {"type": "text", "text": ""},
                     }
                 )
             elif kind == "delta":
-                field = {"text": "text", "thinking": "thinking"}.get(event.get("field"))
+                field = {"text": "text", "reasoning": "thinking"}.get(event.get("field"))
                 if field is None:
-                    continue
-                if field == "thinking" and parameters.get("source_protocol") != PROTOCOL:
                     continue
                 value = {
                     "type": "content_block_delta",
@@ -338,18 +330,14 @@ class AnthropicDecoder(BaseDecoder):
                 }
                 result.append(value)
             elif kind == "block_stop":
-                if event["block"].get("type") == "thinking":
-                    if not native_owner:
-                        report_loss(
-                            event["block"],
-                            "Anthropic cannot replay reasoning without its native signature",
-                        )
-                        continue
-                    if not event["block"].get("signature"):
-                        report_loss(
-                            event["block"], "Anthropic reasoning requires a native signature"
-                        )
-                signature = event["block"].get("signature")
+                block = event["block"]
+                item = None
+                if block["type"] == "thinking":
+                    if native_owner:
+                        item = decode_block(block)
+                    else:
+                        foreign_block(block)
+                signature = item.get("signature") if isinstance(item, dict) else None
                 if signature and native_owner:
                     result.append(
                         {

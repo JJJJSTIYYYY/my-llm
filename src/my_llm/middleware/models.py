@@ -6,7 +6,7 @@ import json
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
-from typing import Literal
+from typing import Any, Literal
 
 from my_llm.basic.data import capture
 from my_llm.basic.semantic_loss import originated
@@ -132,27 +132,19 @@ class ImageContent(ProtocolValue):
 
 @dataclass(slots=True)
 class ReasoningContent(ProtocolValue):
-    reasoning: str = ""
-    mark: Literal["raw", "summary", "encrypted"] = "raw"
-    signature: str | None = None
-    encrypted_content: str | None = None
-    opaque_protocol: str | None = None
+    """Visible reasoning and the opaque native item retained for later feedback."""
+
+    reasoning: str | None = None
+    feedback_item: Any | None = None
     item: ItemIdentity | None = None
     origin: Origin | None = dataclass_field(default=None, repr=False)
     type: Literal["thinking"] = dataclass_field(default="thinking", init=False)
-    summary: list[str] | None = None
-    redacted: bool = False
 
     def to_wire(self) -> dict:
-        """Project recognized reasoning text, opaque data, signatures and native ownership."""
-        value = {"type": "thinking", "thinking": self.reasoning, "mark": self.mark}
-        for key in ("encrypted_content", "signature", "summary"):
-            if (child := getattr(self, key)) is not None:
-                value[key] = child
-        if self.redacted:
-            value["redacted"] = True
-        if self.opaque_protocol is not None:
-            value["protocol"] = self.opaque_protocol
+        """Project visible text and borrow the native feedback item within the pipeline."""
+        value = {"type": "thinking", "reasoning": self.reasoning}
+        if self.feedback_item is not None:
+            value["feedback_item"] = self.feedback_item
         return _located(_with_item(value, self.item), self.origin)
 
 
@@ -244,15 +236,10 @@ def content_from_validated_wire(
         )
     if kind == "thinking":
         return ReasoningContent(
-            reasoning=value["thinking"],
-            mark=value["mark"],
-            signature=value.get("signature"),
-            encrypted_content=value.get("encrypted_content"),
-            opaque_protocol=value.get("protocol", protocol),
+            reasoning=value["reasoning"],
+            feedback_item=capture(value.get("feedback_item")),
             item=_item(value),
             origin=origin,
-            summary=capture(value.get("summary")),
-            redacted=value.get("redacted", False),
         )
     if kind == "tool_use":
         return ToolCall(

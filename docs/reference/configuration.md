@@ -95,7 +95,7 @@ assert model.get_attributes()["model"].default_value == "demo"
 
 | source | 参数来源 | 例子 |
 | --- | --- | --- |
-| `output` | 从接口返回的指定位置读取值，编码到中间态 | content、reasoning_content |
+| `output` | 从接口返回的指定位置读取值，编码到中间态 | content、reasoning_content、feedback_reasoning_item |
 | `input` | 将中间态或生成选项翻译为接口请求，在指定位置应用参数 | max_tokens、reasoning_enable、reasoning_effort |
 
 output 参数不会注入请求；input 参数不会被用来读取响应。
@@ -187,6 +187,23 @@ output 参数从接口返回对象的根部按同样的路径语法读取。
 | gemini | `$.config.max_output_tokens` | `$.candidates[0].content.parts[0].text` | `$.candidates[0].content.parts[0].text` |
 | ollama | `$.options.num_predict` | `$.message.content` | `$.message.thinking` |
 
+`feedback_reasoning_item` 独立选择原生回传项，流式完整项和聚合结果由对应 codec 读取：
+
+| 协议 | feedback_reasoning_item（output 默认路径） | 保存内容 |
+| --- | --- | --- |
+| openai_chat | `$.choices[0].delta.reasoning_content` | 原始思维文本 |
+| openai_responses | `$.item` | 完整原生 reasoning item |
+| anthropic | `$.content_block` | 完整 thinking / redacted_thinking block |
+| gemini | `$.candidates[0].content.parts[0]` | 原生 thought part |
+| ollama | `$.message.thinking` | 原始思维文本 |
+
+Responses 的提取上下文统一为 `{"item": native_reasoning_item}`，适用于历史、流式 item.done 和最终快照。
+自定义路径可用 `$.item.encrypted_content` 等 item 内路径；事件的同级字段不在该上下文内。
+默认提取完整 item 才能原样回传，改为局部值时应由调用方确认接口是否接受。
+
+`None` 继承提取声明，`omit` 禁用提取；该字段不产生公开流式 delta。
+`should_feedback_reasoning_item` 决定下一轮是否回传及回传范围，可见 `reasoning_content` 独立控制。
+
 Chat 的 reasoning_content 是兼容服务扩展；Responses、Gemini 仍按标准事件或 part 类型区分文本和思考。
 修改路径不会改变协议事件类型的含义，也不会更改 Decoder 输出的标准字段位置。
 
@@ -263,7 +280,8 @@ generate 的 extra_headers 继续按现有规则覆盖；Ollama 的请求头仍�
 | `reasoning_effort` | input Parameter；强度位置及缺失时默认值 |
 | `reasoning_effort.supports` | Parameter；Responses 默认 True，其他默认 False，替代 supports_reasoning_effort |
 | `reasoning_effort_mapping` | Config；none/low/medium/high/xhigh/max 的映射，映射项 None/omit 禁用对应级别 |
-| `feedback_reasoning_content` | Config[Literal["when_tool_calls", "always", "none"]]；所有内置协议默认 always；回传工具调用消息中的思考、全部历史思考或不回传；omit 等同 none |
+| `feedback_reasoning_item` | 输出 Parameter[Any]；各协议自主定义默认提取路径，保存原始回传项；None 继承，omit 禁用 |
+| `should_feedback_reasoning_item` | Config[Literal["when_tool_calls", "always", "none"]]；所有内置协议默认 always；回传工具调用消息中的思考、全部历史思考或不回传；omit 等同 none |
 
 回传策略只决定哪些历史思考进入请求，被策略排除的思考不记录语义损失。
 `reasoning_enable.supports=False` 表示模型不支持思考，所有思考内容均记录为不支持的语义损失，
@@ -293,7 +311,7 @@ from my_llm import Config, Parameter, ProviderProfile, omit
 
 compatible = ProviderProfile(
     protocol=Config(default_value="openai_chat"),
-    feedback_reasoning_content=Config(default_value="always"),
+    should_feedback_reasoning_item=Config(default_value="always"),
     reasoning_enable=Parameter(
         path="$.extra_body.thinking",
         default_value={"type": "enabled"},
@@ -337,7 +355,9 @@ class CompatibleProvider(ProviderProfile):
         ),
         metadata={"source": "input"},
     )
-    vendor_mode: Config[bool] | Omit | None = field(default_factory=lambda: Config(default_value=True))
+    vendor_mode: Config[bool] | Omit | None = field(
+        default_factory=lambda: Config(default_value=True)
+    )
 
 
 provider = CompatibleProvider()  # 使用扩展类声明的预算配置
@@ -361,7 +381,9 @@ from my_llm import Parameter, ProviderProfile
 @dataclass(kw_only=True)
 class HeaderProvider(ProviderProfile):
     authentication: Parameter[str] = field(
-        default_factory=lambda: Parameter(path="$.extra_headers.x-auth", default_value="offline-token"),
+        default_factory=lambda: Parameter(
+            path="$.extra_headers.x-auth", default_value="offline-token"
+        ),
         metadata={"scope": "client", "source": "input"},
     )
 ```
@@ -406,8 +428,8 @@ Encoder / Decoder 只读取并构造标准协议及 Profile 明确声明的已�
 开放字典内部应用数据随其已识别的外层字段保留，不保存原始对象或跨协议恢复记录。
 跨协议来回翻译不保证无损，详见[翻译字段边界](../design/translation-boundaries.md)。
 
-标准签名、redacted_thinking、encrypted_content 按对应协议明确处理，不能转换成其他协议的原生签名，
-也不通过隐藏记录保存供后续恢复。不能表达的媒体或会改变工具约束的已知 SDK 限制会在 Decoder 记录语义损失。
+原生思维项统一保存在 `ReasoningContent.feedback_item`；跨协议由 Decoder 丢弃并记录语义损失。
+该值不转换成其他协议的签名或密文，也不通过隐藏记录保存供后续恢复。不能表达的媒体或会改变工具约束的已知 SDK 限制会在 Decoder 记录语义损失。
 audio / file / 文档与用户 metadata 不在支持集合，编码时静默丢弃。图片不能变为文本引用；
 目标无法表达支持值时进入默认 raise、ignore 或双向 hook，见[语义损失指南](../guides/semantic-loss.md)。
 
@@ -425,5 +447,5 @@ assert model.reasoning_enable.source == "input"
 ```
 
 `supports_stream`、`supports_function_calling`、`supports_message_name` 控制流协议、工具能力和消息处理分支，
-当前没有对应的可路由 Parameter，继续使用独立 Config。`feedback_reasoning_content`、
+当前没有对应的可路由 Parameter，继续使用独立 Config。`should_feedback_reasoning_item`、
 `reasoning_effort_mapping` 等行为配置也保持 Config。

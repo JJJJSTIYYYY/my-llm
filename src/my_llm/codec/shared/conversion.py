@@ -50,6 +50,22 @@ def text(content: list[dict]) -> str:
     return "".join(b.get("text", "") for b in content if b.get("type") == "text")
 
 
+def scalar_reasoning(block: dict, *, feedback: bool = False) -> str | None:
+    """Select scalar request feedback or visible output, recording unrepresentable items."""
+    item = block.get("feedback_item")
+    if feedback:
+        if item is not None and not isinstance(item, str):
+            report_loss(block, "reasoning feedback_item must be text")
+            return None
+        return item
+    reasoning = block.get("reasoning")
+    if item is not None and (not isinstance(item, str) or item != reasoning):
+        report_loss(
+            block, "target protocol cannot preserve feedback_item alongside visible reasoning"
+        )
+    return reasoning
+
+
 def arguments(value: Any) -> dict:
     """Read an argument object; the public translation boundary captures it."""
     if isinstance(value, dict):

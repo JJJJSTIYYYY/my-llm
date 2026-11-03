@@ -75,6 +75,8 @@ class OverridableProfile(Profile):
     """Shared provider/model overrides, all keyword-only and defaulting to None.
 
     Args:
+        protocol: Config containing a registered upstream protocol name. Model
+            overrides provider; None inherits. A protocol is required to resolve.
         extra_headers: Config of default request headers.
         extra_body: Config of native generation options.
         reasoning_effort_mapping: Config mapping public effort levels to native values.
@@ -93,6 +95,7 @@ class OverridableProfile(Profile):
     Extend profiles with typed Parameter, Config or Attribute fields.
     """
 
+    protocol: Config[Protocol] | None = None
     extra_headers: Config[dict[str, Any]] | Omit | None = None
     extra_body: Config[dict[str, Any]] | Omit | None = None
     reasoning_effort_mapping: Config[dict[str, Any]] | Omit | None = None

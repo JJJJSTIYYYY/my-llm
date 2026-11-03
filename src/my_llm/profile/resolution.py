@@ -86,8 +86,8 @@ def resolve_profiles(
     """Resolve independent settings in protocol-default, provider, model order.
 
     Args:
-        provider: ProviderProfile with an explicit protocol Config.
-        model: ModelProfile containing a nonempty model ID.
+        provider: ProviderProfile containing connection settings and defaults.
+        model: ModelProfile containing a nonempty model ID and optional overrides.
         defaults_for: Optional instance-owned protocol-default lookup. By default,
             create the selected registered codec independently.
 
@@ -104,6 +104,7 @@ def resolve_profiles(
 
     Direct integrations should also call MyCodec.validate_profile before use to
     check protocol-specific constraints. MyLLM performs both steps automatically.
+    The model's protocol overrides the provider's before selecting codec defaults.
     """
     if not isinstance(provider, ProviderProfile) or not isinstance(model, ModelProfile):
         raise ConfigurationError("provider and model must be profile instances")
@@ -113,9 +114,12 @@ def resolve_profiles(
         or not model.model.default_value.strip()
     ):
         raise ConfigurationError("model must be a non-empty string")
-    if provider.protocol is not None and not isinstance(provider.protocol, Config):
-        raise ConfigurationError("protocol must use Config[Protocol]")
-    protocol = provider.protocol.default_value if provider.protocol is not None else None
+    protocol = None
+    for profile in (provider, model):
+        if profile.protocol is not None:
+            if not isinstance(profile.protocol, Config):
+                raise ConfigurationError("protocol must use Config[Protocol]")
+            protocol = profile.protocol.default_value
     defaults = codec_for(protocol).defaults if defaults_for is None else defaults_for(protocol)
     if not isinstance(defaults, ProtocolDefaults):
         raise ConfigurationError("codec defaults must be a ProtocolDefaults instance")

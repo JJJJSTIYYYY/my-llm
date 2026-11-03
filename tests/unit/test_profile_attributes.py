@@ -12,6 +12,7 @@ from my_llm import (
     MyCodec,
     Parameter,
     ProviderProfile,
+    omit,
     resolve_profiles,
 )
 
@@ -106,22 +107,34 @@ def test_attribute_cannot_share_a_field_with_configuration_or_routing(annotation
         )
 
 
-def test_protocol_is_a_bound_config_and_resolves_to_a_plain_protocol_name():
+@pytest.mark.parametrize("layer", ["provider", "model"])
+def test_protocol_is_a_bound_config_and_resolves_to_a_plain_protocol_name(layer):
     declaration = Config(default_value="openai_chat")
-    provider = ProviderProfile(protocol=declaration)
-    profile = resolve_profiles(provider, ModelProfile(model=Attribute(default_value="demo")))
-    assert provider.protocol.name == "protocol"
+    provider = ProviderProfile(protocol=declaration if layer == "provider" else None)
+    model = ModelProfile(
+        model=Attribute(default_value="demo"),
+        protocol=declaration if layer == "model" else None,
+    )
+    profile = resolve_profiles(provider, model)
+    configured = provider if layer == "provider" else model
+    assert configured.protocol.name == "protocol"
     assert declaration.name is None
     assert profile.protocol == profile.get("protocol") == "openai_chat"
     assert profile.parameter("protocol") is None
 
 
-@pytest.mark.parametrize("protocol", ["openai_chat", Attribute(default_value="openai_chat")])
-def test_protocol_rejects_non_config_declarations(protocol):
+@pytest.mark.parametrize("layer", ["provider", "model"])
+@pytest.mark.parametrize("protocol", ["openai_chat", Attribute(default_value="openai_chat"), omit])
+def test_protocol_rejects_non_config_declarations(layer, protocol):
     with pytest.raises(ConfigurationError, match="protocol.*Config"):
         resolve_profiles(
-            ProviderProfile(protocol=protocol),
-            ModelProfile(model=Attribute(default_value="demo")),
+            ProviderProfile(
+                protocol=protocol if layer == "provider" else Config(default_value="openai_chat")
+            ),
+            ModelProfile(
+                model=Attribute(default_value="demo"),
+                protocol=protocol if layer == "model" else None,
+            ),
         )
 
 
@@ -133,15 +146,17 @@ def test_model_requires_an_attribute_declaration(model):
         )
 
 
-def test_model_cannot_change_the_protocol_after_codec_selection():
+def test_model_subclass_protocol_default_overrides_provider_before_codec_selection():
     @dataclass(kw_only=True)
     class DifferentProtocol(ModelProfile):
         protocol: Config[str] = field(
             default_factory=lambda: Config(default_value="openai_responses")
         )
 
-    with pytest.raises(ConfigurationError, match="protocol cannot change"):
-        resolve_profiles(
-            ProviderProfile(protocol=Config(default_value="openai_chat")),
-            DifferentProtocol(model=Attribute(default_value="demo")),
-        )
+    profile = resolve_profiles(
+        ProviderProfile(protocol=Config(default_value="openai_chat")),
+        DifferentProtocol(model=Attribute(default_value="demo")),
+    )
+
+    assert profile.protocol == profile.get("protocol") == "openai_responses"
+    assert profile.parameter("max_tokens").path == "$.max_output_tokens"

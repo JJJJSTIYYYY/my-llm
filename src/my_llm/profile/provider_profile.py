@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 
 from my_llm.basic.exceptions import ConfigurationError
-from my_llm.profile.configuration import OverridableProfile, Protocol
+from my_llm.profile.configuration import OverridableProfile
 from my_llm.profile.model_profile import ModelProfile
 from my_llm.profile.types import Attribute, Config, Omit, Parameter
 
@@ -15,8 +15,8 @@ class ProviderProfile(OverridableProfile):
     """Provider connection, upstream protocol and optional model catalogue.
 
     Args:
-        protocol: Config containing a registered protocol name; required for use
-            with MyLLM or resolve_profiles, although its field default is None.
+        protocol: Config containing a default upstream protocol name. A model
+            may override it or supply it when the provider leaves it unset.
         base_url: Config containing the service URL; None inherits SDK defaults.
         api_key: Input Parameter containing the authentication value and path.
             Use the SDK key path or an authentication-header path for the protocol.
@@ -34,7 +34,6 @@ class ProviderProfile(OverridableProfile):
     Additional keyword fields are inherited from OverridableProfile.
     """
 
-    protocol: Config[Protocol] | None = None
     base_url: Config[str] | Omit | None = None
     api_key: Parameter[str] | Omit | None = field(
         default=None, repr=False, metadata={"scope": "client", "source": "input"}

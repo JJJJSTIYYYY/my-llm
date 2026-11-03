@@ -16,6 +16,7 @@ class ModelProfile(OverridableProfile):
 
     Args:
         model: Required Attribute containing a nonempty model ID.
+        protocol: Config overriding the provider's upstream protocol; None inherits.
         max_context_window: Descriptive Attribute integer, default 256000. It does
             not truncate history or enforce token limits.
         supports_function_calling: Config capability flag; protocol default False.

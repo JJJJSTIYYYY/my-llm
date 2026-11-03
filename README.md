@@ -115,7 +115,7 @@ async def main():
 asyncio.run(main())
 ```
 
-更换 `provider.protocol` 及对应连接、模型配置，即可切换上游 API；`stdio_protocol` 决定业务层使用的格式。
+通过 `provider.protocol` 配置默认上游 API，`model.protocol` 可覆盖它；`stdio_protocol` 决定业务层使用的格式。
 建议像示例一样显式指定 `stdio_protocol`。省略时仅在消息与工具整批唯一匹配一种协议时自动绑定；
 零匹配或多种协议都匹配时抛出 `MessageValidationError`。普通 role/content 文本存在协议歧义，需要显式指定。
 
@@ -161,7 +161,7 @@ print(converted["messages"])
 
 ## 支持的协议
 
-以下标识均可用于 `ProviderProfile.protocol` 和 `stdio_protocol`：
+以下标识均可用于 `ProviderProfile.protocol`、`ModelProfile.protocol` 和 `stdio_protocol`：
 
 | 协议标识 | 对应 API |
 | --- | --- |

@@ -34,13 +34,15 @@ async def session():
 
 | 参数 | 类型 | 含义 |
 | --- | --- | --- |
-| `provider` | `ProviderProfile` | 必填，连接配置和明确指定的上游协议 |
+| `provider` | `ProviderProfile` | 必填，连接配置和默认上游协议 |
 | `model` | `ModelProfile` | 必填，模型 ID 和模型配置 |
 | `resolve_profile_with_hash` | `tuple[ResolvedProfile, int] \| None` | 默认 `None`；传入同一配置的预解析结果，跳过解析和哈希，复制快照后仍检查协议约束 |
 | `stdio_protocol` | `Protocol \| None` | 输入消息、工具和输出共用的协议；默认尝试唯一推断 |
 | `enable_message_cache` | `bool` | 默认 `False`；开启后缓存已翻译的增量输入，同一实例必须串行使用 |
 
-`ProviderProfile.protocol` 选择上游 API，`stdio_protocol` 选择应用使用的消息格式，两者可以不同。
+`ModelProfile.protocol` 优先于 `ProviderProfile.protocol` 选择上游 API，并决定使用哪份 Codec 默认值。
+Model 的 `protocol=None` 继承 Provider；Model 明确配置时，Provider 可省略协议。
+`stdio_protocol` 选择应用使用的消息格式，可以与上游协议不同。
 `stdio_protocol` 未指定时，第一次生成从整个消息与工具列表中推断；只有唯一匹配时才绑定。
 纯文本输入常同时符合多种协议，建议显式指定。零匹配、多匹配或空输入无法推断时抛出
 `MessageValidationError`；推断失败不会绑定协议。绑定后后续调用沿用该协议。
@@ -323,7 +325,6 @@ Parameter 覆盖时替换完整声明。Config 字典按键合并，嵌套值整
 
 | 字段 | 包装类型 | 含义 |
 | --- | --- | --- |
-| `protocol` | `Config[Protocol]` | 使用时必须明确指定已注册协议名 |
 | `base_url` | `Config[str]` | 服务地址；未设置时遵循 SDK 默认值 |
 | `api_key` | `Parameter[str]` | 认证值及其位置；使用所选协议支持的密钥或认证头路径 |
 | `timeout` | `Config[float]` | 正数，单位为秒 |
@@ -363,6 +364,7 @@ Provider 与 Model 共享以下覆盖项，均默认 `None`，表示继承：
 
 | 字段 | 包装类型 | 含义 |
 | --- | --- | --- |
+| `protocol` | `Config[Protocol]` | Model 优先于 Provider；最终必须是已注册协议名，不接受 `omit` |
 | `extra_headers` / `extra_body` | `Config[dict]` | 默认请求头与协议原生生成选项 |
 | `max_tokens` | 输入 `Parameter[int]` | 输出 token 上限 |
 | `content` / `reasoning_content` | 输出 `Parameter` | 可见文本与思考字段 |

@@ -2,6 +2,8 @@
 
 `ProviderProfile` 描述连接和上游 API，`ModelProfile` 描述模型及覆盖项。
 MyLLM 构造时按 `Codec.defaults → provider → model` 解析为独立的 `ResolvedProfile`。
+先按 `Model.protocol > Provider.protocol` 选择上游协议，再使用该协议的 Codec 默认值。
+Model 的 `protocol=None` 继承 Provider；Model 明确配置协议时，Provider 可以不设置 `protocol`。
 协议默认值由各协议的 `ProtocolDefaults` 声明；新协议先注册，再创建 MyLLM。
 generate 不接受动态 provider/model 或连接参数。
 
@@ -24,6 +26,25 @@ llm = MyLLM(
     ),
     stdio_protocol="openai_chat",
 )
+```
+
+同一 Provider 下的模型可以使用不同协议，并分别继承对应协议的参数路径：
+
+```python
+from my_llm import Attribute, Config, ModelProfile, ProviderProfile, resolve_profiles
+
+provider = ProviderProfile(protocol=Config(default_value="openai_chat"))
+chat_model = ModelProfile(model=Attribute(default_value="chat-model"))
+responses_model = ModelProfile(
+    model=Attribute(default_value="responses-model"),
+    protocol=Config(default_value="openai_responses"),
+)
+chat = resolve_profiles(provider, chat_model)
+responses = resolve_profiles(provider, responses_model)
+assert chat.protocol == "openai_chat"
+assert chat.parameter("max_tokens").path == "$.max_completion_tokens"
+assert responses.protocol == "openai_responses"
+assert responses.parameter("max_tokens").path == "$.max_output_tokens"
 ```
 
 ## 参数与行为配置
@@ -83,7 +104,8 @@ output 参数不会注入请求；input 参数不会被用来读取响应。
 
 ## 继承、默认值和省略
 
-Profile 的参数与行为字段都使用 `Parameter[T] | Omit | None` 或 `Config[T] | Omit | None`：
+Profile 的参数与行为字段通常使用 `Parameter[T] | Omit | None` 或 `Config[T] | Omit | None`。
+`protocol` 使用 `Config[Protocol] | None`，不接受 `omit`，最终必须是已注册协议名。
 
 | 配置 | 含义 |
 | --- | --- |
@@ -172,7 +194,7 @@ Chat 的 reasoning_content 是兼容服务扩展；Responses、Gemini 仍按标�
 
 | 字段 | 归属 / 说明 |
 | --- | --- |
-| `protocol` | Provider Config[Protocol]；默认 None，使用前须以 Config 包装已注册协议名；它决定选用哪一份 Codec 默认值 |
+| `protocol` | Provider / Model Config[Protocol]；默认 None，Model 优先；最终协议决定选用哪一份 Codec 默认值 |
 | `base_url` | Provider Config；默认继承 SDK 配置 |
 | `api_key` | Provider input Parameter；配置连接密钥的传递位置，default_value 默认为 omit，不出现在 repr |
 | `timeout` / `max_retries` | Provider Config；正秒数 / 非负整数，默认使用 SDK 配置 |
@@ -232,6 +254,7 @@ generate 的 extra_headers 继续按现有规则覆盖；Ollama 的请求头仍�
 
 | 字段 | 类型 / 说明 |
 | --- | --- |
+| `protocol` | Config[Protocol]；Model 覆盖 Provider，None 继承；最终必须明确指定已注册协议名，不接受 omit |
 | `extra_headers` / `extra_body` | Config；请求头及协议原生生成参数，按键合并 |
 | `max_tokens` | input Parameter；正整数输出上限，标准缺失默认值 omit |
 | `content` | output Parameter；文本位置及缺失时默认值，标准缺失默认值 omit |

@@ -57,12 +57,19 @@ def test_mutable_profile_defaults_are_independent_between_instances():
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
-def test_standard_defaults_are_preserved_in_independent_profile_snapshots(protocol):
+@pytest.mark.parametrize("model_override", [False, True])
+def test_standard_defaults_are_preserved_in_independent_profile_snapshots(protocol, model_override):
     defaults = protocol_defaults(protocol)
     resolved = resolve_profiles(
-        ProviderProfile(protocol=Config(default_value=protocol)),
-        ModelProfile(model=Attribute(default_value="demo")),
+        ProviderProfile(
+            protocol=Config(default_value="openai_chat" if model_override else protocol)
+        ),
+        ModelProfile(
+            model=Attribute(default_value="demo"),
+            protocol=Config(default_value=protocol) if model_override else None,
+        ),
     )
+    assert resolved.protocol == resolved.get("protocol") == protocol
     assert all(
         (resolved.parameters[key] if isinstance(value, (Parameter, Omit)) else resolved.get(key))
         == (value if isinstance(value, (Parameter, Omit)) else value.default_value)
@@ -71,6 +78,27 @@ def test_standard_defaults_are_preserved_in_independent_profile_snapshots(protoc
     defaults["reasoning_effort_mapping"].default_value["changed"] = "custom"
     assert "changed" not in resolved.get("reasoning_effort_mapping")
     assert "changed" not in protocol_defaults(protocol)["reasoning_effort_mapping"].default_value
+
+
+def test_model_protocol_selects_the_instance_defaults_before_resolution():
+    codec = MyCodec()
+    calls = []
+
+    def defaults_for(protocol):
+        calls.append(protocol)
+        return codec.defaults(protocol)
+
+    resolved = resolve_profiles(
+        ProviderProfile(protocol=Config(default_value="openai_chat")),
+        ModelProfile(
+            model=Attribute(default_value="demo"),
+            protocol=Config(default_value="openai_responses"),
+        ),
+        defaults_for=defaults_for,
+    )
+
+    assert calls == ["openai_responses"]
+    assert resolved.parameter("max_tokens").path == "$.max_output_tokens"
 
 
 def test_llm_uses_its_own_codec_for_protocol_validation(monkeypatch):

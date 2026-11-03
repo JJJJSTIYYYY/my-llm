@@ -109,7 +109,8 @@ Encoder / Decoder 的完整调用流程仍集中在所属类中。初始化文�
       → stdio Decoder → 原生事件／完成消息 → 本次响应关闭
 ```
 
-`ProviderProfile.protocol` 选择上游，`stdio_protocol` 选择业务输入输出。
+先按 `ModelProfile.protocol > ProviderProfile.protocol` 选择上游，再加载该协议的 Codec 默认值；
+Model 未设置协议时继承 Provider。`stdio_protocol` 选择业务输入输出。
 未设置 stdio_protocol 时，仅整批输入唯一匹配才绑定；零匹配和多匹配报 MessageValidationError。
 绑定与准备没有 await；准备完成后修改调用方历史、body、headers 不会改变待消费请求。
 同协议和跨协议均经过 Encoder / Decoder；收集式调用消费同一个 MessageStream。

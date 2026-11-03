@@ -37,8 +37,11 @@ def test_shared_overrides_are_public():
     from my_llm.profile.configuration import OverridableProfile as ConfigurationExport
 
     assert OverridableProfile is ProfileExport is ConfigurationExport
+    assert OverridableProfile().get_configs()["protocol"] is None
     assert isinstance(ProviderProfile(), OverridableProfile)
-    assert isinstance(ModelProfile(model=Attribute(default_value="demo")), OverridableProfile)
+    model = ModelProfile(model=Attribute(default_value="demo"))
+    assert isinstance(model, OverridableProfile)
+    assert model.get_configs()["protocol"] is None
 
 
 def test_model_overrides_provider_and_dict_keys():
@@ -76,11 +79,42 @@ def test_omit_disables_defaults_and_none_inherits(profile_factory):
 
 
 @pytest.mark.parametrize("settings", [{}, {"protocol": None}, {"protocol": config("unknown")}])
-def test_provider_requires_a_registered_protocol(settings):
+def test_resolved_profile_requires_a_registered_protocol(settings):
     provider = ProviderProfile(**settings)
     protocol = provider.protocol.default_value if provider.protocol is not None else None
     with pytest.raises(UnsupportedProviderError, match=f"unsupported protocol: {protocol!r}"):
         resolve_profiles(provider, ModelProfile(model=Attribute(default_value="demo")))
+
+
+@pytest.mark.parametrize("provider_protocol", [None, config("unknown"), config("openai_chat")])
+def test_model_protocol_overrides_provider_or_supplies_a_missing_protocol(provider_protocol):
+    provider = ProviderProfile(protocol=provider_protocol)
+    original = deepcopy(provider)
+    model = ModelProfile(model=Attribute(default_value="demo"), protocol=config("openai_responses"))
+
+    result = resolve_profiles(provider, model)
+
+    assert result.protocol == result.get("protocol") == "openai_responses"
+    assert result.parameter("max_tokens").path == "$.max_output_tokens"
+    assert provider == original
+
+
+def test_unset_model_protocol_inherits_provider():
+    provider = ProviderProfile(protocol=config("openai_responses"))
+    model = ModelProfile(model=Attribute(default_value="demo"), protocol=None)
+
+    result = resolve_profiles(provider, model)
+
+    assert result.protocol == result.get("protocol") == "openai_responses"
+
+
+@pytest.mark.parametrize("protocol", ["unknown", None, omit])
+def test_explicit_invalid_model_protocol_does_not_fall_back_to_provider(protocol):
+    with pytest.raises(UnsupportedProviderError, match="unsupported protocol"):
+        resolve_profiles(
+            ProviderProfile(protocol=config("openai_chat")),
+            ModelProfile(model=Attribute(default_value="demo"), protocol=config(protocol)),
+        )
 
 
 @pytest.mark.parametrize("protocol", ["anthropic", "gemini", "ollama"])

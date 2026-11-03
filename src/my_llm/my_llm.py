@@ -28,8 +28,8 @@ class MyLLM:
     """Generate messages using a fixed provider, model and input/output protocol.
 
     Args:
-        provider: Connection settings and an explicitly configured upstream protocol.
-        model: Model identity and overrides for provider defaults.
+        provider: Connection settings and default upstream protocol.
+        model: Model identity and overrides, including the upstream protocol.
         resolve_profile_with_hash: Precomputed (ResolvedProfile, int) for the same
             provider/model, from compare or resolve_profiles_with_hash. Skip
             resolution and hashing; copy the snapshot and validate the protocol.
@@ -449,7 +449,7 @@ async def generate(
     """Generate once with an automatically managed temporary MyLLM instance.
 
     Args:
-        provider: Provider connection settings and upstream protocol.
+        provider: Provider connection settings and default upstream protocol.
         model: ModelProfile or a nonempty model ID. An ID creates a ModelProfile;
             it does not look up the provider's model catalogue.
         messages: History in the selected input/output protocol.

@@ -2,7 +2,8 @@
 
 应用可以直接使用从 `my_llm` 导出的具体模型收发消息。构造实例时必须显式设置
 `stdio_protocol="middleware"`；中间模型不参与协议推断，也不能混入原生协议的消息和工具列表。
-`provider.protocol` 仍然选择真实上游，例如 `openai_chat`、`anthropic` 或 `gemini`。
+`model.protocol` 优先于 `provider.protocol` 选择真实上游，例如 `openai_chat`、`anthropic` 或 `gemini`；
+Model 未设置协议时继承 Provider。
 
 ```python
 from my_llm import (

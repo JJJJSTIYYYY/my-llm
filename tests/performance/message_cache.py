@@ -4,6 +4,7 @@ Run: python -m tests.performance.message_cache --json /tmp/message-cache.json
 """
 
 import argparse
+import asyncio
 import gc
 import hashlib
 import json
@@ -41,8 +42,8 @@ def messages(count, chars, *, offset=0):
     ]
 
 
-def prepare(llm, batch, *, cached, key):
-    return llm.codec.prepare(
+async def prepare(llm, batch, *, cached, key):
+    return await llm.codec.prepare(
         {
             "messages": batch,
             "tools": omit,
@@ -62,11 +63,11 @@ def prepare(llm, batch, *, cached, key):
     )
 
 
-def measure(operation):
+async def measure(operation):
     collections = sum(item["collections"] for item in gc.get_stats())
     cpu = process_time_ns()
     start = perf_counter_ns()
-    result = operation()
+    result = await operation()
     elapsed = perf_counter_ns() - start
     cpu = process_time_ns() - cpu
     return result, {
@@ -87,7 +88,7 @@ def summary(samples):
     }
 
 
-def benchmark(history_count, chars, *, delta_count, delta_chars, iterations, warmup):
+async def benchmark(history_count, chars, *, delta_count, delta_chars, iterations, warmup):
     provider, model = profiles("openai_chat")
     # Keep instance/factory/schema setup outside the timed request preparation.
     llm = MyLLM(provider=provider, model=model, stdio_protocol="openai_chat")
@@ -103,7 +104,7 @@ def benchmark(history_count, chars, *, delta_count, delta_chars, iterations, war
             # Otherwise repeated deltas would measure dedup hits or growing histories.
             llm.codec.expire_message_cache(key)
             if history:
-                prepare(llm, history, cached=True, key=key)
+                (await prepare(llm, history, cached=True, key=key))
             operations = {
                 "direct": lambda: prepare(llm, full, cached=False, key=key),
                 "cached": lambda: prepare(llm, delta, cached=True, key=key),
@@ -111,7 +112,7 @@ def benchmark(history_count, chars, *, delta_count, delta_chars, iterations, war
             order = ("direct", "cached") if index % 2 == 0 else ("cached", "direct")
             results = {}
             for name in order:
-                result, sample = measure(operations[name])
+                result, sample = await measure(operations[name])
                 results[name] = result
                 if index >= warmup:
                     samples[name].append(sample)
@@ -140,7 +141,7 @@ def benchmark(history_count, chars, *, delta_count, delta_chars, iterations, war
     }
 
 
-def main():
+async def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--history", type=int, nargs="+", default=[0, 1, 2, 4, 8, 16, 32, 64, 128])
     parser.add_argument("--chars", type=int, nargs="+", default=[32, 256, 2048, 16384])
@@ -184,7 +185,7 @@ def main():
         "cases": [],
     }
     for count, chars in cases:
-        case = benchmark(
+        case = await benchmark(
             count,
             chars,
             delta_count=options.delta,
@@ -204,4 +205,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

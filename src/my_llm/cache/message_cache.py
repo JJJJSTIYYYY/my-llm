@@ -35,7 +35,7 @@ def _fingerprint_value(value: Any) -> Any:
     return value
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False, weakref_slot=True)
 class _History:
     messages: list
     fingerprint: bytes | None
@@ -137,3 +137,25 @@ class MessageCacheBatch:
         """Publish the staged translation without retaining adaptor/hook edits."""
         if self._history is not None:
             self._cache._histories[self._key] = self._history
+
+    @property
+    def identity(self) -> object:
+        """Opaque, weak-referenceable identity shared by consecutive batch retries.
+
+        A new input batch gets a new identity. Consumers own any state keyed by
+        this identity; the cache retains no consumer metadata.
+        """
+        if self._history is None:
+            raise ConfigurationError("message cache identity requires staged history")
+        return self._history
+
+    def extend(self, messages: list) -> None:
+        """Publish owned messages after this batch, preserving its input identity.
+
+        This operation does not deduplicate additions; callers decide when to use
+        it. Other changes to the request remain independent of cached history.
+        """
+        if self._history is None or not isinstance(messages, list):
+            raise ConfigurationError("message cache extension requires staged history and a list")
+        self._history.messages = [*self._history.messages, *capture(messages)]
+        self.commit()

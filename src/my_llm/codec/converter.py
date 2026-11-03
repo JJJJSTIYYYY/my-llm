@@ -265,7 +265,7 @@ class MyCodec:
         inputs.update(messages=history, tools=values)
         return protocol
 
-    def prepare(
+    async def prepare(
         self,
         inputs: dict,
         profile: ResolvedProfile,
@@ -275,7 +275,7 @@ class MyCodec:
         enable_message_cache: bool = False,
         message_cache_key: str | None = None,
     ) -> dict:
-        """Prepare one complete generation call without performing network I/O.
+        """Prepare one complete generation call and await registered request hooks.
 
         Args:
             inputs: MyLLM.generate options as a dictionary, including messages, tools
@@ -304,8 +304,9 @@ class MyCodec:
 
         Message caching stages only the current batch's native translation, after
         association validation. It joins prior translated history during assembly
-        and publishes it through BaseCodec.translate before semantic-loss adaptation.
-        No SDK client is created and no network request is sent here.
+        and publishes it through BaseCodec.prepare before semantic-loss adaptation.
+        No SDK client is created or upstream model request sent here. Explicit
+        asynchronous request hooks may perform their own I/O before returning.
         """
         if enable_message_cache and message_cache_key is None:
             raise ConfigurationError("message caching requires an instance key")
@@ -327,11 +328,17 @@ class MyCodec:
                 message_cache_key, fingerprint=self._message_cache.fingerprint(inputs["messages"])
             )
             intermediate["message_transform"] = batch.append
-        return target.translate(
-            lambda: target.decoder.prepare(intermediate, client),
-            SemanticLossContext(input_format, profile.protocol, "input", "request"),
-            draft_key="request",
-            enable_message_cache=enable_message_cache,
+        return await target.prepare(
+            intermediate,
+            client,
+            SemanticLossContext(
+                input_format,
+                profile.protocol,
+                "input",
+                "request",
+                profile=profile,
+                message_cache=batch,
+            ),
             message_cache_batch=batch,
         )
 
@@ -587,7 +594,7 @@ class MyCodec:
         target = self._codec(profile.protocol)
         return target.translate(
             lambda: target.request(messages, tools, profile, **parameters),
-            SemanticLossContext(source, profile.protocol, "input", "request"),
+            SemanticLossContext(source, profile.protocol, "input", "request", profile=profile),
         )
 
 

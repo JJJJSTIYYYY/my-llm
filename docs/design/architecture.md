@@ -92,8 +92,9 @@ Encoder / Decoder 的完整调用流程仍集中在所属类中。初始化文�
 
 请求：generate 完整输入字典 + ResolvedProfile
       → MyCodec.bind_input（已绑定时直接使用，否则唯一识别）
+      → await MyCodec.prepare
       → 输入 Encoder.request → 输入验证 → 消息与工具中间态
-      → 上游 Decoder.prepare
+      → await BaseCodec.prepare → 上游 Decoder.prepare
           → validate_parameters（每次一次）
           → request_client / client_key（SDK 的请求级客户端变体）
           → request → 当前批工具关联验证 → 消息翻译
@@ -101,7 +102,7 @@ Encoder / Decoder 的完整调用流程仍集中在所属类中。初始化文�
           → 参数路径及默认值 → assemble_request
           → native_request → Schema 过滤、能力及原生结构验证
           → {client, request, local}
-      → BaseCodec.translate 发布消息翻译缓存，再调用语义损失 adaptor
+      → BaseCodec.prepare 发布消息翻译缓存，再等待语义损失 adaptor / 请求 hook
       → MyLLM 延迟取得／复用客户端 → Transport.upstream → SDK(**request)
 
 返回：SDK 事件 → 上游 Encoder → 本次 StreamState
@@ -172,7 +173,8 @@ cache/compiled_cache.py 集中管理 SDK 类型分析、计划编译、过滤与
 类型分析命中后，当前请求仍逐值选择分支、过滤和验证；输入和输出的验证分别保证两个协议边界。
 详见 [Schema 过滤计划缓存](schema-filter-cache.md)。
 
-`MyLLM(enable_message_cache=True)` 将开关和实例生成的 uuid4 键传至 `BaseCodec.translate`。
+`MyLLM(enable_message_cache=True)` 将开关和实例生成的 uuid4 键传入 `MyCodec.prepare`，
+由 `BaseCodec.prepare` 管理对应消息批次的发布。
 以上游 OpenAI Chat 为例：首次提交 `[system, user]`，下次提交 `[assistant, user]`，两批分别走原有翻译流程；
 MessageCache 按原始输入哈希判断是否追加当前消息翻译列表，
 返回包含四条消息的独立快照供 Decoder 组装本次请求。

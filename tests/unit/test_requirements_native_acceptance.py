@@ -24,12 +24,14 @@ def target_profile(profile_factory, target):
     )
 
 
-def prepare(codec, messages, source, profile):
-    return codec.prepare(
-        {"messages": messages, "tools": omit, "stream": False},
-        profile,
-        input_format=source,
-        client=codec.client_parameters(profile),
+async def prepare(codec, messages, source, profile):
+    return (
+        await codec.prepare(
+            {"messages": messages, "tools": omit, "stream": False},
+            profile,
+            input_format=source,
+            client=codec.client_parameters(profile),
+        )
     )["request"]
 
 
@@ -96,13 +98,15 @@ def gemini_image_history(media, sdk):
 @pytest.mark.parametrize("target", PROTOCOLS)
 @pytest.mark.parametrize("media", ["inline", "file"])
 @pytest.mark.parametrize("sdk", [False, True])
-def test_gemini_tool_images_preserve_or_report_original_values(target, media, sdk, profile_factory):
+async def test_gemini_tool_images_preserve_or_report_original_values(
+    target, media, sdk, profile_factory
+):
     messages, original_image = gemini_image_history(media, sdk)
     codec = MyCodec()
     profile = target_profile(profile_factory, target)
     if target in ("openai_chat", "gemini", "ollama"):
         with pytest.raises(SemanticLossError) as caught:
-            prepare(codec, messages, "gemini", profile)
+            (await prepare(codec, messages, "gemini", profile))
         assert len(caught.value.losses.items) == 1
         loss = caught.value.losses.items[0]
         assert loss.origin_value is original_image
@@ -110,7 +114,7 @@ def test_gemini_tool_images_preserve_or_report_original_values(target, media, sd
         assert "ok" in str(caught.value.draft)
         assert "image/png" not in str(caught.value.draft)
         return
-    request = prepare(codec, messages, "gemini", profile)
+    request = await prepare(codec, messages, "gemini", profile)
     parts = (
         request["input"][-1]["output"]
         if target == "openai_responses"
@@ -125,9 +129,9 @@ def test_gemini_tool_images_preserve_or_report_original_values(target, media, sd
 
 @pytest.mark.parametrize("source", PROTOCOLS)
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_application_arrays_with_type_keys_remain_tool_text(source, target, profile_factory):
+async def test_application_arrays_with_type_keys_remain_tool_text(source, target, profile_factory):
     payload = [{"type": "invoice", "value": 1}, {"type": "receipt", "value": {"count": 2}}]
-    request = prepare(
+    request = await prepare(
         MyCodec(),
         application_result_history(source, payload),
         source,
@@ -138,7 +142,9 @@ def test_application_arrays_with_type_keys_remain_tool_text(source, target, prof
 
 @pytest.mark.parametrize("source", ["openai_chat", "openai_responses", "anthropic"])
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_unknown_native_tool_parts_drop_before_validation_and_json(source, target, profile_factory):
+async def test_unknown_native_tool_parts_drop_before_validation_and_json(
+    source, target, profile_factory
+):
     text_type = "input_text" if source == "openai_responses" else "text"
     file_type = (
         "input_file"
@@ -156,12 +162,14 @@ def test_unknown_native_tool_parts_drop_before_validation_and_json(source, targe
             {"type": text_type, "text": "after"},
         ],
     )
-    request = prepare(MyCodec(), messages, source, target_profile(profile_factory, target))
+    request = await prepare(MyCodec(), messages, source, target_profile(profile_factory, target))
     assert native_result_text(target, request) == "beforeafter"
 
 
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_empty_tool_schema_is_preserved_or_reported_with_complete_draft(target, profile_factory):
+async def test_empty_tool_schema_is_preserved_or_reported_with_complete_draft(
+    target, profile_factory
+):
     schema = {}
     tools = [
         {"type": "function", "function": {"name": "first", "parameters": schema}},
@@ -172,15 +180,22 @@ def test_empty_tool_schema_is_preserved_or_reported_with_complete_draft(target, 
     inputs = {"messages": [{"role": "user", "content": "hi"}], "tools": tools, "stream": False}
     if target == "ollama":
         with pytest.raises(SemanticLossError) as caught:
-            codec.prepare(
-                inputs, profile, input_format="openai_chat", client=codec.client_parameters(profile)
+            (
+                await codec.prepare(
+                    inputs,
+                    profile,
+                    input_format="openai_chat",
+                    client=codec.client_parameters(profile),
+                )
             )
         assert caught.value.losses.items[0].origin_value is schema
         assert caught.value.losses.items[0].origin_path == "$.tools[0].function.parameters"
         assert caught.value.draft["tools"][1]["function"]["name"] == "later"
         return
-    request = codec.prepare(
-        inputs, profile, input_format="openai_chat", client=codec.client_parameters(profile)
+    request = (
+        await codec.prepare(
+            inputs, profile, input_format="openai_chat", client=codec.client_parameters(profile)
+        )
     )["request"]
     actual = (
         request["tools"][0]["function"]["parameters"]

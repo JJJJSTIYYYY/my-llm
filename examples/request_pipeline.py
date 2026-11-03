@@ -3,10 +3,12 @@
 Run with: python examples/request_pipeline.py
 """
 
+import asyncio
+
 from my_llm import Attribute, Config, ModelProfile, MyCodec, ProviderProfile, omit, resolve_profiles
 
 
-def main():
+async def main():
     codec = MyCodec()
     profile = resolve_profiles(
         ProviderProfile(protocol=Config(default_value="anthropic")),
@@ -26,7 +28,7 @@ def main():
         extra_body={"temperature": 0.2},
         previous_response_id=None,
     )
-    prepared = codec.prepare(inputs, profile, input_format="openai_chat", client=client)
+    prepared = await codec.prepare(inputs, profile, input_format="openai_chat", client=client)
     assert set(prepared) == {"client", "request", "local"}
     assert prepared["request"]["messages"] == [
         {"role": "user", "content": [{"type": "text", "text": "Hello"}]}
@@ -39,4 +41,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

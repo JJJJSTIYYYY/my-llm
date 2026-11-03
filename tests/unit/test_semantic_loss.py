@@ -97,7 +97,9 @@ def test_message_name_loss_keeps_all_positions_and_complete_draft(target):
     "target", ["openai_chat", "openai_responses", "anthropic", "gemini", "ollama"]
 )
 @pytest.mark.parametrize("policy", ["raise", "ignore", "hook"])
-def test_message_name_request_policies_use_complete_sdk_draft(profile_factory, target, policy):
+async def test_message_name_request_policies_use_complete_sdk_draft(
+    profile_factory, target, policy
+):
     observed = []
 
     def hook(draft, losses, context):
@@ -121,8 +123,8 @@ def test_message_name_request_policies_use_complete_sdk_draft(profile_factory, t
     ]
     before = deepcopy(messages)
 
-    def prepare():
-        return codec.prepare(
+    async def prepare():
+        return await codec.prepare(
             {**complete_inputs(messages), "max_tokens": 128},
             profile,
             input_format="openai_chat",
@@ -131,12 +133,12 @@ def test_message_name_request_policies_use_complete_sdk_draft(profile_factory, t
 
     if policy == "raise":
         with pytest.raises(SemanticLossError) as caught:
-            prepare()
+            (await prepare())
         assert caught.value.draft["model"]
         assert "complete tail" in str(caught.value.draft)
         assert len(caught.value.losses) == 1
     else:
-        prepared = prepare()
+        prepared = await prepare()
         assert "alice" not in str(prepared["request"])
         if policy == "hook":
             assert observed[0] is prepared["request"]
@@ -326,7 +328,7 @@ def test_native_tool_images_remain_visible(target):
     assert "aW1hZ2U=" in str(converted)
 
 
-def test_request_hook_can_move_images_in_place_on_the_final_sdk_request(profile_factory):
+async def test_request_hook_can_move_images_in_place_on_the_final_sdk_request(profile_factory):
     saved = []
 
     def hook(draft, losses, context):
@@ -349,7 +351,7 @@ def test_request_hook_can_move_images_in_place_on_the_final_sdk_request(profile_
 
     codec = MyCodec("hook", input_semantic_loss_hook=hook)
     profile = profile_factory("openai_chat", supports_function_calling=config(True))
-    prepared = codec.prepare(
+    prepared = await codec.prepare(
         complete_inputs(picture_history()),
         profile,
         input_format="anthropic",
@@ -508,7 +510,7 @@ def image_history():
 @pytest.mark.parametrize("target", PROTOCOLS)
 @pytest.mark.parametrize("supports_vision", [None, config(False), omit])
 @pytest.mark.parametrize("stage", ["convert", "prepare"])
-def test_unsupported_images_report_original_values_and_complete_draft(
+async def test_unsupported_images_report_original_values_and_complete_draft(
     profile_factory, target, supports_vision, stage
 ):
     messages = image_history()
@@ -521,11 +523,13 @@ def test_unsupported_images_report_original_values_and_complete_draft(
                 messages, input_format="openai_chat", target_format=target, profile=profile
             )
         else:
-            codec.prepare(
-                {**complete_inputs(messages), "max_tokens": 128},
-                profile,
-                input_format="openai_chat",
-                client={},
+            (
+                await codec.prepare(
+                    {**complete_inputs(messages), "max_tokens": 128},
+                    profile,
+                    input_format="openai_chat",
+                    client={},
+                )
             )
     error = caught.value
     assert error.context.source_protocol == "openai_chat"
@@ -544,11 +548,11 @@ def test_unsupported_images_report_original_values_and_complete_draft(
 
 
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_enabled_vision_preserves_supported_images_in_requests(profile_factory, target):
+async def test_enabled_vision_preserves_supported_images_in_requests(profile_factory, target):
     messages = image_history()
     del messages[0]["content"][1]  # Ollama supports base64 images.
     codec = MyCodec()
-    prepared = codec.prepare(
+    prepared = await codec.prepare(
         {**complete_inputs(messages), "max_tokens": 128},
         profile_factory(target, supports_vision=config(True)),
         input_format="openai_chat",
@@ -558,15 +562,17 @@ def test_enabled_vision_preserves_supported_images_in_requests(profile_factory, 
 
 
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_images_in_tool_results_are_model_capability_losses(profile_factory, target):
+async def test_images_in_tool_results_are_model_capability_losses(profile_factory, target):
     messages = picture_history()
     before = deepcopy(messages)
     with pytest.raises(SemanticLossError) as caught:
-        MyCodec().prepare(
-            {**complete_inputs(messages), "max_tokens": 128},
-            profile_factory(target, supports_function_calling=config(True)),
-            input_format="anthropic",
-            client={},
+        (
+            await MyCodec().prepare(
+                {**complete_inputs(messages), "max_tokens": 128},
+                profile_factory(target, supports_function_calling=config(True)),
+                input_format="anthropic",
+                client={},
+            )
         )
     assert [item.origin_path for item in caught.value.losses] == [
         "$.messages[1].content[0].content[1]",
@@ -578,7 +584,7 @@ def test_images_in_tool_results_are_model_capability_losses(profile_factory, tar
 
 
 @pytest.mark.parametrize("policy", ["ignore", "hook"])
-def test_vision_loss_policies_and_cache_keep_the_complete_filtered_translation(
+async def test_vision_loss_policies_and_cache_keep_the_complete_filtered_translation(
     profile_factory, policy
 ):
     observed = []
@@ -594,7 +600,7 @@ def test_vision_loss_policies_and_cache_keep_the_complete_filtered_translation(
     profile = profile_factory()
     messages = image_history()
     for _ in range(2):
-        prepared = codec.prepare(
+        prepared = await codec.prepare(
             complete_inputs(messages),
             profile,
             input_format="openai_chat",
@@ -610,29 +616,33 @@ def test_vision_loss_policies_and_cache_keep_the_complete_filtered_translation(
     assert "hook edit" not in str(cached) and "aW1hZ2U=" not in str(cached)
 
 
-def test_vision_loss_raise_commits_filtered_cache_before_the_adaptor(profile_factory):
+async def test_vision_loss_raise_commits_filtered_cache_before_the_adaptor(profile_factory):
     codec = MyCodec()
     for _ in range(2):
         with pytest.raises(SemanticLossError):
-            codec.prepare(
-                complete_inputs(image_history()),
-                profile_factory(),
-                input_format="openai_chat",
-                client={},
-                enable_message_cache=True,
-                message_cache_key="vision-test",
+            (
+                await codec.prepare(
+                    complete_inputs(image_history()),
+                    profile_factory(),
+                    input_format="openai_chat",
+                    client={},
+                    enable_message_cache=True,
+                    message_cache_key="vision-test",
+                )
             )
     cached = codec._message_cache.get("vision-test")
     assert len(cached) == 2
     assert "aW1hZ2U=" not in str(cached)
 
 
-def test_typed_images_keep_the_original_object_as_loss_value(profile_factory):
+async def test_typed_images_keep_the_original_object_as_loss_value(profile_factory):
     image = ImageContent(ImageSource("url", url="https://example.com/a.png"))
     messages = [UserMessage("user", [image, TextContent("tail")])]
     with pytest.raises(SemanticLossError) as caught:
-        MyCodec().prepare(
-            complete_inputs(messages), profile_factory(), input_format="middleware", client={}
+        (
+            await MyCodec().prepare(
+                complete_inputs(messages), profile_factory(), input_format="middleware", client={}
+            )
         )
     assert caught.value.losses.items[0].origin_value is image
     assert caught.value.losses.items[0].origin_path == "$.messages[0].content[0]"

@@ -6,9 +6,14 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Literal
+from inspect import isawaitable, iscoroutine
+from typing import TYPE_CHECKING, Literal
 
 from my_llm.basic.exceptions import ConfigurationError, SemanticLossError
+
+if TYPE_CHECKING:
+    from my_llm.cache.message_cache import MessageCacheBatch
+    from my_llm.profile.resolution import ResolvedProfile
 
 type LossDirection = Literal["input", "output"]
 type LossPolicy = Literal["raise", "ignore", "hook"]
@@ -37,10 +42,14 @@ class SemanticLossGroup:
 
 @dataclass(frozen=True, slots=True)
 class SemanticLossContext:
+    """Conversion identity with optional request profile and explicit cache repair."""
+
     source_protocol: str | None
     target_protocol: str
     origin_source: LossDirection = "input"
     stage: str = "decoder"
+    profile: ResolvedProfile | None = field(default=None, repr=False, compare=False)
+    message_cache: MessageCacheBatch | None = field(default=None, repr=False, compare=False)
 
 
 type SemanticLossHook = Callable[[object, SemanticLossGroup, SemanticLossContext], object]
@@ -129,7 +138,7 @@ def _ignore(draft, losses, context):
 
 
 class BaseSemanticLossAdaptor:
-    """Policy selected once per converter, with separate synchronous hooks."""
+    """Instance-owned policies with synchronous hooks or awaited request hooks."""
 
     def __init__(
         self,
@@ -164,10 +173,25 @@ class BaseSemanticLossAdaptor:
         in place; their return values are ignored. The raising policy propagates
         SemanticLossError, and application hook exceptions retain their own types.
         """
+        result = self._invoke(error)
+        if isawaitable(result):
+            if iscoroutine(result):
+                result.close()
+            raise ConfigurationError("async hooks require the asynchronous request prepare path")
+        return error.draft
+
+    async def handle_async(self, error: SemanticLossError) -> object:
+        """Await a request hook in place; synchronous hooks keep the same contract."""
+        result = self._invoke(error)
+        if isawaitable(result):
+            await result
+        return error.draft
+
+    def _invoke(self, error: SemanticLossError) -> object:
+        """Select the directional policy and invoke it once."""
         hook = (
             self.input_semantic_loss_hook
             if error.losses.origin_source == "input"
             else self.output_semantic_loss_hook
         )
-        hook(error.draft, error.losses, error.context)
-        return error.draft
+        return hook(error.draft, error.losses, error.context)

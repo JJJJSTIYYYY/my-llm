@@ -129,7 +129,8 @@ Anthropic、Gemini 已有普通消息缓存时，可以单独追加 system 消�
 校验完整请求；请求准备完成后，在调用语义损失 adaptor 之前保存这份翻译结果。
 格式或请求校验失败不会写入缓存；此后的 raise 策略、hook 或网络调用抛错不会撤销已保存的输入。
 hook 修改只影响本次请求，不会自动回写消息缓存。使用者负责 hook 的全部行为，
-包括修改翻译结果后需要进行的缓存维护。
+包括修改翻译结果后需要进行的缓存维护。显式导入的工具图片预设已同步处理缓存与重试，
+见[预设工具图片 hook](../guides/semantic-loss.md#预设工具图片-hook)。
 流尚未消费或调用失败后，连续重发相同消息批次会复用已有历史，不再追加一次。
 每次重发仍执行翻译和语义损失处理，发送时使用本次请求选项、消息历史和本次 hook 的修改。
 例如，丢弃尚未消费的流后，可以修改输出上限并重试：
@@ -473,8 +474,17 @@ async def add_round_trip(provider, model_id):
 
 `MyLLM` 构造接收 `semantic_loss_protocol="raise" | "ignore" | "hook"` 及
 `input_semantic_loss_hook` / `output_semantic_loss_hook`，实例上可用同名参数调用
-`set_semantic_loss_policy()` 二次设置。hook 同步接收 `(draft, losses, context)` 并原位修改，
+`set_semantic_loss_policy()` 二次设置。hook 接收 `(draft, losses, context)` 并原位修改，
+请求 hook 可以异步执行，准备阶段会等待其完成；离线转换与输出 hook 仍为同步函数，
 具体值和示例见[迁移指南](../guides/semantic-loss.md)。
+
+Chat、Gemini、Ollama 分别提供 `prebuilt.move_tool_images_to_user_message`，由调用者显式导入并在
+初始化时传入；不会自动改变请求行为或默认损失策略。预设读取实例解析后的
+`supports_vision`，不能发送的图片替换为 `[Unsupported Image]`，其他损失视为已处理。
+请求阶段的 `SemanticLossContext.profile` 提供解析后的 Profile；启用缓存时，
+`context.message_cache.extend(messages)` 可显式补写本批新增原生消息并保留输入 fingerprint。
+`message_cache.identity` 提供连续重试共享的弱引用标识；预设自己记录已处理批次并决定是否补写，
+缓存不保存预设状态或执行补写去重。
 
 流事件过滤接口返回的 usage；成功结束后调用 `get_last_usage()` 获取独立的 `Usage`。
 未报告字段为 `None`，非流式结果不含 usage。关闭消息缓存后的并发调用中，该接口代表最后完成的流式调用。
@@ -531,13 +541,13 @@ assert converted["messages"] == [{"role": "user", "parts": [{"text": "Hello"}]}]
 | `defaults(protocol)` | 只读借用本实例所选协议的 ProtocolDefaults，供配置解析使用 |
 | `bind_input(inputs, protocol)` | 返回显式协议或从 messages/tools 唯一推断；推断时更新传入字典的这两个值；不记住协议 |
 | `client_parameters(profile)` | 返回连接参数字典 |
-| `prepare(inputs, profile, *, input_format, client)` | 准备完整调用，返回 `client`、`request`、`local` 三个字典；inputs 需包含 messages、tools、stream 和使用的生成选项 |
+| `await prepare(inputs, profile, *, input_format, client)` | 异步准备完整调用并等待请求 hook，返回 `client`、`request`、`local` 三个字典；inputs 需包含 messages、tools、stream 和使用的生成选项 |
 | `request(intermediate, profile, **parameters)` | 从 encode 返回的消息与可选工具构造原生请求参数字典 |
 | `upstream(client, request, profile)` | 返回异步上下文管理器，迭代原生事件；退出时关闭响应，由调用者管理 client |
 
 `prepare` 的 `client` 参数来自 `client_parameters`。返回值中 `client` 是 SDK 构造参数，
 `request` 是 SDK 调用参数，`local` 包含 `stream` 和 `client_key`。
-参数准备接口均不创建客户端或发出请求。
+参数准备接口不创建模型客户端或发出上游模型请求；显式注册的异步请求 hook 可以执行图片下载等 I/O。
 新增注册仅对后续创建的实例可见；实现要求和完整接入示例见[协议接入指南](../guides/adding-protocol.md)。
 
 五个内置 Codec 类从 `my_llm.codec` 导入，均无需构造参数，提供 BaseCodec 接口：

@@ -137,12 +137,14 @@ def test_native_stream_projection_discards_generated_media_before_middleware(pro
 
 
 @pytest.mark.parametrize("text", ['{"value": [1, 2]}', "ordinary text", "[1, 2]"])
-def test_gemini_prepare_keeps_tool_result_text_without_guessing_json_types(text, profile_factory):
+async def test_gemini_prepare_keeps_tool_result_text_without_guessing_json_types(
+    text, profile_factory
+):
     from my_llm import Config, omit
 
     codec = MyCodec()
     profile = profile_factory("gemini", supports_function_calling=Config(default_value=True))
-    prepared = codec.prepare(
+    prepared = await codec.prepare(
         {
             "messages": [
                 {

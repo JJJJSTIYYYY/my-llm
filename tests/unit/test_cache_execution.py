@@ -32,8 +32,8 @@ async def test_warm_incremental_prepare_skips_old_translation_and_type_compilati
         ]
         original = deepcopy((first, delta, declared))
 
-        def prepare(messages):
-            return llm.codec.prepare(
+        async def prepare(messages):
+            return await llm.codec.prepare(
                 {"messages": messages, "tools": declared, "stream": True, **controls(upstream)},
                 llm.resolved_profile,
                 input_format=stdio,
@@ -42,7 +42,7 @@ async def test_warm_incremental_prepare_skips_old_translation_and_type_compilati
                 message_cache_key=llm._message_cache_key,
             )
 
-        prepare(first)
+        (await prepare(first))
         cache = llm.codec._message_cache
         initial_size = len(cache.get(llm._message_cache_key))
         before = caches()
@@ -76,8 +76,8 @@ async def test_warm_incremental_prepare_skips_old_translation_and_type_compilati
 
         monkeypatch.setattr(compiled_cache, "get_type_hints", unexpected)
         monkeypatch.setattr(compiled_cache, "TypeAdapter", unexpected)
-        second = prepare(delta)
-        retried = prepare(delta)
+        second = await prepare(delta)
+        retried = await prepare(delta)
         assert second == retried
         assert translations == associations == [1, 1]
         assert encoded == ([1, 1] if stdio != "middleware" else [])

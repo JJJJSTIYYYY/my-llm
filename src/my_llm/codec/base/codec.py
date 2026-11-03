@@ -80,6 +80,37 @@ class BaseCodec(ABC):
                 message_cache_batch.commit()
         return draft
 
+    async def prepare(
+        self,
+        intermediate: dict,
+        client: dict,
+        context: SemanticLossContext,
+        *,
+        message_cache_batch: MessageCacheBatch | None = None,
+    ) -> dict:
+        """Build a request and await its loss hook before handing it to transport.
+
+        Ordinary validation failures do not publish cache state. Translation is
+        published before the adaptor, matching synchronous conversion semantics;
+        an explicit hook can then repair that batch through its context.
+        """
+        prepared = None
+        try:
+            with collect_losses(context) as (losses, owner):
+                prepared = self.decoder.prepare(intermediate, client)
+                if owner:
+                    losses.complete(prepared["request"])
+        except SemanticLossError as error:
+            if message_cache_batch is not None:
+                message_cache_batch.commit()
+            request = await self.semantic_loss_adaptor.handle_async(error)
+            if prepared is None:
+                prepared = {"request": request}
+        else:
+            if message_cache_batch is not None:
+                message_cache_batch.commit()
+        return prepared
+
     @property
     @abstractmethod
     def protocol_or_api_style(self) -> Protocol:
@@ -132,7 +163,9 @@ class BaseCodec(ABC):
         self.validate_profile(profile)
         return self.translate(
             lambda: self.decoder.request(messages, tools, profile, **parameters),
-            SemanticLossContext(None, self.protocol_or_api_style, "input", "request"),
+            SemanticLossContext(
+                None, self.protocol_or_api_style, "input", "request", profile=profile
+            ),
         )
 
     @final

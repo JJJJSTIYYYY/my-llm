@@ -50,11 +50,11 @@ def test_configuration_guide_covers_profile_fields_and_local_links():
                 assert (path.parent / target.split("#")[0]).is_file(), target
 
 
-def test_offline_request_pipeline_example():
+async def test_offline_request_pipeline_example():
     import runpy
 
     namespace = runpy.run_path(str(ROOT / "examples/request_pipeline.py"))
-    prepared = namespace["main"]()
+    prepared = await namespace["main"]()
     assert prepared["request"]["model"] == "example-model"
 
 

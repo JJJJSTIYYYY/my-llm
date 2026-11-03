@@ -12,6 +12,7 @@
 保留正常 GC，记录逐样本墙钟、CPU、GC 次数、源码指纹及 SDK 版本。
 
 计时包含输入校验、翻译和最终 SDK 请求过滤校验，不创建 SDK 客户端，不含网络或模型推理。
+测量直接等待 `await MyCodec.prepare(...)` 完成，事件循环建立在计时之外；负载不注册下载 hook。
 该对照确认当前缓存省下的编译成本，不依赖历史性能报告，也不代表前后版本的性能差异。
 暖请求的规则 miss 与条目数必须保持不变。实现见
 [compiled_cache.py](../../tests/performance/compiled_cache.py)。

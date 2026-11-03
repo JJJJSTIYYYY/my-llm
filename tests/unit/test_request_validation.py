@@ -205,7 +205,7 @@ def test_public_request_revalidates_mutated_middleware_models():
         llm.codec.request(encoded, llm.resolved_profile)
 
 
-def test_cached_translation_is_filtered_again_without_readding_unsupported_content():
+async def test_cached_translation_is_filtered_again_without_readding_unsupported_content():
     from my_llm.codec.openai.chat.decoding.decoder import ChatCompletionsDecoder
 
     class ExtensionDecoder(ChatCompletionsDecoder):
@@ -229,24 +229,26 @@ def test_cached_translation_is_filtered_again_without_readding_unsupported_conte
     )
     llm.codec.codecs["openai_chat"].decoder = ExtensionDecoder()
 
-    def prepare(text):
-        return llm.codec.prepare(
-            {"messages": [{"role": "user", "content": text}], "tools": None, "stream": True},
-            llm.resolved_profile,
-            input_format="openai_chat",
-            client=llm.client_parameters,
-            enable_message_cache=True,
-            message_cache_key=llm._message_cache_key,
+    async def prepare(text):
+        return (
+            await llm.codec.prepare(
+                {"messages": [{"role": "user", "content": text}], "tools": None, "stream": True},
+                llm.resolved_profile,
+                input_format="openai_chat",
+                client=llm.client_parameters,
+                enable_message_cache=True,
+                message_cache_key=llm._message_cache_key,
+            )
         )["request"]
 
-    first = prepare("initial")
+    first = await prepare("initial")
     expected = [{"type": "text", "text": "initial"}]
     assert first["messages"][0]["content"] == expected
     cached = llm.codec._message_cache.get(llm._message_cache_key)
     assert cached[0]["content"][1]["type"] == "unsupported_extension"
-    second = prepare("next")
+    second = await prepare("next")
     assert second["messages"][0]["content"] == expected
-    assert second == prepare("next")
+    assert second == (await prepare("next"))
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)

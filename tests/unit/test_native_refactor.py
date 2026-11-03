@@ -16,7 +16,7 @@ from tests.helpers.tool_results import application_result_history, native_result
 @pytest.mark.parametrize(
     "payload", [{"value": [1, {"metadata": "application data"}]}, [1, {"value": [2, 3]}]]
 )
-def test_object_and_array_tool_results_prepare_as_text_in_every_direction(
+async def test_object_and_array_tool_results_prepare_as_text_in_every_direction(
     source, target, payload, profile_factory
 ):
     from my_llm import Config, omit
@@ -30,7 +30,7 @@ def test_object_and_array_tool_results_prepare_as_text_in_every_direction(
         max_tokens=parameter("max_tokens", 2048, protocol=target),
     )
     codec = MyCodec()
-    prepared = codec.prepare(
+    prepared = await codec.prepare(
         {"messages": messages, "tools": omit, "stream": False},
         profile,
         input_format=source,

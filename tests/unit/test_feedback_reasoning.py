@@ -48,7 +48,9 @@ def reasoning_history(protocol):
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 @pytest.mark.parametrize("mode", ["always", "when_tool_calls", "none", omit])
 @pytest.mark.parametrize("policy", ["raise", "ignore", "hook"])
-def test_feedback_selects_history_without_semantic_loss(profile_factory, protocol, mode, policy):
+async def test_feedback_selects_history_without_semantic_loss(
+    profile_factory, protocol, mode, policy
+):
     messages = reasoning_history(protocol)
     before = deepcopy(messages)
     observed = []
@@ -59,15 +61,17 @@ def test_feedback_selects_history_without_semantic_loss(profile_factory, protoco
         supports_function_calling=config(True),
     )
 
-    def prepare():
-        return codec.prepare(
-            {"messages": messages, "tools": omit, "stream": False, "max_tokens": 128},
-            profile,
-            input_format="middleware",
-            client={},
+    async def prepare():
+        return (
+            await codec.prepare(
+                {"messages": messages, "tools": omit, "stream": False, "max_tokens": 128},
+                profile,
+                input_format="middleware",
+                client={},
+            )
         )["request"]
 
-    draft = prepare()
+    draft = await prepare()
     assert not observed
     assert ("plain reasoning" in str(draft)) is (mode == "always")
     assert ("tool reasoning" in str(draft)) is (mode in ("always", "when_tool_calls"))
@@ -76,7 +80,9 @@ def test_feedback_selects_history_without_semantic_loss(profile_factory, protoco
 
 
 @pytest.mark.parametrize("target", ["openai_chat", "openai_responses", "ollama"])
-def test_tool_feedback_keeps_split_responses_reasoning_and_native_item_ids(profile_factory, target):
+async def test_tool_feedback_keeps_split_responses_reasoning_and_native_item_ids(
+    profile_factory, target
+):
     messages = [
         {
             "type": "reasoning",
@@ -108,15 +114,17 @@ def test_tool_feedback_keeps_split_responses_reasoning_and_native_item_ids(profi
         {"type": "function_call_output", "call_id": "c", "output": "tool result"},
     ]
     before = deepcopy(messages)
-    draft = MyCodec().prepare(
-        {"messages": messages, "tools": omit, "stream": False, "max_tokens": 128},
-        profile_factory(
-            target,
-            feedback_reasoning_content=config("when_tool_calls"),
-            supports_function_calling=config(True),
-        ),
-        input_format="openai_responses",
-        client={},
+    draft = (
+        await MyCodec().prepare(
+            {"messages": messages, "tools": omit, "stream": False, "max_tokens": 128},
+            profile_factory(
+                target,
+                feedback_reasoning_content=config("when_tool_calls"),
+                supports_function_calling=config(True),
+            ),
+            input_format="openai_responses",
+            client={},
+        )
     )["request"]
     assert "tool reasoning" in str(draft)
     assert "plain reasoning" not in str(draft)
@@ -148,7 +156,7 @@ def test_feedback_requires_a_wrapped_policy_value(profile_factory, value):
 
 
 @pytest.mark.parametrize("policy", ["raise", "ignore", "hook"])
-def test_feedback_cache_commits_filtered_history_without_hook_edits(profile_factory, policy):
+async def test_feedback_cache_commits_filtered_history_without_hook_edits(profile_factory, policy):
     def hook(draft, losses, context):
         draft["messages"].append({"role": "user", "content": "hook edit"})
 
@@ -159,8 +167,8 @@ def test_feedback_cache_commits_filtered_history_without_hook_edits(profile_fact
     inputs = {"messages": reasoning_history("openai_chat"), "tools": omit, "stream": False}
     for _ in range(2):
 
-        def prepare():
-            return codec.prepare(
+        async def prepare():
+            return await codec.prepare(
                 inputs,
                 profile,
                 input_format="middleware",
@@ -169,7 +177,7 @@ def test_feedback_cache_commits_filtered_history_without_hook_edits(profile_fact
                 message_cache_key="feedback-test",
             )
 
-        prepare()
+        (await prepare())
     cached = codec._message_cache.get("feedback-test")
     assert len(cached) == 5
     assert "tool reasoning" in str(cached)
@@ -211,7 +219,7 @@ def test_native_scalar_reasoning_feedback_matches_message_policy(
 @pytest.mark.parametrize("mode", ["always", "when_tool_calls", "none", omit])
 @pytest.mark.parametrize("reasoning", [None, False, True])
 @pytest.mark.parametrize("has_calls", [False, True])
-def test_empty_reasoning_feedback_depends_on_history_policy_not_generation_enablement(
+async def test_empty_reasoning_feedback_depends_on_history_policy_not_generation_enablement(
     profile_factory, protocol, field, mode, reasoning, has_calls
 ):
     message = AssistantMessage("assistant", [TextContent("answer")])
@@ -226,11 +234,13 @@ def test_empty_reasoning_feedback_depends_on_history_policy_not_generation_enabl
         feedback_reasoning_content=omit if mode is omit else config(mode),
         supports_function_calling=config(True),
     )
-    request = codec.prepare(
-        {"messages": messages, "tools": omit, "stream": False, "reasoning": reasoning},
-        profile,
-        input_format="middleware",
-        client={},
+    request = (
+        await codec.prepare(
+            {"messages": messages, "tools": omit, "stream": False, "reasoning": reasoning},
+            profile,
+            input_format="middleware",
+            client={},
+        )
     )["request"]
     expected = has_calls and mode in ("always", "when_tool_calls")
     assert (field in request["messages"][0]) is expected
@@ -265,7 +275,7 @@ def test_native_tool_messages_get_empty_reasoning_without_a_generation_reasoning
 @pytest.mark.parametrize(
     "protocol,field", [("openai_chat", "reasoning_content"), ("ollama", "thinking")]
 )
-def test_empty_reasoning_is_not_injected_when_reasoning_is_unsupported(
+async def test_empty_reasoning_is_not_injected_when_reasoning_is_unsupported(
     profile_factory, protocol, field
 ):
     profile = profile_factory(
@@ -274,15 +284,17 @@ def test_empty_reasoning_is_not_injected_when_reasoning_is_unsupported(
         supports_function_calling=config(True),
         reasoning_enable=parameter("reasoning_enable", protocol=protocol, supports=False),
     )
-    request = MyCodec().prepare(
-        {
-            "messages": [AssistantMessage("assistant", [ToolCall("c", "f")])],
-            "tools": omit,
-            "stream": False,
-        },
-        profile,
-        input_format="middleware",
-        client={},
+    request = (
+        await MyCodec().prepare(
+            {
+                "messages": [AssistantMessage("assistant", [ToolCall("c", "f")])],
+                "tools": omit,
+                "stream": False,
+            },
+            profile,
+            input_format="middleware",
+            client={},
+        )
     )["request"]
     assert field not in request["messages"][0]
 
@@ -290,7 +302,7 @@ def test_empty_reasoning_is_not_injected_when_reasoning_is_unsupported(
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 @pytest.mark.parametrize("mode", ["always", "when_tool_calls", "none", omit])
 @pytest.mark.parametrize("policy", ["raise", "ignore", "hook"])
-def test_unsupported_reasoning_is_loss_regardless_of_feedback(
+async def test_unsupported_reasoning_is_loss_regardless_of_feedback(
     profile_factory, protocol, mode, policy
 ):
     messages = reasoning_history(protocol)
@@ -304,21 +316,23 @@ def test_unsupported_reasoning_is_loss_regardless_of_feedback(
         feedback_reasoning_content=omit if mode is omit else config(mode),
     )
 
-    def prepare():
-        return codec.prepare(
-            {"messages": messages, "tools": omit, "stream": False, "max_tokens": 128},
-            profile,
-            input_format="middleware",
-            client={},
+    async def prepare():
+        return (
+            await codec.prepare(
+                {"messages": messages, "tools": omit, "stream": False, "max_tokens": 128},
+                profile,
+                input_format="middleware",
+                client={},
+            )
         )["request"]
 
     losses = None
     if policy == "raise":
         with pytest.raises(SemanticLossError) as caught:
-            prepare()
+            (await prepare())
         draft, losses = caught.value.draft, caught.value.losses
     else:
-        draft = prepare()
+        draft = await prepare()
         if policy == "hook":
             assert observed[0][0] is draft
             losses = observed[0][1]
@@ -478,7 +492,7 @@ def test_unsupported_reasoning_stream_records_loss_and_keeps_text(profile_factor
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 @pytest.mark.parametrize("policy", ["raise", "ignore", "hook"])
-def test_history_tool_calls_and_results_are_losses_without_tool_definitions(
+async def test_history_tool_calls_and_results_are_losses_without_tool_definitions(
     profile_factory, protocol, policy
 ):
     messages = [
@@ -490,21 +504,23 @@ def test_history_tool_calls_and_results_are_losses_without_tool_definitions(
     observed = []
     codec = MyCodec(policy, input_semantic_loss_hook=lambda *args: observed.append(args))
 
-    def prepare():
-        return codec.prepare(
-            {"messages": messages, "tools": omit, "stream": False, "max_tokens": 128},
-            profile_factory(protocol, supports_function_calling=config(False)),
-            input_format="middleware",
-            client={},
+    async def prepare():
+        return (
+            await codec.prepare(
+                {"messages": messages, "tools": omit, "stream": False, "max_tokens": 128},
+                profile_factory(protocol, supports_function_calling=config(False)),
+                input_format="middleware",
+                client={},
+            )
         )["request"]
 
     losses = None
     if policy == "raise":
         with pytest.raises(SemanticLossError) as caught:
-            prepare()
+            (await prepare())
         draft, losses = caught.value.draft, caught.value.losses
     else:
-        draft = prepare()
+        draft = await prepare()
         if policy == "hook":
             losses = observed[0][1]
     assert "tail" in str(draft)

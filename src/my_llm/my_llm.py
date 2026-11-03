@@ -40,7 +40,7 @@ class MyLLM:
             AssistantMessage/MessageEvent output; this format is never inferred.
         semantic_loss_protocol: How supported fields that the target cannot express
             are handled: "raise", "ignore", or "hook".
-        input_semantic_loss_hook: Synchronous hook for the complete request draft.
+        input_semantic_loss_hook: Sync or async hook for the complete request draft.
         output_semantic_loss_hook: Synchronous hook for response drafts. Hooks receive
             the draft, grouped losses and context, and modify the draft in place.
         enable_message_cache: Cache translated input batches for this instance.
@@ -341,7 +341,7 @@ class MyLLM:
         protocol = self.codec.bind_input(inputs, self.stdio_protocol)
         self._stdio_protocol = protocol
         profile = self.resolved_profile
-        prepared = self.codec.prepare(
+        prepared = await self.codec.prepare(
             inputs,
             profile,
             input_format=protocol,
@@ -456,7 +456,7 @@ async def generate(
         stdio_protocol: Input/output protocol, or None for unique inference.
             Typed middleware input requires explicit "middleware".
         semantic_loss_protocol: "raise", "ignore", or "hook" for semantic loss.
-        input_semantic_loss_hook: Optional request draft hook for the "hook" policy.
+        input_semantic_loss_hook: Optional sync/async request hook for the "hook" policy.
         output_semantic_loss_hook: Optional response draft hook for the "hook" policy.
         **parameters: Generation options accepted by MyLLM.generate, including
             stream, tools, max_tokens, reasoning and extra_body.

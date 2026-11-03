@@ -37,12 +37,12 @@ async def benchmark(protocol, iterations, warmup):
             **controls(protocol),
         }
 
-        def prepare():
-            return llm.codec.prepare(
+        async def prepare():
+            return await llm.codec.prepare(
                 inputs, llm.resolved_profile, input_format=protocol, client=llm.client_parameters
             )
 
-        prepare()
+        (await prepare())
         before = caches()
         for index in range(warmup + iterations):
             order = ("cached", "uncached") if index % 2 == 0 else ("uncached", "cached")
@@ -57,7 +57,7 @@ async def benchmark(protocol, iterations, warmup):
                             patches.enter_context(
                                 patch.object(compiler, "_compiled", compiler.__wrapped__)
                             )
-                    results[name], sample = measure(prepare)
+                    results[name], sample = await measure(prepare)
                 if index >= warmup:
                     samples[name].append(sample)
             assert results["cached"] == results["uncached"]

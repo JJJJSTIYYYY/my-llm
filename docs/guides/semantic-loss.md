@@ -40,7 +40,9 @@ llm.set_semantic_loss_policy(
 ```
 
 `ignore` 不保留损失历史或输出日志；`hook` 未提供函数时使用空函数。
-hook 是同步函数，接收 `(draft, losses, context)`，返回值忽略。它可以原地修改、抛错、
+hook 接收 `(draft, losses, context)`，返回值忽略。请求 hook 可以是同步或异步函数，
+`MyLLM.generate()` 与 `await MyCodec.prepare(...)` 会直接等待它完成；离线转换及输出 hook 使用同步函数。
+hook 可以原地修改、抛错、
 重排内容或不做修改。生成请求的 hook 收到完整 SDK 请求；离线 convert 的消息 / 工具 hook 收到相应目标集合。
 启用消息缓存时，消息翻译结果在调用 adaptor 前已经保存。hook 对请求的修改不会自动回写缓存，
 即使 hook 抛错也不撤销这份翻译结果；使用者自行负责 hook 行为及所需的缓存维护。
@@ -49,25 +51,67 @@ hook 是同步函数，接收 `(draft, losses, context)`，返回值忽略。它
 中间 stdio 的结果 draft 为 `AssistantMessage`，事件 draft 为 `MessageEvent` 列表。
 实时流只能基于已经收到的块作决定，不能预读未来内容。
 
-例如，应用明确选择把 Anthropic 来源工具结果中的图片搬到 Chat 后续用户消息：
+## 预设工具图片 hook
+
+Chat Completions、Gemini 和 Ollama 的 `prebuilt` 目录提供
+`move_tool_images_to_user_message`。它将本批工具结果中的图片按原顺序汇总到一条新的
+user 消息，追加到本次历史末尾；原工具结果保留文字和调用关联。
+
+| 上游目标 | 导入位置 | 图片支持 |
+| --- | --- | --- |
+| Chat Completions | `my_llm.codec.openai.chat.prebuilt` | URL、Base64 |
+| Gemini | `my_llm.codec.gemini.prebuilt` | URL、Base64 |
+| Ollama | `my_llm.codec.ollama.prebuilt` | Base64；异步下载 URL 图片并转换为 Base64，失败时使用 `[Unsupported Image]` |
+
+选择与上游目标匹配的 hook，最外层仍可使用 Anthropic 或 Responses 等协议：
 
 ```python
-def repair_input(draft, losses, context):
-    images = []
-    for loss in losses.items:
-        value = loss.origin_value
-        if not isinstance(value, dict) or value.get("type") != "image":
-            raise ValueError(f"unhandled semantic loss at {loss.origin_path}")
-        source = value["source"]
-        url = source.get("url")
-        if source.get("type") == "base64":
-            url = f"data:{source['media_type']};base64,{source['data']}"
-        images.append({"type": "image_url", "image_url": {"url": url}})
-    draft["messages"].append({"role": "user", "content": images})
+from my_llm import MyLLM
+from my_llm.codec.openai.chat.prebuilt import move_tool_images_to_user_message
+
+llm = MyLLM(
+    provider=provider,  # 已配置为 openai_chat 上游。
+    model=model,
+    stdio_protocol="openai_responses",
+    semantic_loss_protocol="hook",
+    input_semantic_loss_hook=move_tool_images_to_user_message,
+    enable_message_cache=True,
+)
 ```
 
-这是应用自行决定的补偿行为。库不会自动添加图片消息，也不会再次翻译 hook 已修改的原生
-draft。交给 transport、交付事件以及最终结果使用该 draft；`MessageStream.result`
+外部使用者必须显式导入处理器，在构造 `MyLLM` 时传给 `input_semantic_loss_hook`，
+并显式选择 `semantic_loss_protocol="hook"`。预设不会自动注册或被请求链路直接调用，
+默认 `raise` 策略不变。请求阶段通过 `SemanticLossContext.profile` 提供解析后的 Profile，
+启用缓存时还提供 `SemanticLossContext.message_cache`；处理器不需要绑定 `MyLLM` 实例。
+
+处理器依据解析后的 `supports_vision` 决定是否发送图片，包含模型声明、协议默认值与
+`omit` 的结果。支持时搬移可表示的图片；模型不支持图片或协议无法表示该图片时，
+逐张插入 `[Unsupported Image]`。工具调用仍需启用 `supports_function_calling`。
+其余语义损失视为已处理，不再抛错。
+图片来源支持 Anthropic、Responses、Gemini 原生字典 / SDK 对象和直接中间模型。
+
+Ollama 预设为异步函数：模型支持视觉时并发下载本批 URL 图片，跟随 HTTP 重定向，
+请求超时为 10 秒；依据文件内容识别 PNG、JPEG、GIF、WebP。相同 URL 在本批只下载一次，
+重复图片仍按原顺序保留。HTTP 错误、超时或非图片内容替换为 `[Unsupported Image]`。
+模型不支持视觉时直接插入占位符，不下载；下载取消时关闭连接并继续传播取消。
+
+启用 `enable_message_cache=True` 时，预设会显式补写新增 user 消息，并保留此前缓存的
+系统指令、历史及当前输入 fingerprint。下一轮增量请求继续携带图片；连续重发相同批次
+（包括尚未消费的流）不会重复插图；不同工具回合即使图片数据相同也分别保留。
+下载结果和失败占位符也会缓存；相同批次重试不重复下载。取消未完成的下载不会缓存修复，
+之后重试会重新下载。下载使用请求局部 HTTP 客户端，不复用模型客户端的认证或请求头。
+
+占位消息也遵循相同的缓存与重试规则。各协议的 `prebuilt` 自己记录已处理的批次，
+通过上下文中缓存批次的 `message_cache.extend(messages)` 补写新增消息。
+`message_cache.identity` 是连续重试共享的弱引用标识，新输入批次使用新标识；
+预设使用弱集合记录处理状态，缓存过期、清空或进入新批次后，旧状态可随之释放。
+缓存不保存 hook 状态，也不对补写消息去重；何时补写、是否重试及下载取消均由 hook 负责。
+只有预设新增的原生消息会写入缓存，普通 draft 修改仍仅影响当前请求。
+预设不替换全部缓存，因此 Gemini 的系统指令也会保留。预设仅用于请求阶段，
+不补偿离线 `convert()` 或输出阶段的损失。
+
+这些预设是显式启用的补偿行为，不会再次翻译 hook 已修改的原生 draft。
+交给 transport、交付事件以及最终结果使用该 draft；`MessageStream.result`
 重复读取返回本次最终结果本身。修改结果不影响其他调用或输入历史。
 
 工具参数仍可从上游逐片到达，但仅在成功读取完整响应后以完整调用输出。

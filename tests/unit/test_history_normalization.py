@@ -267,7 +267,7 @@ def test_tool_pairing_reads_each_message_once_without_scanning_prior_calls(round
 @pytest.mark.parametrize("source", PROTOCOLS)
 @pytest.mark.parametrize("target", PROTOCOLS)
 @pytest.mark.parametrize("repair", ["missing_call", "missing_result", "duplicates"])
-def test_all_native_protocol_pairs_repair_tools_before_sdk_validation(
+async def test_all_native_protocol_pairs_repair_tools_before_sdk_validation(
     profile_factory, source, target, repair
 ):
     messages = history(source)
@@ -288,11 +288,13 @@ def test_all_native_protocol_pairs_repair_tools_before_sdk_validation(
         supports_function_calling=config(True),
         max_tokens=parameter("max_tokens", 2048, protocol=target),
     )
-    request = codec.prepare(
-        {"messages": messages, "tools": tools(source), "stream": False},
-        profile,
-        input_format=source,
-        client={},
+    request = (
+        await codec.prepare(
+            {"messages": messages, "tools": tools(source), "stream": False},
+            profile,
+            input_format=source,
+            client={},
+        )
     )["request"]
     validate_request(target, request)
     native = (
@@ -312,24 +314,26 @@ def test_all_native_protocol_pairs_repair_tools_before_sdk_validation(
 
 
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_all_orphan_results_fail_without_inventing_a_user_prompt(profile_factory, target):
+async def test_all_orphan_results_fail_without_inventing_a_user_prompt(profile_factory, target):
     codec = MyCodec()
     with pytest.raises(MessageValidationError, match="no usable history"):
-        codec.prepare(
-            {
-                "messages": [UserMessage("user", [ToolResult("c", [TextContent("result")])])],
-                "tools": omit,
-                "stream": False,
-                "max_tokens": 2048,
-            },
-            profile_factory(target, supports_function_calling=config(True)),
-            input_format="middleware",
-            client={},
+        (
+            await codec.prepare(
+                {
+                    "messages": [UserMessage("user", [ToolResult("c", [TextContent("result")])])],
+                    "tools": omit,
+                    "stream": False,
+                    "max_tokens": 2048,
+                },
+                profile_factory(target, supports_function_calling=config(True)),
+                input_format="middleware",
+                client={},
+            )
         )["request"]
 
 
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_orphan_message_is_removed_with_all_its_text_in_every_target(profile_factory, target):
+async def test_orphan_message_is_removed_with_all_its_text_in_every_target(profile_factory, target):
     messages = [
         UserMessage("user", [TextContent("keep first")]),
         UserMessage(
@@ -343,11 +347,13 @@ def test_orphan_message_is_removed_with_all_its_text_in_every_target(profile_fac
         UserMessage("user", [TextContent("keep last")]),
     ]
     before = deepcopy(messages)
-    request = MyCodec().prepare(
-        {"messages": messages, "tools": omit, "stream": False, "max_tokens": 2048},
-        profile_factory(target, supports_function_calling=config(True)),
-        input_format="middleware",
-        client={},
+    request = (
+        await MyCodec().prepare(
+            {"messages": messages, "tools": omit, "stream": False, "max_tokens": 2048},
+            profile_factory(target, supports_function_calling=config(True)),
+            input_format="middleware",
+            client={},
+        )
     )["request"]
     validate_request(target, request)
     assert "discarded" not in str(request)
@@ -358,7 +364,7 @@ def test_orphan_message_is_removed_with_all_its_text_in_every_target(profile_fac
 
 @pytest.mark.parametrize("source", PROTOCOLS)
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_native_idless_results_are_discarded_before_missing_results_are_padded(
+async def test_native_idless_results_are_discarded_before_missing_results_are_padded(
     profile_factory, source, target
 ):
     messages = history(source)
@@ -385,11 +391,13 @@ def test_native_idless_results_are_discarded_before_missing_results_are_padded(
         supports_function_calling=config(True),
         max_tokens=parameter("max_tokens", 2048, protocol=target),
     )
-    request = MyCodec().prepare(
-        {"messages": messages, "tools": omit, "stream": False},
-        profile,
-        input_format=source,
-        client={},
+    request = (
+        await MyCodec().prepare(
+            {"messages": messages, "tools": omit, "stream": False},
+            profile,
+            input_format=source,
+            client={},
+        )
     )["request"]
     validate_request(target, request)
     assert "discarded" not in str(request)

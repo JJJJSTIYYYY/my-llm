@@ -1,5 +1,8 @@
 """Translated message lists are independent of request structure and hook edits."""
 
+from copy import deepcopy
+from weakref import WeakSet
+
 import pytest
 
 from my_llm import ConfigurationError
@@ -115,3 +118,80 @@ def test_opaque_extras_preserve_conversion_without_unsafe_deduplication():
     assert cache.fingerprint([{"content": b"first"}]) != cache.fingerprint(
         [{"content": ["bytes", "6669727374"]}]
     )
+
+
+def test_batch_extensions_own_messages_and_preserve_input_identity():
+    cache = MessageCache()
+    original = [{"role": "system", "content": "instructions"}]
+    cache.update("session", original)
+    incoming = [{"role": "tool", "content": "result"}]
+    fingerprint = cache.fingerprint(incoming)
+    batch = cache.batch("session", fingerprint=fingerprint)
+    batch.append(incoming)
+    batch.commit()
+    identity = batch.identity
+    additions = [{"role": "user", "content": ["extra"]}]
+    batch.extend(additions)
+    expected = [*original, *incoming, *deepcopy(additions)]
+    additions[0]["content"].clear()
+    assert cache.get("session") == expected
+    retry = cache.batch("session", fingerprint=fingerprint)
+    assert retry.append(incoming) == expected
+    retry.commit()
+    assert retry.identity is identity
+    assert cache.get("session") == expected
+    next_batch = cache.batch("session", fingerprint=cache.fingerprint([{"content": "next"}]))
+    next_batch.append([{"content": "next"}])
+    next_batch.commit()
+    assert next_batch.identity is not identity
+    next_batch.extend([expected[-1]])
+    next_batch.extend([expected[-1]])
+    # Generic extensions never decide whether an addition should be deduplicated.
+    assert cache.get("session") == [*expected, {"content": "next"}, expected[-1], expected[-1]]
+
+
+def test_consumer_state_uses_weak_batch_identity_and_is_released_with_history():
+    cache = MessageCache()
+    messages = [{"content": "initial"}]
+    fingerprint = cache.fingerprint(messages)
+    tracked = WeakSet()
+    batch = cache.batch("session", fingerprint=fingerprint)
+    with pytest.raises(ConfigurationError, match="staged history"):
+        _ = batch.identity
+    batch.append(messages)
+    batch.commit()
+    tracked.add(batch.identity)
+    del batch
+    retry = cache.batch("session", fingerprint=fingerprint)
+    retry.append(messages)
+    assert retry.identity in tracked
+    del retry
+    cache.update("session", [{"content": "next"}])
+    assert not tracked
+    for release in (lambda: cache.expire("session"), cache.clear):
+        batch = cache.batch("session", fingerprint=fingerprint)
+        batch.append(messages)
+        batch.commit()
+        tracked.add(batch.identity)
+        del batch
+        release()
+        assert not tracked
+
+
+def test_failed_batch_extension_leaves_published_history_and_identity_intact():
+    class Uncopyable:
+        def __deepcopy__(self, memo):
+            raise RuntimeError("extension capture failed")
+
+    cache = MessageCache()
+    incoming = [{"content": "initial"}]
+    fingerprint = cache.fingerprint(incoming)
+    batch = cache.batch("session", fingerprint=fingerprint)
+    batch.append(incoming)
+    batch.commit()
+    with pytest.raises(RuntimeError, match="extension capture failed"):
+        batch.extend([{"content": Uncopyable()}])
+    assert cache.get("session") == incoming
+    retry = cache.batch("session", fingerprint=fingerprint)
+    assert retry.append(incoming) == incoming
+    assert retry.identity is batch.identity

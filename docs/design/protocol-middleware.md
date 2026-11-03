@@ -103,9 +103,12 @@ decoder 把无法表达的支持值记为 `SemanticLossItem(origin_value, origin
 请求的 draft 是完整 SDK 请求；响应的 draft 是本次要交付的完整消息或事件列表。
 实时流只能处理当前已收到的批次，不预读未来块；签名完整性在完整块 / 终态再校验。
 
-`SemanticLossContext` 包含源协议、目标协议、方向和阶段。`BaseCodec` 捕获错误并交给
+`SemanticLossContext` 包含源协议、目标协议、方向和阶段。请求阶段还提供解析后的 `profile`，
+以及启用缓存时的 `message_cache` 批次句柄，供显式注册的 hook 补写原生消息。
+上下文不选择或调用预设，也不会自动缓存 hook 修改。`BaseCodec` 捕获错误并交给
 实例所有的 `BaseSemanticLossAdaptor`。默认 `raise`；`ignore` 无日志、无损失历史；
-`hook` 调用相应同步函数 `(draft, losses, context)`，函数返回值忽略。
+`hook` 调用相应函数 `(draft, losses, context)`，函数返回值忽略；异步请求准备会直接等待
+异步请求 hook，离线转换和输出 hook 使用同步函数。
 hook 可任意原地编辑 draft，进入 transport 或返回用户的对象身份保持不变。
 图片、思考、工具与消息名称能力由 `codec.shared.capabilities` 统一判断并记录原因，
 各协议在现有消息和内容循环内调用，损失保留原始来源信息；

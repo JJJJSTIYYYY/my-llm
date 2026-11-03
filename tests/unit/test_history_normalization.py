@@ -18,6 +18,7 @@ from my_llm.codec.shared.conversion import validate_history
 from my_llm.middleware.history import HistoryNormalizer
 from my_llm.middleware.protocol import wire_values
 from my_llm.middleware.validation import validate_messages
+from tests.helpers.chat_history import assert_chat_tool_sequence
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import PROTOCOLS, history, tools
 from tests.helpers.schema import validate_request
@@ -297,6 +298,8 @@ async def test_all_native_protocol_pairs_repair_tools_before_sdk_validation(
         )
     )["request"]
     validate_request(target, request)
+    if target == "openai_chat":
+        assert_chat_tool_sequence(request["messages"])
     native = (
         request["input"]
         if target == "openai_responses"
@@ -402,6 +405,8 @@ async def test_native_idless_results_are_discarded_before_missing_results_are_pa
     validate_request(target, request)
     assert "discarded" not in str(request)
     assert "Sunny" not in str(request)
+    if target == "openai_chat":
+        assert_chat_tool_sequence(request["messages"])
     assert messages == before
 
 
@@ -493,3 +498,37 @@ def test_idless_result_is_discarded_even_with_a_unique_matching_tool_name():
     assert result[1]["content"][0]["tool_use_id"] == "weather"
     assert result[1]["content"][0]["content"] == []
     assert "discarded" not in str(result)
+
+
+@pytest.mark.parametrize("role", ["user", "assistant", "system", "developer"])
+def test_chat_request_groups_results_without_a_semantic_loss_hook(profile_factory, role):
+    messages = [
+        AssistantMessage("assistant", [ToolCall("a", "f"), ToolCall("b", "g")]),
+        {"role": role, "content": [{"type": "text", "text": "first ordinary message"}]},
+        UserMessage("user", [ToolResult("b", [TextContent("second result")])]),
+        UserMessage("user", [TextContent("second ordinary message")]),
+        UserMessage("user", [ToolResult("a", [TextContent("first result")])]),
+    ]
+    before = deepcopy(messages)
+    request = (
+        MyCodec()
+        .codecs["openai_chat"]
+        .request(messages, None, profile_factory(supports_function_calling=config(True)))
+    )
+    native = request["messages"]
+    assert_chat_tool_sequence(native)
+    assert [m["role"] for m in native] == ["assistant", "tool", "tool", role, "user"]
+    assert [m["tool_call_id"] for m in native if m["role"] == "tool"] == ["b", "a"]
+    assert native[-2]["content"] == "first ordinary message"
+    assert native[-1]["content"] == "second ordinary message"
+    assert messages == before
+
+
+def test_offline_chat_conversion_keeps_standalone_tool_results():
+    converted = MyCodec().decode(
+        [UserMessage("user", [ToolResult("external", [TextContent("result")])])],
+        target_format="openai_chat",
+    )
+    assert converted["messages"] == [
+        {"role": "tool", "tool_call_id": "external", "content": "result"}
+    ]

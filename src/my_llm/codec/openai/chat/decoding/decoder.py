@@ -1,6 +1,7 @@
 """openai/chat: intermediate to native output."""
 
 from collections.abc import Callable, Iterable
+from itertools import chain
 from typing import Any
 
 from openai.resources.chat.completions import AsyncCompletions
@@ -220,11 +221,13 @@ class ChatCompletionsDecoder(BaseDecoder):
         """Render middleware history as Chat messages with separate tool results.
 
         Apply capability and reasoning-feedback policies, collect assistant calls
-        under tool_calls and emit tool_result blocks as role=tool messages. Convert
+        under tool_calls and group their role=tool results directly after them,
+        preserving result arrival order and ordinary-message order. Convert
         foreign reasoning/media through Chat content helpers and record supported
         values that Chat cannot preserve as semantic losses.
         """
         result = []
+        tool_groups = {}
         for index, message, feedback in message_feedback(messages, profile):
             name_supported = message.get("name") is None or content_capability(
                 message["name"],
@@ -278,9 +281,19 @@ class ChatCompletionsDecoder(BaseDecoder):
                     feedback=profile is not None and feedback,
                     has_tool_calls=bool(calls),
                 )
-                result.append(value)
-            result.extend(tool_results)
-        return result
+                group = [value]
+                result.append(group)
+                for call in calls:
+                    tool_groups[call["id"]] = group
+            for tool_result in tool_results:
+                group = tool_groups.get(tool_result["tool_call_id"])
+                if group is None:
+                    # Offline message conversion can contain standalone results;
+                    # request preparation owns orphan handling and empty padding.
+                    result.append([tool_result])
+                else:
+                    group.append(tool_result)
+        return list(chain.from_iterable(result))
 
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any

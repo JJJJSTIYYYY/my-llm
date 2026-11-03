@@ -18,6 +18,7 @@ from my_llm import (
     omit,
 )
 from my_llm.cache.message_cache import MessageCacheBatch
+from tests.helpers.chat_history import assert_chat_tool_sequence
 from tests.helpers.profiles import parameter
 from tests.helpers.sdk import MESSAGE_TYPES, assert_input_native
 from tests.helpers.tool_images import (
@@ -52,6 +53,9 @@ async def test_presets_move_images_without_mutating_inputs_and_preserve_retries(
     expected = expected_image_message(target)
     assert first[key][-1] == retry[key][-1] == expected
     assert first[key] == retry[key]
+    if target == "openai_chat":
+        assert_chat_tool_sequence(first[key])
+        assert_chat_tool_sequence(retry[key])
     assert "beforeafter" in str(first)
     assert_input_native(first[key][-1], MESSAGE_TYPES[target])
     assert messages == before
@@ -66,6 +70,8 @@ async def test_presets_move_images_without_mutating_inputs_and_preserve_retries(
         following = await prepare(llm, next_input)
         assert following[key][-2] == expected
         assert following[key][:-1] == retry[key]
+        if target == "openai_chat":
+            assert_chat_tool_sequence(following[key])
 
 
 @pytest.mark.parametrize("target", HOOKS)
@@ -117,6 +123,8 @@ async def test_presets_read_gemini_tool_images_without_inspecting_unknown_parts(
         assert message["role"] == "user"
         assert ("cG5n" if media == "inline" else "https://example.test/p.png") in str(message)
         assert_input_native(message, MESSAGE_TYPES[target])
+    if target == "openai_chat":
+        assert_chat_tool_sequence(request[key])
 
 
 @pytest.mark.parametrize("target", HOOKS)

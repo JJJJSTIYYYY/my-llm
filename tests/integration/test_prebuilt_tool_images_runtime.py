@@ -7,6 +7,7 @@ from inspect import isawaitable
 import pytest
 
 from my_llm import MyLLM
+from tests.helpers.chat_history import assert_chat_tool_sequence
 from tests.helpers.protocols import stream_events
 from tests.helpers.schema import validate_request
 from tests.helpers.tool_images import HOOKS, consume, request_history, responses_history
@@ -80,7 +81,10 @@ async def test_relocated_images_survive_retry_and_incremental_requests(target, s
             assert str(request_history(target, final)).count("aW1hZ2U=") == 2
             assert batch == before
         for request in sdk.requests:
-            validate_request(target, json.loads(request.content))
+            body = json.loads(request.content)
+            validate_request(target, body)
+            if target == "openai_chat":
+                assert_chat_tool_sequence(body["messages"])
         assert all(body.closed for body in sdk.bodies)
 
 
@@ -102,3 +106,5 @@ async def test_unconsumed_stream_retry_does_not_duplicate_cached_images(target):
             await consume(await llm.generate(messages=responses_history(), stream=True))
             request = json.loads(sdk.requests[-1].content)
             assert str(request_history(target, request)).count("aW1hZ2U=") == 1
+            if target == "openai_chat":
+                assert_chat_tool_sequence(request["messages"])

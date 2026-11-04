@@ -9,10 +9,10 @@ import pytest
 from my_llm import (
     Attribute,
     Config,
+    InputParameter,
     ModelProfile,
     MyCodec,
     MyLLM,
-    Parameter,
     ProviderProfile,
     resolve_profiles,
 )
@@ -108,12 +108,12 @@ async def test_complete_call_passes_through_codec_with_explicit_destinations(
 def test_client_scope_is_declared_instead_of_inferred_from_field_name():
     @dataclass(kw_only=True)
     class AuthProvider(ProviderProfile):
-        authentication: Parameter[str] = field(
-            default_factory=lambda: Parameter(
+        authentication: InputParameter[str] = field(
+            default_factory=lambda: InputParameter(
                 path="$.extra_headers.x-auth",
                 default_value="offline-token",
             ),
-            metadata={"scope": "client", "source": "input"},
+            metadata={"scope": "client"},
         )
 
     profile = resolve_profiles(

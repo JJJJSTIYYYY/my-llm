@@ -8,10 +8,11 @@ from my_llm import (
     Attribute,
     Config,
     ConfigurationError,
+    InputParameter,
     ModelProfile,
     MyCodec,
     Omit,
-    Parameter,
+    OutputParameter,
     ProviderProfile,
     omit,
 )
@@ -21,17 +22,16 @@ from tests.helpers.profiles import config
 
 @dataclass(kw_only=True)
 class SamplingProvider(ProviderProfile):
-    temperature: Parameter[float | None] | Omit | None = field(
-        default_factory=lambda: Parameter(path="$.extra_body.temperature", default_value=0.5),
-        metadata={"source": "input"},
+    temperature: InputParameter[float | None] | Omit | None = field(
+        default_factory=lambda: InputParameter(path="$.extra_body.temperature", default_value=0.5),
     )
     sampling_enabled: Config[bool] | Omit | None = field(default_factory=lambda: config(True))
 
 
 @dataclass(kw_only=True)
 class SamplingModel(ModelProfile):
-    temperature: Parameter[float | None] | Omit | None = field(
-        default=None, metadata={"source": "input"}
+    temperature: InputParameter[float | None] | Omit | None = field(
+        default=None,
     )
     sampling_enabled: Config[bool] | Omit | None = None
 
@@ -46,7 +46,7 @@ def test_parameter_defaults_distinguish_inheritance_none_and_omit():
         provider,
         SamplingModel(
             model=Attribute(default_value="demo"),
-            temperature=Parameter(
+            temperature=InputParameter(
                 path="$.extra_body.temperature",
                 default_value=None,
             ),
@@ -68,7 +68,7 @@ def test_parameter_path_and_config_layering_in_custom_profiles():
         ),
         SamplingModel(
             model=Attribute(default_value="demo"),
-            temperature=Parameter(
+            temperature=InputParameter(
                 path="$.extra_body.vendor.temperature",
                 default_value=None,
             ),
@@ -93,7 +93,7 @@ def test_custom_default_types_are_checked(profile_class, value):
         resolve_profiles(
             profile_class(
                 protocol=Config(default_value="openai_chat"),
-                temperature=Parameter(
+                temperature=InputParameter(
                     path="$.extra_body.temperature",
                     default_value=value,
                 ),
@@ -127,12 +127,11 @@ def test_unclassified_extension_is_rejected():
 def test_parameter_binds_path_default_and_source_without_a_paired_field():
     @dataclass(kw_only=True)
     class Extension(ModelProfile):
-        arbitrary: Parameter[str] = field(
-            default_factory=lambda: Parameter(
+        arbitrary: InputParameter[str] = field(
+            default_factory=lambda: InputParameter(
                 path="$.extra_body.vendor",
                 default_value="fallback",
             ),
-            metadata={"source": "input"},
         )
 
     resolved = resolve_profiles(
@@ -144,7 +143,7 @@ def test_parameter_binds_path_default_and_source_without_a_paired_field():
 
 
 def test_declarations_are_mutable_and_keyword_only():
-    declaration = Parameter(path="$.value", default_value=None)
+    declaration = InputParameter(path="$.value", default_value=None)
     declaration.path = "$.other"
     declaration.default_value = 42
     declaration.supports = False
@@ -152,7 +151,7 @@ def test_declarations_are_mutable_and_keyword_only():
     assert declaration.default_value == 42
     assert declaration.supports is False
     with pytest.raises(TypeError):
-        Parameter("Value", "$.value", None, "encode")
+        InputParameter("Value", "$.value", None, "encode")
     with pytest.raises(TypeError):
         Config("Flag", True)
     setting = Config(default_value=True)
@@ -177,8 +176,8 @@ def test_profile_marker_cannot_change_between_layers():
 def test_a_field_cannot_declare_multiple_responsibilities():
     @dataclass(kw_only=True)
     class AmbiguousProvider(ProviderProfile):
-        feature: Config[bool] | Parameter[bool] = field(
-            default_factory=lambda: config(True), metadata={"source": "input"}
+        feature: Config[bool] | InputParameter[bool] = field(
+            default_factory=lambda: config(True),
         )
 
     with pytest.raises(ConfigurationError, match="exactly one"):
@@ -203,8 +202,8 @@ def test_profile_marker_must_describe_the_field_not_a_contained_item():
 def test_a_field_cannot_nest_different_profile_markers():
     @dataclass(kw_only=True)
     class NestedResponsibilities(ProviderProfile):
-        feature: Config[Parameter[bool]] = field(
-            default_factory=lambda: config(True), metadata={"source": "input"}
+        feature: Config[InputParameter[bool]] = field(
+            default_factory=lambda: config(True),
         )
 
     with pytest.raises(ConfigurationError, match="exactly one"):
@@ -230,7 +229,7 @@ def test_declared_extension_defaults_reach_filtered_sdk_request(configured, body
     profile = resolve_profiles(
         SamplingProvider(
             protocol=Config(default_value="openai_chat"),
-            temperature=Parameter(
+            temperature=InputParameter(
                 path="$.extra_body.temperature",
                 default_value=configured,
             ),
@@ -260,7 +259,7 @@ def test_config_wrapper_none_is_a_value_and_field_none_inherits():
 
 
 def test_parameter_override_replaces_path_and_default_without_changing_source():
-    replacement = Parameter(
+    replacement = InputParameter(
         path="$.vendor.result",
         default_value=None,
     )
@@ -276,6 +275,7 @@ def test_parameter_override_replaces_path_and_default_without_changing_source():
 
 def test_reasoning_feedback_parameter_is_an_output_route_with_normal_inheritance():
     from dataclasses import fields
+    from typing import Any, get_type_hints
 
     from my_llm import OverridableProfile
 
@@ -283,10 +283,10 @@ def test_reasoning_feedback_parameter_is_an_output_route_with_normal_inheritance
         field for field in fields(OverridableProfile) if field.name == "feedback_reasoning_item"
     )
     assert declaration.default is None
-    assert declaration.metadata["source"] == "output"
+    assert OutputParameter[Any] in get_type_hints(OverridableProfile)[declaration.name].__args__
     provider = ProviderProfile(
         protocol=Config(default_value="openai_responses"),
-        feedback_reasoning_item=Parameter(path="$.vendor.reasoning_item"),
+        feedback_reasoning_item=OutputParameter(path="$.vendor.reasoning_item"),
     )
     model = ModelProfile(model=Attribute(default_value="demo"))
     inherited = resolve_profiles(provider, model)

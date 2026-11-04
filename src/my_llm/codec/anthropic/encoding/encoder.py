@@ -19,7 +19,7 @@ from my_llm.codec.shared.stream import (
     record,
 )
 from my_llm.profile.resolution import ResolvedProfile
-from my_llm.profile.types import Parameter
+from my_llm.profile.types import OutputParameter, Parameter
 
 PROTOCOL = "anthropic"
 REASONS = {
@@ -196,16 +196,14 @@ class AnthropicEncoder(BaseEncoder):
         feedback_parameter = (
             profile.parameters.get("feedback_reasoning_item") if profile is not None else None
         )
-        custom_feedback = (
-            isinstance(feedback_parameter, Parameter)
-            and feedback_parameter.path != "$.content_block"
+        custom_feedback = isinstance(feedback_parameter, OutputParameter) and (
+            feedback_parameter.path != "$.content_block" or feedback_parameter.event_type
         )
         reasoning_parameter = (
             profile.parameters.get("reasoning_content") if profile is not None else None
         )
-        custom_reasoning = (
-            isinstance(reasoning_parameter, Parameter)
-            and reasoning_parameter.path != "$.delta.thinking"
+        custom_reasoning = isinstance(reasoning_parameter, OutputParameter) and (
+            reasoning_parameter.path != "$.delta.thinking" or reasoning_parameter.event_type
         )
         for event_index, event in enumerate(chunks):
             if event.get("type") == "error" or event.get("error"):
@@ -256,18 +254,10 @@ class AnthropicEncoder(BaseEncoder):
                     "signature_delta": "feedback_item",
                     "input_json_delta": "arguments",
                 }.get(delta.get("type"))
-                if field and not (field == "feedback_item" and custom_feedback):
-                    value = (
-                        self.parameter_value(
-                            event,
-                            profile,
-                            "content" if field == "text" else "reasoning_content",
-                            "$.delta.text" if field == "text" else "$.delta.thinking",
-                            _MISSING,
-                        )
-                        if field in ("text", "reasoning")
-                        else delta.get("partial_json" if field == "arguments" else "signature", "")
-                    )
+                if field in ("arguments", "feedback_item") and not (
+                    field == "feedback_item" and custom_feedback
+                ):
+                    value = delta.get("partial_json" if field == "arguments" else "signature", "")
                     if value is not None and value is not _MISSING:
                         ops.append(
                             {
@@ -316,15 +306,54 @@ class AnthropicEncoder(BaseEncoder):
                     ops.append({"type": "usage", "usage": event["usage"]})
             elif kind == "message_stop":
                 ops.append({"type": "finish"})
-            if custom_feedback and (
-                kind == "content_block_start"
-                and event["content_block"].get("type") in ("thinking", "redacted_thinking")
-                or kind == "content_block_delta"
-                and event["delta"].get("type") in ("thinking_delta", "signature_delta")
-                or kind == "content_block_stop"
+            for name, delta_type, field, block_kind in (
+                ("content", "text_delta", "text", "text"),
+                ("reasoning_content", "thinking_delta", "reasoning", "thinking"),
+            ):
+                if not self.parameter_matches_event(
+                    event,
+                    profile,
+                    name,
+                    native=kind == "content_block_delta"
+                    and event.get("delta", {}).get("type") == delta_type,
+                ):
+                    continue
+                value = self.parameter_value(
+                    event,
+                    profile,
+                    name,
+                    "$.delta.text" if field == "text" else "$.delta.thinking",
+                    _MISSING,
+                )
+                if value is not None and value is not _MISSING:
+                    ops.append(
+                        {
+                            "type": "block_delta",
+                            "ref": BlockRef("content", index),
+                            "field": field,
+                            "kind": block_kind,
+                            "value": value,
+                        }
+                    )
+            if custom_feedback and self.parameter_matches_event(
+                event,
+                profile,
+                "feedback_reasoning_item",
+                native=(
+                    kind == "content_block_start"
+                    and event["content_block"].get("type") in ("thinking", "redacted_thinking")
+                    or kind == "content_block_delta"
+                    and event["delta"].get("type") in ("thinking_delta", "signature_delta")
+                    or kind == "content_block_stop"
+                ),
             ):
                 feedback_item = self.parameter_value(
-                    event, profile, "feedback_reasoning_item", "$.content_block", _MISSING
+                    event,
+                    profile,
+                    "feedback_reasoning_item",
+                    "$.content_block",
+                    _MISSING,
+                    event=True,
                 )
                 if feedback_item is not _MISSING:
                     position = len(ops) - 1 if kind == "content_block_stop" else len(ops)

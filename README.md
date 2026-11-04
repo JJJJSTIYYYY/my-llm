@@ -41,7 +41,7 @@ OpenAI Chat 格式输入 → 任意协议 API → OpenAI Chat 格式输出
 也可[直接使用中间模型](docs/guides/middleware-io.md)，输入 `Message` / `FunctionTool`，返回 `AssistantMessage` / `MessageEvent`。
 文本、图片、思维链、工具与 usage 通过具体的 `ProtocolMiddleWare` 翻译；audio、file、用户 metadata 等未支持字段静默丢弃。
 已支持字段无法表达或配置声明不支持时统一记录语义损失，默认抛 `SemanticLossError`，可选择 ignore 或双向原位 hook，详见[迁移指南](docs/guides/semantic-loss.md)。
-Profile 用 `Parameter` 声明字段路径、默认值与 source，`Config` 控制代码分支；继承不能扩大固定中间协议的支持集合。
+Profile 用 `InputParameter` / `OutputParameter` 声明字段路径、默认值与方向，`Config` 控制代码分支；继承不能扩大固定中间协议的支持集合。
 字段 `None` 继承配置；`default_value=None` 是实际值，已有 `None` 不会被默认值覆盖；跨协议来回翻译不保证无损。
 跨协议转换受目标协议的表达能力限制，详见[兼容边界](docs/reference/configuration.md#跨协议请求的处理边界)。
 新增协议通过 `MyCodec.register(CodecFactory)` 在启动时注册，协议默认值随 Codec 声明；
@@ -87,21 +87,21 @@ pip install 'my-llm-py[openai,anthropic]'
 import asyncio
 import os
 
-from my_llm import Attribute, Config, ModelProfile, MyLLM, Parameter, ProviderProfile
+from my_llm import Attribute, Config, ModelProfile, MyLLM, InputParameter, ProviderProfile
 
 
 async def main():
     async with MyLLM(
         provider=ProviderProfile(
             protocol=Config(default_value="anthropic"),  # 实际请求的 API 协议
-            api_key=Parameter(
+            api_key=InputParameter(
                 path="$.api_key",
                 default_value=os.environ["ANTHROPIC_API_KEY"],
             ),
         ),
         model=ModelProfile(
             model=Attribute(default_value=os.environ["LLM_MODEL"]),
-            max_tokens=Parameter(
+            max_tokens=InputParameter(
                 path="$.max_tokens",
                 default_value=4096,
             ),

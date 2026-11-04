@@ -118,10 +118,10 @@ def test_api_key_rejects_unsupported_connection_paths(path):
 
 
 def test_api_key_source_is_fixed_in_profile():
-    from my_llm import Parameter
+    from my_llm import InputParameter
 
     with pytest.raises(TypeError, match="source"):
-        Parameter(path="$.api_key", default_value="local", source="output")
+        InputParameter(path="$.api_key", default_value="local", source="output")
     provider = ProviderProfile(
         protocol=Config(default_value="openai_chat"), api_key=parameter("api_key", "local")
     )

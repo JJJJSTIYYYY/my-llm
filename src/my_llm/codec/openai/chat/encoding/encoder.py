@@ -252,12 +252,16 @@ class ChatCompletionsEncoder(BaseEncoder):
                 raise ResponseFailedError(
                     "provider generation failed", details=event.get("error", event)
                 )
-            if not any(key in event for key in ("choices", "usage")):
+            custom_event = any(
+                self.parameter_matches_event(event, profile, name, native=False)
+                for name in ("content", "reasoning_content", "feedback_reasoning_item")
+            )
+            if not any(key in event for key in ("choices", "usage")) and not custom_event:
                 continue
             ops = [metadata(self._metadata(event))]
             if event.get("usage") is not None:
                 ops.append({"type": "usage", "usage": event["usage"]})
-            for choice in event.get("choices", []):
+            for choice in event.get("choices") or ([{}] if custom_event else []):
                 if choice.get("index", 0) != 0:
                     raise ConfigurationError("only one generated candidate is supported")
                 delta = choice.get("delta", {})
@@ -265,12 +269,17 @@ class ChatCompletionsEncoder(BaseEncoder):
                     ("content", "text", "$.choices[0].delta.content"),
                     ("reasoning_content", "thinking", "$.choices[0].delta.reasoning_content"),
                 ):
+                    if not self.parameter_matches_event(
+                        event, profile, name, native=bool(event.get("choices"))
+                    ):
+                        continue
                     value = self.parameter_value(
                         event,
                         profile,
                         name,
                         default,
                         use_default=choice.get("finish_reason") is None,
+                        event=True,
                     )
                     if value:
                         ops.append(
@@ -282,13 +291,17 @@ class ChatCompletionsEncoder(BaseEncoder):
                                 "kind": kind,
                             }
                         )
-                feedback = self.parameter_value(
-                    event,
-                    profile,
-                    "feedback_reasoning_item",
-                    "$.choices[0].delta.reasoning_content",
-                    use_default=choice.get("finish_reason") is None,
-                )
+                feedback = None
+                if self.parameter_matches_event(
+                    event, profile, "feedback_reasoning_item", native=bool(event.get("choices"))
+                ):
+                    feedback = self.parameter_value(
+                        event,
+                        profile,
+                        "feedback_reasoning_item",
+                        "$.choices[0].delta.reasoning_content",
+                        use_default=choice.get("finish_reason") is None,
+                    )
                 if feedback is not None:
                     ops.append(feedback_operation(BlockRef("thinking"), feedback))
                 for call in delta.get("tool_calls") or []:

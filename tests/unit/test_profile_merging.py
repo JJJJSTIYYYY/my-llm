@@ -8,8 +8,8 @@ from my_llm import (
     Attribute,
     Config,
     ConfigurationError,
+    InputParameter,
     ModelProfile,
-    Parameter,
     ProviderProfile,
     merge_profiles,
     omit,
@@ -40,11 +40,11 @@ def test_merge_inherits_unset_fields_and_keeps_explicit_values(old_value, new_va
 def test_merge_replaces_parameters_and_attributes_as_whole_declarations():
     older = ModelProfile(
         model=Attribute(default_value="older"),
-        reasoning_enable=Parameter(path="$.thinking", default_value={"budget": 1024}),
+        reasoning_enable=InputParameter(path="$.thinking", default_value={"budget": 1024}),
     )
     newer = ModelProfile(
         model=Attribute(default_value="newer", comment="new identity"),
-        reasoning_enable=Parameter(
+        reasoning_enable=InputParameter(
             path="$.reasoning", default_value={"enabled": True}, comment="new route"
         ),
     )

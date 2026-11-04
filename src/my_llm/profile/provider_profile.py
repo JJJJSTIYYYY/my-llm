@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 from my_llm.basic.exceptions import ConfigurationError
 from my_llm.profile.configuration import OverridableProfile
 from my_llm.profile.model_profile import ModelProfile
-from my_llm.profile.types import Attribute, Config, Omit, Parameter
+from my_llm.profile.types import Attribute, Config, InputParameter, Omit
 
 
 @dataclass(kw_only=True)
@@ -35,8 +35,8 @@ class ProviderProfile(OverridableProfile):
     """
 
     base_url: Config[str] | Omit | None = None
-    api_key: Parameter[str] | Omit | None = field(
-        default=None, repr=False, metadata={"scope": "client", "source": "input"}
+    api_key: InputParameter[str] | Omit | None = field(
+        default=None, repr=False, metadata={"scope": "client"}
     )
     timeout: Config[float] | Omit | None = None
     max_retries: Config[int] | Omit | None = None

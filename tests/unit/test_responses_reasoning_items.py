@@ -4,7 +4,14 @@ from copy import deepcopy
 
 import pytest
 
-from my_llm import Message, Parameter, ReasoningContent, SemanticLossError, omit
+from my_llm import (
+    InputParameter,
+    Message,
+    OutputParameter,
+    ReasoningContent,
+    SemanticLossError,
+    omit,
+)
 from my_llm.codec.openai.responses.decoding.decoder import ResponsesDecoder
 from my_llm.codec.openai.responses.encoding.encoder import ResponsesEncoder
 from my_llm.runtime.state import StreamState
@@ -42,7 +49,7 @@ def test_feedback_output_parameter_selects_item_envelope_path(profile_factory):
     native = reasoning_item("visible")
     profile = profile_factory(
         "openai_responses",
-        feedback_reasoning_item=Parameter(path="$.item.encrypted_content"),
+        feedback_reasoning_item=OutputParameter(path="$.item.encrypted_content"),
     )
     block = ResponsesEncoder().messages([native], profile)[0].content[0]
     assert block.reasoning == "visible"
@@ -166,7 +173,7 @@ def test_filtered_reasoning_is_not_recreated_from_terminal_metadata(profile_fact
     options = (
         {"reasoning_content": omit, "feedback_reasoning_item": omit}
         if filtered == "both_fields"
-        else {"reasoning_enable": Parameter(path="$.reasoning", supports=False)}
+        else {"reasoning_enable": InputParameter(path="$.reasoning", supports=False)}
         if filtered == "capability"
         else {"feedback_reasoning_item": omit}
     )
@@ -193,7 +200,7 @@ def test_feedback_path_is_applied_to_completed_item_snapshots(profile_factory):
     selected = {**native, "encrypted_content": "selected-opaque"}
     source_item = {**native, "vendor": {"feedback": selected}}
     profile = profile_factory(
-        "openai_responses", feedback_reasoning_item=Parameter(path="$.item.vendor.feedback")
+        "openai_responses", feedback_reasoning_item=OutputParameter(path="$.item.vendor.feedback")
     )
     state = StreamState("demo")
     encoder = ResponsesEncoder()
@@ -261,7 +268,7 @@ def test_scalar_feedback_reports_semantic_loss_instead_of_failing_to_render(prof
 def test_scalar_feedback_from_custom_path_reports_loss_on_native_stream_finish(profile_factory):
     native = reasoning_item("visible")
     profile = profile_factory(
-        "openai_responses", feedback_reasoning_item=Parameter(path="$.item.encrypted_content")
+        "openai_responses", feedback_reasoning_item=OutputParameter(path="$.item.encrypted_content")
     )
     state = StreamState("demo")
     state.feed(ResponsesEncoder().chunks([response_completed([native])], profile))

@@ -16,10 +16,11 @@ from my_llm import (
     BaseTransport,
     Config,
     ConfigurationError,
+    InputParameter,
     ModelProfile,
     MyCodec,
     MyLLM,
-    Parameter,
+    OutputParameter,
     ProtocolDefaults,
     ProviderProfile,
     SemanticLossError,
@@ -215,11 +216,11 @@ class Codec(BaseCodec):
     protocol_or_api_style = PROTOCOL
     _DEFAULTS = ProtocolDefaults(
         should_feedback_reasoning_item=config("none"),
-        max_tokens=Parameter(path="$.limit", default_value=omit),
-        content=Parameter(path="$.body", default_value=omit),
-        reasoning_content=Parameter(path="$.thinking", default_value=omit),
-        reasoning_enable=Parameter(path="$.hint", default_value={"level": 1}),
-        reasoning_effort=Parameter(path="$.hint.level", default_value=omit, supports=False),
+        max_tokens=InputParameter(path="$.limit", default_value=omit),
+        content=OutputParameter(path="$.body", default_value=omit),
+        reasoning_content=OutputParameter(path="$.thinking", default_value=omit),
+        reasoning_enable=InputParameter(path="$.hint", default_value={"level": 1}),
+        reasoning_effort=InputParameter(path="$.hint.level", default_value=omit, supports=False),
     )
     encoder_type = Encoder
     decoder_type = Decoder
@@ -269,9 +270,8 @@ async def test_new_protocol_reuses_caches_with_unhashable_annotations(registered
 
     @dataclass(kw_only=True)
     class ExtendedModel(ModelProfile):
-        vendor: Parameter[str] = field(
-            default_factory=lambda: Parameter(path="$.hint.vendor", default_value="extra"),
-            metadata={"source": "input"},
+        vendor: InputParameter[str] = field(
+            default_factory=lambda: InputParameter(path="$.hint.vendor", default_value="extra"),
         )
 
     monkeypatch.setattr(Codec, "decoder_type", AnnotatedDecoder)
@@ -661,7 +661,7 @@ def test_external_encoder_inherits_output_routes_and_missing_value_semantics(
     registered, payload, expected
 ):
     provider, model = profiles()
-    declaration = Parameter(
+    declaration = OutputParameter(
         comment="Presentation only",
         path="$.vendor.body",
         default_value="fallback",
@@ -682,22 +682,20 @@ def test_external_encoder_inherits_output_routes_and_missing_value_semantics(
 def test_external_protocol_inherits_generic_input_parameters_and_source_isolation(registered):
     @dataclass(kw_only=True)
     class ExtensionModel(ModelProfile):
-        vendor_limit: Parameter[int] = field(
-            default_factory=lambda: Parameter(path="$.hint.vendor", default_value=7),
-            metadata={"source": "input"},
+        vendor_limit: InputParameter[int] = field(
+            default_factory=lambda: InputParameter(path="$.hint.vendor", default_value=7),
         )
-        encoder_only: Parameter[str] = field(
-            default_factory=lambda: Parameter(
+        encoder_only: OutputParameter[str] = field(
+            default_factory=lambda: OutputParameter(
                 path="$.hint.leak",
                 default_value="must not leak",
             ),
-            metadata={"source": "output"},
         )
 
     provider, _ = profiles()
     model = ExtensionModel(
         model=Attribute(default_value="independent"),
-        content=Parameter(path="$.hint.body", default_value="fallback"),
+        content=OutputParameter(path="$.hint.body", default_value="fallback"),
     )
     profile = resolve_profiles(provider, model)
     codec = MyCodec()

@@ -7,7 +7,7 @@ from my_llm.codec.gemini.decoding.decoder import GeminiDecoder
 from my_llm.codec.gemini.encoding.encoder import GeminiEncoder
 from my_llm.codec.gemini.transport import GeminiTransport
 from my_llm.profile.configuration import ProtocolDefaults
-from my_llm.profile.types import Config, Parameter, omit
+from my_llm.profile.types import Config, InputParameter, OutputParameter, omit
 
 
 class GeminiCodec(BaseCodec):
@@ -21,23 +21,23 @@ class GeminiCodec(BaseCodec):
     protocol_or_api_style = "gemini"
     _DEFAULTS = ProtocolDefaults(
         should_feedback_reasoning_item=Config(default_value="always"),
-        max_tokens=Parameter(path="$.config.max_output_tokens", default_value=omit),
-        content=Parameter(
+        max_tokens=InputParameter(path="$.config.max_output_tokens", default_value=omit),
+        content=OutputParameter(
             path="$.candidates[0].content.parts[0].text",
             default_value=omit,
         ),
-        reasoning_content=Parameter(
+        reasoning_content=OutputParameter(
             path="$.candidates[0].content.parts[0].text",
             default_value=omit,
         ),
-        feedback_reasoning_item=Parameter(
+        feedback_reasoning_item=OutputParameter(
             path="$.candidates[0].content.parts[0]", default_value=omit
         ),
-        reasoning_enable=Parameter(
+        reasoning_enable=InputParameter(
             path="$.config.thinking_config",
             default_value={"include_thoughts": True, "thinking_budget": -1},
         ),
-        reasoning_effort=Parameter(
+        reasoning_effort=InputParameter(
             supports=False,
             path="$.config.thinking_config.thinking_level",
             default_value=omit,

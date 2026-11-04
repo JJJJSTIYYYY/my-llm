@@ -9,7 +9,7 @@ import pytest
 from openai import AsyncOpenAI
 
 from my_llm import Attribute, Config, ModelProfile, MyLLM, ProviderProfile
-from my_llm.profile.types import Parameter
+from my_llm.profile.types import InputParameter
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import history, stream_events, tools
 from tests.helpers.schema import validate_request
@@ -212,12 +212,11 @@ async def test_inherited_parameter_defaults_and_vendor_effort_reach_official_sdk
 ):
     @dataclass(kw_only=True)
     class VendorModel(ModelProfile):
-        vendor_limit: Parameter[int | None] = field(
-            default_factory=lambda: Parameter(
+        vendor_limit: InputParameter[int | None] = field(
+            default_factory=lambda: InputParameter(
                 path="$.extra_body.vendor_limit",
                 default_value=None,
             ),
-            metadata={"source": "input"},
         )
 
     bodies = []
@@ -257,3 +256,89 @@ async def test_inherited_parameter_defaults_and_vendor_effort_reach_official_sdk
         else bodies[0]["reasoning"]["effort"]
     )
     assert effort == "vendor_effort"
+
+
+@pytest.mark.parametrize("protocol", ["openai_chat", "openai_responses"])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("name", ["content", "reasoning_content"])
+async def test_output_event_type_through_official_sdk_sse(monkeypatch, protocol, stream, name):
+    from my_llm import Message, OutputParameter, ReasoningContent, TextContent
+    from tests.helpers.protocols import chat_event, response_completed
+
+    selected_type = "response.vendor.delta"
+    native_type = (
+        "response.output_text.delta"
+        if name == "content"
+        else "response.reasoning_summary_text.delta"
+    )
+    events = [
+        {"type": native_type, "vendor": {"value": "ignored"}},
+        {"type": selected_type, "vendor": {"value": "custom "}},
+        {"type": selected_type, "vendor": {"value": "value"}},
+    ]
+    if protocol == "openai_chat":
+        events.append(chat_event(finish="stop"))
+    else:
+        item = (
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "custom value", "annotations": []},
+                ],
+            }
+            if name == "content"
+            else {
+                "type": "reasoning",
+                "summary": [
+                    {"type": "summary_text", "text": "custom value"},
+                ],
+            }
+        )
+        events.append(response_completed([item]))
+
+    def handler(request):
+        return httpx.Response(
+            200,
+            text=sse(events, done=protocol == "openai_chat"),
+            headers={"Content-Type": "text/event-stream"},
+        )
+
+    def factory(**kwargs):
+        return AsyncOpenAI(
+            **kwargs, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        )
+
+    module = "chat" if protocol == "openai_chat" else "responses"
+    monkeypatch.setattr(f"my_llm.codec.openai.{module}.transport.AsyncOpenAI", factory)
+    async with MyLLM(
+        provider=ProviderProfile(
+            protocol=Config(default_value=protocol),
+            api_key=InputParameter(path="$.api_key", default_value="local-test"),
+        ),
+        model=ModelProfile(
+            model=Attribute(default_value="demo"),
+            **{
+                name: OutputParameter(path="$.vendor.value", event_type=selected_type),
+            },
+        ),
+        stdio_protocol="middleware",
+    ) as llm:
+        result = await llm.generate(messages=[Message("user", [TextContent("hi")])], stream=stream)
+        if stream:
+            async with result:
+                public = [event async for event in result]
+            assert [event.value for event in public if event.type == "delta"] == [
+                "custom ",
+                "value",
+            ]
+            result = result.result
+        block = next(
+            block
+            for block in result.content
+            if isinstance(
+                block,
+                TextContent if name == "content" else ReasoningContent,
+            )
+        )
+        assert (block.text if name == "content" else block.reasoning) == "custom value"

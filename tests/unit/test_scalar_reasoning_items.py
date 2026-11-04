@@ -4,7 +4,15 @@ from copy import deepcopy
 
 import pytest
 
-from my_llm import Message, MyCodec, Origin, Parameter, ReasoningContent, SemanticLossError, omit
+from my_llm import (
+    Message,
+    MyCodec,
+    Origin,
+    OutputParameter,
+    ReasoningContent,
+    SemanticLossError,
+    omit,
+)
 from my_llm.basic.protocols import codec_for
 from my_llm.runtime.state import StreamState
 from tests.helpers.profiles import config
@@ -33,8 +41,8 @@ def test_scalar_feedback_stream_uses_its_own_output_parameter(scalar, profile_fa
     root = "$.choices[0].delta" if protocol == "openai_chat" else "$.message"
     profile = profile_factory(
         protocol,
-        reasoning_content=Parameter(path=f"{root}.visible"),
-        feedback_reasoning_item=Parameter(path=f"{root}.private"),
+        reasoning_content=OutputParameter(path=f"{root}.visible"),
+        feedback_reasoning_item=OutputParameter(path=f"{root}.private"),
     )
     encoder = codec_for(protocol).encoder
     state = StreamState("demo")
@@ -58,7 +66,9 @@ def test_scalar_feedback_stream_uses_its_own_output_parameter(scalar, profile_fa
 def test_scalar_encrypted_object_is_retained_without_public_delta(scalar, profile_factory):
     protocol, _, chunk, terminal = scalar
     root = "$.choices[0].delta" if protocol == "openai_chat" else "$.message"
-    profile = profile_factory(protocol, feedback_reasoning_item=Parameter(path=f"{root}.private"))
+    profile = profile_factory(
+        protocol, feedback_reasoning_item=OutputParameter(path=f"{root}.private")
+    )
     feedback = {"encrypted": ["opaque"]}
     event = chunk(private=feedback)
     before = deepcopy(event)
@@ -83,13 +93,15 @@ def test_scalar_native_message_custom_feedback_is_separate(scalar, profile_facto
     protocol, field, _, _ = scalar
     root = "$.choices[0].delta" if protocol == "openai_chat" else "$.message"
     message = {"role": "assistant", "content": "answer", field: "visible", "private": "raw"}
-    profile = profile_factory(protocol, feedback_reasoning_item=Parameter(path=f"{root}.private"))
+    profile = profile_factory(
+        protocol, feedback_reasoning_item=OutputParameter(path=f"{root}.private")
+    )
     block = codec_for(protocol).encoder.messages([message], profile)[0].content[1]
     assert block.reasoning == "visible"
     assert block.feedback_item == "raw"
 
 
-@pytest.mark.parametrize("disabled", [omit, Parameter(path="$.private", supports=False)])
+@pytest.mark.parametrize("disabled", [omit, OutputParameter(path="$.private", supports=False)])
 def test_output_feedback_declaration_filters_only_feedback(scalar, profile_factory, disabled):
     protocol, _, _, _ = scalar
     message = Message("assistant", [ReasoningContent("visible", "raw")], protocol=protocol)
@@ -143,7 +155,9 @@ def test_native_output_reports_feedback_it_cannot_preserve(scalar):
 def test_feedback_update_keeps_earlier_public_event_stable(scalar, profile_factory):
     protocol, field, chunk, _ = scalar
     root = "$.choices[0].delta" if protocol == "openai_chat" else "$.message"
-    profile = profile_factory(protocol, feedback_reasoning_item=Parameter(path=f"{root}.private"))
+    profile = profile_factory(
+        protocol, feedback_reasoning_item=OutputParameter(path=f"{root}.private")
+    )
     encoder = codec_for(protocol).encoder
     state = StreamState("demo")
     first = state.feed(encoder.chunks([chunk(**{field: "visible"})], profile))

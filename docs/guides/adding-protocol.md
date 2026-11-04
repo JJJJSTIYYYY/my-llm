@@ -109,14 +109,13 @@ MyLLM 根据 Decoder 生成的 client_key 管理实例缓存和最终关闭。
 
 BaseCodec 必须提供 protocol_or_api_style、defaults、encoder、decoder、transport。
 defaults 使用可变 dataclass ProtocolDefaults。should_feedback_reasoning_item 通过 Config 明确声明；
-max_tokens、content、reasoning_content、feedback_reasoning_item、reasoning_enable、reasoning_effort 使用 Parameter 声明，不用的字段保留默认 omit。
+请求字段使用 InputParameter，输出字段使用 OutputParameter；不用的字段保留默认 omit。
 max_tokens / reasoning_enable / reasoning_effort source 固定为 input，content / reasoning_content / feedback_reasoning_item source 固定为 output。
 路径从根字典定位，使用 $. 前缀，$ 表示 **parameters 解包字典的根；事件类型不是参数路径。
-wrapper 的 name 与 Parameter.source 由 Profile 固定；comment 可用于展示说明。
+wrapper 的 name 由 Profile 固定，source 由 InputParameter / OutputParameter 固定；comment 可用于展示说明。
 Profile 字段 None 表示继承，wrapper.default_value=None 为实际值，仅在目标字段缺失时应用。
 
-ProtocolDefaults、ProviderProfile、ModelProfile 可继承扩展：新增参数通过字段 metadata 硬编码 source="input" 或 source="output"，声明
-Parameter[T] | Omit | None，分支配置声明 Config[T] | Omit | None。
+ProtocolDefaults、ProviderProfile、ModelProfile 可继承扩展：新增参数声明 InputParameter[T] | Omit | None 或 OutputParameter[T] | Omit | None，分支配置声明 Config[T] | Omit | None。
 解析器自动发现继承字段并检查声明，不需要路径与默认值配对，也不需要中央参数表。
 自定义 Config 的含义由协议组件实现；所有请求 scope 的 input 参数路径和默认值由 BaseDecoder 自动应用。
 自定义 output 参数只能映射为现有中间态语义，不能扩大固定支持集合。
@@ -136,7 +135,7 @@ from my_llm import (
     ModelProfile,
     MyCodec,
     MyLLM,
-    Parameter,
+    InputParameter,
     ProtocolDefaults,
     ProviderProfile,
     omit,
@@ -153,7 +152,7 @@ class ExampleCodec(BaseCodec):
     protocol_or_api_style = "example"
     _DEFAULTS = ProtocolDefaults(
         should_feedback_reasoning_item=Config(default_value="none"),
-        max_tokens=Parameter(
+        max_tokens=InputParameter(
             path="$.max_tokens",
             default_value=omit,
         ),

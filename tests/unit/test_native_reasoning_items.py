@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from my_llm import Message, Parameter, ReasoningContent, SemanticLossError
+from my_llm import Message, OutputParameter, ReasoningContent, SemanticLossError
 from my_llm.codec.anthropic.decoding.decoder import AnthropicDecoder
 from my_llm.codec.anthropic.encoding.encoder import AnthropicEncoder
 from my_llm.codec.gemini.decoding.decoder import GeminiDecoder
@@ -94,7 +94,7 @@ def test_anthropic_stream_accumulates_signature_privately_and_replays_redacted_b
 def test_anthropic_custom_feedback_parameter_selects_complete_private_item(profile_factory):
     native = {"type": "thinking", "thinking": "visible", "signature": "custom"}
     profile = profile_factory(
-        "anthropic", feedback_reasoning_item=Parameter(path="$.delta.private")
+        "anthropic", feedback_reasoning_item=OutputParameter(path="$.delta.private")
     )
     state = StreamState("demo")
     encoder = AnthropicEncoder()
@@ -123,7 +123,9 @@ def test_anthropic_custom_feedback_parameter_selects_complete_private_item(profi
 
 
 def test_anthropic_visible_override_does_not_change_native_feedback_text(profile_factory):
-    profile = profile_factory("anthropic", reasoning_content=Parameter(path="$.delta.summary"))
+    profile = profile_factory(
+        "anthropic", reasoning_content=OutputParameter(path="$.delta.summary")
+    )
     state = StreamState("demo")
     encoder = AnthropicEncoder()
     for event in [
@@ -195,7 +197,7 @@ def test_gemini_custom_feedback_parameter_preserves_visible_reasoning(profile_fa
         "private": feedback,
         "candidates": [{"content": {"role": "model", "parts": [native]}, "finish_reason": "STOP"}],
     }
-    profile = profile_factory("gemini", feedback_reasoning_item=Parameter(path="$.private"))
+    profile = profile_factory("gemini", feedback_reasoning_item=OutputParameter(path="$.private"))
     state = StreamState("demo")
     state.feed(GeminiEncoder().chunks([event], profile))
     state.finish()

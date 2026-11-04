@@ -7,7 +7,7 @@ from my_llm.codec.openai.chat.decoding.decoder import ChatCompletionsDecoder
 from my_llm.codec.openai.chat.encoding.encoder import ChatCompletionsEncoder
 from my_llm.codec.openai.chat.transport import ChatCompletionsTransport
 from my_llm.profile.configuration import ProtocolDefaults
-from my_llm.profile.types import Config, Parameter, omit
+from my_llm.profile.types import Config, InputParameter, OutputParameter, omit
 
 
 class ChatCompletionsCodec(BaseCodec):
@@ -21,20 +21,22 @@ class ChatCompletionsCodec(BaseCodec):
     protocol_or_api_style = "openai_chat"
     _DEFAULTS = ProtocolDefaults(
         should_feedback_reasoning_item=Config(default_value="always"),
-        max_tokens=Parameter(path="$.max_completion_tokens", default_value=omit),
-        content=Parameter(path="$.choices[0].delta.content", default_value=omit),
-        reasoning_content=Parameter(
+        max_tokens=InputParameter(path="$.max_completion_tokens", default_value=omit),
+        content=OutputParameter(path="$.choices[0].delta.content", default_value=omit),
+        reasoning_content=OutputParameter(
             path="$.choices[0].delta.reasoning_content",
             default_value=omit,
         ),
-        feedback_reasoning_item=Parameter(
+        feedback_reasoning_item=OutputParameter(
             path="$.choices[0].delta.reasoning_content", default_value=omit
         ),
-        reasoning_enable=Parameter(
+        reasoning_enable=InputParameter(
             path="$.reasoning_effort",
             default_value="medium",
         ),
-        reasoning_effort=Parameter(supports=False, path="$.reasoning_effort", default_value=omit),
+        reasoning_effort=InputParameter(
+            supports=False, path="$.reasoning_effort", default_value=omit
+        ),
     )
 
     def __init__(self) -> None:

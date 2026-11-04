@@ -24,7 +24,7 @@ from my_llm.codec.shared.stream import (
     record,
 )
 from my_llm.profile.resolution import ResolvedProfile
-from my_llm.profile.types import Omit, Parameter
+from my_llm.profile.types import Omit, OutputParameter, Parameter
 
 PROTOCOL = "gemini"
 TEXT_PATH = "$.candidates[0].content.parts[0].text"
@@ -197,8 +197,8 @@ class GeminiEncoder(BaseEncoder):
         feedback_parameter = (
             profile.parameters.get("feedback_reasoning_item") if profile is not None else None
         )
-        custom_feedback = (
-            isinstance(feedback_parameter, Parameter) and feedback_parameter.path != FEEDBACK_PATH
+        custom_feedback = isinstance(feedback_parameter, OutputParameter) and (
+            feedback_parameter.path != FEEDBACK_PATH or feedback_parameter.event_type
         )
         for event_index, event in enumerate(chunks):
             if event.get("type") == "error" or event.get("error"):
@@ -214,6 +214,9 @@ class GeminiEncoder(BaseEncoder):
                     "response_id",
                     "model_version",
                 )
+            ) and not any(
+                self.parameter_matches_event(event, profile, name, native=False)
+                for name in ("content", "reasoning_content", "feedback_reasoning_item")
             ):
                 continue
             if event.get("prompt_feedback", {}).get("block_reason") not in (
@@ -254,8 +257,10 @@ class GeminiEncoder(BaseEncoder):
                             name = "reasoning_content" if block["type"] == "thinking" else "content"
                             seen_text.add(name)
                             if profile is not None:
-                                parameter = profile.parameter(name, "output")
-                                if parameter is not None and parameter.path != TEXT_PATH:
+                                parameter = profile.parameters.get(name)
+                                if isinstance(parameter, OutputParameter) and (
+                                    parameter.path != TEXT_PATH or parameter.event_type
+                                ):
                                     if block["type"] == "text":
                                         continue
                                     block["reasoning"] = None
@@ -285,12 +290,20 @@ class GeminiEncoder(BaseEncoder):
                     ("content", "text", "text"),
                     ("reasoning_content", "thinking", "reasoning"),
                 ):
-                    parameter = profile.parameter(name, "output")
-                    if parameter is None:
+                    parameter = profile.parameters.get(name)
+                    if not isinstance(parameter, OutputParameter):
                         continue
-                    if parameter.path != TEXT_PATH:
+                    if not self.parameter_matches_event(event, profile, name):
+                        continue
+                    if parameter.path != TEXT_PATH or parameter.event_type:
                         value = self.parameter_value(
-                            event, profile, name, TEXT_PATH, _MISSING, use_default=has_parts
+                            event,
+                            profile,
+                            name,
+                            TEXT_PATH,
+                            _MISSING,
+                            use_default=has_parts or bool(parameter.event_type),
+                            event=True,
                         )
                     elif name not in seen_text and has_parts:
                         value = parameter.default_value
@@ -319,7 +332,8 @@ class GeminiEncoder(BaseEncoder):
                     "feedback_reasoning_item",
                     FEEDBACK_PATH,
                     _MISSING,
-                    use_default=has_parts,
+                    use_default=has_parts or bool(feedback_parameter.event_type),
+                    event=True,
                 )
                 if feedback_item is not _MISSING and not isinstance(feedback_item, Omit):
                     position = next(

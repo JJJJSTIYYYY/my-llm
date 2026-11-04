@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import copy
 from dataclasses import dataclass, field, fields
-from functools import lru_cache, wraps
+from functools import wraps
 from typing import Any, Generic, Literal, TypeVar
 
 from my_llm.basic.exceptions import ConfigurationError
@@ -69,7 +69,7 @@ class Attribute(Generic[_T]):
 
 @dataclass(kw_only=True)
 class Parameter(Generic[_T]):
-    """Declare a parameter's path, default value and capability support.
+    """Common path, default value and capability support for routed parameters.
 
     Args:
         path: Rooted field path, such as ``$.max_tokens`` or ``$.choices[0].delta.content``.
@@ -81,12 +81,10 @@ class Parameter(Generic[_T]):
 
     Attributes:
         name: Field name assigned by the containing profile.
-        source: "input" or "output" assigned by the profile declaration.
+        source: Direction fixed by InputParameter or OutputParameter.
 
-    Input parameters configure requests; output parameters select response values.
-    The containing profile determines the source; callers cannot pass name/source
-    to this keyword-only dataclass. Invalid paths, comments or support flags
-    raise ConfigurationError.
+    Use InputParameter for requests and OutputParameter for responses. The base
+    class alone does not declare a direction. Callers cannot pass name/source.
     """
 
     path: str
@@ -103,6 +101,31 @@ class Parameter(Generic[_T]):
         if not self.supports:
             object.__setattr__(self, "default_value", omit)
         path_keys(self.path)
+
+
+@dataclass(kw_only=True)
+class InputParameter(Parameter[_T]):
+    """Route a request or connection value to its native field path."""
+
+    source: Literal["input"] = field(default="input", init=False)
+
+
+@dataclass(kw_only=True)
+class OutputParameter(Parameter[_T]):
+    """Read a response value from a native event.
+
+    event_type selects the exact native event ``type`` (or Chat ``object``).
+    An empty string retains the codec's native event classification. Event
+    selection applies to streaming chunks; history and snapshots use only path.
+    """
+
+    source: Literal["output"] = field(default="output", init=False)
+    event_type: str = ""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not isinstance(self.event_type, str):
+            raise ConfigurationError("output parameter event_type must be a string")
 
 
 @dataclass(kw_only=True)
@@ -132,36 +155,28 @@ class Config(Generic[_T]):
 def set_attr(method):
     """Bind wrapper identity once, from hard-coded Profile declarations.
 
-    Decorate a Profile's __post_init__. Parameter fields declare source through
-    dataclass metadata. Copy each unbound wrapper so reusable declarations never
+    Decorate a Profile's __post_init__. Parameter subclasses fix their source.
+    Copy each unbound wrapper so reusable declarations never
     acquire an identity as a side effect of constructing another profile.
     """
 
     @wraps(method)
     def bind(self, *args, **kwargs):
-        for name, source in _attributes(type(self)):
+        for item in fields(self):
+            name = item.name
             value = getattr(self, name)
             if not isinstance(value, (Parameter, Config)):
                 continue
-            if value.name is not None or isinstance(value, Parameter) and value.source is not None:
-                if value.name != name or isinstance(value, Parameter) and value.source != source:
-                    raise ConfigurationError(f"{name} name/source have already been assigned")
+            if value.name is not None:
+                if value.name != name:
+                    raise ConfigurationError(f"{name} name has already been assigned")
                 continue
             bound = copy(value)
             object.__setattr__(bound, "name", name)
-            if isinstance(bound, Parameter):
-                if source not in ("input", "output"):
-                    raise ConfigurationError(f"{name} must declare input/output source in Profile")
-                object.__setattr__(bound, "source", source)
             object.__setattr__(self, name, bound)
         return method(self, *args, **kwargs)
 
     return bind
-
-
-@lru_cache(maxsize=128)
-def _attributes(profile_type: type) -> tuple[tuple[str, str | None], ...]:
-    return tuple((item.name, item.metadata.get("source")) for item in fields(profile_type))
 
 
 def _validate_comment(comment: str | None) -> None:

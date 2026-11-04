@@ -396,14 +396,19 @@ class ResponsesEncoder(BaseEncoder):
                 )
                 if response.get("usage") is not None:
                     ops.append({"type": "usage", "usage": response["usage"]})
-            for name, event_type, block_kind in (
-                ("content", "response.output_text.delta", "text"),
-                ("reasoning_content", "response.reasoning_summary_text.delta", "thinking"),
-                ("reasoning_content", "response.reasoning_text.delta", "thinking"),
+            for name, event_types, block_kind in (
+                ("content", ("response.output_text.delta",), "text"),
+                (
+                    "reasoning_content",
+                    ("response.reasoning_summary_text.delta", "response.reasoning_text.delta"),
+                    "thinking",
+                ),
             ):
-                if kind != event_type:
+                if not self.parameter_matches_event(
+                    event, profile, name, native=kind in event_types
+                ):
                     continue
-                value = self.parameter_value(event, profile, name, "$.delta")
+                value = self.parameter_value(event, profile, name, "$.delta", event=True)
                 if value is not None:
                     ops.append(
                         {
@@ -416,6 +421,23 @@ class ResponsesEncoder(BaseEncoder):
                             "kind": block_kind,
                             "field": "text" if block_kind == "text" else "reasoning",
                             "value": value,
+                        }
+                    )
+            if self.parameter_matches_event(
+                event, profile, "feedback_reasoning_item", native=False
+            ):
+                feedback_item = self.parameter_value(
+                    event, profile, "feedback_reasoning_item", "$.item"
+                )
+                if feedback_item is not None:
+                    ops.append(
+                        {
+                            "type": "block_update",
+                            "ref": BlockRef("thinking", index),
+                            "block": {
+                                "type": "thinking",
+                                "feedback_item": capture(feedback_item),
+                            },
                         }
                     )
             if "output_index" in event:

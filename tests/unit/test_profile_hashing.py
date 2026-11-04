@@ -10,9 +10,9 @@ from my_llm import (
     Attribute,
     Config,
     ConfigurationError,
+    InputParameter,
     ModelProfile,
     MyLLM,
-    Parameter,
     ProviderProfile,
     omit,
     resolve_profiles,
@@ -85,7 +85,13 @@ def test_hash_retains_custom_parameter_declaration_order():
         return make_dataclass(
             "OrderedProvider",
             [
-                (name, Parameter[int] | None, field(default=None, metadata={"source": "input"}))
+                (
+                    name,
+                    InputParameter[int] | None,
+                    field(
+                        default=None,
+                    ),
+                )
                 for name in names
             ],
             bases=(ProviderProfile,),
@@ -94,8 +100,8 @@ def test_hash_retains_custom_parameter_declaration_order():
 
     declarations = {
         "protocol": Config(default_value="openai_chat"),
-        "first": Parameter(path="$.extra_body.first", default_value=1),
-        "second": Parameter(path="$.extra_body.second", default_value=2),
+        "first": InputParameter(path="$.extra_body.first", default_value=1),
+        "second": InputParameter(path="$.extra_body.second", default_value=2),
     }
     model = ModelProfile(model=Attribute(default_value="demo"))
     first = resolve_profiles_with_hash(provider_type(("first", "second"))(**declarations), model)
@@ -109,10 +115,10 @@ def test_hash_retains_custom_parameter_declaration_order():
 @pytest.mark.parametrize(
     "declaration",
     [
-        Parameter(path="$.extra_body.other", default_value=128),
-        Parameter(path="$.max_completion_tokens", default_value=None),
-        Parameter(path="$.max_completion_tokens", supports=False),
-        Parameter(path="$.max_completion_tokens", default_value=128, comment="new comment"),
+        InputParameter(path="$.extra_body.other", default_value=128),
+        InputParameter(path="$.max_completion_tokens", default_value=None),
+        InputParameter(path="$.max_completion_tokens", supports=False),
+        InputParameter(path="$.max_completion_tokens", default_value=128, comment="new comment"),
         omit,
     ],
 )
@@ -120,7 +126,7 @@ def test_compare_detects_complete_parameter_changes(declaration):
     provider = ProviderProfile(protocol=Config(default_value="openai_chat"))
     model = ModelProfile(
         model=Attribute(default_value="demo"),
-        max_tokens=Parameter(path="$.max_completion_tokens", default_value=128),
+        max_tokens=InputParameter(path="$.max_completion_tokens", default_value=128),
     )
     llm = MyLLM(provider=provider, model=model)
 
@@ -158,7 +164,7 @@ def test_compare_ignores_overridden_values_and_unresolved_attributes():
     "changes",
     [
         {"timeout": Config(default_value=30)},
-        {"api_key": Parameter(path="$.api_key", default_value="offline-test-value")},
+        {"api_key": InputParameter(path="$.api_key", default_value="offline-test-value")},
         {"extra_headers": Config(default_value={"x-test": "changed"})},
         {"protocol": Config(default_value="openai_responses")},
     ],
@@ -249,7 +255,7 @@ async def test_generation_uses_the_reused_changed_configuration(monkeypatch):
 def test_precomputed_snapshot_still_undergoes_protocol_validation():
     provider = ProviderProfile(
         protocol=Config(default_value="ollama"),
-        api_key=Parameter(path="$.api_key", default_value="offline-test-value"),
+        api_key=InputParameter(path="$.api_key", default_value="offline-test-value"),
     )
     model = ModelProfile(model=Attribute(default_value="demo"))
     result = resolve_profiles_with_hash(provider, model)

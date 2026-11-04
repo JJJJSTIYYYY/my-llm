@@ -8,9 +8,9 @@ from my_llm import (
     Attribute,
     Config,
     ConfigurationError,
+    InputParameter,
     ModelProfile,
     MyCodec,
-    Parameter,
     ProviderProfile,
     omit,
     resolve_profiles,
@@ -93,7 +93,7 @@ def test_attribute_cannot_change_to_config_between_layers():
 
 @pytest.mark.parametrize(
     "annotation",
-    [Attribute[str] | Config[str], Attribute[str] | Parameter[str], Config[Attribute[str]]],
+    [Attribute[str] | Config[str], Attribute[str] | InputParameter[str], Config[Attribute[str]]],
 )
 def test_attribute_cannot_share_a_field_with_configuration_or_routing(annotation):
     @dataclass(kw_only=True)

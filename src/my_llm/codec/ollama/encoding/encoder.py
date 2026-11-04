@@ -239,7 +239,10 @@ class OllamaEncoder(BaseEncoder):
                 raise ResponseFailedError(
                     "provider generation failed", details=event.get("error", event)
                 )
-            if not any(key in event for key in ("message", "done")):
+            if not any(key in event for key in ("message", "done")) and not any(
+                self.parameter_matches_event(event, profile, name, native=False)
+                for name in ("content", "reasoning_content", "feedback_reasoning_item")
+            ):
                 continue
             ops = [metadata(project_metadata(event, (("model", "model"),)))]
             message = event.get("message", {})
@@ -248,7 +251,7 @@ class OllamaEncoder(BaseEncoder):
                 ("reasoning_content", "thinking", "$.message.thinking"),
             ):
                 value = self.parameter_value(
-                    event, profile, name, default, use_default=not event.get("done")
+                    event, profile, name, default, use_default=not event.get("done"), event=True
                 )
                 if value:
                     ops.append(
@@ -266,6 +269,7 @@ class OllamaEncoder(BaseEncoder):
                 "feedback_reasoning_item",
                 "$.message.thinking",
                 use_default=not event.get("done"),
+                event=True,
             )
             if feedback is not None:
                 ops.append(feedback_operation(BlockRef("thinking"), feedback))

@@ -8,7 +8,9 @@ from my_llm import (
     Attribute,
     Config,
     ConfigurationError,
+    InputParameter,
     ModelProfile,
+    OutputParameter,
     Parameter,
     ProviderProfile,
     SemanticLossError,
@@ -46,9 +48,9 @@ def test_profile_fixes_names_and_sources_across_every_layer(protocol):
 @pytest.mark.parametrize("attribute,value", [("name", "other"), ("source", "output")])
 def test_parameter_identity_is_init_false_and_reassigned_identity_is_validated(attribute, value):
     with pytest.raises(TypeError, match=attribute):
-        Parameter(path="$.limit", **{attribute: value})
+        InputParameter(path="$.limit", **{attribute: value})
     model = ModelProfile(
-        model=Attribute(default_value="demo"), max_tokens=Parameter(path="$.limit")
+        model=Attribute(default_value="demo"), max_tokens=InputParameter(path="$.limit")
     )
     bound = model.max_tokens
     setattr(bound, attribute, value)
@@ -75,32 +77,35 @@ def test_config_name_cannot_be_supplied_or_rebound_to_another_field():
 
 
 def test_reusable_unbound_declaration_gets_independent_fixed_identity():
-    declaration = Parameter(path="$.vendor")
+    declaration = OutputParameter(path="$.vendor")
     profile = ModelProfile(
         model=Attribute(default_value="demo"), content=declaration, reasoning_content=declaration
     )
-    assert declaration.name is declaration.source is None
+    assert declaration.name is None
+    assert declaration.source == "output"
     assert profile.content.name == "content"
     assert profile.reasoning_content.name == "reasoning_content"
     with pytest.raises(ConfigurationError, match="already been assigned"):
         ModelProfile(model=Attribute(default_value="demo"), reasoning_content=profile.content)
 
 
-def test_custom_parameters_require_source_in_profile_declaration():
+def test_custom_parameters_require_a_directional_type():
     @dataclass(kw_only=True)
     class MissingSource(ModelProfile):
         vendor: Parameter[int] = field(
             default_factory=lambda: Parameter(path="$.extra_body.vendor")
         )
 
-    with pytest.raises(ConfigurationError, match="source in Profile"):
-        MissingSource(model=Attribute(default_value="demo"))
+    with pytest.raises(ConfigurationError, match="InputParameter or OutputParameter"):
+        resolve_profiles(
+            ProviderProfile(protocol=Config(default_value="openai_chat")),
+            MissingSource(model=Attribute(default_value="demo")),
+        )
 
     @dataclass(kw_only=True)
     class Vendor(ModelProfile):
-        vendor: Parameter[int] = field(
-            default_factory=lambda: Parameter(path="$.extra_body.vendor", default_value=7),
-            metadata={"source": "input"},
+        vendor: InputParameter[int] = field(
+            default_factory=lambda: InputParameter(path="$.extra_body.vendor", default_value=7),
         )
 
     profile = resolve_profiles(
@@ -113,9 +118,9 @@ def test_custom_parameters_require_source_in_profile_declaration():
 def test_client_parameters_must_be_inputs():
     @dataclass(kw_only=True)
     class InvalidClient(ProviderProfile):
-        credential: Parameter[str] = field(
-            default_factory=lambda: Parameter(path="$.api_key"),
-            metadata={"scope": "client", "source": "output"},
+        credential: OutputParameter[str] = field(
+            default_factory=lambda: OutputParameter(path="$.api_key"),
+            metadata={"scope": "client"},
         )
 
     with pytest.raises(ConfigurationError, match="credential must use the input source"):
@@ -125,13 +130,15 @@ def test_client_parameters_must_be_inputs():
         )
 
 
-@pytest.mark.parametrize("value", [None, Parameter(path="$.max_completion_tokens")])
+@pytest.mark.parametrize("value", [None, InputParameter(path="$.max_completion_tokens")])
 @pytest.mark.parametrize("source,scope", [("output", "request"), ("input", "client")])
 def test_parameter_source_and_scope_cannot_change_between_profile_layers(value, source, scope):
+    marker = OutputParameter if source == "output" else InputParameter
+
     @dataclass(kw_only=True)
     class ChangedModel(ModelProfile):
-        max_tokens: Parameter[int] | None = field(
-            default_factory=lambda: value, metadata={"source": source, "scope": scope}
+        max_tokens: marker[int] | None = field(
+            default_factory=lambda: value, metadata={"scope": scope}
         )
 
     with pytest.raises(ConfigurationError, match="max_tokens must keep the same source and scope"):
@@ -152,7 +159,7 @@ def test_profile_overriding_post_init_cannot_silently_skip_identity_binding():
             ProviderProfile(protocol=Config(default_value="openai_chat")),
             UnboundModel(
                 model=Attribute(default_value="demo"),
-                max_tokens=Parameter(path="$.max_completion_tokens"),
+                max_tokens=InputParameter(path="$.max_completion_tokens"),
             ),
         )
 
@@ -190,7 +197,9 @@ def test_omitting_both_reasoning_routes_only_disables_automatic_insertion(protoc
 
 @pytest.mark.parametrize("value", [None, 0, "ignored", {"enabled": True}])
 def test_unsupported_parameter_forces_omit_before_profile_type_validation(value):
-    declaration = Parameter(path="$.max_completion_tokens", supports=False, default_value=value)
+    declaration = InputParameter(
+        path="$.max_completion_tokens", supports=False, default_value=value
+    )
     assert declaration.default_value is omit
     profile = resolve_profiles(
         ProviderProfile(protocol=Config(default_value="openai_chat")),
@@ -257,7 +266,7 @@ def test_generated_enable_wins_over_native_body_and_preserves_input(protocol):
 @pytest.mark.parametrize("value", [None, "false", 0, 1, omit])
 def test_supports_requires_a_real_boolean(value):
     with pytest.raises(ConfigurationError, match="supports must be a bool"):
-        Parameter(path="$.value", supports=value)
+        InputParameter(path="$.value", supports=value)
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)

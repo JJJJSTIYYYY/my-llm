@@ -9,7 +9,7 @@
 ### `MyLLM`
 
 ```python
-from my_llm import Attribute, Config, ModelProfile, MyLLM, Parameter, ProviderProfile
+from my_llm import Attribute, Config, ModelProfile, MyLLM, InputParameter, ProviderProfile
 
 
 async def ask(llm, prompt):
@@ -21,7 +21,7 @@ async def session():
         provider=ProviderProfile(protocol=Config(default_value="openai_responses")),
         model=ModelProfile(
             model=Attribute(default_value="your-model"),
-            max_tokens=Parameter(path="$.max_output_tokens", default_value=2048),
+            max_tokens=InputParameter(path="$.max_output_tokens", default_value=2048),
         ),
         stdio_protocol="openai_chat",
     ) as llm:
@@ -290,17 +290,21 @@ async def print_stream(llm, prompt):
 
 ### `Attribute`、`Parameter`、`Config` 与 `omit`
 
-三种包装类型均为冻结、仅限关键字参数的 dataclass，通过 `.default_value` 读取值：
+包装类型均为可变、仅限关键字参数的 dataclass，通过 `.default_value` 读取值：
 
 | 类型 / 构造参数 | 用途 |
 | --- | --- |
 | `Attribute(default_value=..., comment=None)` | 模型 ID、上下文窗口或模型目录等数据；不参与配置继承 |
-| `Parameter(path=..., default_value=omit, supports=True, comment=None)` | 参数位置、默认值和支持状态；输入参数用于请求，输出参数用于读取响应字段 |
+| `Parameter(path=..., default_value=omit, supports=True, comment=None)` | 参数公共基类；具体 Profile 字段使用 InputParameter / OutputParameter |
+| `InputParameter(path=..., default_value=omit, supports=True, comment=None)` | 请求或连接字段；source 固定为 input |
+| `OutputParameter(path=..., event_type="", default_value=omit, supports=True, comment=None)` | 响应字段；source 固定为 output；event_type 非空时按事件类型精确匹配，空字符串沿用原生分类 |
 | `Config(default_value=..., comment=None)` | 行为设置、连接选项或一组原生生成参数；字典按键合并 |
 | `omit` / `Omit` | 显式省略标记及其类型；`Omit()` 返回同一标记，布尔值为假 |
 
-`Parameter.name`、`Parameter.source` 和 `Config.name` 由所属 Profile 的声明固定，不接受构造参数。
-`source` 为 `input` 或 `output`；`comment` 仅用于说明。
+`Parameter.name` 和 `Config.name` 由所属 Profile 的声明固定，不接受构造参数。
+`Parameter.source` 由具体参数类型固定为 `input` 或 `output`，不接受构造参数；`comment` 仅用于说明。
+`event_type` 匹配 SDK 输出对象的 `type`，Chat 无 `type` 时匹配 `object`；非匹配事件不应用默认值。
+历史消息和原生最终快照沿用协议结构解析。
 路径使用 `$.` 前缀、点分字段及非负列表索引，例如 `$.max_tokens`、`$.choices[0].delta.content`。
 `supports=False` 表示不支持自动路由，并将参数默认值设为 `omit`。
 
@@ -324,7 +328,7 @@ Parameter 覆盖时替换完整声明。Config 字典按键合并，嵌套值整
 | 字段 | 包装类型 | 含义 |
 | --- | --- | --- |
 | `base_url` | `Config[str]` | 服务地址；未设置时遵循 SDK 默认值 |
-| `api_key` | `Parameter[str]` | 认证值及其位置；使用所选协议支持的密钥或认证头路径 |
+| `api_key` | `InputParameter[str]` | 认证值及其位置；使用所选协议支持的密钥或认证头路径 |
 | `timeout` | `Config[float]` | 正数，单位为秒 |
 | `max_retries` | `Config[int]` | 非负重试次数；Ollama 仅接受未设置或 `0` |
 | `supports_stream` | `Config[bool]` | 生成要求支持流，默认继承协议的 `True` |
@@ -354,7 +358,7 @@ Parameter 覆盖时替换完整声明。Config 字典按键合并，嵌套值整
 | `supports_message_name` | `Config[bool] \| Omit \| None`，默认继承 | 协议默认 `True`；控制消息名称支持 |
 
 `ModelProfile.supported_roles` 为固定类属性 `("system", "user", "assistant", "tool")`，不是构造参数。
-Provider 与 Model 均为冻结的、仅限关键字参数的 dataclass；用 `dataclasses.replace()` 创建配置变体。
+Provider 与 Model 均为可变的、仅限关键字参数的 dataclass；用 `dataclasses.replace()` 创建配置变体。
 
 ### `OverridableProfile`
 
@@ -364,12 +368,12 @@ Provider 与 Model 共享以下覆盖项，均默认 `None`，表示继承：
 | --- | --- | --- |
 | `protocol` | `Config[Protocol]` | Model 优先于 Provider；最终必须是已注册协议名，不接受 `omit` |
 | `extra_headers` / `extra_body` | `Config[dict]` | 默认请求头与协议原生生成选项 |
-| `max_tokens` | 输入 `Parameter[int]` | 输出 token 上限 |
-| `content` / `reasoning_content` | 输出 `Parameter` | 可见文本与思考字段 |
-| `reasoning_enable` | 输入 `Parameter` | 开启思考的参数；`supports=False` 表示不支持 reasoning，请求开启思考及已有思考内容均记录语义损失 |
-| `reasoning_effort` | 输入 `Parameter` | 思考强度参数及支持状态 |
+| `max_tokens` | `InputParameter[int]` | 输出 token 上限 |
+| `content` / `reasoning_content` | `OutputParameter` | 可见文本与思考字段 |
+| `reasoning_enable` | `InputParameter` | 开启思考的参数；`supports=False` 表示不支持 reasoning，请求开启思考及已有思考内容均记录语义损失 |
+| `reasoning_effort` | `InputParameter` | 思考强度参数及支持状态 |
 | `reasoning_effort_mapping` | `Config[dict]` | 公共强度到原生值的映射；值为 `None` / `omit` 时该级别不可用 |
-| `feedback_reasoning_item` | `Parameter[Any] \| Omit \| None` | 输出声明；从协议默认或自定义路径提取原生回传项；`None` 继承，`omit` 禁用 |
+| `feedback_reasoning_item` | `OutputParameter[Any] \| Omit \| None` | 输出声明；从协议默认或自定义路径提取原生回传项；`None` 继承，`omit` 禁用 |
 | `should_feedback_reasoning_item` | `Config[Literal["when_tool_calls", "always", "none"]]` | 内置协议默认 `always`；仅回传工具调用消息中的思考、全部历史思考或不回传；`omit` 等同 `none`，策略排除的思考不记录损失 |
 
 `ReasoningEffort` 是 `Literal["none", "low", "medium", "high", "xhigh", "max"]` 类型别名。
@@ -589,7 +593,7 @@ assert converted["messages"] == [{"role": "user", "parts": [{"text": "Hello"}]}]
 BaseEncoder / BaseDecoder 的 `messages`、`tools`、`chunks` 采用相同参数约定，分别执行对应方向的转换；
 `usage(value)` 转换用量数据，缺失时返回 `None`。
 BaseEncoder 还提供 `matches` / `match_item`、`validate_input`、`validate_values`、
-`parameter_value` 和 `request`。BaseDecoder 提供请求准备、过滤、验证及连接选项的扩展方法；
+`parameter_value`、`parameter_matches_event` 和 `request`。BaseDecoder 提供请求准备、过滤、验证及连接选项的扩展方法；
 覆写要求见接入指南与对应方法 docstring。
 
 BaseTransport 的 `create_client(parameters)` 返回调用者拥有的 SDK 客户端；

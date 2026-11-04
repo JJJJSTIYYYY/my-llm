@@ -9,10 +9,10 @@ from my_llm import (
     Attribute,
     Config,
     ConfigurationError,
+    InputParameter,
     ModelProfile,
     Omit,
     OverridableProfile,
-    Parameter,
     Profile,
     ProviderProfile,
     omit,
@@ -27,9 +27,8 @@ type Label = Attribute[str] | None
 class DescriptiveProvider(ProviderProfile):
     label: Label = None
     feature: Config[bool] | Omit = omit
-    vendor_limit: Parameter[int] = field(
-        default_factory=lambda: Parameter(path="$.extra_body.vendor_limit", supports=False),
-        metadata={"source": "input"},
+    vendor_limit: InputParameter[int] = field(
+        default_factory=lambda: InputParameter(path="$.extra_body.vendor_limit", supports=False),
     )
     catalogue_kind: ClassVar[Config[str]] = Config(default_value="descriptive")
 

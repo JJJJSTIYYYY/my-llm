@@ -8,7 +8,7 @@ from types import UnionType
 from typing import Any, TypeAliasType, Union, get_args, get_origin, get_type_hints
 
 from my_llm.basic.exceptions import ConfigurationError
-from my_llm.profile.types import Attribute, Config, Omit, Parameter
+from my_llm.profile.types import Attribute, Config, InputParameter, Omit, OutputParameter, Parameter
 
 
 @dataclass(kw_only=True)
@@ -52,13 +52,17 @@ def _declarations(profile_type: type) -> tuple[tuple[str, str, Any, str | None, 
                 f"{item.name} must declare exactly one of Parameter, Config or Attribute"
             )
         kind = kinds.pop()
-        source = item.metadata.get("source")
+        source = None
         scope = item.metadata.get("scope", "request")
         if scope not in ("client", "request"):
             raise ConfigurationError("parameter scope must be client or request")
         if kind == "parameter":
-            if source not in ("input", "output"):
-                raise ConfigurationError(f"{item.name} must declare input/output source in Profile")
+            sources = _sources(annotation)
+            if len(sources) != 1:
+                raise ConfigurationError(
+                    f"{item.name} must declare InputParameter or OutputParameter"
+                )
+            source = sources.pop()
             if scope == "client" and source != "input":
                 raise ConfigurationError(f"{item.name} must use the input source")
         result.append((item.name, kind, annotation, source, scope))
@@ -67,11 +71,15 @@ def _declarations(profile_type: type) -> tuple[tuple[str, str, Any, str | None, 
 
 def _kinds(annotation: Any) -> set[str]:
     origin = get_origin(annotation)
-    markers = (Parameter, Config, Attribute)
+    markers = (Parameter, InputParameter, OutputParameter, Config, Attribute)
     if origin in markers or annotation in markers:
-        kind = {Parameter: "parameter", Config: "config", Attribute: "attribute"}[
-            origin or annotation
-        ]
+        kind = {
+            Parameter: "parameter",
+            InputParameter: "parameter",
+            OutputParameter: "parameter",
+            Config: "config",
+            Attribute: "attribute",
+        }[origin or annotation]
         arguments = get_args(annotation)
         if arguments and _kinds(arguments[0]):
             return {"parameter", "config", "attribute"}
@@ -80,4 +88,19 @@ def _kinds(annotation: Any) -> set[str]:
         return _kinds(annotation.__value__)
     if origin in (Union, UnionType):
         return set().union(*(_kinds(argument) for argument in get_args(annotation)))
+    return set()
+
+
+def _sources(annotation: Any) -> set[str]:
+    marker = get_origin(annotation) or annotation
+    if marker is InputParameter:
+        return {"input"}
+    if marker is OutputParameter:
+        return {"output"}
+    if marker is Parameter:
+        return {"input", "output"}
+    if isinstance(annotation, TypeAliasType):
+        return _sources(annotation.__value__)
+    if get_origin(annotation) in (Union, UnionType):
+        return set().union(*(_sources(argument) for argument in get_args(annotation)))
     return set()

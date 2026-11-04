@@ -19,7 +19,7 @@ from my_llm import (
 )
 from my_llm.codec.openai.chat.decoding.decoder import ChatCompletionsDecoder
 from my_llm.profile import ModelProfile, ProviderProfile, resolve_profiles
-from my_llm.profile.types import Parameter
+from my_llm.profile.types import InputParameter
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import PROTOCOLS, history
 
@@ -256,9 +256,10 @@ def test_request_projection_addresses_sdk_fields_without_reading_extensions(
 def test_profile_extension_restores_only_its_declared_unknown_sdk_leaf():
     @dataclass(kw_only=True)
     class ExtendedModel(ModelProfile):
-        vendor_limit: Parameter[int | None] = field(
-            default_factory=lambda: Parameter(path="$.reasoning.vendor_limit", default_value=None),
-            metadata={"source": "input"},
+        vendor_limit: InputParameter[int | None] = field(
+            default_factory=lambda: InputParameter(
+                path="$.reasoning.vendor_limit", default_value=None
+            ),
         )
 
     profile = resolve_profiles(
@@ -532,9 +533,8 @@ def test_direct_chat_request_preserves_explicit_none_extra_body(profile_factory)
 def test_declared_unknown_sdk_root_reports_configuration_error():
     @dataclass(kw_only=True)
     class ExtendedModel(ModelProfile):
-        vendor: Parameter[int] = field(
-            default_factory=lambda: Parameter(path="$.vendor", default_value=1),
-            metadata={"source": "input"},
+        vendor: InputParameter[int] = field(
+            default_factory=lambda: InputParameter(path="$.vendor", default_value=1),
         )
 
     profile = resolve_profiles(

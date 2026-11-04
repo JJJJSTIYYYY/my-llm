@@ -7,7 +7,7 @@ from my_llm.codec.ollama.decoding.decoder import OllamaDecoder
 from my_llm.codec.ollama.encoding.encoder import OllamaEncoder
 from my_llm.codec.ollama.transport import OllamaTransport
 from my_llm.profile.configuration import ProtocolDefaults
-from my_llm.profile.types import Config, Parameter, omit
+from my_llm.profile.types import Config, InputParameter, OutputParameter, omit
 
 
 class OllamaCodec(BaseCodec):
@@ -21,16 +21,16 @@ class OllamaCodec(BaseCodec):
     protocol_or_api_style = "ollama"
     _DEFAULTS = ProtocolDefaults(
         should_feedback_reasoning_item=Config(default_value="always"),
-        api_key=Parameter(
+        api_key=InputParameter(
             path="$.extra_headers.Authorization",
             default_value=omit,
         ),
-        max_tokens=Parameter(path="$.options.num_predict", default_value=omit),
-        content=Parameter(path="$.message.content", default_value=omit),
-        reasoning_content=Parameter(path="$.message.thinking", default_value=omit),
-        feedback_reasoning_item=Parameter(path="$.message.thinking", default_value=omit),
-        reasoning_enable=Parameter(path="$.think", default_value=True),
-        reasoning_effort=Parameter(supports=False, path="$.think", default_value=omit),
+        max_tokens=InputParameter(path="$.options.num_predict", default_value=omit),
+        content=OutputParameter(path="$.message.content", default_value=omit),
+        reasoning_content=OutputParameter(path="$.message.thinking", default_value=omit),
+        feedback_reasoning_item=OutputParameter(path="$.message.thinking", default_value=omit),
+        reasoning_enable=InputParameter(path="$.think", default_value=True),
+        reasoning_effort=InputParameter(supports=False, path="$.think", default_value=omit),
     )
 
     def __init__(self) -> None:

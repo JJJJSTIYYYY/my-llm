@@ -18,7 +18,7 @@ from my_llm.profile.configuration import Protocol, ProtocolDefaults, merge_dicts
 from my_llm.profile.model_profile import ModelProfile
 from my_llm.profile.paths import path_keys
 from my_llm.profile.provider_profile import ProviderProfile
-from my_llm.profile.types import Attribute, Config, Omit, Parameter
+from my_llm.profile.types import Attribute, Config, InputParameter, Omit, OutputParameter, Parameter
 
 
 @dataclass
@@ -42,7 +42,7 @@ class ResolvedProfile:
     values: dict[str, Any]
     parameters: dict[str, Parameter[Any] | Omit] = field(default_factory=dict)
 
-    request_parameters: tuple[tuple[str, Parameter[Any]], ...] = ()
+    request_parameters: tuple[tuple[str, InputParameter[Any]], ...] = ()
     connection: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def get(self, key: str, default: Any = None) -> Any:
@@ -281,7 +281,7 @@ def _matches(value: Any, annotation: Any) -> bool:
     if annotation is Any:
         return True
     origin = get_origin(annotation)
-    if origin in (Parameter, Config):
+    if origin in (Parameter, InputParameter, OutputParameter, Config):
         if not isinstance(value, origin):
             return False
         payload = value.default_value

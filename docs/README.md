@@ -14,6 +14,7 @@
 - [本地开发规范](guides/development.md)：目录职责、导入、测试辅助代码与结构验证。
 - [generate 性能测试](guides/performance.md)：增量消息缓存、复杂协议负载、无网络 SDK 路径与复测方法。
 - [ReasoningContent 性能复测](performance/2026-11-04-reasoning-content.md)：60 场景、ABBA、最终 Responses 所有权成本和源码范围。
+- [Parameter 与事件路由性能审查](performance/2026-11-04-parameter-events.md)：60 场景、交替复测、局部候选和职责边界。
 - [接入新的协议](guides/adding-protocol.md)：Encoder / Decoder 必需接口、固定流程与注册验证。
 - [构建与发行包验证](guides/building.md)：安装、构建和 CI。
 - [完整中间协议](design/protocol-middleware.md)：具体模型、源位置、损失 draft、实例生命周期与缓存边界。

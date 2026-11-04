@@ -8,6 +8,7 @@ from my_llm import (
     Attribute,
     Config,
     ConfigurationError,
+    InputParameter,
     ModelProfile,
     MyCodec,
     MyLLM,
@@ -26,7 +27,7 @@ def test_mutable_parameter_bindings_are_isolated_between_profile_snapshots():
     provider = ProviderProfile(protocol=Config(default_value="openai_chat"))
     model = ModelProfile(
         model=Attribute(default_value="demo"),
-        max_tokens=Parameter(path="$.max_completion_tokens", default_value=128),
+        max_tokens=InputParameter(path="$.max_completion_tokens", default_value=128),
     )
     first = resolve_profiles(provider, model)
     second = resolve_profiles(provider, model)
@@ -138,9 +139,8 @@ def test_llm_preserves_profile_type_errors_before_reading_defaults(provider, mod
 
 @dataclass(kw_only=True)
 class SamplingDefaults(ProtocolDefaults):
-    temperature: Parameter[float | None] | Omit = field(
-        default_factory=lambda: Parameter(path="$.extra_body.temperature", default_value=0.25),
-        metadata={"source": "input"},
+    temperature: InputParameter[float | None] | Omit = field(
+        default_factory=lambda: InputParameter(path="$.extra_body.temperature", default_value=0.25),
     )
     custom_mode: Config[str] = field(default_factory=lambda: Config(default_value="standard"))
 
@@ -170,7 +170,7 @@ def test_inherited_protocol_none_default_and_omit_are_preserved(monkeypatch):
     codec = codec_for("openai_chat")
     defaults = SamplingDefaults(
         **protocol_defaults("openai_chat"),
-        temperature=Parameter(path="$.extra_body.temperature", default_value=None),
+        temperature=InputParameter(path="$.extra_body.temperature", default_value=None),
     )
     monkeypatch.setattr(type(codec), "defaults", defaults)
     result = resolve_profiles(

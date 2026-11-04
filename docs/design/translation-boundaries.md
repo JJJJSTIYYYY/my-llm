@@ -45,7 +45,7 @@ Profile 提供明确的兼容入口：参数路径和缺失默认值、extra_bod
 这些入口各有作用范围。例如 `content` / `reasoning_content` 的 encode 参数读取配置的返回字段，
 不会把任意历史消息字段加入放行范围；Chat / Responses 的 extra_body 通过 SDK 的扩展请求体
 机制发送，内部键不套用消息字段过滤。其他协议仍遵循各自 SDK 支持的参数接口。
-新的兼容参数通过继承 Profile 声明 `Parameter[T]`，将路径、缺失默认值和阶段保存在一起；
+新的兼容参数通过继承 Profile 声明 `InputParameter[T]` 或 `OutputParameter[T]`，将路径、缺失默认值和方向保存在一起；输出参数还可配置 event_type；
 新的控制能力通过 `Config[T]` 声明并由协议实现消费，不能依靠未知字段透传。
 
 具体字段和落点见[配置指南](../reference/configuration.md#sdk-参数与协议字段)。

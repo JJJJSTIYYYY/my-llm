@@ -15,7 +15,15 @@ from my_llm.profile.resolution import (
     resolve_profiles,
     resolve_profiles_with_hash,
 )
-from my_llm.profile.types import Attribute, Config, Omit, Parameter, omit
+from my_llm.profile.types import (
+    Attribute,
+    Config,
+    InputParameter,
+    Omit,
+    OutputParameter,
+    Parameter,
+    omit,
+)
 
 __all__ = [
     "Attribute",
@@ -31,6 +39,8 @@ __all__ = [
     "resolve_profiles",
     "resolve_profiles_with_hash",
     "Parameter",
+    "InputParameter",
+    "OutputParameter",
     "Config",
     "Omit",
     "omit",

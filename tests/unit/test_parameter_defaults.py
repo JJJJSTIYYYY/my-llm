@@ -8,8 +8,8 @@ import pytest
 from my_llm import (
     Attribute,
     Config,
+    InputParameter,
     ModelProfile,
-    Parameter,
     ProviderProfile,
     omit,
     resolve_profiles,
@@ -21,9 +21,8 @@ from tests.helpers.requests import encode_request
 
 @dataclass(kw_only=True)
 class TemperatureProvider(ProviderProfile):
-    temperature: Parameter[float | None] = field(
-        default_factory=lambda: Parameter(path="$.temperature", default_value=0.4),
-        metadata={"source": "input"},
+    temperature: InputParameter[float | None] = field(
+        default_factory=lambda: InputParameter(path="$.temperature", default_value=0.4),
     )
     trace_enabled: Config[bool] = field(default_factory=lambda: config(True))
 
@@ -41,7 +40,7 @@ def profile(protocol, path, value=0.4):
     return resolve_profiles(
         TemperatureProvider(
             protocol=Config(default_value=protocol),
-            temperature=Parameter(path=path, default_value=value),
+            temperature=InputParameter(path=path, default_value=value),
         ),
         ModelProfile(
             model=Attribute(default_value="demo"),
@@ -121,7 +120,7 @@ def test_comments_do_not_control_business_parameters_or_branches(profile_factory
         reasoning_effort_mapping=config({"high": "medium"}),
     )
     decorated = profile_factory(
-        max_tokens=Parameter(
+        max_tokens=InputParameter(
             comment="Only shown in the UI",
             path="$.max_completion_tokens",
             default_value=120,

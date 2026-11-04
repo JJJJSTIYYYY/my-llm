@@ -7,7 +7,14 @@ from typing import Any, Literal
 
 from my_llm.basic.exceptions import ConfigurationError
 from my_llm.profile.base import Profile
-from my_llm.profile.types import Config, Omit, Parameter, omit, set_attr
+from my_llm.profile.types import (
+    Config,
+    InputParameter,
+    Omit,
+    OutputParameter,
+    omit,
+    set_attr,
+)
 
 type Protocol = str
 type ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
@@ -24,7 +31,7 @@ class ProtocolDefaults(Profile):
     extra_body, reasoning_effort_mapping, capability flags and usage_mode.
     See OverridableProfile for the shared setting meanings.
 
-    Parameter field metadata fixes source="input" or "output"; scope="client"
+    InputParameter and OutputParameter fix source; metadata scope="client"
     marks connection parameters such as api_key. Config and Parameter names are
     assigned from field names. Extend this keyword-only dataclass for
     custom protocol settings; applications normally use ProviderProfile and
@@ -32,19 +39,17 @@ class ProtocolDefaults(Profile):
     """
 
     should_feedback_reasoning_item: Config[Literal["when_tool_calls", "always", "none"]] | Omit
-    api_key: Parameter[str] | Omit = field(
-        default_factory=lambda: Parameter(path="$.api_key", default_value=omit),
+    api_key: InputParameter[str] | Omit = field(
+        default_factory=lambda: InputParameter(path="$.api_key", default_value=omit),
         repr=False,
-        metadata={"scope": "client", "source": "input"},
+        metadata={"scope": "client"},
     )
-    max_tokens: Parameter[int] | Omit = field(default=omit, metadata={"source": "input"})
-    content: Parameter[Any] | Omit = field(default=omit, metadata={"source": "output"})
-    reasoning_content: Parameter[Any] | Omit = field(default=omit, metadata={"source": "output"})
-    feedback_reasoning_item: Parameter[Any] | Omit = field(
-        default=omit, metadata={"source": "output"}
-    )
-    reasoning_enable: Parameter[Any] | Omit = field(default=omit, metadata={"source": "input"})
-    reasoning_effort: Parameter[Any] | Omit = field(default=omit, metadata={"source": "input"})
+    max_tokens: InputParameter[int] | Omit = omit
+    content: OutputParameter[Any] | Omit = omit
+    reasoning_content: OutputParameter[Any] | Omit = omit
+    feedback_reasoning_item: OutputParameter[Any] | Omit = omit
+    reasoning_enable: InputParameter[Any] | Omit = omit
+    reasoning_effort: InputParameter[Any] | Omit = omit
     extra_headers: Config[dict[str, Any]] | Omit = field(
         default_factory=lambda: Config(default_value={})
     )
@@ -103,20 +108,12 @@ class OverridableProfile(Profile):
     extra_headers: Config[dict[str, Any]] | Omit | None = None
     extra_body: Config[dict[str, Any]] | Omit | None = None
     reasoning_effort_mapping: Config[dict[str, Any]] | Omit | None = None
-    max_tokens: Parameter[int] | Omit | None = field(default=None, metadata={"source": "input"})
-    content: Parameter[Any] | Omit | None = field(default=None, metadata={"source": "output"})
-    reasoning_content: Parameter[Any] | Omit | None = field(
-        default=None, metadata={"source": "output"}
-    )
-    feedback_reasoning_item: Parameter[Any] | Omit | None = field(
-        default=None, metadata={"source": "output"}
-    )
-    reasoning_enable: Parameter[Any] | Omit | None = field(
-        default=None, metadata={"source": "input"}
-    )
-    reasoning_effort: Parameter[Any] | Omit | None = field(
-        default=None, metadata={"source": "input"}
-    )
+    max_tokens: InputParameter[int] | Omit | None = None
+    content: OutputParameter[Any] | Omit | None = None
+    reasoning_content: OutputParameter[Any] | Omit | None = None
+    feedback_reasoning_item: OutputParameter[Any] | Omit | None = None
+    reasoning_enable: InputParameter[Any] | Omit | None = None
+    reasoning_effort: InputParameter[Any] | Omit | None = None
     should_feedback_reasoning_item: (
         Config[Literal["when_tool_calls", "always", "none"]] | Omit | None
     ) = None

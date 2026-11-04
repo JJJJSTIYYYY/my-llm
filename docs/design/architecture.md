@@ -126,7 +126,7 @@ AssistantMessage / MessageEvent，略过 stdio Decoder。该 stdio 名称不注�
 
 ## 参数分类与优先级
 
-Profile 用 `Parameter[T]` 声明路径、缺失默认值及 encode / decode 阶段，`Config[T]` 声明代码配置。
+Profile 用 `InputParameter[T]` / `OutputParameter[T]` 声明路径、缺失默认值及输入 / 输出方向；OutputParameter.event_type 配置输出事件类型，`Config[T]` 声明代码配置。
 字段 `None` 继承，字段 `omit` 禁用；wrapper 的 `default_value=None` 是实际值。
 路径统一从 SDK 字典根 `$` 定位。显示名称和注释不参与处理。
 

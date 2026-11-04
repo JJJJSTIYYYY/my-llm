@@ -22,10 +22,11 @@ from my_llm import (
     FunctionTool,
     ImageContent,
     ImageSource,
+    InputParameter,
     MessageEvent,
     ModelProfile,
     MyLLM,
-    Parameter,
+    OutputParameter,
     ProviderProfile,
     ReasoningContent,
     TextContent,
@@ -61,10 +62,10 @@ def provider(protocol, key):
     }[protocol]
     overrides = {}
     if protocol == "openai_chat":
-        overrides["max_tokens"] = Parameter(path="$.max_tokens", default_value=512)
-        overrides["reasoning_effort"] = Parameter(path="$.reasoning_effort")
+        overrides["max_tokens"] = InputParameter(path="$.max_tokens", default_value=512)
+        overrides["reasoning_effort"] = InputParameter(path="$.reasoning_effort")
         # SenseNova's Chat stream uses reasoning rather than reasoning_content.
-        overrides["reasoning_content"] = Parameter(
+        overrides["reasoning_content"] = OutputParameter(
             path="$.choices[0].delta.reasoning",
             default_value=None,
         )
@@ -72,7 +73,7 @@ def provider(protocol, key):
         protocol=Config(default_value=protocol),
         base_url=config("https://token.sensenova.cn" + ("" if protocol == "anthropic" else "/v1")),
         # Anthropic's SDK normally sends x-api-key; this service specifies Bearer.
-        api_key=Parameter(
+        api_key=InputParameter(
             path="$.extra_headers.Authorization" if protocol == "anthropic" else "$.api_key",
             default_value=f"Bearer {key}" if protocol == "anthropic" else key,
         ),
@@ -274,7 +275,7 @@ async def policy_scenario(upstream, model_id, key, case, *, request_interval=0.0
             "supports_vision": config(False),
             "supports_function_calling": config(False),
             "supports_message_name": config(False),
-            "reasoning_enable": Parameter(
+            "reasoning_enable": InputParameter(
                 path={
                     "openai_chat": "$.reasoning_effort",
                     "openai_responses": "$.reasoning",

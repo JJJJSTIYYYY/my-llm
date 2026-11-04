@@ -10,10 +10,10 @@ from typing_extensions import TypedDict
 from my_llm import (
     Attribute,
     Config,
+    InputParameter,
     MessageValidationError,
     ModelProfile,
     MyCodec,
-    Parameter,
     ProviderProfile,
     SemanticLossError,
     resolve_profiles,
@@ -196,9 +196,8 @@ def test_custom_unsupported_parameter_cannot_be_restored_by_native_body(protocol
 
     @dataclass(kw_only=True)
     class Model(ModelProfile):
-        temperature: Parameter[float] = field(
-            default_factory=lambda: Parameter(path=path, supports=False),
-            metadata={"source": "input"},
+        temperature: InputParameter[float] = field(
+            default_factory=lambda: InputParameter(path=path, supports=False),
         )
 
     profile = resolve_profiles(
@@ -275,8 +274,8 @@ def test_encoder_rejects_invalid_protocol_structure_as_message_validation():
 def test_supported_extension_cannot_restore_an_unsupported_parent(profile_factory):
     profile = profile_factory(
         "openai_responses",
-        reasoning_enable=Parameter(path="$.reasoning", supports=False),
-        reasoning_effort=Parameter(path="$.reasoning.vendor_effort"),
+        reasoning_enable=InputParameter(path="$.reasoning", supports=False),
+        reasoning_effort=InputParameter(path="$.reasoning.vendor_effort"),
     )
     native = {
         "input": [{"role": "user", "content": "complete tail"}],

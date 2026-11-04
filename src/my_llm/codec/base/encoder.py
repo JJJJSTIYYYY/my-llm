@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, final
 
-from my_llm.basic.data import dictionaries, dictionary_views
+from my_llm.basic.data import dictionaries, dictionary_views, read
 from my_llm.basic.exceptions import MessageValidationError
 from my_llm.cache.compiled_cache import validate_values
 from my_llm.codec.shared.conversion import match_all
@@ -12,7 +12,7 @@ from my_llm.middleware.models import FunctionTool, Message, messages_from_wire, 
 from my_llm.middleware.protocol import ProtocolMiddleWare
 from my_llm.middleware.stream import StreamBatch, stream_from_wire
 from my_llm.profile.resolution import ResolvedProfile
-from my_llm.profile.types import Omit
+from my_llm.profile.types import Omit, OutputParameter
 
 
 class BaseEncoder(ABC):
@@ -150,6 +150,7 @@ class BaseEncoder(ABC):
         default: Any = None,
         *,
         use_default: bool = True,
+        event: bool = False,
     ) -> Any:
         """Read a semantic response field using an optional output Parameter.
 
@@ -160,11 +161,14 @@ class BaseEncoder(ABC):
             default_path: Rooted native path used without an output override.
             default: Value returned when the addressed source path is absent.
             use_default: Whether a declaration's non-omit default replaces default.
+            event: Apply event_type selection when reading a streaming event.
 
         An explicit None at the addressed path is preserved. Input declarations do
         not change response lookup. Disabled target bindings do not erase supported
         source content; the decoder reports any resulting semantic loss.
         """
+        if event and not self.parameter_matches_event(value, profile, name):
+            return default
         if profile is not None:
             declaration = profile.parameters.get(name)
             if (
@@ -176,6 +180,21 @@ class BaseEncoder(ABC):
                 if use_default and not isinstance(declaration.default_value, Omit):
                     default = declaration.default_value
         return path_value(value, default_path, default)
+
+    @final
+    def parameter_matches_event(
+        self,
+        event: Any,
+        profile: ResolvedProfile | None,
+        name: str,
+        *,
+        native: bool = True,
+    ) -> bool:
+        """Match an explicit output event type, otherwise use native classification."""
+        declaration = profile.parameters.get(name) if profile is not None else None
+        if isinstance(declaration, OutputParameter) and declaration.event_type:
+            return read(event, "type", read(event, "object", "")) == declaration.event_type
+        return native
 
     @abstractmethod
     def match_item(self, item: dict) -> bool:

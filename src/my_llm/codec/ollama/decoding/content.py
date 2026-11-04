@@ -1,5 +1,6 @@
 """Render supported Ollama content and report media and opaque reasoning loss."""
 
+import my_llm.codec.ollama.constants as constants
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.shared.conversion import select_present, text_result
 from my_llm.codec.shared.input import input_content, without_feedback
@@ -14,9 +15,13 @@ def foreign_block(block: dict) -> dict | None:
         return None
     if kind == "thinking":
         block = without_feedback(block)
-    elif kind in ("text", "tool_use") and block.get("signature") is not None:
+    elif kind in constants.MIDDLEWARE_TEXT_TOOL_USE_TYPES and block.get("signature") is not None:
         report_loss(block, "Ollama cannot preserve another protocol's thought signature")
-    return block if kind in ("text", "image", "tool_use", "tool_result", "thinking") else None
+    return (
+        block
+        if kind in constants.MIDDLEWARE_TEXT_IMAGE_THINKING_TOOL_USE_TOOL_RESULT_TYPES
+        else None
+    )
 
 
 def tool_text(block: dict, profile: ResolvedProfile | None = None) -> str:
@@ -45,7 +50,7 @@ def function_tool(function: dict) -> dict:
     return {
         "type": "function",
         "function": {
-            **select_present(function, "name", "description"),
+            **select_present(function, *constants.MIDDLEWARE_FUNCTION_METADATA_FIELDS),
             "parameters": function["parameters"]
             if function.get("parameters") is not None
             else {"type": "object"},

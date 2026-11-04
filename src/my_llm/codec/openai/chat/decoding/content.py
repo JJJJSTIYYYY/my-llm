@@ -2,6 +2,7 @@
 
 from typing import Any
 
+import my_llm.codec.openai.chat.constants as constants
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.shared.conversion import json_arguments, text_result
 from my_llm.codec.shared.input import input_content, without_feedback
@@ -34,9 +35,13 @@ def foreign_block(block: dict) -> dict | None:
     kind = block.get("type")
     if kind == "thinking":
         block = without_feedback(block)
-    elif kind in ("text", "tool_use") and block.get("signature") is not None:
+    elif kind in constants.MIDDLEWARE_TEXT_TOOL_USE_TYPES and block.get("signature") is not None:
         report_loss(block, "Chat cannot preserve another protocol's thought signature")
-    return block if kind in ("text", "image", "tool_use", "tool_result", "thinking") else None
+    return (
+        block
+        if kind in constants.MIDDLEWARE_TEXT_IMAGE_THINKING_TOOL_USE_TOOL_RESULT_TYPES
+        else None
+    )
 
 
 def tool_text(block: dict, profile: ResolvedProfile | None = None) -> str:

@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 
+import my_llm.codec.openai.responses.constants as constants
 from my_llm.codec.base.codec import BaseCodec
 from my_llm.codec.openai.responses.decoding.decoder import ResponsesDecoder
 from my_llm.codec.openai.responses.encoding.encoder import ResponsesEncoder
@@ -18,19 +19,19 @@ class ResponsesCodec(BaseCodec):
     """
 
     __slots__ = ("encoder", "decoder", "transport", "_defaults")
-    protocol_or_api_style = "openai_responses"
+    protocol_or_api_style = constants.PROTOCOL
     _DEFAULTS = ProtocolDefaults(
         should_feedback_reasoning_item=Config(default_value="always"),
-        max_tokens=InputParameter(path="$.max_output_tokens", default_value=omit),
-        content=OutputParameter(path="$.delta", default_value=omit),
-        reasoning_content=OutputParameter(path="$.delta", default_value=omit),
-        feedback_reasoning_item=OutputParameter(path="$.item", default_value=omit),
+        max_tokens=InputParameter(path=constants.MAX_TOKENS_PATH, default_value=omit),
+        content=OutputParameter(path=constants.TEXT_PATH, default_value=omit),
+        reasoning_content=OutputParameter(path=constants.TEXT_PATH, default_value=omit),
+        feedback_reasoning_item=OutputParameter(path=constants.FEEDBACK_PATH, default_value=omit),
         reasoning_enable=InputParameter(
-            path="$.reasoning",
-            default_value={"effort": "medium", "summary": "detailed"},
+            path=constants.REASONING_ENABLE_PATH,
+            default_value=constants.DEFAULT_REASONING,
         ),
         reasoning_effort=InputParameter(
-            supports=True, path="$.reasoning.effort", default_value=omit
+            supports=True, path=constants.REASONING_EFFORT_PATH, default_value=omit
         ),
     )
 

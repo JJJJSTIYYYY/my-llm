@@ -7,6 +7,7 @@ from google.genai import types
 from google.genai.models import AsyncModels
 from pydantic import ValidationError
 
+import my_llm.codec.gemini.constants as constants
 from my_llm.basic.data import capture
 from my_llm.basic.exceptions import ConfigurationError
 from my_llm.basic.semantic_loss import report_loss
@@ -30,22 +31,6 @@ from my_llm.codec.shared.options import PreparedOptions, validate_request_option
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile, client_parameters, validate_max_tokens
 
-PROTECTED = {
-    "model",
-    "stream",
-    "messages",
-    "contents",
-    "input",
-    "tools",
-    "system_instruction",
-    "previous_response_id",
-    "config",
-    "automatic_function_calling",
-    "http_options",
-}
-
-PROTOCOL = "gemini"
-
 
 def input_kind(part: dict) -> str:
     """Classify a native Gemini part for input-capability filtering."""
@@ -64,12 +49,12 @@ class GeminiDecoder(BaseDecoder):
     """Translate recognized intermediate values into protocol dictionaries."""
 
     __slots__ = ()
-    protocol = PROTOCOL
+    protocol = constants.PROTOCOL
 
     tool_type = types.Tool
     message_type = types.Content
-    message_path = ("contents",)
-    tool_path = ("config", "tools")
+    message_path = constants.MESSAGE_PATH
+    tool_path = constants.TOOL_PATH
 
     request_schema = {
         **parameter_types(AsyncModels.generate_content_stream),
@@ -139,7 +124,10 @@ class GeminiDecoder(BaseDecoder):
         """Validate shared controls and protect Gemini fields from extra-body replacement."""
         options = super().validate_parameters(profile, **parameters)
         return validate_request_options(
-            profile, options, protected=PROTECTED, containers=("config",)
+            profile,
+            options,
+            protected=constants.REQUEST_ENVELOPE_FIELDS,
+            containers=constants.BODY_CONTAINERS,
         )
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
@@ -154,7 +142,7 @@ class GeminiDecoder(BaseDecoder):
             report_loss(
                 config["candidate_count"],
                 "multiple generated candidates are not supported",
-                path="$.config.candidate_count",
+                path=constants.CANDIDATE_COUNT_PATH,
             )
             config["candidate_count"] = 1
         # Tool declarations were validated separately in native_request. Validate
@@ -169,13 +157,15 @@ class GeminiDecoder(BaseDecoder):
             raise ConfigurationError("reasoning conflicts with a zero Gemini thinking budget")
         return request
 
-    body_container = "config"
-    headers_field = "$.config.http_options.headers"
+    body_container = constants.BODY_CONTAINER
+    headers_field = constants.HEADERS_PATH
 
     def client_parameters(self, profile: ResolvedProfile) -> dict:
         """Prepare Gemini HTTP options and map provider settings to SDK constructor fields."""
         values = client_parameters(profile, headers_field="headers")
-        options = {key: value for key, value in values.items() if key in ("base_url", "headers")}
+        options = {
+            key: value for key, value in values.items() if key in constants.HTTP_OPTION_FIELDS
+        }
         if "timeout" in values:
             options["timeout"] = max(1, round(values["timeout"] * 1000))
         if "max_retries" in values:
@@ -238,7 +228,9 @@ class GeminiDecoder(BaseDecoder):
                     native_support=False,
                     path=f"{getattr(message, 'origin_path', f'$.messages[{index}]')}.name",
                 )
-            foreign = (source_protocol(message) or parameters.get("source_protocol")) != PROTOCOL
+            foreign = (
+                source_protocol(message) or parameters.get("source_protocol")
+            ) != constants.PROTOCOL
             parts = []
             for block in message["content"]:
                 if not input_content(block, profile, feedback=feedback):
@@ -250,10 +242,7 @@ class GeminiDecoder(BaseDecoder):
                         block = {
                             **select(
                                 block,
-                                "type",
-                                "tool_use_id",
-                                "content",
-                                "signature",
+                                *constants.MIDDLEWARE_TOOL_RESULT_ID_CONTENT_SIGNATURE_FIELDS,
                             ),
                             "name": names.get(block["tool_use_id"]),
                         }
@@ -307,7 +296,7 @@ class GeminiDecoder(BaseDecoder):
                 owner = event["block"].get("protocol")
                 native_owner = (
                     parameters.get("source_protocol") if owner is None else owner
-                ) == PROTOCOL
+                ) == constants.PROTOCOL
             parts = []
             reason = None
             if kind == "delta" and event.get("field") in ("text", "reasoning"):
@@ -319,7 +308,7 @@ class GeminiDecoder(BaseDecoder):
                 ]
             elif kind in ("tool", "block"):
                 block = event["block"]
-                foreign = parameters.get("source_protocol") != PROTOCOL
+                foreign = parameters.get("source_protocol") != constants.PROTOCOL
                 part = decode_part(block, foreign=foreign)
                 if part is None:
                     continue
@@ -356,12 +345,7 @@ class GeminiDecoder(BaseDecoder):
                         }
                     ]
             elif kind == "finish":
-                reason = {
-                    "length": "MAX_TOKENS",
-                    "content_filter": "SAFETY",
-                    "stop": "STOP",
-                    "tool_calls": "STOP",
-                }.get(event["reason"], "OTHER")
+                reason = constants.MIDDLEWARE_REASON_TO_FINISH_REASON.get(event["reason"], "OTHER")
             if parts or reason:
                 value = {
                     "response_id": parameters.get("response_id", "generated"),

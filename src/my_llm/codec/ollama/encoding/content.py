@@ -4,6 +4,7 @@ import base64
 import binascii
 from pathlib import Path
 
+import my_llm.codec.ollama.constants as constants
 from my_llm.basic.exceptions import MessageValidationError
 from my_llm.codec.shared.conversion import arguments
 
@@ -31,13 +32,13 @@ def media_type(value: str) -> str:
         data = base64.b64decode(value, validate=True)
     except (ValueError, TypeError, binascii.Error) as exc:
         raise MessageValidationError("Ollama image must contain base64 image data") from exc
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+    if data.startswith(constants.PNG_SIGNATURE):
         return "image/png"
-    if data.startswith(b"\xff\xd8\xff"):
+    if data.startswith(constants.JPEG_SIGNATURE):
         return "image/jpeg"
-    if data.startswith((b"GIF87a", b"GIF89a")):
+    if data.startswith(constants.GIF_SIGNATURES):
         return "image/gif"
-    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+    if data.startswith(constants.WEBP_RIFF_SIGNATURE) and data[8:12] == constants.WEBP_SIGNATURE:
         return "image/webp"
     raise MessageValidationError("Ollama image format cannot be identified safely")
 

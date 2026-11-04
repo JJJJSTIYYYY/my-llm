@@ -7,6 +7,7 @@ from typing import Any
 from openai.resources.chat.completions import AsyncCompletions
 from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
 
+import my_llm.codec.openai.chat.constants as constants
 from my_llm.basic.exceptions import (
     ConfigurationError,
     MessageValidationError,
@@ -42,23 +43,19 @@ from my_llm.codec.shared.options import (
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
 
-PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response_id"}
-
-PROTOCOL = "openai_chat"
-
 
 class ChatCompletionsDecoder(BaseDecoder):
     """Translate recognized intermediate values into protocol dictionaries."""
 
     __slots__ = ()
-    protocol = PROTOCOL
+    protocol = constants.PROTOCOL
 
-    usage_modes = ("none", "stream_options")
+    usage_modes = constants.USAGE_MODES
 
     tool_type = ChatCompletionToolParam
     message_type = ChatCompletionMessageParam
-    message_path = ("messages",)
-    tool_path = ("tools",)
+    message_path = constants.MESSAGE_PATH
+    tool_path = constants.TOOL_PATH
 
     request_schema = parameter_types(AsyncCompletions.create)
 
@@ -73,7 +70,7 @@ class ChatCompletionsDecoder(BaseDecoder):
         **parameters: Any,
     ) -> dict | None:
         """Apply Chat capabilities and preserve its supported reasoning extension."""
-        if original.get("role") in ("tool", "function") and not policy.allows(
+        if original.get("role") in constants.TOOL_RESULT_ROLES and not policy.allows(
             original, "tool_result", path=path
         ):
             return None
@@ -89,7 +86,7 @@ class ChatCompletionsDecoder(BaseDecoder):
             if len(retained) != len(content):
                 projected = _plan(
                     self.message_type,
-                    delegated_paths=(("content",), ("tool_calls",), ("function_call",)),
+                    delegated_paths=constants.MESSAGE_DELEGATED_PATHS,
                 ).decode(original, path)
                 if projected is _MISSING:
                     return None
@@ -103,7 +100,7 @@ class ChatCompletionsDecoder(BaseDecoder):
                 if projected is original:
                     projected = _plan(
                         self.message_type,
-                        delegated_paths=(("content",), ("tool_calls",), ("function_call",)),
+                        delegated_paths=constants.MESSAGE_DELEGATED_PATHS,
                     ).decode(original, path)
                     if projected is _MISSING:
                         return None
@@ -146,7 +143,7 @@ class ChatCompletionsDecoder(BaseDecoder):
         result = super().filter_tools(tools, profile)
         for tool in result:
             function = tool.get("function", {})
-            for field in ("description", "parameters"):
+            for field in constants.FUNCTION_DESCRIPTION_PARAMETERS_FIELDS:
                 if field in function and function[field] is None:
                     function.pop(field)
         return result
@@ -155,12 +152,15 @@ class ChatCompletionsDecoder(BaseDecoder):
         """Validate shared controls and protect Chat Completions fields from extra-body replacement."""
         options = super().validate_parameters(profile, **parameters)
         return validate_request_options(
-            profile, options, protected=PROTECTED, containers=("extra_body",)
+            profile,
+            options,
+            protected=constants.REQUEST_ENVELOPE_FIELDS,
+            containers=constants.BODY_CONTAINERS,
         )
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
         """Validate token/reasoning controls and record unsupported multiple-candidate requests."""
-        for field in ("max_tokens", "max_completion_tokens"):
+        for field in constants.TOKEN_LIMIT_FIELDS:
             if field in request:
                 validate_max_tokens(request[field])
         effort = request.get("reasoning_effort")
@@ -171,16 +171,20 @@ class ChatCompletionsDecoder(BaseDecoder):
             report_loss(
                 body["n"],
                 "multiple generated candidates are not supported",
-                path="$.extra_body.n",
+                path=constants.BODY_CANDIDATE_COUNT_PATH,
             )
             body["n"] = 1
         if request.get("n") not in (None, 1):
-            report_loss(request["n"], "multiple generated candidates are not supported", path="$.n")
+            report_loss(
+                request["n"],
+                "multiple generated candidates are not supported",
+                path=constants.CANDIDATE_COUNT_PATH,
+            )
             request["n"] = 1
         return request
 
-    body_container = "extra_body"
-    body_overlay = "extra_body"
+    body_container = constants.BODY_CONTAINER
+    body_overlay = constants.BODY_CONTAINER
     omit_empty_body = True
 
     def _request_parameters(
@@ -245,7 +249,7 @@ class ChatCompletionsDecoder(BaseDecoder):
                 if not input_content(block, profile, feedback=feedback):
                     continue
                 owner = block.get("protocol")
-                if (context_owner if owner is None else owner) != PROTOCOL:
+                if (context_owner if owner is None else owner) != constants.PROTOCOL:
                     block = foreign_block(block)
                 if block is None:
                     continue
@@ -268,7 +272,7 @@ class ChatCompletionsDecoder(BaseDecoder):
                         reasoning.append(value)
             if content or not tool_results:
                 value = {
-                    **select(message, "role", "name"),
+                    **select(message, *constants.MESSAGE_IDENTITY_FIELDS),
                     "content": render_content(content, role=message["role"]),
                 }
                 if not name_supported:
@@ -307,7 +311,7 @@ class ChatCompletionsDecoder(BaseDecoder):
             lambda functions: [
                 {
                     "type": "function",
-                    "function": select_present(f, "name", "description", "parameters", "strict"),
+                    "function": select_present(f, *constants.FUNCTION_DECLARATION_FIELDS),
                 }
                 for f in functions
             ],
@@ -331,16 +335,13 @@ class ChatCompletionsDecoder(BaseDecoder):
                 owner = event["block"].get("protocol")
                 native_owner = (
                     parameters.get("source_protocol") if owner is None else owner
-                ) == PROTOCOL
+                ) == constants.PROTOCOL
             delta = {}
             finish = None
             if kind == "start":
                 delta = {"role": "assistant"}
             elif kind == "delta" and event["field"] in ("text", "reasoning"):
-                field = {
-                    "text": "content",
-                    "reasoning": "reasoning_content",
-                }[event["field"]]
+                field = constants.MIDDLEWARE_FIELD_TO_DELTA_FIELD[event["field"]]
                 if (
                     event["field"] == "reasoning"
                     and profile is not None
@@ -373,13 +374,7 @@ class ChatCompletionsDecoder(BaseDecoder):
                 delta = {"tool_calls": [call]}
             elif kind == "finish":
                 finish = event["reason"]
-                if finish not in (
-                    "stop",
-                    "length",
-                    "tool_calls",
-                    "content_filter",
-                    "function_call",
-                ):
+                if finish not in constants.FINISH_REASONS:
                     raise ResponseFailedError(
                         "Chat cannot represent the source finish reason", details={"reason": finish}
                     )
@@ -387,7 +382,7 @@ class ChatCompletionsDecoder(BaseDecoder):
                 continue
             value = {
                 **self._envelope(**parameters),
-                "object": "chat.completion.chunk",
+                "object": constants.CHUNK_OBJECT,
                 "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
             }
             result.append(value)

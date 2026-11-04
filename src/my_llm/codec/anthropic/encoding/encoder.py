@@ -4,6 +4,7 @@ from typing import Any
 
 from anthropic.types import MessageParam, ToolParam
 
+import my_llm.codec.anthropic.constants as constants
 from my_llm.basic.data import _MISSING, capture, dictionary_views
 from my_llm.basic.exceptions import MessageValidationError, ResponseFailedError
 from my_llm.basic.semantic_loss import originated
@@ -21,21 +22,12 @@ from my_llm.codec.shared.stream import (
 from my_llm.profile.resolution import ResolvedProfile
 from my_llm.profile.types import OutputParameter, Parameter
 
-PROTOCOL = "anthropic"
-REASONS = {
-    "end_turn": "stop",
-    "stop_sequence": "stop",
-    "tool_use": "tool_calls",
-    "max_tokens": "length",
-    "refusal": "content_filter",
-}
-
 
 class AnthropicEncoder(BaseEncoder):
     """Convert native messages, tools, events and usage to intermediate values."""
 
     __slots__ = ()
-    protocol = PROTOCOL
+    protocol = constants.PROTOCOL
     message_type = MessageParam
     tool_type = ToolParam
 
@@ -71,31 +63,15 @@ class AnthropicEncoder(BaseEncoder):
 
     def _validation_tools(self, tools: list) -> list:
         """Project supported Anthropic function declarations before native schema validation."""
-        return [
-            select(tool, "name", "description", "input_schema", "strict")
-            for tool in tools
-            if "input_schema" in tool
-        ]
+        return [select(tool, *constants.TOOL_FIELDS) for tool in tools if "input_schema" in tool]
 
     def match_item(self, item: dict) -> bool:
         """Whether a native message or tool has a recognizable Anthropic shape."""
         if "input_schema" in item:
             return isinstance(item["input_schema"], dict) and isinstance(item.get("name"), str)
-        if item.get("role") not in ("user", "assistant", "system") or "content" not in item:
+        if item.get("role") not in constants.MESSAGE_ROLES or "content" not in item:
             return False
-        if any(
-            key in item
-            for key in {
-                "parts",
-                "type",
-                "tool_calls",
-                "tool_call_id",
-                "reasoning_content",
-                "thinking",
-                "images",
-                "tool_name",
-            }
-        ):
+        if any(key in item for key in constants.OTHER_PROTOCOL_MESSAGE_FIELDS):
             return False
         content = item["content"]
         return (
@@ -103,23 +79,7 @@ class AnthropicEncoder(BaseEncoder):
             or content is None
             or (
                 mapping_list(content)
-                and all(
-                    block.get("type")
-                    in {
-                        "text",
-                        "thinking",
-                        "redacted_thinking",
-                        "tool_use",
-                        "tool_result",
-                        "image",
-                        "document",
-                        "server_tool_use",
-                        "web_search_tool_result",
-                        "web_fetch_tool_result",
-                        "code_execution_tool_result",
-                    }
-                    for block in content
-                )
+                and all(block.get("type") in constants.MESSAGE_BLOCK_TYPES for block in content)
             )
         )
 
@@ -129,7 +89,7 @@ class AnthropicEncoder(BaseEncoder):
         """Normalize supported Anthropic blocks and reasoning provenance into middleware messages."""
         result = []
         binding = profile.parameters.get("feedback_reasoning_item") if profile is not None else None
-        custom_feedback = isinstance(binding, Parameter) and binding.path != "$.content_block"
+        custom_feedback = isinstance(binding, Parameter) and binding.path != constants.FEEDBACK_PATH
         for index, message in enumerate(messages):
             role = message.get("role")
             path = f"$.messages[{index}].content"
@@ -147,14 +107,14 @@ class AnthropicEncoder(BaseEncoder):
                             {"content_block": item},
                             profile,
                             "feedback_reasoning_item",
-                            "$.content_block",
+                            constants.FEEDBACK_PATH,
                             _MISSING,
                         )
                         block.pop("feedback_item", None)
                         if feedback_item is not _MISSING:
                             block["feedback_item"] = feedback_item
                     content.append(block)
-            result.append({"protocol": PROTOCOL, "role": role, "content": content})
+            result.append({"protocol": constants.PROTOCOL, "role": role, "content": content})
         return result
 
     def _tools(
@@ -166,7 +126,7 @@ class AnthropicEncoder(BaseEncoder):
                 "functions": [
                     originated(
                         {
-                            **select(tool, "name", "description", "strict"),
+                            **select(tool, *constants.NATIVE_FUNCTION_METADATA_FIELDS),
                             "parameters": originated(
                                 tool.get("input_schema", {}),
                                 f"$.tools[{index}].input_schema",
@@ -197,13 +157,13 @@ class AnthropicEncoder(BaseEncoder):
             profile.parameters.get("feedback_reasoning_item") if profile is not None else None
         )
         custom_feedback = isinstance(feedback_parameter, OutputParameter) and (
-            feedback_parameter.path != "$.content_block" or feedback_parameter.event_type
+            feedback_parameter.path != constants.FEEDBACK_PATH or feedback_parameter.event_type
         )
         reasoning_parameter = (
             profile.parameters.get("reasoning_content") if profile is not None else None
         )
         custom_reasoning = isinstance(reasoning_parameter, OutputParameter) and (
-            reasoning_parameter.path != "$.delta.thinking" or reasoning_parameter.event_type
+            reasoning_parameter.path != constants.REASONING_PATH or reasoning_parameter.event_type
         )
         for event_index, event in enumerate(chunks):
             if event.get("type") == "error" or event.get("error"):
@@ -213,19 +173,18 @@ class AnthropicEncoder(BaseEncoder):
             kind = event.get("type")
             index = event.get("index", 0)
             ops = []
-            if kind == "message_start":
+            if kind == constants.MESSAGE_START:
                 message = event.get("message")
                 if not isinstance(message, dict):
                     message = {}
                 ops.append(metadata(self._metadata(message)))
                 if message.get("usage") is not None:
                     ops.append({"type": "usage", "usage": message["usage"]})
-            elif kind == "content_block_start":
+            elif kind == constants.CONTENT_BLOCK_START:
                 block = intermediate_block(event["content_block"])
-                if block is None or block["type"] not in (
-                    "text",
-                    "thinking",
-                    "tool_use",
+                if (
+                    block is None
+                    or block["type"] not in constants.MIDDLEWARE_TEXT_THINKING_TOOL_USE_TYPES
                 ):
                     continue
                 if block["type"] == "tool_use":
@@ -246,14 +205,9 @@ class AnthropicEncoder(BaseEncoder):
                         ),
                     }
                 )
-            elif kind == "content_block_delta":
+            elif kind == constants.CONTENT_BLOCK_DELTA:
                 delta = event["delta"]
-                field = {
-                    "text_delta": "text",
-                    "thinking_delta": "reasoning",
-                    "signature_delta": "feedback_item",
-                    "input_json_delta": "arguments",
-                }.get(delta.get("type"))
+                field = constants.DELTA_TYPE_TO_MIDDLEWARE_FIELD.get(delta.get("type"))
                 if field in ("arguments", "feedback_item") and not (
                     field == "feedback_item" and custom_feedback
                 ):
@@ -264,13 +218,15 @@ class AnthropicEncoder(BaseEncoder):
                                 "type": "block_delta",
                                 "ref": BlockRef("content", index),
                                 "field": field,
-                                "kind": {
-                                    "arguments": "tool_use",
-                                    "reasoning": "thinking",
-                                    "feedback_item": "thinking",
-                                }.get(field, field),
+                                "kind": constants.MIDDLEWARE_DELTA_FIELD_TO_BLOCK_TYPE.get(
+                                    field, field
+                                ),
                                 "value": value,
-                                **({"path": ("signature",)} if field == "feedback_item" else {}),
+                                **(
+                                    {"path": constants.SIGNATURE_PATH}
+                                    if field == "feedback_item"
+                                    else {}
+                                ),
                             }
                         )
                 if field == "reasoning" and custom_reasoning and not custom_feedback:
@@ -281,40 +237,49 @@ class AnthropicEncoder(BaseEncoder):
                                 "type": "block_delta",
                                 "ref": BlockRef("content", index),
                                 "field": "feedback_item",
-                                "path": ("thinking",),
+                                "path": constants.THINKING_PATH,
                                 "kind": "thinking",
                                 "value": native_reasoning,
                             }
                         )
-            elif kind == "content_block_stop":
+            elif kind == constants.CONTENT_BLOCK_STOP:
                 ops.append({"type": "block_stop", "ref": BlockRef("content", index)})
-            elif kind == "message_delta":
+            elif kind == constants.MESSAGE_DELTA:
                 delta = event.get("delta", {})
                 if delta.get("stop_reason"):
                     reason = delta["stop_reason"]
-                    ops.append({"type": "reason", "reason": REASONS.get(reason, reason)})
+                    ops.append(
+                        {
+                            "type": "reason",
+                            "reason": constants.STOP_REASON_TO_MIDDLEWARE_REASON.get(
+                                reason, reason
+                            ),
+                        }
+                    )
                     ops.append(
                         metadata(
                             {
                                 f"native_{key}": delta[key]
-                                for key in ("stop_reason", "stop_sequence")
+                                for key in constants.STOP_METADATA_FIELDS
                                 if isinstance(delta.get(key), (str, int, float))
                             }
                         )
                     )
                 if event.get("usage") is not None:
                     ops.append({"type": "usage", "usage": event["usage"]})
-            elif kind == "message_stop":
+            elif kind == constants.MESSAGE_STOP:
                 ops.append({"type": "finish"})
-            for name, delta_type, field, block_kind in (
-                ("content", "text_delta", "text", "text"),
-                ("reasoning_content", "thinking_delta", "reasoning", "thinking"),
-            ):
+            for (
+                name,
+                delta_type,
+                field,
+                block_kind,
+            ) in constants.CONTENT_REASONING_PARAMETER_DELTA_BLOCK_FIELDS:
                 if not self.parameter_matches_event(
                     event,
                     profile,
                     name,
-                    native=kind == "content_block_delta"
+                    native=kind == constants.CONTENT_BLOCK_DELTA
                     and event.get("delta", {}).get("type") == delta_type,
                 ):
                     continue
@@ -322,7 +287,7 @@ class AnthropicEncoder(BaseEncoder):
                     event,
                     profile,
                     name,
-                    "$.delta.text" if field == "text" else "$.delta.thinking",
+                    constants.TEXT_PATH if field == "text" else constants.REASONING_PATH,
                     _MISSING,
                 )
                 if value is not None and value is not _MISSING:
@@ -340,23 +305,24 @@ class AnthropicEncoder(BaseEncoder):
                 profile,
                 "feedback_reasoning_item",
                 native=(
-                    kind == "content_block_start"
-                    and event["content_block"].get("type") in ("thinking", "redacted_thinking")
-                    or kind == "content_block_delta"
-                    and event["delta"].get("type") in ("thinking_delta", "signature_delta")
-                    or kind == "content_block_stop"
+                    kind == constants.CONTENT_BLOCK_START
+                    and event["content_block"].get("type")
+                    in constants.THINKING_REDACTED_THINKING_TYPES
+                    or kind == constants.CONTENT_BLOCK_DELTA
+                    and event["delta"].get("type") in constants.THINKING_SIGNATURE_DELTA_TYPES
+                    or kind == constants.CONTENT_BLOCK_STOP
                 ),
             ):
                 feedback_item = self.parameter_value(
                     event,
                     profile,
                     "feedback_reasoning_item",
-                    "$.content_block",
+                    constants.FEEDBACK_PATH,
                     _MISSING,
                     event=True,
                 )
                 if feedback_item is not _MISSING:
-                    position = len(ops) - 1 if kind == "content_block_stop" else len(ops)
+                    position = len(ops) - 1 if kind == constants.CONTENT_BLOCK_STOP else len(ops)
                     ops.insert(
                         position,
                         {
@@ -380,19 +346,18 @@ class AnthropicEncoder(BaseEncoder):
                     )
                 elif operation.get("type") == "block_delta":
                     field = operation.get("field")
-                    native_field = {
-                        "arguments": "partial_json",
-                        "reasoning": "thinking",
-                        "feedback_item": "signature",
-                    }.get(field, field)
-                    if field == "feedback_item" and operation.get("path") == ("thinking",):
+                    native_field = constants.MIDDLEWARE_FIELD_TO_DELTA_VALUE_FIELD.get(field, field)
+                    if (
+                        field == "feedback_item"
+                        and operation.get("path") == constants.THINKING_PATH
+                    ):
                         native_field = "thinking"
                     origin_path, origin_value = (
                         event_path + f".delta.{native_field}",
                         operation.get("value"),
                     )
                 ops[operation_index] = originated(operation, origin_path, origin_value)
-            result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
+            result.append(encode_batch(ops, constants.PROTOCOL, usage=self.usage))
         return result
 
     @optional_usage
@@ -412,4 +377,4 @@ class AnthropicEncoder(BaseEncoder):
 
     def _metadata(self, event: dict) -> dict:
         """Project supported Anthropic response identity and model metadata."""
-        return project_metadata(event, (("id", "response_id"), ("model", "model")))
+        return project_metadata(event, constants.RESPONSE_FIELD_TO_MIDDLEWARE_METADATA)

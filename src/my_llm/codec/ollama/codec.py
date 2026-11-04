@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 
+import my_llm.codec.ollama.constants as constants
 from my_llm.codec.base.codec import BaseCodec
 from my_llm.codec.ollama.decoding.decoder import OllamaDecoder
 from my_llm.codec.ollama.encoding.encoder import OllamaEncoder
@@ -18,19 +19,21 @@ class OllamaCodec(BaseCodec):
     """
 
     __slots__ = ("encoder", "decoder", "transport", "_defaults")
-    protocol_or_api_style = "ollama"
+    protocol_or_api_style = constants.PROTOCOL
     _DEFAULTS = ProtocolDefaults(
         should_feedback_reasoning_item=Config(default_value="always"),
         api_key=InputParameter(
-            path="$.extra_headers.Authorization",
+            path=constants.API_KEY_PATH,
             default_value=omit,
         ),
-        max_tokens=InputParameter(path="$.options.num_predict", default_value=omit),
-        content=OutputParameter(path="$.message.content", default_value=omit),
-        reasoning_content=OutputParameter(path="$.message.thinking", default_value=omit),
-        feedback_reasoning_item=OutputParameter(path="$.message.thinking", default_value=omit),
-        reasoning_enable=InputParameter(path="$.think", default_value=True),
-        reasoning_effort=InputParameter(supports=False, path="$.think", default_value=omit),
+        max_tokens=InputParameter(path=constants.MAX_TOKENS_PATH, default_value=omit),
+        content=OutputParameter(path=constants.TEXT_PATH, default_value=omit),
+        reasoning_content=OutputParameter(path=constants.REASONING_PATH, default_value=omit),
+        feedback_reasoning_item=OutputParameter(path=constants.REASONING_PATH, default_value=omit),
+        reasoning_enable=InputParameter(path=constants.REASONING_ENABLE_PATH, default_value=True),
+        reasoning_effort=InputParameter(
+            supports=False, path=constants.REASONING_ENABLE_PATH, default_value=omit
+        ),
     )
 
     def __init__(self) -> None:

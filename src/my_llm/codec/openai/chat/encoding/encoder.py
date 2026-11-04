@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
 
+import my_llm.codec.openai.chat.constants as constants
 from my_llm.basic.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.basic.semantic_loss import originated
 from my_llm.codec.base.encoder import BaseEncoder
@@ -30,15 +31,12 @@ from my_llm.codec.shared.stream import (
 from my_llm.profile.resolution import ResolvedProfile
 from my_llm.profile.types import Parameter
 
-PROTOCOL = "openai_chat"
-TOOL_RESULT_PARTS = frozenset(("text", "image_url", "input_audio", "file", "refusal"))
-
 
 class ChatCompletionsEncoder(BaseEncoder):
     """Convert native messages, tools, events and usage to intermediate values."""
 
     __slots__ = ()
-    protocol = PROTOCOL
+    protocol = constants.PROTOCOL
     message_type = ChatCompletionMessageParam
     tool_type = ChatCompletionToolParam
 
@@ -46,17 +44,19 @@ class ChatCompletionsEncoder(BaseEncoder):
         """Project supported Chat Completions message fields before native schema validation."""
         result = []
         for message in messages:
-            if message.get("role") in ("tool", "function") and (
+            if message.get("role") in constants.TOOL_RESULT_ROLES and (
                 not isinstance(message.get("tool_call_id"), str) or not message["tool_call_id"]
             ):
                 continue  # The canonical history validator discards this entire message.
-            value = select(message, "role", "name", "tool_call_id", "function_call")
+            value = select(message, *constants.MESSAGE_ROLE_NAME_TOOL_CALL_FIELDS)
             content = message.get("content")
-            if message.get("role") in ("tool", "function"):
-                content = tool_result_content(content, native_types=TOOL_RESULT_PARTS)
+            if message.get("role") in constants.TOOL_RESULT_ROLES:
+                content = tool_result_content(
+                    content, native_types=constants.TOOL_RESULT_NATIVE_PART_TYPES
+                )
             value["content"] = (
                 [
-                    select(block, "type", "text")
+                    select(block, *constants.TEXT_PART_FIELDS)
                     if block.get("type") == "text"
                     else {"type": "image_url", "image_url": block.get("image_url")}
                     for block in content
@@ -72,8 +72,10 @@ class ChatCompletionsEncoder(BaseEncoder):
             if message.get("tool_calls") is not None:
                 value["tool_calls"] = [
                     {
-                        **select(call, "id", "type"),
-                        "function": select(call.get("function", {}), "name", "arguments"),
+                        **select(call, *constants.TOOL_CALL_ID_TYPE_FIELDS),
+                        "function": select(
+                            call.get("function", {}), *constants.FUNCTION_CALL_FIELDS
+                        ),
                     }
                     for call in message["tool_calls"]
                     if isinstance(call, dict) and call.get("type", "function") == "function"
@@ -87,7 +89,7 @@ class ChatCompletionsEncoder(BaseEncoder):
             {
                 "type": "function",
                 "function": select(
-                    tool.get("function", {}), "name", "description", "parameters", "strict"
+                    tool.get("function", {}), *constants.FUNCTION_DECLARATION_FIELDS
                 ),
             }
             for tool in tools
@@ -98,9 +100,9 @@ class ChatCompletionsEncoder(BaseEncoder):
         """Whether a native message or tool has a recognizable Chat Completions shape."""
         if item.get("type") == "function":
             return isinstance(item.get("function"), dict)
-        if item.get("role") not in ("user", "assistant", "system", "developer", "tool"):
+        if item.get("role") not in constants.MESSAGE_ROLES:
             return False
-        if any(key in item for key in {"parts", "type", "thinking", "images", "tool_name"}):
+        if any(key in item for key in constants.OTHER_PROTOCOL_MESSAGE_FIELDS):
             return False
         calls = item.get("tool_calls") or []
         if not mapping_list(calls) or any(
@@ -115,10 +117,7 @@ class ChatCompletionsEncoder(BaseEncoder):
             or content is None
             or (
                 mapping_list(content)
-                and all(
-                    block.get("type") in {"text", "image_url", "file", "input_audio", "refusal"}
-                    for block in content
-                )
+                and all(block.get("type") in constants.MESSAGE_CONTENT_TYPES for block in content)
             )
         )
 
@@ -143,17 +142,19 @@ class ChatCompletionsEncoder(BaseEncoder):
         )
         custom_feedback = (
             isinstance(feedback_binding, Parameter)
-            and feedback_binding.path != "$.choices[0].delta.reasoning_content"
+            and feedback_binding.path != constants.REASONING_PATH
         )
         for index, message in enumerate(messages):
             path = f"$.messages[{index}]"
             role = message.get("role")
             native_content = message.get("content")
-            if role in ("tool", "function"):
-                native_content = tool_result_content(native_content, native_types=TOOL_RESULT_PARTS)
+            if role in constants.TOOL_RESULT_ROLES:
+                native_content = tool_result_content(
+                    native_content, native_types=constants.TOOL_RESULT_NATIVE_PART_TYPES
+                )
             content = (
                 []
-                if role in ("tool", "function")
+                if role in constants.TOOL_RESULT_ROLES
                 else encode_content(
                     native_content, path=f"{path}.content", allow_images=role == "user"
                 )
@@ -164,7 +165,7 @@ class ChatCompletionsEncoder(BaseEncoder):
                     {"choices": [{"delta": message}]},
                     profile,
                     "feedback_reasoning_item",
-                    "$.choices[0].delta.reasoning_content",
+                    constants.REASONING_PATH,
                 )
                 if custom_feedback
                 else reasoning
@@ -184,7 +185,7 @@ class ChatCompletionsEncoder(BaseEncoder):
             )
             if message.get("function_call"):
                 content.append(tool_block(message["function_call"], call_id=legacy_call_id))
-            if role in ("tool", "function"):
+            if role in constants.TOOL_RESULT_ROLES:
                 content = [
                     {
                         "type": "tool_result",
@@ -197,7 +198,7 @@ class ChatCompletionsEncoder(BaseEncoder):
                 ]
                 role = "user"
             value = {
-                "protocol": PROTOCOL,
+                "protocol": constants.PROTOCOL,
                 "role": role,
                 "content": content,
                 **select(message, "name"),
@@ -214,7 +215,7 @@ class ChatCompletionsEncoder(BaseEncoder):
                 "functions": [
                     originated(
                         {
-                            **select(tool["function"], "name", "description", "strict"),
+                            **select(tool["function"], *constants.NATIVE_FUNCTION_METADATA_FIELDS),
                             **(
                                 {
                                     "parameters": originated(
@@ -256,7 +257,7 @@ class ChatCompletionsEncoder(BaseEncoder):
                 self.parameter_matches_event(event, profile, name, native=False)
                 for name in ("content", "reasoning_content", "feedback_reasoning_item")
             )
-            if not any(key in event for key in ("choices", "usage")) and not custom_event:
+            if not any(key in event for key in constants.RESPONSE_FIELDS) and not custom_event:
                 continue
             ops = [metadata(self._metadata(event))]
             if event.get("usage") is not None:
@@ -265,10 +266,7 @@ class ChatCompletionsEncoder(BaseEncoder):
                 if choice.get("index", 0) != 0:
                     raise ConfigurationError("only one generated candidate is supported")
                 delta = choice.get("delta", {})
-                for name, kind, default in (
-                    ("content", "text", "$.choices[0].delta.content"),
-                    ("reasoning_content", "thinking", "$.choices[0].delta.reasoning_content"),
-                ):
+                for name, kind, default in constants.CONTENT_REASONING_PARAMETER_BLOCK_PATHS:
                     if not self.parameter_matches_event(
                         event, profile, name, native=bool(event.get("choices"))
                     ):
@@ -299,7 +297,7 @@ class ChatCompletionsEncoder(BaseEncoder):
                         event,
                         profile,
                         "feedback_reasoning_item",
-                        "$.choices[0].delta.reasoning_content",
+                        constants.REASONING_PATH,
                         use_default=choice.get("finish_reason") is None,
                     )
                 if feedback is not None:
@@ -333,7 +331,7 @@ class ChatCompletionsEncoder(BaseEncoder):
                     )
                     origin_path, origin_value = event_path + suffix, operation.get("value")
                 ops[operation_index] = originated(operation, origin_path, origin_value)
-            result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
+            result.append(encode_batch(ops, constants.PROTOCOL, usage=self.usage))
         return result
 
     @optional_usage
@@ -351,6 +349,4 @@ class ChatCompletionsEncoder(BaseEncoder):
 
     def _metadata(self, event: dict) -> dict:
         """Project supported Chat response identity, model and creation metadata."""
-        return project_metadata(
-            event, (("id", "response_id"), ("model", "model"), ("created", "created_at"))
-        )
+        return project_metadata(event, constants.RESPONSE_FIELD_TO_MIDDLEWARE_METADATA)

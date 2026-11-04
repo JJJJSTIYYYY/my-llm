@@ -2,6 +2,7 @@
 
 from weakref import WeakSet
 
+import my_llm.codec.openai.chat.constants as constants
 from my_llm.basic.semantic_loss import SemanticLossContext, SemanticLossGroup
 from my_llm.codec.openai.chat.decoding.content import render_content
 from my_llm.codec.shared.prebuilt.tool_images import move_tool_images
@@ -17,7 +18,7 @@ def move_tool_images_to_user_message(
         draft,
         losses,
         context,
-        protocol="openai_chat",
+        protocol=constants.PROTOCOL,
         reason="Chat tool results cannot represent images",
         message_key="messages",
         completed=_completed,

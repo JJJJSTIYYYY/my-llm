@@ -6,6 +6,7 @@ from typing import Any
 from ollama import Image, Message, Options, Tool
 from pydantic import ValidationError
 
+import my_llm.codec.ollama.constants as constants
 from my_llm.basic.data import capture, dictionary_views
 from my_llm.basic.exceptions import ConfigurationError
 from my_llm.basic.semantic_loss import report_loss
@@ -34,8 +35,6 @@ from my_llm.codec.shared.options import PreparedOptions, validate_request_option
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.configuration import merge_dicts
 from my_llm.profile.resolution import ResolvedProfile, client_parameters
-
-PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response_id"}
 
 
 def validate_schema(parameters: dict, *, path: str | None = None) -> dict:
@@ -79,19 +78,16 @@ def validate_schema(parameters: dict, *, path: str | None = None) -> dict:
     return parameters
 
 
-PROTOCOL = "ollama"
-
-
 class OllamaDecoder(BaseDecoder):
     """Translate recognized intermediate values into protocol dictionaries."""
 
     __slots__ = ()
-    protocol = PROTOCOL
+    protocol = constants.PROTOCOL
 
     tool_type = Tool
     message_type = Message
-    message_path = ("messages",)
-    tool_path = ("tools",)
+    message_path = constants.MESSAGE_PATH
+    tool_path = constants.TOOL_PATH
 
     request_schema = REQUEST_SCHEMA
 
@@ -102,7 +98,9 @@ class OllamaDecoder(BaseDecoder):
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
         """Validate shared controls and protect Ollama fields from extra-body replacement."""
         options = super().validate_parameters(profile, **parameters)
-        return validate_request_options(profile, options, protected=PROTECTED, containers=())
+        return validate_request_options(
+            profile, options, protected=constants.REQUEST_ENVELOPE_FIELDS, containers=()
+        )
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
         """Validate thinking/options and record retry settings unsupported by the Ollama SDK."""
@@ -118,7 +116,7 @@ class OllamaDecoder(BaseDecoder):
             raise ConfigurationError("Ollama think must be a boolean or model-defined string")
         if (
             (binding := profile.parameter("reasoning_enable", "input")) is not None
-            and binding.path == "$.think"
+            and binding.path == constants.REASONING_ENABLE_PATH
             and (
                 parameters.get("reasoning") is True
                 or parameters.get("reasoning_effort", "none") != "none"
@@ -135,7 +133,7 @@ class OllamaDecoder(BaseDecoder):
 
     def filter_tools(self, tools: list, profile: ResolvedProfile) -> list:
         """Filter native tools while reporting schema constraints the installed SDK would discard."""
-        decode = _plan(self.tool_type, delegated_paths=(("function", "parameters"),)).decode
+        decode = _plan(self.tool_type, delegated_paths=constants.TOOL_SCHEMA_PATHS).decode
         result = []
         for index, original in enumerate(dictionary_views(tools)):
             tool = decode(original, f"$.tools[{index}]")
@@ -151,7 +149,7 @@ class OllamaDecoder(BaseDecoder):
             result.append(tool)
         return result
 
-    message_delegated_paths = (("images",),)
+    message_delegated_paths = constants.MESSAGE_IMAGE_PATHS
 
     def _filter_message(
         self,
@@ -282,7 +280,7 @@ class OllamaDecoder(BaseDecoder):
                 if not input_content(block, profile, feedback=feedback):
                     continue
                 owner = block.get("protocol")
-                if (context_owner if owner is None else owner) != PROTOCOL:
+                if (context_owner if owner is None else owner) != constants.PROTOCOL:
                     block = foreign_block(block)
                 if block is None:
                     continue
@@ -368,10 +366,10 @@ class OllamaDecoder(BaseDecoder):
                 owner = event["block"].get("protocol")
                 native_owner = (
                     parameters.get("source_protocol") if owner is None else owner
-                ) == PROTOCOL
+                ) == constants.PROTOCOL
             message = {"role": "assistant", "content": ""}
             if kind == "delta" and event["field"] in ("text", "reasoning"):
-                field = {"text": "content", "reasoning": "thinking"}[event["field"]]
+                field = constants.MIDDLEWARE_FIELD_TO_MESSAGE_FIELD[event["field"]]
                 message[field] = event["value"]
             elif kind == "block_stop":
                 block = event["block"]

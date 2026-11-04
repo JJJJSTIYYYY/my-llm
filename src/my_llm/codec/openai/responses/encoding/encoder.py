@@ -4,6 +4,7 @@ from typing import Any
 
 from openai.types.responses import ResponseInputItemParam, ToolParam
 
+import my_llm.codec.openai.responses.constants as constants
 from my_llm.basic.data import capture
 from my_llm.basic.exceptions import ResponseFailedError, ResponseIncompleteError
 from my_llm.basic.semantic_loss import originated
@@ -28,17 +29,12 @@ from my_llm.codec.shared.stream import (
 )
 from my_llm.profile.resolution import ResolvedProfile
 
-PROTOCOL = "openai_responses"
-TOOL_RESULT_PARTS = frozenset(
-    ("input_text", "input_image", "input_file", "input_audio", "output_text", "text", "refusal")
-)
-
 
 class ResponsesEncoder(BaseEncoder):
     """Convert native messages, tools, events and usage to intermediate values."""
 
     __slots__ = ()
-    protocol = PROTOCOL
+    protocol = constants.PROTOCOL
     message_type = ResponseInputItemParam
     tool_type = ToolParam
 
@@ -52,19 +48,19 @@ class ResponsesEncoder(BaseEncoder):
             ):
                 continue  # Association repair owns missing result IDs, not SDK shape validation.
             if kind == "message":
-                value = select(message, "type", "role", "id", "status")
+                value = select(message, *constants.MESSAGE_FIELDS)
                 content = message.get("content")
                 value["content"] = (
                     [
                         {
-                            **select(block, "type", "text", "image_url"),
+                            **select(block, *constants.TEXT_IMAGE_PART_FIELDS),
                             **({"annotations": []} if block.get("type") == "output_text" else {}),
                             **({"detail": "auto"} if block.get("type") == "input_image" else {}),
                         }
                         for block in content
                         if isinstance(block, dict)
                         and (
-                            block.get("type") in ("input_text", "output_text")
+                            block.get("type") in constants.INPUT_OUTPUT_TEXT_PART_TYPES
                             or (
                                 block.get("type") == "input_image" and message.get("role") == "user"
                             )
@@ -74,24 +70,26 @@ class ResponsesEncoder(BaseEncoder):
                     else content
                 )
             elif kind == "function_call":
-                value = select(message, "type", "id", "call_id", "name", "arguments", "status")
+                value = select(message, *constants.FUNCTION_CALL_FIELDS)
             elif kind == "function_call_output":
-                value = select(message, "type", "id", "call_id", "status")
-                output = tool_result_content(message.get("output"), native_types=TOOL_RESULT_PARTS)
+                value = select(message, *constants.FUNCTION_OUTPUT_FIELDS)
+                output = tool_result_content(
+                    message.get("output"), native_types=constants.TOOL_RESULT_NATIVE_PART_TYPES
+                )
                 value["output"] = (
                     [
-                        select(block, "type", "text", "image_url")
+                        select(block, *constants.TEXT_IMAGE_PART_FIELDS)
                         for block in output
                         if isinstance(block, dict)
-                        and block.get("type") in ("input_text", "input_image")
+                        and block.get("type") in constants.INPUT_TEXT_IMAGE_PART_TYPES
                     ]
                     if isinstance(output, list)
                     else output
                 )
             elif kind == "reasoning":
-                value = select(message, "type", "id", "encrypted_content", "status")
+                value = select(message, *constants.REASONING_ITEM_FIELDS)
                 value["summary"] = [
-                    select(part, "type", "text")
+                    select(part, *constants.SUMMARY_TEXT_PART_FIELDS)
                     for part in message.get("summary", [])
                     if isinstance(part, dict) and part.get("type") == "summary_text"
                 ]
@@ -103,9 +101,7 @@ class ResponsesEncoder(BaseEncoder):
     def _validation_tools(self, tools: list) -> list:
         """Project supported Responses function declarations before native schema validation."""
         return [
-            select(tool, "type", "name", "description", "parameters", "strict")
-            for tool in tools
-            if tool.get("type") == "function"
+            select(tool, *constants.TOOL_FIELDS) for tool in tools if tool.get("type") == "function"
         ]
 
     def match_item(self, item: dict) -> bool:
@@ -113,27 +109,11 @@ class ResponsesEncoder(BaseEncoder):
         kind = item.get("type")
         if kind == "function":
             return "function" not in item and isinstance(item.get("name"), str)
-        if kind in {"function_call", "function_call_output", "reasoning", "item_reference"}:
+        if kind in constants.FUNCTION_REASONING_REFERENCE_ITEM_TYPES:
             return True
-        if kind not in (None, "message") or item.get("role") not in (
-            "user",
-            "assistant",
-            "system",
-            "developer",
-        ):
+        if kind not in (None, "message") or item.get("role") not in constants.MESSAGE_ROLES:
             return False
-        if any(
-            key in item
-            for key in {
-                "parts",
-                "tool_calls",
-                "tool_call_id",
-                "reasoning_content",
-                "thinking",
-                "images",
-                "tool_name",
-            }
-        ):
+        if any(key in item for key in constants.OTHER_PROTOCOL_MESSAGE_FIELDS):
             return False
         content = item.get("content")
         return (
@@ -141,11 +121,7 @@ class ResponsesEncoder(BaseEncoder):
             or content is None
             or (
                 mapping_list(content)
-                and all(
-                    block.get("type")
-                    in {"input_text", "output_text", "input_image", "input_file", "refusal"}
-                    for block in content
-                )
+                and all(block.get("type") in constants.MESSAGE_CONTENT_TYPES for block in content)
             )
         )
 
@@ -164,7 +140,7 @@ class ResponsesEncoder(BaseEncoder):
             path = f"$.messages[{index}]"
             kind = item.get("type", "message")
             role = item.get("role", "assistant") if kind == "message" else "assistant"
-            identity = select(item, "id", "status")
+            identity = select(item, *constants.ITEM_ID_STATUS_FIELDS)
             item_identity = {"item": identity} if identity else {}
             if kind == "function_call":
                 content = [
@@ -178,7 +154,9 @@ class ResponsesEncoder(BaseEncoder):
                 ]
             elif kind == "function_call_output":
                 role = "user"
-                output = tool_result_content(item.get("output"), native_types=TOOL_RESULT_PARTS)
+                output = tool_result_content(
+                    item.get("output"), native_types=constants.TOOL_RESULT_NATIVE_PART_TYPES
+                )
                 content = [
                     {
                         "type": "tool_result",
@@ -194,14 +172,17 @@ class ResponsesEncoder(BaseEncoder):
                     part.get("text", "")
                     for parts in (item.get("summary", []), item.get("content") or [])
                     for part in parts
-                    if part.get("type") in ("summary_text", "reasoning_text")
+                    if part.get("type") in constants.REASONING_TEXT_TYPES
                 )
                 content = [
                     {
                         "type": "thinking",
                         "reasoning": reasoning or None,
                         "feedback_item": self.parameter_value(
-                            {"item": item}, profile, "feedback_reasoning_item", "$.item"
+                            {"item": item},
+                            profile,
+                            "feedback_reasoning_item",
+                            constants.FEEDBACK_PATH,
                         ),
                         **item_identity,
                     }
@@ -226,7 +207,7 @@ class ResponsesEncoder(BaseEncoder):
                 content = [originated(block, path, item) for block in content]
             result.append(
                 {
-                    "protocol": PROTOCOL,
+                    "protocol": constants.PROTOCOL,
                     "coalesce": True,
                     "role": role,
                     "content": content,
@@ -244,7 +225,7 @@ class ResponsesEncoder(BaseEncoder):
                 "functions": [
                     originated(
                         {
-                            **select(tool, "name", "description", "strict"),
+                            **select(tool, *constants.NATIVE_FUNCTION_METADATA_FIELDS),
                             **(
                                 {
                                     "parameters": originated(
@@ -279,10 +260,10 @@ class ResponsesEncoder(BaseEncoder):
         result = []
         for event_index, event in enumerate(chunks):
             kind = event.get("type")
-            if kind in ("response.failed", "response.incomplete", "error") or event.get("error"):
+            if kind in constants.FAILED_INCOMPLETE_ERROR_EVENTS or event.get("error"):
                 error = (
                     ResponseIncompleteError
-                    if kind == "response.incomplete"
+                    if kind == constants.RESPONSE_INCOMPLETE
                     else ResponseFailedError
                 )
                 response = event.get("response", {})
@@ -295,12 +276,12 @@ class ResponsesEncoder(BaseEncoder):
             kind = event.get("type", "")
             index = event.get("output_index", 0)
             ops = []
-            if kind in ("response.created", "response.in_progress"):
+            if kind in constants.CREATED_IN_PROGRESS_EVENTS:
                 ops.extend(self._response_metadata(event.get("response", {})))
-                if kind == "response.created":
+                if kind == constants.RESPONSE_CREATED:
                     ops.append({"type": "start"})
             elif (
-                kind == "response.output_item.added"
+                kind == constants.OUTPUT_ITEM_ADDED
                 and event.get("item", {}).get("type") == "function_call"
             ):
                 item = event["item"]
@@ -312,7 +293,7 @@ class ResponsesEncoder(BaseEncoder):
                         arguments=item.get("arguments", ""),
                     )
                 )
-            elif kind == "response.function_call_arguments.delta":
+            elif kind == constants.FUNCTION_CALL_ARGUMENTS_DELTA:
                 ops.extend(
                     tool_operations(
                         BlockRef("tool_use", index),
@@ -320,7 +301,7 @@ class ResponsesEncoder(BaseEncoder):
                     )
                 )
             elif (
-                kind == "response.output_item.done"
+                kind == constants.OUTPUT_ITEM_DONE
                 and event.get("item", {}).get("type") == "function_call"
             ):
                 message = self._messages([event["item"]], profile)[0]
@@ -332,7 +313,7 @@ class ResponsesEncoder(BaseEncoder):
                         "block": block,
                     }
                 )
-            elif kind in ("response.content_part.added", "response.content_part.done"):
+            elif kind in constants.CONTENT_PART_ADDED_DONE_EVENTS:
                 part = event.get("part", {})
                 if part.get("type") == "output_text":
                     ops.append(
@@ -342,7 +323,7 @@ class ResponsesEncoder(BaseEncoder):
                             "block": encode_content([part])[0],
                         }
                     )
-            elif kind == "response.reasoning_summary_part.added" and event.get("summary_index", 0):
+            elif kind == constants.REASONING_SUMMARY_PART_ADDED and event.get("summary_index", 0):
                 ops.append(
                     {
                         "type": "block_delta",
@@ -353,7 +334,7 @@ class ResponsesEncoder(BaseEncoder):
                     }
                 )
             elif (
-                kind == "response.output_item.done"
+                kind == constants.OUTPUT_ITEM_DONE
                 and event.get("item", {}).get("type") == "reasoning"
             ):
                 block = self._messages([event["item"]], profile)[0]["content"][0]
@@ -365,7 +346,7 @@ class ResponsesEncoder(BaseEncoder):
                         "block": block,
                     }
                 )
-            elif kind == "response.completed":
+            elif kind == constants.RESPONSE_COMPLETED:
                 response = event["response"]
                 output = response.get("output", [])
                 ops.extend(
@@ -376,7 +357,8 @@ class ResponsesEncoder(BaseEncoder):
                                 "response_items": {
                                     str(i): self._item_metadata(item)
                                     for i, item in enumerate(output)
-                                    if item.get("type") in ("message", "reasoning", "function_call")
+                                    if item.get("type")
+                                    in constants.MESSAGE_REASONING_FUNCTION_CALL_ITEM_TYPES
                                 }
                             }
                         ),
@@ -396,19 +378,16 @@ class ResponsesEncoder(BaseEncoder):
                 )
                 if response.get("usage") is not None:
                     ops.append({"type": "usage", "usage": response["usage"]})
-            for name, event_types, block_kind in (
-                ("content", ("response.output_text.delta",), "text"),
-                (
-                    "reasoning_content",
-                    ("response.reasoning_summary_text.delta", "response.reasoning_text.delta"),
-                    "thinking",
-                ),
-            ):
+            for (
+                name,
+                event_types,
+                block_kind,
+            ) in constants.CONTENT_REASONING_PARAMETER_EVENT_BLOCK_TYPES:
                 if not self.parameter_matches_event(
                     event, profile, name, native=kind in event_types
                 ):
                     continue
-                value = self.parameter_value(event, profile, name, "$.delta", event=True)
+                value = self.parameter_value(event, profile, name, constants.TEXT_PATH, event=True)
                 if value is not None:
                     ops.append(
                         {
@@ -427,7 +406,7 @@ class ResponsesEncoder(BaseEncoder):
                 event, profile, "feedback_reasoning_item", native=False
             ):
                 feedback_item = self.parameter_value(
-                    event, profile, "feedback_reasoning_item", "$.item"
+                    event, profile, "feedback_reasoning_item", constants.FEEDBACK_PATH
                 )
                 if feedback_item is not None:
                     ops.append(
@@ -450,9 +429,7 @@ class ResponsesEncoder(BaseEncoder):
                             header["type"] = "reasoning"
                         elif "function_call_arguments" in kind:
                             header["type"] = "function_call"
-                        elif kind.startswith(
-                            ("response.output_text", "response.content_part", "response.refusal")
-                        ):
+                        elif kind.startswith(constants.MESSAGE_EVENT_PREFIXES):
                             header["type"] = "message"
                     ops.insert(
                         0,
@@ -474,7 +451,7 @@ class ResponsesEncoder(BaseEncoder):
                         operation["block"], event_path + ".item", event["item"]
                     )
                 ops[operation_index] = originated(operation, origin_path, origin_value)
-            result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
+            result.append(encode_batch(ops, constants.PROTOCOL, usage=self.usage))
         return result
 
     @optional_usage
@@ -493,22 +470,18 @@ class ResponsesEncoder(BaseEncoder):
 
     def _metadata(self, event: dict) -> dict:
         """Project recognized response metadata into a middleware metadata operation."""
-        return project_metadata(
-            event, (("id", "response_id"), ("model", "model"), ("created_at", "created_at"))
-        )
+        return project_metadata(event, constants.RESPONSE_FIELD_TO_MIDDLEWARE_METADATA)
 
     def _item_metadata(self, item: dict) -> dict:
         """Record native output-item headers for identity-preserving stream rendering."""
-        return project_metadata(
-            item, tuple((key, key) for key in ("id", "type", "status", "name", "call_id"))
-        )
+        return project_metadata(item, tuple((key, key) for key in constants.ITEM_METADATA_FIELDS))
 
     def _snapshot(
         self,
         output: list,
         *,
         profile: ResolvedProfile | None = None,
-        path: str = "$.response.output",
+        path: str = constants.OUTPUT_PATH,
     ) -> dict:
         """Address recognized final blocks with their live item/part coordinates."""
         blocks = []

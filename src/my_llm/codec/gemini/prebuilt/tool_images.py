@@ -2,6 +2,7 @@
 
 from weakref import WeakSet
 
+import my_llm.codec.gemini.constants as constants
 from my_llm.basic.semantic_loss import SemanticLossContext, SemanticLossGroup
 from my_llm.codec.gemini.decoding.content import decode_part
 from my_llm.codec.shared.prebuilt.tool_images import move_tool_images
@@ -17,7 +18,7 @@ def move_tool_images_to_user_message(
         draft,
         losses,
         context,
-        protocol="gemini",
+        protocol=constants.PROTOCOL,
         reason="Gemini tool results cannot represent images",
         message_key="contents",
         completed=_completed,

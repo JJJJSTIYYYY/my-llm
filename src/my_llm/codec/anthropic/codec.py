@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 
+import my_llm.codec.anthropic.constants as constants
 from my_llm.codec.anthropic.decoding.decoder import AnthropicDecoder
 from my_llm.codec.anthropic.encoding.encoder import AnthropicEncoder
 from my_llm.codec.anthropic.transport import AnthropicTransport
@@ -18,20 +19,20 @@ class AnthropicCodec(BaseCodec):
     """
 
     __slots__ = ("encoder", "decoder", "transport", "_defaults")
-    protocol_or_api_style = "anthropic"
+    protocol_or_api_style = constants.PROTOCOL
     _DEFAULTS = ProtocolDefaults(
         should_feedback_reasoning_item=Config(default_value="always"),
-        max_tokens=InputParameter(path="$.max_tokens", default_value=omit),
-        content=OutputParameter(path="$.delta.text", default_value=omit),
-        reasoning_content=OutputParameter(path="$.delta.thinking", default_value=omit),
-        feedback_reasoning_item=OutputParameter(path="$.content_block", default_value=omit),
+        max_tokens=InputParameter(path=constants.MAX_TOKENS_PATH, default_value=omit),
+        content=OutputParameter(path=constants.TEXT_PATH, default_value=omit),
+        reasoning_content=OutputParameter(path=constants.REASONING_PATH, default_value=omit),
+        feedback_reasoning_item=OutputParameter(path=constants.FEEDBACK_PATH, default_value=omit),
         reasoning_enable=InputParameter(
-            path="$.thinking",
-            default_value={"type": "enabled", "budget_tokens": 1024},
+            path=constants.REASONING_ENABLE_PATH,
+            default_value=constants.DEFAULT_REASONING,
         ),
         reasoning_effort=InputParameter(
             supports=False,
-            path="$.output_config.effort",
+            path=constants.REASONING_EFFORT_PATH,
             default_value=omit,
         ),
     )

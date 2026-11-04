@@ -6,6 +6,7 @@ from weakref import WeakSet
 
 from httpx import AsyncClient, HTTPError, InvalidURL
 
+import my_llm.codec.ollama.constants as constants
 from my_llm.basic.exceptions import MessageValidationError
 from my_llm.basic.semantic_loss import SemanticLossContext, SemanticLossGroup
 from my_llm.codec.ollama.encoding.content import media_type
@@ -46,7 +47,7 @@ async def move_tool_images_to_user_message(
         draft,
         losses,
         context,
-        protocol="ollama",
+        protocol=constants.PROTOCOL,
         reason="Ollama tool results cannot represent images",
         message_key="messages",
         completed=_completed,

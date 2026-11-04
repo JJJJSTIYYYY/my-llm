@@ -1,5 +1,6 @@
 """Project supported Anthropic content and report unrepresentable reasoning."""
 
+import my_llm.codec.anthropic.constants as constants
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.anthropic.content import native_block
 from my_llm.codec.shared.conversion import select, text_result
@@ -12,24 +13,24 @@ def foreign_block(block: dict) -> dict | None:
     kind = block.get("type")
     if kind == "thinking":
         return without_feedback(block)
-    if kind in ("text", "tool_use") and block.get("signature") is not None:
+    if kind in constants.MIDDLEWARE_TEXT_TOOL_USE_TYPES and block.get("signature") is not None:
         report_loss(block, "Anthropic cannot preserve another protocol's reasoning signature")
     if kind == "tool_result":
         content = block.get("content")
         return {
-            **select(block, "type", "tool_use_id"),
+            **select(block, *constants.MIDDLEWARE_TOOL_RESULT_ID_FIELDS),
             "content": [value for child in content if (value := foreign_block(child)) is not None]
             if isinstance(content, list)
             else text_result(content),
         }
-    return block if kind in ("text", "image", "tool_use") else None
+    return block if kind in constants.MIDDLEWARE_TEXT_IMAGE_TOOL_USE_TYPES else None
 
 
 def decode_block(block: dict, *, profile: ResolvedProfile | None = None) -> dict | None:
     """Render canonical blocks with Anthropic signatures and nested result capabilities."""
     if block["type"] == "tool_result" and isinstance(block.get("content"), list):
         return {
-            **select(block, "type", "tool_use_id"),
+            **select(block, *constants.MIDDLEWARE_TOOL_RESULT_ID_FIELDS),
             "content": [
                 value
                 for child in block["content"]
@@ -39,7 +40,10 @@ def decode_block(block: dict, *, profile: ResolvedProfile | None = None) -> dict
         }
     if block["type"] == "thinking":
         item = block.get("feedback_item")
-        if not isinstance(item, dict) or item.get("type") not in ("thinking", "redacted_thinking"):
+        if (
+            not isinstance(item, dict)
+            or item.get("type") not in constants.THINKING_REDACTED_THINKING_TYPES
+        ):
             if item is not None:
                 report_loss(block, "Anthropic reasoning requires a native feedback item")
             return (

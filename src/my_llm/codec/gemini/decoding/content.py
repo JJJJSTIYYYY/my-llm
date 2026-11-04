@@ -1,5 +1,6 @@
 """Render supported Gemini parts without inventing thought signatures."""
 
+import my_llm.codec.gemini.constants as constants
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.shared.conversion import text_result
 from my_llm.codec.shared.input import input_content, without_feedback
@@ -18,7 +19,7 @@ def decode_part(
     """
     kind = block.get("type")
     owner = block.get("protocol")
-    native_signature = not foreign if owner is None else owner == "gemini"
+    native_signature = not foreign if owner is None else owner == constants.PROTOCOL
     common = (
         {"thought_signature": block["signature"]}
         if native_signature and "signature" in block

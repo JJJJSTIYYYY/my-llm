@@ -2,6 +2,7 @@
 
 from typing import Any
 
+import my_llm.codec.openai.chat.constants as constants
 from my_llm.basic.semantic_loss import originated
 from my_llm.codec.shared.conversion import arguments, blocks, select, uri_source
 from my_llm.codec.shared.stream import BlockRef
@@ -15,7 +16,7 @@ def encode_content(
     for index, block in enumerate(blocks(content)):
         kind = block.get("type")
         if kind == "text":
-            value = select(block, "type", "text")
+            value = select(block, *constants.TEXT_PART_FIELDS)
         elif kind == "image_url" and allow_images:
             image = block.get("image_url", {})
             uri = image.get("url") if isinstance(image, dict) else image

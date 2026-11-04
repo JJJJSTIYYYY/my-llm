@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from ollama import Message, Tool
 
+import my_llm.codec.ollama.constants as constants
 from my_llm.basic.data import capture
 from my_llm.basic.exceptions import ResponseFailedError
 from my_llm.basic.semantic_loss import originated
@@ -30,14 +31,12 @@ from my_llm.codec.shared.stream import (
 from my_llm.profile.resolution import ResolvedProfile
 from my_llm.profile.types import Parameter
 
-PROTOCOL = "ollama"
-
 
 class OllamaEncoder(BaseEncoder):
     """Convert native messages, tools, events and usage to intermediate values."""
 
     __slots__ = ()
-    protocol = PROTOCOL
+    protocol = constants.PROTOCOL
     message_type = Message
     tool_type = Tool
 
@@ -49,18 +48,16 @@ class OllamaEncoder(BaseEncoder):
         """Project supported Ollama message fields before native schema validation."""
         result = []
         for message in messages:
-            value = select(
-                message, "role", "content", "thinking", "images", "tool_name", "tool_call_id"
-            )
+            value = select(message, *constants.MESSAGE_FIELDS)
             if message.get("role") == "tool" and not isinstance(
                 message.get("content"), (str, type(None))
             ):
                 value["content"] = text_result(message.get("content"))
-            if message.get("role") not in ("user", "tool"):
+            if message.get("role") not in constants.USER_TOOL_MESSAGE_ROLES:
                 value.pop("images", None)
             if message.get("tool_calls") is not None:
                 value["tool_calls"] = [
-                    {"function": select(call.get("function", {}), "name", "arguments", "index")}
+                    {"function": select(call.get("function", {}), *constants.FUNCTION_CALL_FIELDS)}
                     for call in message["tool_calls"]
                     if isinstance(call, dict)
                 ]
@@ -72,7 +69,9 @@ class OllamaEncoder(BaseEncoder):
         return [
             {
                 "type": "function",
-                "function": select(tool.get("function", {}), "name", "description", "parameters"),
+                "function": select(
+                    tool.get("function", {}), *constants.FUNCTION_DECLARATION_FIELDS
+                ),
             }
             for tool in tools
             if tool.get("type") == "function"
@@ -82,9 +81,9 @@ class OllamaEncoder(BaseEncoder):
         """Whether a native message or tool has a recognizable Ollama shape."""
         if item.get("type") == "function":
             return isinstance(item.get("function"), dict)
-        if item.get("role") not in ("user", "assistant", "system", "tool"):
+        if item.get("role") not in constants.MESSAGE_ROLES:
             return False
-        if any(key in item for key in {"parts", "type", "reasoning_content"}):
+        if any(key in item for key in constants.OTHER_PROTOCOL_MESSAGE_FIELDS):
             return False
         calls = item.get("tool_calls") or []
         if not mapping_list(calls) or any(
@@ -122,7 +121,7 @@ class OllamaEncoder(BaseEncoder):
         )
         custom_feedback = (
             isinstance(feedback_binding, Parameter)
-            and feedback_binding.path != "$.message.thinking"
+            and feedback_binding.path != constants.REASONING_PATH
         )
         for index, message in enumerate(messages):
             role = message.get("role")
@@ -132,12 +131,12 @@ class OllamaEncoder(BaseEncoder):
             content = [
                 originated(block, f"$.messages[{index}].content", message.get("content"))
                 for block in blocks(native_content)
-                if role in ("user", "tool") or block.get("type") != "image"
+                if role in constants.USER_TOOL_MESSAGE_ROLES or block.get("type") != "image"
             ]
             for image_index, native_image in enumerate(message.get("images") or []):
                 image = image_data(native_image)
                 mime = media_type(image)
-                if role not in ("user", "tool"):
+                if role not in constants.USER_TOOL_MESSAGE_ROLES:
                     continue
                 content.append(
                     originated(
@@ -156,7 +155,10 @@ class OllamaEncoder(BaseEncoder):
             reasoning = message.get("thinking")
             feedback = (
                 self.parameter_value(
-                    {"message": message}, profile, "feedback_reasoning_item", "$.message.thinking"
+                    {"message": message},
+                    profile,
+                    "feedback_reasoning_item",
+                    constants.REASONING_PATH,
                 )
                 if custom_feedback
                 else reasoning
@@ -189,7 +191,7 @@ class OllamaEncoder(BaseEncoder):
                     }
                 ]
                 role = "user"
-            result.append({"protocol": PROTOCOL, "role": role, "content": content})
+            result.append({"protocol": constants.PROTOCOL, "role": role, "content": content})
         return result
 
     def _tools(
@@ -201,7 +203,7 @@ class OllamaEncoder(BaseEncoder):
                 "functions": [
                     originated(
                         {
-                            **select(tool["function"], "name", "description"),
+                            **select(tool["function"], *constants.NATIVE_FUNCTION_METADATA_FIELDS),
                             **(
                                 {
                                     "parameters": originated(
@@ -239,17 +241,16 @@ class OllamaEncoder(BaseEncoder):
                 raise ResponseFailedError(
                     "provider generation failed", details=event.get("error", event)
                 )
-            if not any(key in event for key in ("message", "done")) and not any(
+            if not any(key in event for key in constants.RESPONSE_FIELDS) and not any(
                 self.parameter_matches_event(event, profile, name, native=False)
                 for name in ("content", "reasoning_content", "feedback_reasoning_item")
             ):
                 continue
-            ops = [metadata(project_metadata(event, (("model", "model"),)))]
+            ops = [
+                metadata(project_metadata(event, constants.RESPONSE_FIELD_TO_MIDDLEWARE_METADATA))
+            ]
             message = event.get("message", {})
-            for name, kind, default in (
-                ("content", "text", "$.message.content"),
-                ("reasoning_content", "thinking", "$.message.thinking"),
-            ):
+            for name, kind, default in constants.CONTENT_REASONING_PARAMETER_BLOCK_PATHS:
                 value = self.parameter_value(
                     event, profile, name, default, use_default=not event.get("done"), event=True
                 )
@@ -267,7 +268,7 @@ class OllamaEncoder(BaseEncoder):
                 event,
                 profile,
                 "feedback_reasoning_item",
-                "$.message.thinking",
+                constants.REASONING_PATH,
                 use_default=not event.get("done"),
                 event=True,
             )
@@ -281,7 +282,7 @@ class OllamaEncoder(BaseEncoder):
                 ops.append(
                     {
                         "type": "usage",
-                        "usage": select(event, "prompt_eval_count", "eval_count"),
+                        "usage": select(event, *constants.PROMPT_EVAL_TOKEN_COUNT_FIELDS),
                     }
                 )
                 ops.append({"type": "finish", "reason": event.get("done_reason", "stop")})
@@ -300,7 +301,7 @@ class OllamaEncoder(BaseEncoder):
                     suffix = binding.path[1:] if binding is not None else f".message.{native_field}"
                     origin_path, origin_value = event_path + suffix, operation.get("value")
                 ops[operation_index] = originated(operation, origin_path, origin_value)
-            result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
+            result.append(encode_batch(ops, constants.PROTOCOL, usage=self.usage))
         return result
 
     @optional_usage

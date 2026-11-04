@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from google.genai import types
 
+import my_llm.codec.gemini.constants as constants
 from my_llm.basic.data import _MISSING, capture
 from my_llm.basic.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.basic.semantic_loss import originated
@@ -26,16 +27,12 @@ from my_llm.codec.shared.stream import (
 from my_llm.profile.resolution import ResolvedProfile
 from my_llm.profile.types import Omit, OutputParameter, Parameter
 
-PROTOCOL = "gemini"
-TEXT_PATH = "$.candidates[0].content.parts[0].text"
-FEEDBACK_PATH = "$.candidates[0].content.parts[0]"
-
 
 class GeminiEncoder(BaseEncoder):
     """Convert native messages, tools, events and usage to intermediate values."""
 
     __slots__ = ()
-    protocol = PROTOCOL
+    protocol = constants.PROTOCOL
     message_type = types.Content
     tool_type = types.Tool
 
@@ -47,12 +44,14 @@ class GeminiEncoder(BaseEncoder):
             for part in message.get("parts", []):
                 if not isinstance(part, dict):
                     continue
-                value = select(part, "text", "thought", "thought_signature")
+                value = select(part, *constants.TEXT_PART_FIELDS)
                 if "function_call" in part:
-                    value["function_call"] = select(part["function_call"], "id", "name", "args")
+                    value["function_call"] = select(
+                        part["function_call"], *constants.FUNCTION_CALL_FIELDS
+                    )
                 if "function_response" in part:
                     value["function_response"] = select(
-                        part["function_response"], "id", "name", "response"
+                        part["function_response"], *constants.FUNCTION_RESPONSE_FIELDS
                     )
                     if "parts" in part["function_response"]:
                         value["function_response"]["parts"] = [
@@ -63,14 +62,14 @@ class GeminiEncoder(BaseEncoder):
                     response = value["function_response"].get("response", {})
                     if not isinstance(response, dict):
                         value["function_response"]["response"] = {"result": text_result(response)}
-                for field in ("inline_data", "file_data"):
+                for field in constants.INLINE_FILE_DATA_FIELDS:
                     media = part.get(field)
                     if (
                         message.get("role", "user") == "user"
                         and isinstance(media, dict)
                         and str(media.get("mime_type", "")).startswith("image/")
                     ):
-                        value[field] = select(media, "mime_type", "data", "file_uri")
+                        value[field] = select(media, *constants.IMAGE_MEDIA_FIELDS)
                 if value:
                     parts.append(value)
             result.append({**select(message, "role"), "parts": parts})
@@ -81,7 +80,7 @@ class GeminiEncoder(BaseEncoder):
         return [
             {
                 "function_declarations": [
-                    select(function, "name", "description", "parameters", "parameters_json_schema")
+                    select(function, *constants.FUNCTION_DECLARATION_FIELDS)
                     for function in tool["function_declarations"] or []
                 ]
             }
@@ -93,12 +92,9 @@ class GeminiEncoder(BaseEncoder):
         """Whether a native message or tool has a recognizable Gemini shape."""
         if "function_declarations" in item:
             return mapping_list(item["function_declarations"])
-        return item.get("role", "user") in (
-            "user",
-            "model",
-            "system",
-            "developer",
-        ) and mapping_list(item.get("parts"))
+        return item.get("role", "user") in constants.MESSAGE_ROLES and mapping_list(
+            item.get("parts")
+        )
 
     def _messages(
         self, messages: list, profile: ResolvedProfile | None = None, **parameters: Any
@@ -112,7 +108,7 @@ class GeminiEncoder(BaseEncoder):
         """
         result = []
         binding = profile.parameters.get("feedback_reasoning_item") if profile is not None else None
-        custom_feedback = isinstance(binding, Parameter) and binding.path != FEEDBACK_PATH
+        custom_feedback = isinstance(binding, Parameter) and binding.path != constants.FEEDBACK_PATH
         id_prefix = f"{uuid4().hex}_" if parameters.get("enable_message_cache", False) else ""
         # Reserve IDs from later messages too, before synthesizing any missing IDs.
         used_ids = {
@@ -140,7 +136,7 @@ class GeminiEncoder(BaseEncoder):
                         {"candidates": [{"content": {"parts": [part]}}]},
                         profile,
                         "feedback_reasoning_item",
-                        FEEDBACK_PATH,
+                        constants.FEEDBACK_PATH,
                         _MISSING,
                     )
                     block.pop("feedback_item", None)
@@ -149,7 +145,7 @@ class GeminiEncoder(BaseEncoder):
                 content.append(originated(block, f"$.messages[{index}].parts[{part_index}]", part))
             result.append(
                 {
-                    "protocol": PROTOCOL,
+                    "protocol": constants.PROTOCOL,
                     "role": role,
                     "content": content,
                 }
@@ -165,7 +161,7 @@ class GeminiEncoder(BaseEncoder):
             functions = []
             for function_index, function in enumerate(tool.get("function_declarations") or []):
                 path = f"$.tools[{index}].function_declarations[{function_index}]"
-                value = select(function, "name", "description")
+                value = select(function, *constants.NATIVE_FUNCTION_METADATA_FIELDS)
                 if function.get("parameters_json_schema") is not None:
                     value["parameters"] = originated(
                         function["parameters_json_schema"],
@@ -198,40 +194,27 @@ class GeminiEncoder(BaseEncoder):
             profile.parameters.get("feedback_reasoning_item") if profile is not None else None
         )
         custom_feedback = isinstance(feedback_parameter, OutputParameter) and (
-            feedback_parameter.path != FEEDBACK_PATH or feedback_parameter.event_type
+            feedback_parameter.path != constants.FEEDBACK_PATH or feedback_parameter.event_type
         )
         for event_index, event in enumerate(chunks):
             if event.get("type") == "error" or event.get("error"):
                 raise ResponseFailedError(
                     "provider generation failed", details=event.get("error", event)
                 )
-            if not any(
-                key in event
-                for key in (
-                    "candidates",
-                    "usage_metadata",
-                    "prompt_feedback",
-                    "response_id",
-                    "model_version",
-                )
-            ) and not any(
+            if not any(key in event for key in constants.RESPONSE_FIELDS) and not any(
                 self.parameter_matches_event(event, profile, name, native=False)
                 for name in ("content", "reasoning_content", "feedback_reasoning_item")
             ):
                 continue
-            if event.get("prompt_feedback", {}).get("block_reason") not in (
-                None,
-                "BLOCK_REASON_UNSPECIFIED",
+            if (
+                event.get("prompt_feedback", {}).get("block_reason")
+                not in constants.ABSENT_OR_UNSPECIFIED_BLOCK_REASONS
             ):
                 raise ResponseFailedError(
                     "Gemini blocked the prompt", details=event["prompt_feedback"]
                 )
             ops = [
-                metadata(
-                    project_metadata(
-                        event, (("response_id", "response_id"), ("model_version", "model"))
-                    )
-                )
+                metadata(project_metadata(event, constants.RESPONSE_FIELD_TO_MIDDLEWARE_METADATA))
             ]
             if event.get("usage_metadata") is not None:
                 ops.append({"type": "usage", "usage": event["usage_metadata"]})
@@ -246,7 +229,10 @@ class GeminiEncoder(BaseEncoder):
                 has_parts = has_parts or bool(native_parts)
                 for part_index, part in enumerate(native_parts):
                     block = encode_part(part, "")
-                    if block is not None and block["type"] in ("text", "thinking", "tool_use"):
+                    if (
+                        block is not None
+                        and block["type"] in constants.MIDDLEWARE_TEXT_THINKING_TOOL_USE_TYPES
+                    ):
                         if block["type"] == "tool_use":
                             block["input"] = capture(block["input"])
                         # A standard text path uses each native part's thought flag.
@@ -259,7 +245,7 @@ class GeminiEncoder(BaseEncoder):
                             if profile is not None:
                                 parameter = profile.parameters.get(name)
                                 if isinstance(parameter, OutputParameter) and (
-                                    parameter.path != TEXT_PATH or parameter.event_type
+                                    parameter.path != constants.TEXT_PATH or parameter.event_type
                                 ):
                                     if block["type"] == "text":
                                         continue
@@ -275,32 +261,31 @@ class GeminiEncoder(BaseEncoder):
                             }
                         )
                 reason = candidate.get("finish_reason")
-                if reason not in (None, "FINISH_REASON_UNSPECIFIED"):
-                    if reason not in ("STOP", "MAX_TOKENS"):
+                if reason not in constants.ABSENT_OR_UNSPECIFIED_FINISH_REASONS:
+                    if reason not in constants.STOP_AND_MAX_TOKENS_FINISH_REASONS:
                         raise ResponseFailedError("Gemini generation failed", details=candidate)
                     ops.append(
                         {
                             "type": "finish",
-                            "reason": "length" if reason == "MAX_TOKENS" else "stop",
+                            "reason": "length"
+                            if reason == constants.MAX_TOKENS_FINISH_REASON
+                            else "stop",
                             "allow_tail": ["metadata", "usage"],
                         }
                     )
             if profile is not None:
-                for name, kind, field in (
-                    ("content", "text", "text"),
-                    ("reasoning_content", "thinking", "reasoning"),
-                ):
+                for name, kind, field in constants.CONTENT_REASONING_PARAMETER_BLOCK_FIELDS:
                     parameter = profile.parameters.get(name)
                     if not isinstance(parameter, OutputParameter):
                         continue
                     if not self.parameter_matches_event(event, profile, name):
                         continue
-                    if parameter.path != TEXT_PATH or parameter.event_type:
+                    if parameter.path != constants.TEXT_PATH or parameter.event_type:
                         value = self.parameter_value(
                             event,
                             profile,
                             name,
-                            TEXT_PATH,
+                            constants.TEXT_PATH,
                             _MISSING,
                             use_default=has_parts or bool(parameter.event_type),
                             event=True,
@@ -330,7 +315,7 @@ class GeminiEncoder(BaseEncoder):
                     event,
                     profile,
                     "feedback_reasoning_item",
-                    FEEDBACK_PATH,
+                    constants.FEEDBACK_PATH,
                     _MISSING,
                     use_default=has_parts or bool(feedback_parameter.event_type),
                     event=True,
@@ -355,7 +340,7 @@ class GeminiEncoder(BaseEncoder):
                 if "block" in operation and not hasattr(operation["block"], "origin_path"):
                     operation["block"] = originated(operation["block"], event_path, event)
                 ops[operation_index] = originated(operation, event_path, event)
-            result.append(encode_batch(ops, PROTOCOL, usage=self.usage))
+            result.append(encode_batch(ops, constants.PROTOCOL, usage=self.usage))
         return result
 
     @optional_usage

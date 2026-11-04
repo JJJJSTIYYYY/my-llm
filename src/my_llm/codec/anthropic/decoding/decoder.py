@@ -13,6 +13,7 @@ from anthropic.types import (
 )
 from pydantic import ValidationError
 
+import my_llm.codec.anthropic.constants as constants
 from my_llm.basic.data import capture
 from my_llm.basic.exceptions import ConfigurationError, MessageValidationError, ResponseFailedError
 from my_llm.cache.compiled_cache import _MISSING, _plan, adapter, parameter_types
@@ -35,29 +36,19 @@ from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
 from my_llm.profile.types import Parameter
 
-PROTECTED = {"model", "stream", "messages", "input", "tools", "system", "previous_response_id"}
-
 REQUEST_SCHEMA = parameter_types(AsyncMessages.create)
-
-PROTOCOL = "anthropic"
-REASONS = {
-    "stop": "end_turn",
-    "tool_calls": "tool_use",
-    "length": "max_tokens",
-    "content_filter": "refusal",
-}
 
 
 class AnthropicDecoder(BaseDecoder):
     """Translate recognized intermediate values into protocol dictionaries."""
 
     __slots__ = ()
-    protocol = PROTOCOL
+    protocol = constants.PROTOCOL
 
     tool_type = ToolParam
     message_type = MessageParam
-    message_path = ("messages",)
-    tool_path = ("tools",)
+    message_path = constants.MESSAGE_PATH
+    tool_path = constants.TOOL_PATH
 
     request_schema = REQUEST_SCHEMA
 
@@ -98,7 +89,7 @@ class AnthropicDecoder(BaseDecoder):
                     continue
                 if kind == "tool_result" and isinstance(children := block.get("content"), list):
                     block = {
-                        **select_present(block, "type", "tool_use_id", "is_error", "cache_control"),
+                        **select_present(block, *constants.TOOL_RESULT_ID_ERROR_CACHE_FIELDS),
                         "content": [
                             child
                             for child_index, child in enumerate(children)
@@ -120,7 +111,7 @@ class AnthropicDecoder(BaseDecoder):
         # The SDK's InputSchema TypedDict names only some JSON Schema keys.
         # Delegate this open leaf so it is captured once rather than filtered
         # and copied before replacing it with the full application schema.
-        decode = _plan(self.tool_type, delegated_paths=(("input_schema",),)).decode
+        decode = _plan(self.tool_type, delegated_paths=constants.TOOL_SCHEMA_PATHS).decode
         result = []
         for index, original in enumerate(tools):
             filtered = decode(original, f"$.tools[{index}]")
@@ -136,7 +127,9 @@ class AnthropicDecoder(BaseDecoder):
     def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
         """Validate shared controls and protect Anthropic fields from extra-body replacement."""
         options = super().validate_parameters(profile, **parameters)
-        return validate_request_options(profile, options, protected=PROTECTED, containers=())
+        return validate_request_options(
+            profile, options, protected=constants.REQUEST_ENVELOPE_FIELDS, containers=()
+        )
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
         """Validate required history/token limits, system blocks and thinking configuration."""
@@ -170,13 +163,13 @@ class AnthropicDecoder(BaseDecoder):
         thinking = request.get("thinking", {})
         if (
             (binding := profile.parameter("reasoning_enable", "input")) is not None
-            and binding.path == "$.thinking"
+            and binding.path == constants.REASONING_ENABLE_PATH
             and "thinking" in request
             and (
                 parameters.get("reasoning") is True
                 or parameters.get("reasoning_effort", "none") != "none"
             )
-            and thinking.get("type") not in ("enabled", "adaptive")
+            and thinking.get("type") not in constants.ENABLED_ADAPTIVE_THINKING_MODES
         ):
             raise ConfigurationError("reasoning requires enabled or adaptive Anthropic thinking")
         if thinking.get("type") == "enabled":
@@ -247,7 +240,7 @@ class AnthropicDecoder(BaseDecoder):
                 if not input_content(block, profile, feedback=feedback):
                     continue
                 owner = block.get("protocol")
-                if (context_owner if owner is None else owner) != PROTOCOL:
+                if (context_owner if owner is None else owner) != constants.PROTOCOL:
                     block = foreign_block(block)
                     if block is None:
                         continue
@@ -265,7 +258,7 @@ class AnthropicDecoder(BaseDecoder):
             tools,
             lambda functions: [
                 {
-                    **select_present(f, "name", "description", "strict"),
+                    **select_present(f, *constants.MIDDLEWARE_FUNCTION_METADATA_FIELDS),
                     "input_schema": f["parameters"]
                     if f.get("parameters") is not None
                     else {"type": "object"},
@@ -291,12 +284,12 @@ class AnthropicDecoder(BaseDecoder):
                 owner = event["block"].get("protocol")
                 native_owner = (
                     parameters.get("source_protocol") if owner is None else owner
-                ) == PROTOCOL
+                ) == constants.PROTOCOL
             index = event.get("index", 0)
             if kind == "start":
                 result.append(
                     {
-                        "type": "message_start",
+                        "type": constants.MESSAGE_START,
                         "message": {
                             "id": parameters.get("response_id", "generated"),
                             "type": "message",
@@ -312,7 +305,7 @@ class AnthropicDecoder(BaseDecoder):
                 block = event["block"]
                 result.append(
                     {
-                        "type": "content_block_start",
+                        "type": constants.CONTENT_BLOCK_START,
                         "index": index,
                         "content_block": {"type": "thinking", "thinking": "", "signature": ""}
                         if block["type"] == "thinking"
@@ -320,11 +313,11 @@ class AnthropicDecoder(BaseDecoder):
                     }
                 )
             elif kind == "delta":
-                field = {"text": "text", "reasoning": "thinking"}.get(event.get("field"))
+                field = constants.MIDDLEWARE_FIELD_TO_DELTA_FIELD.get(event.get("field"))
                 if field is None:
                     continue
                 value = {
-                    "type": "content_block_delta",
+                    "type": constants.CONTENT_BLOCK_DELTA,
                     "index": index,
                     "delta": {"type": f"{field}_delta", field: event["value"]},
                 }
@@ -341,12 +334,12 @@ class AnthropicDecoder(BaseDecoder):
                 if signature and native_owner:
                     result.append(
                         {
-                            "type": "content_block_delta",
+                            "type": constants.CONTENT_BLOCK_DELTA,
                             "index": index,
-                            "delta": {"type": "signature_delta", "signature": signature},
+                            "delta": {"type": constants.SIGNATURE_DELTA, "signature": signature},
                         }
                     )
-                result.append({"type": "content_block_stop", "index": index})
+                result.append({"type": constants.CONTENT_BLOCK_STOP, "index": index})
             elif kind == "tool":
                 block = event["block"]
                 if not native_owner:
@@ -355,11 +348,11 @@ class AnthropicDecoder(BaseDecoder):
                 result.extend(
                     [
                         {
-                            "type": "content_block_start",
+                            "type": constants.CONTENT_BLOCK_START,
                             "index": index,
                             "content_block": capture(block),
                         },
-                        {"type": "content_block_stop", "index": index},
+                        {"type": constants.CONTENT_BLOCK_STOP, "index": index},
                     ]
                 )
             elif kind == "block":
@@ -374,20 +367,22 @@ class AnthropicDecoder(BaseDecoder):
                 result.extend(
                     [
                         {
-                            "type": "content_block_start",
+                            "type": constants.CONTENT_BLOCK_START,
                             "index": index,
                             "content_block": capture(block),
                         },
-                        {"type": "content_block_stop", "index": index},
+                        {"type": constants.CONTENT_BLOCK_STOP, "index": index},
                     ]
                 )
             elif kind == "finish":
-                reason = REASONS.get(event["reason"], event["reason"])
+                reason = constants.MIDDLEWARE_REASON_TO_STOP_REASON.get(
+                    event["reason"], event["reason"]
+                )
                 stop_sequence = None
-                if parameters.get("source_protocol") == PROTOCOL:
+                if parameters.get("source_protocol") == constants.PROTOCOL:
                     reason = parameters.get("native_stop_reason", reason)
                     stop_sequence = parameters.get("native_stop_sequence")
-                elif event["reason"] not in REASONS:
+                elif event["reason"] not in constants.MIDDLEWARE_REASON_TO_STOP_REASON:
                     raise ResponseFailedError(
                         "Anthropic cannot represent the source finish reason",
                         details={"reason": event["reason"]},
@@ -395,10 +390,10 @@ class AnthropicDecoder(BaseDecoder):
                 result.extend(
                     [
                         {
-                            "type": "message_delta",
+                            "type": constants.MESSAGE_DELTA,
                             "delta": {"stop_reason": reason, "stop_sequence": stop_sequence},
                         },
-                        {"type": "message_stop"},
+                        {"type": constants.MESSAGE_STOP},
                     ]
                 )
         return result

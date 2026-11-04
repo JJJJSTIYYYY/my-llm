@@ -7,6 +7,7 @@ from uuid import uuid4
 from openai.resources.responses import AsyncResponses
 from openai.types.responses import ResponseInputItemParam, ToolParam
 
+import my_llm.codec.openai.responses.constants as constants
 from my_llm.basic.data import capture, dictionary_views
 from my_llm.basic.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.basic.semantic_loss import report_loss
@@ -36,21 +37,17 @@ from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
 from my_llm.profile.types import Omit
 
-PROTECTED = {"model", "stream", "messages", "input", "tools", "previous_response_id"}
-
-PROTOCOL = "openai_responses"
-
 
 class ResponsesDecoder(BaseDecoder):
     """Translate recognized intermediate values into protocol dictionaries."""
 
     __slots__ = ()
-    protocol = PROTOCOL
+    protocol = constants.PROTOCOL
 
     tool_type = ToolParam
     message_type = ResponseInputItemParam
-    message_path = ("input",)
-    tool_path = ("tools",)
+    message_path = constants.MESSAGE_PATH
+    tool_path = constants.TOOL_PATH
 
     supports_previous_response_id = True
 
@@ -70,7 +67,10 @@ class ResponsesDecoder(BaseDecoder):
         has_calls = False
         for index, message in enumerate(dictionary_views(messages)):
             kind = message.get("type")
-            assistant = kind in ("reasoning", "function_call") or message.get("role") == "assistant"
+            assistant = (
+                kind in constants.REASONING_FUNCTION_CALL_ITEM_TYPES
+                or message.get("role") == "assistant"
+            )
             if not assistant:
                 for item_index, item in pending:
                     yield (item_index, item, has_calls)
@@ -92,11 +92,7 @@ class ResponsesDecoder(BaseDecoder):
         **parameters: Any,
     ) -> dict | None:
         """Filter one Responses item using its assistant-group reasoning context."""
-        kind = {
-            "reasoning": "thinking",
-            "function_call": "tool_use",
-            "function_call_output": "tool_result",
-        }.get(message.get("type"), "text")
+        kind = constants.INPUT_ITEM_TYPE_TO_MIDDLEWARE_BLOCK_TYPE.get(message.get("type"), "text")
         if not policy.allows(message, kind, feedback=feedback, path=path):
             return None
         if message.get("name") is not None and kind == "text":
@@ -112,7 +108,7 @@ class ResponsesDecoder(BaseDecoder):
             ]
             if len(retained) != len(content):
                 message = _plan(
-                    self.message_type, delegated_paths=(("content",), ("output",))
+                    self.message_type, delegated_paths=constants.MESSAGE_DELEGATED_PATHS
                 ).decode(message, path)
                 if message is _MISSING:
                     return None
@@ -128,7 +124,10 @@ class ResponsesDecoder(BaseDecoder):
         """Validate shared controls and protect Responses fields from extra-body replacement."""
         options = super().validate_parameters(profile, **parameters)
         return validate_request_options(
-            profile, options, protected=PROTECTED, containers=("extra_body",)
+            profile,
+            options,
+            protected=constants.REQUEST_ENVELOPE_FIELDS,
+            containers=constants.BODY_CONTAINERS,
         )
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
@@ -139,13 +138,13 @@ class ResponsesDecoder(BaseDecoder):
         if reasoning is not None:
             if not isinstance(reasoning, dict):
                 raise ConfigurationError("reasoning must be a dictionary")
-            for field in ("effort", "summary", "generate_summary"):
+            for field in constants.REASONING_FIELDS:
                 if reasoning.get(field) is not None and not isinstance(reasoning[field], str):
                     raise ConfigurationError(f"reasoning.{field} must be a string")
         return request
 
-    body_container = "extra_body"
-    body_overlay = "extra_body"
+    body_container = constants.BODY_CONTAINER
+    body_overlay = constants.BODY_CONTAINER
     omit_empty_body = True
 
     def assemble_request(
@@ -199,7 +198,7 @@ class ResponsesDecoder(BaseDecoder):
                 if not input_content(block, profile, feedback=feedback):
                     continue
                 owner = block.get("protocol") if block.get("type") != "thinking" else None
-                if (context_owner if owner is None else owner) != PROTOCOL:
+                if (context_owner if owner is None else owner) != constants.PROTOCOL:
                     block = foreign_block(block)
                 if block is not None:
                     content.append(block)
@@ -232,8 +231,7 @@ class ResponsesDecoder(BaseDecoder):
                             ),
                             **select(
                                 pending[0].get("item") or message.get("item") or {},
-                                "id",
-                                "status",
+                                *constants.ITEM_ID_STATUS_FIELDS,
                             ),
                             "role": message["role"],
                             "content": render_content(
@@ -260,7 +258,7 @@ class ResponsesDecoder(BaseDecoder):
                     result.append(
                         {
                             **select(block, "name"),
-                            **select(block.get("item", {}), "id", "status"),
+                            **select(block.get("item", {}), *constants.ITEM_ID_STATUS_FIELDS),
                             "type": "function_call",
                             "call_id": block["id"],
                             "arguments": json_arguments(block["input"]),
@@ -269,7 +267,7 @@ class ResponsesDecoder(BaseDecoder):
                 elif kind == "tool_result":
                     result.append(
                         {
-                            **select(block.get("item", {}), "id", "status"),
+                            **select(block.get("item", {}), *constants.ITEM_ID_STATUS_FIELDS),
                             "type": "function_call_output",
                             "call_id": block["tool_use_id"],
                             "output": render_content(block["content"], role="user", profile=profile)
@@ -291,7 +289,9 @@ class ResponsesDecoder(BaseDecoder):
                             result.append(
                                 {
                                     "id": f"rs_{id_prefix}{len(result)}",
-                                    **select(block.get("item", {}), "id", "status"),
+                                    **select(
+                                        block.get("item", {}), *constants.ITEM_ID_STATUS_FIELDS
+                                    ),
                                     "type": "reasoning",
                                     "summary": reasoning_summary(block),
                                 }
@@ -307,7 +307,7 @@ class ResponsesDecoder(BaseDecoder):
                             if message["role"] == "assistant"
                             else {}
                         ),
-                        **select(message.get("item", {}), "id", "status"),
+                        **select(message.get("item", {}), *constants.ITEM_ID_STATUS_FIELDS),
                         "content": [],
                     }
                 )
@@ -322,7 +322,7 @@ class ResponsesDecoder(BaseDecoder):
             lambda functions: [
                 {
                     "type": "function",
-                    **select_present(f, "name", "description", "strict"),
+                    **select_present(f, *constants.MIDDLEWARE_FUNCTION_METADATA_FIELDS),
                     "parameters": f.get("parameters"),
                     "strict": f.get("strict") or False,
                 }
@@ -351,12 +351,12 @@ class ResponsesDecoder(BaseDecoder):
                 )
                 native_owner = (
                     parameters.get("source_protocol") if owner is None else owner
-                ) == PROTOCOL
+                ) == constants.PROTOCOL
             index, part_index, item_id, native = self._address(event, parameters)
             if kind == "start":
                 result.append(
                     {
-                        "type": "response.created",
+                        "type": constants.RESPONSE_CREATED,
                         "response": {
                             **self._response_envelope(**parameters),
                             "status": "in_progress",
@@ -381,13 +381,13 @@ class ResponsesDecoder(BaseDecoder):
                     if native:
                         item = self._added_item(parameters["response_items"][str(index)])
                     result.append(
-                        {"type": "response.output_item.added", "output_index": index, "item": item}
+                        {"type": constants.OUTPUT_ITEM_ADDED, "output_index": index, "item": item}
                     )
                 result.append(
                     {
-                        "type": "response.reasoning_summary_part.added"
+                        "type": constants.REASONING_SUMMARY_PART_ADDED
                         if thinking
-                        else "response.content_part.added",
+                        else constants.CONTENT_PART_ADDED,
                         "item_id": item_id,
                         "output_index": index,
                         "summary_index" if thinking else "content_index": part_index,
@@ -399,9 +399,9 @@ class ResponsesDecoder(BaseDecoder):
             elif kind == "delta" and event["field"] in ("text", "reasoning"):
                 thinking = event["field"] == "reasoning"
                 value = {
-                    "type": "response.reasoning_summary_text.delta"
+                    "type": constants.REASONING_SUMMARY_TEXT_DELTA
                     if thinking
-                    else "response.output_text.delta",
+                    else constants.OUTPUT_TEXT_DELTA,
                     "item_id": item_id,
                     "output_index": index,
                     "summary_index" if thinking else "content_index": part_index,
@@ -417,9 +417,9 @@ class ResponsesDecoder(BaseDecoder):
                 value = block.get("reasoning" if thinking else "text") or ""
                 result.append(
                     {
-                        "type": "response.reasoning_summary_text.done"
+                        "type": constants.REASONING_SUMMARY_TEXT_DONE
                         if thinking
-                        else "response.output_text.done",
+                        else constants.OUTPUT_TEXT_DONE,
                         "item_id": item_id,
                         "output_index": index,
                         "summary_index" if thinking else "content_index": part_index,
@@ -439,9 +439,9 @@ class ResponsesDecoder(BaseDecoder):
                 )
                 result.append(
                     {
-                        "type": "response.reasoning_summary_part.done"
+                        "type": constants.REASONING_SUMMARY_PART_DONE
                         if thinking
-                        else "response.content_part.done",
+                        else constants.CONTENT_PART_DONE,
                         "item_id": item_id,
                         "output_index": index,
                         "summary_index" if thinking else "content_index": part_index,
@@ -451,7 +451,7 @@ class ResponsesDecoder(BaseDecoder):
                 if not native:
                     item = self._output_item(block, index, parameters.get("source_protocol"))
                     result.append(
-                        {"type": "response.output_item.done", "output_index": index, "item": item}
+                        {"type": constants.OUTPUT_ITEM_DONE, "output_index": index, "item": item}
                     )
             elif kind == "tool":
                 item = (
@@ -461,10 +461,7 @@ class ResponsesDecoder(BaseDecoder):
                         ),
                         **select(
                             parameters["response_items"][str(index)],
-                            "id",
-                            "status",
-                            "name",
-                            "call_id",
+                            *constants.FUNCTION_CALL_ITEM_IDENTITY_FIELDS,
                         ),
                     }
                     if native
@@ -473,12 +470,12 @@ class ResponsesDecoder(BaseDecoder):
                 result.extend(
                     [
                         {
-                            "type": "response.output_item.added",
+                            "type": constants.OUTPUT_ITEM_ADDED,
                             "output_index": index,
                             "item": {**item, "status": "in_progress"},
                         },
                         {
-                            "type": "response.function_call_arguments.done",
+                            "type": constants.FUNCTION_CALL_ARGUMENTS_DONE,
                             "output_index": index,
                             "item_id": item_id,
                             "arguments": item["arguments"],
@@ -488,7 +485,7 @@ class ResponsesDecoder(BaseDecoder):
                 )
                 if not native:
                     result.append(
-                        {"type": "response.output_item.done", "output_index": index, "item": item}
+                        {"type": constants.OUTPUT_ITEM_DONE, "output_index": index, "item": item}
                     )
             elif kind == "block":
                 block = event["block"]
@@ -502,22 +499,22 @@ class ResponsesDecoder(BaseDecoder):
                 item = self._output_item(block, index, parameters.get("source_protocol"))
                 result.append(
                     {
-                        "type": "response.output_item.added",
+                        "type": constants.OUTPUT_ITEM_ADDED,
                         "output_index": index,
                         "item": self._added_item(item),
                     }
                 )
                 if not native:
                     result.append(
-                        {"type": "response.output_item.done", "output_index": index, "item": item}
+                        {"type": constants.OUTPUT_ITEM_DONE, "output_index": index, "item": item}
                     )
             elif kind == "finish":
                 # Truncation and filtering are incomplete Responses, not successful ends.
-                incomplete = {
-                    "length": "max_output_tokens",
-                    "content_filter": "content_filter",
-                }.get(event["reason"])
-                if incomplete is None and event["reason"] not in ("stop", "tool_calls"):
+                incomplete = constants.MIDDLEWARE_REASON_TO_INCOMPLETE_REASON.get(event["reason"])
+                if (
+                    incomplete is None
+                    and event["reason"] not in constants.STOP_AND_TOOL_CALLS_REASONS
+                ):
                     raise ResponseFailedError(
                         "Responses cannot represent the source finish reason",
                         details={"reason": event["reason"]},
@@ -535,21 +532,23 @@ class ResponsesDecoder(BaseDecoder):
                         if output_index not in represented:
                             result.append(
                                 {
-                                    "type": "response.output_item.added",
+                                    "type": constants.OUTPUT_ITEM_ADDED,
                                     "output_index": output_index,
                                     "item": self._added_item(item),
                                 }
                             )
                         result.append(
                             {
-                                "type": "response.output_item.done",
+                                "type": constants.OUTPUT_ITEM_DONE,
                                 "output_index": output_index,
                                 "item": item,
                             }
                         )
                 result.append(
                     {
-                        "type": "response.incomplete" if incomplete else "response.completed",
+                        "type": constants.RESPONSE_INCOMPLETE
+                        if incomplete
+                        else constants.RESPONSE_COMPLETED,
                         "response": {
                             **self._response_envelope(**parameters),
                             "status": "incomplete" if incomplete else "completed",
@@ -612,7 +611,7 @@ class ResponsesDecoder(BaseDecoder):
         item = self._messages([{"role": "assistant", "content": [block], "protocol": origin}])[0]
         if block.get("type") == "thinking" and isinstance(block.get("feedback_item"), dict):
             item = capture(item)
-        if origin != PROTOCOL:
+        if origin != constants.PROTOCOL:
             item["id"] = f"item_{index}"
         item.setdefault("id", f"item_{index}")
         item.setdefault("status", "completed")
@@ -626,7 +625,7 @@ class ResponsesDecoder(BaseDecoder):
             for entry in entries:
                 block = entry["block"]
                 if (
-                    origin != PROTOCOL
+                    origin != constants.PROTOCOL
                     and block.get("type") == "thinking"
                     and not block.get("reasoning")
                 ):
@@ -670,13 +669,13 @@ class ResponsesDecoder(BaseDecoder):
                 item = self._output_item(blocks[0], int(index), origin)
             else:
                 continue
-            item.update(select(header, "id", "status", "name", "call_id"))
+            item.update(select(header, *constants.FUNCTION_CALL_ITEM_IDENTITY_FIELDS))
             result.append(item)
         return result
 
     def _native_items(self, parameters: dict) -> bool:
         """Whether source Responses metadata supports preserving native item identities."""
-        return parameters.get("source_protocol") == PROTOCOL and bool(
+        return parameters.get("source_protocol") == constants.PROTOCOL and bool(
             parameters.get("response_items")
         )
 
@@ -692,7 +691,7 @@ class ResponsesDecoder(BaseDecoder):
 
     def _added_item(self, item: dict) -> dict:
         """Build an in-progress item header with empty content, summary or arguments."""
-        result = select(item, "type", "id", "role", "status", "call_id", "name")
+        result = select(item, *constants.ITEM_HEADER_FIELDS)
         result["status"] = "in_progress"
         if item["type"] == "message":
             result.setdefault("role", "assistant")

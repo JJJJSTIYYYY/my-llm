@@ -3,6 +3,7 @@
 import json
 from typing import Any
 
+import my_llm.codec.openai.responses.constants as constants
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.codec.shared.conversion import select, text_result
 from my_llm.codec.shared.input import input_content, without_feedback
@@ -55,7 +56,7 @@ def foreign_block(block: dict) -> dict | None:
     if kind == "tool_result":
         value = block.get("content")
         return {
-            **select(block, "type", "tool_use_id", "name", "item"),
+            **select(block, *constants.MIDDLEWARE_TOOL_RESULT_IDENTITY_FIELDS),
             "content": [
                 projected for child in value if (projected := foreign_block(child)) is not None
             ]
@@ -64,6 +65,6 @@ def foreign_block(block: dict) -> dict | None:
         }
     if kind == "thinking":
         return without_feedback(block)
-    if kind in ("text", "tool_use") and block.get("signature"):
+    if kind in constants.MIDDLEWARE_TEXT_TOOL_USE_TYPES and block.get("signature"):
         report_loss(block, "Responses cannot preserve another protocol's reasoning signature")
-    return block if kind in ("text", "image", "tool_use") else None
+    return block if kind in constants.MIDDLEWARE_TEXT_IMAGE_TOOL_USE_TYPES else None

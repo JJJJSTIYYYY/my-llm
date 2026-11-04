@@ -54,63 +54,6 @@ def _image(value: object) -> dict | None:
     return {"type": "image", "source": source} if valid else None
 
 
-def tool_image_content(
-    draft: object,
-    losses: SemanticLossGroup,
-    context: SemanticLossContext,
-    *,
-    protocol: str,
-    reason: str,
-    message_key: str,
-    completed: WeakSet[object],
-    allow_urls: bool = True,
-) -> list[dict]:
-    """Collect movable images or markers; completed cached repairs need no work."""
-    if (
-        context.origin_source != "input"
-        or context.target_protocol != protocol
-        or context.stage != "request"
-        or not isinstance(draft, dict)
-        or not isinstance(draft.get(message_key), list)
-        or context.message_cache is not None
-        and context.message_cache.identity in completed
-    ):
-        return []
-    vision = supports_content("image", context.profile)
-    content = []
-    for loss in losses:
-        if loss.reason not in (
-            reason,
-            "model does not support image input",
-            "Ollama images require base64 data",
-        ):
-            continue
-        image = _image(loss.origin_value) if vision else None
-        content.append(
-            image
-            if image is not None and (allow_urls or image["source"]["type"] == "base64")
-            else {"type": "text", "text": "[Unsupported Image]"}
-        )
-    return content
-
-
-def append_image_message(
-    draft: dict,
-    context: SemanticLossContext,
-    message_key: str,
-    message: dict,
-    completed: WeakSet[object],
-) -> None:
-    """Publish the complete image repair and append it to this request once."""
-    cache = context.message_cache
-    if cache is not None:
-        if cache.identity in completed:
-            return
-        cache.extend([message])
-        completed.add(cache.identity)
-    draft[message_key].append(message)
-
-
 def move_tool_images(
     draft: object,
     losses: SemanticLossGroup,
@@ -121,18 +64,35 @@ def move_tool_images(
     message_key: str,
     completed: WeakSet[object],
     render: Callable[[list[dict]], dict],
-    allow_urls: bool = True,
 ) -> None:
-    """Move images or insert unsupported markers; accept all other losses."""
-    content = tool_image_content(
-        draft,
-        losses,
-        context,
-        protocol=protocol,
-        reason=reason,
-        message_key=message_key,
-        completed=completed,
-        allow_urls=allow_urls,
-    )
-    if content:
-        append_image_message(draft, context, message_key, render(content), completed)
+    """Move images or insert unsupported markers; cache each repair once."""
+    if (
+        context.origin_source != "input"
+        or context.target_protocol != protocol
+        or context.stage != "request"
+        or not isinstance(draft, dict)
+        or not isinstance(draft.get(message_key), list)
+        or context.message_cache is not None
+        and context.message_cache.identity in completed
+    ):
+        return
+    vision = supports_content("image", context.profile)
+    content = []
+    for loss in losses:
+        if loss.reason not in (
+            reason,
+            "model does not support image input",
+        ):
+            continue
+        image = _image(loss.origin_value) if vision else None
+        content.append(
+            image if image is not None else {"type": "text", "text": "[Unsupported Image]"}
+        )
+    if not content:
+        return
+    message = render(content)
+    cache = context.message_cache
+    if cache is not None:
+        cache.extend([message])
+        completed.add(cache.identity)
+    draft[message_key].append(message)

@@ -6,7 +6,6 @@ from typing import Annotated, get_args, get_origin
 from anthropic.types import MessageParam, RawMessageStreamEvent
 from anthropic.types import ToolParam as AnthropicToolParam
 from google.genai import types
-from ollama import ChatResponse, Image, Message, Tool
 from openai.types.chat import (
     ChatCompletionChunk,
     ChatCompletionMessageParam,
@@ -22,7 +21,6 @@ MESSAGE_TYPES = {
     "openai_responses": ResponseInputItemParam,
     "anthropic": MessageParam,
     "gemini": types.Content,
-    "ollama": Message,
 }
 
 
@@ -31,7 +29,6 @@ TOOL_TYPES = {
     "openai_responses": ToolParam,
     "anthropic": AnthropicToolParam,
     "gemini": types.Tool,
-    "ollama": Tool,
 }
 
 
@@ -58,7 +55,6 @@ EVENT_TYPES = {
     "openai_responses": event_models(ResponseStreamEvent),
     "anthropic": event_models(RawMessageStreamEvent),
     "gemini": types.GenerateContentResponse,
-    "ollama": ChatResponse,
 }
 
 
@@ -90,24 +86,7 @@ def assert_no_ignored_fields(native, validated):
 
 
 def assert_input_native(value, schema):
-    """Validate source fields, including association IDs absent from the Ollama SDK.
-
-    These IDs are declared by the pinned REST schema and explicitly read by the
-    input encoder. Output assertions remain strict about SDK-ignored fields.
-    """
-    if schema is Message:
-        value = {**value}
-        validator("ollama", "request").validate({"model": "test", "messages": [value]})
-        if (identity := value.pop("tool_call_id", None)) is not None:
-            assert isinstance(identity, str) and identity
-        if value.get("tool_calls"):
-            calls = []
-            for call in value["tool_calls"]:
-                call = {**call}
-                if (identity := call.pop("id", None)) is not None:
-                    assert isinstance(identity, str) and identity
-                calls.append(call)
-            value["tool_calls"] = calls
+    """Validate source fields without accepting SDK-ignored values."""
     assert_native(value, schema)
 
 
@@ -118,14 +97,9 @@ def assert_native(value, schema):
         ):
             validate_event(protocol, value)
             break
-    # The Ollama client normalizes REST base64 strings into Image objects before
-    # validating Message; the wire format remains a base64 string array.
-    sdk_value = value
-    if schema is Message and value.get("images"):
-        sdk_value = {**value, "images": [Image(value=image) for image in value["images"]]}
     # Keep the adapter alive while consuming any lazy SDK Iterable validators.
     adapter = TypeAdapter(schema)
-    validated = adapter.validate_python(sdk_value)
+    validated = adapter.validate_python(value)
     assert_no_ignored_fields(value, validated)
     # Some SDK models mark these as Optional for convenience, while the REST
     # contract requires them. Do not let model permissiveness weaken the oracle.
@@ -141,8 +115,6 @@ def assert_native(value, schema):
         for function in value.get("function_declarations", []):
             assert isinstance(function.get("name"), str) and function["name"]
             assert isinstance(function.get("description"), str)
-    if schema is Message and value.get("images"):
-        assert validated.model_dump(mode="json", exclude_none=True)["images"] == value["images"]
 
 
 def assert_output_native(value, schema):

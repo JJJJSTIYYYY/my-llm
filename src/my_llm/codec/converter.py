@@ -289,7 +289,7 @@ class MyCodec:
 
         Returns:
             Dictionary with client (SDK constructor arguments), request (SDK call
-            arguments), and local (stream flag and client_key) entries.
+            arguments), and local (stream flag) entries.
 
         Raises:
             ConfigurationError: Generation options or target request are invalid.

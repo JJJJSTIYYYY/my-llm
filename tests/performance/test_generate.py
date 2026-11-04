@@ -12,7 +12,7 @@ from tests.performance import gc_diagnostic, middleware
 from tests.performance.request_chain import probe
 from tests.performance.runner import benchmark, measure
 from tests.performance.transport import LocalSDK, wire_frames
-from tests.performance.validation import validate_exchange, validate_workload
+from tests.performance.validation import validate_exchange
 from tests.performance.workloads import Size, build, controls, profiles
 
 SMALL = Size(
@@ -57,23 +57,6 @@ async def test_complex_workload_uses_real_sdk_and_completes_without_network(
         else:
             assert sample["prepare_ms"] is sample["first_event_ms"] is None
     json.dumps(report)
-
-
-@pytest.mark.parametrize("stream", [False, True])
-async def test_ollama_base64_images_survive_input_and_request_validation(stream):
-    workload = build("ollama", "ollama", SMALL, native=True)
-    validate_workload(workload)
-    frames = wire_frames("ollama", workload.events, 37)
-    with LocalSDK("ollama", frames) as sdk:
-        provider, model = profiles("ollama")
-        async with MyLLM(provider=provider, model=model, stdio_protocol="ollama") as llm:
-            _, result = await measure(llm, workload, stream=stream, parameters=controls("ollama"))
-            validate_exchange(workload, "ollama", result, sdk)
-        request = json.loads(sdk.requests[-1].content)
-        assert request["messages"][0]["role"] == "system"
-        images = [image for message in request["messages"] for image in message.get("images", [])]
-        expected = [image for message in workload.messages for image in message.get("images", [])]
-        assert images == expected
 
 
 @pytest.mark.parametrize("upstream", PROTOCOLS)

@@ -32,7 +32,6 @@ CASES = [
     ("openai_responses", "$.extra_body.temperature", {"temperature": None}),
     ("anthropic", "$.temperature", {"temperature": None}),
     ("gemini", "$.config.temperature", {"temperature": None}),
-    ("ollama", "$.options.temperature", {"options": {"temperature": None}}),
 ]
 
 
@@ -74,10 +73,7 @@ def test_omitted_default_preserves_a_present_parameter(protocol, path, body):
 @pytest.mark.parametrize("protocol,path,body", CASES)
 def test_existing_false_or_zero_does_not_trigger_default(protocol, path, body):
     body = deepcopy(body)
-    if protocol == "ollama":
-        body["options"]["temperature"] = 0.0
-    else:
-        body["temperature"] = 0.0
+    body["temperature"] = 0.0
     assert path_value(encode_request(profile(protocol, path), extra_body=body), path) == 0.0
 
 

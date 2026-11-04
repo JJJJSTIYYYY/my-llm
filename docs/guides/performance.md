@@ -6,13 +6,13 @@
 .venv/bin/python -m tests.performance.compiled_cache --iterations 15 --warmup 2 --json /tmp/compiled-cache.json
 ```
 
-五种协议使用默认复杂原生负载，测量实际 `MyCodec.prepare()`：一组复用编译规则，另一组
+四种协议使用默认复杂原生负载，测量实际 `MyCodec.prepare()`：一组复用编译规则，另一组
 绕过五类规则 LRU，调用相同编译器。两组均关闭消息缓存，逐对核对完整请求一致与输入不变。
 按缓存/重编译、重编译/缓存交替采样；编译器切换、夹具、实例构造、断言及关闭不计时。
 保留正常 GC，记录逐样本墙钟、CPU、GC 次数、源码指纹及 SDK 版本。
 
 计时包含输入校验、翻译和最终 SDK 请求过滤校验，不创建 SDK 客户端，不含网络或模型推理。
-测量直接等待 `await MyCodec.prepare(...)` 完成，事件循环建立在计时之外；负载不注册下载 hook。
+测量直接等待 `await MyCodec.prepare(...)` 完成，事件循环建立在计时之外；负载不注册语义损失 hook。
 该对照确认当前缓存省下的编译成本，不依赖历史性能报告，也不代表前后版本的性能差异。
 暖请求的规则 miss 与条目数必须保持不变。实现见
 [compiled_cache.py](../../tests/performance/compiled_cache.py)。
@@ -47,7 +47,7 @@ Chat Completions → Chat Completions 的增量消息缓存对照：
 此对照衡量已有历史后单次请求的成本，不包含建立历史缓存的累计成本，
 也不代表完整 generate 或远程调用能获得相同比例的收益。
 
-[缓存执行测试](../../tests/unit/test_cache_execution.py)覆盖五种上游与六种输入格式：
+[缓存执行测试](../../tests/unit/test_cache_execution.py)覆盖四种上游与五种输入格式：
 预热后禁止重建 SDK 类型注解和验证器，检查缓存 miss 与条目数不变；调用计数确认增量及重试
 只编码、翻译和校验当前批次，完整历史仍经过最终原生过滤。重试去重发生在翻译之后，
 不会跳过当前批次校验，也不会复用整份请求或响应。
@@ -58,8 +58,8 @@ Chat Completions → Chat Completions 的增量消息缓存对照：
 uv run --no-sync python -m tests.performance.middleware --iterations 15 --warmup 2 --concurrency 4 --json /tmp/middleware-io.json
 ```
 
-同一源码中比较原生 stdio 与 `stdio_protocol="middleware"`：五种上游分别覆盖聚合和流式，
-共十组成对场景，按 N/M、M/N 交替顺序采样。输入包含相同历史、图片、工具 Schema、调用、
+同一源码中比较原生 stdio 与 `stdio_protocol="middleware"`：四种上游分别覆盖聚合和流式，
+共八组成对场景，按 N/M、M/N 交替顺序采样。输入包含相同历史、图片、工具 Schema、调用、
 结果和原生思维；中间夹具在计时外生成并移除 encoder 来源引用，模拟直接构造模型的调用者。
 每一对必须发出完全相同的 SDK 请求字节，响应字节及 HTTP 分块一致。
 结果分别按公开格式提取文本、思维和工具参数验证；事件数量因输出格式不同而分别记录。
@@ -110,10 +110,10 @@ P95 使用 nearest-rank；requests/s 是样本数除以样本总耗时，不是�
 
 ## 复杂负载与覆盖
 
-默认运行 60 个场景：
+默认运行 40 个场景：
 
-- native：五协议分别使用自己的复杂原生请求，覆盖流式与聚合，共 10 个场景。
-- cross：五种上游 × 五种输入输出协议，覆盖流式与聚合，共 50 个场景；请求和响应采用各协议都能表达的文本、图片与工具特性，不含跨协议思维链。
+- native：四协议分别使用自己的复杂原生请求，覆盖流式与聚合，共 8 个场景。
+- cross：四种上游 × 四种输入输出协议，覆盖流式与聚合，共 32 个场景；请求和响应采用各协议都能表达的文本、图片与工具特性，不含跨协议思维链。
 
 请求和响应由测试独立编写，不使用 MyCodec 生成原生预期。每种输入按其 stdio 协议构建，
 响应按上游协议构建。先使用固定协议 Schema 和官方 SDK 类型验证，再检查实际 SDK 发出的请求，
@@ -130,7 +130,6 @@ P95 使用 nearest-rank；requests/s 是样本数除以样本总耗时，不是�
 | Responses | developer、reasoning summary / encrypted_content、多项生命周期、交错上游工具增量与终态快照。 |
 | Anthropic | thinking / signature / redacted_thinking 历史、上游工具参数增量。 |
 | Gemini | 带签名的 thought、多 part 输出、缓存及思考用量。 |
-| Ollama | 原生 images / thinking、无 ID 的历史工具配对、对象工具参数和 NDJSON。 |
 
 签名与加密字段使用离线测试值，只验证结构和回放路径。没有统一的“最复杂合法请求”上限：
 长度及可组合能力受具体模型限制；这里提供覆盖复杂路径、可以继续放大的压力负载。
@@ -153,7 +152,7 @@ uv run --no-sync python -m tests.performance --suite cross --upstream openai_res
 uv run --no-sync python -m tests.performance --suite native --rounds 32 --tools 32 --parallel-calls 8 --text-chars 4096 --output-chars 16384 --argument-items 16 --schema-depth 4 --fragment-chars 32 --wire-chunk-bytes 256 --json /tmp/stress-performance.json
 ```
 
-普通 pytest 使用小规模负载检查全部 60 条路径、无网络保证、计时边界和数据完整性，
+普通 pytest 使用小规模负载检查全部 40 条路径、无网络保证、计时边界和数据完整性，
 不设置依赖机器速度的绝对耗时门槛：
 
 ```sh
@@ -173,11 +172,11 @@ uv run --no-sync pytest -q tests/performance
 python -m tests.performance.request_chain --iterations 9 --concurrency 4 --json /tmp/request-chain.json
 ```
 
-该入口沿用上述 60 个场景、默认复杂负载、1024 字节 HTTP 分块和 benchmark/measure 的计时边界。
+该入口沿用上述 40 个场景、默认复杂负载、1024 字节 HTTP 分块和 benchmark/measure 的计时边界。
 每个场景包含串行 cold、2 次预热和 9 次采样，以及四路并发的 2 批预热和 9 批采样。
 每份响应体在首个字节前经过 asyncio.Barrier，断言 peak_active=4，证明请求实际重叠。
 四路请求携带不同 x-request 头，并验证无串扰、结果完整及每个响应体关闭。
-Ollama 根据不同 headers 保留四个客户端，其余协议共享一个；两版遵循相同规则。
+每个实例复用一个客户端，逐请求 headers 通过请求参数传递。
 
 tracemalloc 只在独立的串行与并发内存探针启用，启用前 gc.collect，不与计时采样混合。
 内存指标包含生成结果和测试收集的 HTTP 观察值，排除预制负载与已创建客户端；它是 Python 分配峰值，
@@ -210,6 +209,6 @@ python -m tests.performance.compare /tmp/before.json /tmp/after.json --json /tmp
 python -m tests.performance.gc_diagnostic /tmp/chat-gc.json --protocol openai_chat --stdio middleware --iterations 100 --warmup 10
 ```
 
-`--protocol` 支持五种协议，默认 `openai_responses`；`--stdio` 选择报告关注的 `native` 或 `middleware`，
+`--protocol` 支持四种协议，默认 `openai_responses`；`--stdio` 选择报告关注的 `native` 或 `middleware`，
 两者仍同时测量。GC 保持原有开关与阈值；回调有额外开销，诊断数据不替换无回调计时。
 比较版本时使用相同解释器与脚本、独立进程交替运行，避免把九样本的最大值当成稳定 P95。

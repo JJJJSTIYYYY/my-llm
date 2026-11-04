@@ -102,7 +102,7 @@ if __name__ == "__main__":
     parser.add_argument("json", type=Path)
     parser.add_argument(
         "--protocol",
-        choices=("openai_chat", "openai_responses", "anthropic", "gemini", "ollama"),
+        choices=("openai_chat", "openai_responses", "anthropic", "gemini"),
         default="openai_responses",
     )
     parser.add_argument("--stdio", choices=("native", "middleware"), default="native")

@@ -32,10 +32,7 @@ from tests.helpers.tool_images import (
     picture_history,
     prepare,
 )
-from tests.helpers.tool_images import unavailable_tool_images as unavailable_tool_images
 from tests.performance.workloads import PNG, profiles
-
-pytestmark = pytest.mark.usefixtures("unavailable_tool_images")
 
 
 @pytest.mark.parametrize("target", HOOKS)
@@ -116,13 +113,10 @@ async def test_presets_read_gemini_tool_images_without_inspecting_unknown_parts(
     messages, _ = gemini_image_history(media, sdk)
     request = await prepare(configured_llm(target, "gemini"), messages)
     key = "contents" if target == "gemini" else "messages"
-    if target == "ollama" and media == "file":
-        assert request[key][-1] == {"role": "user", "content": "[Unsupported Image]"}
-    else:
-        message = request[key][-1]
-        assert message["role"] == "user"
-        assert ("cG5n" if media == "inline" else "https://example.test/p.png") in str(message)
-        assert_input_native(message, MESSAGE_TYPES[target])
+    message = request[key][-1]
+    assert message["role"] == "user"
+    assert ("cG5n" if media == "inline" else "https://example.test/p.png") in str(message)
+    assert_input_native(message, MESSAGE_TYPES[target])
     if target == "openai_chat":
         assert_chat_tool_sequence(request[key])
 
@@ -175,18 +169,12 @@ async def test_presets_use_the_resolved_profile_snapshot(target):
 
 
 @pytest.mark.parametrize("target", HOOKS)
-@pytest.mark.parametrize("source", ["openai_chat", "ollama"])
+@pytest.mark.parametrize("source", ["openai_chat"])
 async def test_model_image_losses_also_receive_markers_for_native_user_images(target, source):
-    message = (
-        {
-            "role": "user",
-            "content": [
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{PNG}"}}
-            ],
-        }
-        if source == "openai_chat"
-        else {"role": "user", "content": "picture", "images": [PNG]}
-    )
+    message = {
+        "role": "user",
+        "content": [{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{PNG}"}}],
+    }
     request = await prepare(
         configured_llm(target, source, supports_vision=Config(default_value=False)), [message]
     )

@@ -1,4 +1,4 @@
-"""Matched native vs direct middleware I/O over five real SDKs and local HTTP.
+"""Matched native vs direct middleware I/O over four native protocols and local HTTP.
 
 Run: python -m tests.performance.middleware --json /tmp/middleware.json
 """
@@ -116,14 +116,7 @@ async def run(options):
         "platform": platform.platform(),
         "versions": {
             name: version(name)
-            for name in (
-                "openai",
-                "anthropic",
-                "google-genai",
-                "ollama",
-                "httpx",
-                "pydantic",
-            )
+            for name in ("openai", "anthropic", "google-genai", "httpx", "pydantic")
         },
         "size": asdict(Size()),
         "iterations": options.iterations,

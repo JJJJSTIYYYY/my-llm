@@ -27,7 +27,6 @@ def test_native_usage_ignores_unparseable_values(protocol, value):
         ("openai_responses", {"input_tokens_details": []}),
         ("anthropic", {"input_tokens": 2, "cache_read_input_tokens": "bad"}),
         ("gemini", {"prompt_token_count": True}),
-        ("ollama", {"eval_count": -1}),
     ],
 )
 def test_invalid_native_counter_or_nested_details_return_empty(protocol, usage):
@@ -94,8 +93,6 @@ async def test_malformed_native_usage_and_auxiliary_metadata_keep_the_response(
             for name in ("id", "model", "model_version", "response_id", "created", "created_at"):
                 if name in root:
                     root[name] = ["invalid auxiliary value"]
-        if protocol == "ollama":
-            event.update(prompt_eval_count="bad", eval_count=[])
     upstream = FakeStream(incoming)
 
     @asynccontextmanager

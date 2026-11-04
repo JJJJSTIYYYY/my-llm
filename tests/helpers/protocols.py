@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-PROTOCOLS = ("openai_chat", "openai_responses", "anthropic", "gemini", "ollama")
+PROTOCOLS = ("openai_chat", "openai_responses", "anthropic", "gemini")
 CHAT_HISTORY = [
     {"role": "user", "content": "Weather?"},
     {
@@ -109,20 +109,7 @@ def history(protocol):
                 ],
             },
         ]
-    return [
-        {"role": "user", "content": "Weather?"},
-        {
-            "role": "assistant",
-            "content": "Checking",
-            "tool_calls": [
-                {
-                    "id": "call_1",
-                    "function": {"name": "weather", "arguments": {"city": "上海"}},
-                }
-            ],
-        },
-        {"role": "tool", "tool_call_id": "call_1", "tool_name": "weather", "content": "Sunny"},
-    ]
+    raise ValueError(f"unsupported protocol: {protocol!r}")
 
 
 def tools(protocol):
@@ -152,8 +139,7 @@ def tools(protocol):
                 ]
             }
         ]
-    function.pop("strict")
-    return [{"type": "function", "function": function}]
+    raise ValueError(f"unsupported protocol: {protocol!r}")
 
 
 def chat_event(*, content=None, reasoning=None, calls=None, finish=None, usage=None):
@@ -421,34 +407,4 @@ def stream_events(protocol, *, tool=False):
                 },
             },
         ]
-    return [
-        {
-            "model": "demo",
-            "created_at": "2026-10-17T00:00:00Z",
-            "message": {
-                "role": "assistant",
-                "content": "Hello",
-                **(
-                    {
-                        "tool_calls": [
-                            {
-                                "function": {"name": "weather", "arguments": {"city": "上海"}},
-                            }
-                        ]
-                    }
-                    if tool
-                    else {}
-                ),
-            },
-            "done": False,
-        },
-        {
-            "model": "demo",
-            "created_at": "2026-10-17T00:00:00Z",
-            "message": {"role": "assistant", "content": ""},
-            "done": True,
-            "done_reason": "stop",
-            "prompt_eval_count": 1,
-            "eval_count": 2,
-        },
-    ]
+    raise ValueError(f"unsupported protocol: {protocol!r}")

@@ -8,8 +8,6 @@
 - Anthropic Python SDK：Copyright 2023 Anthropic, PBC.，MIT。
   原始许可见 [licenses/anthropic-sdk.txt](licenses/anthropic-sdk.txt)，
   [固定版本](https://github.com/anthropics/anthropic-sdk-python/tree/v1.15.0)。
-- Ollama：Copyright Ollama，MIT。原始许可见 [licenses/ollama.txt](licenses/ollama.txt)，
-  [固定 OpenAPI](https://github.com/ollama/ollama/blob/2476d5ead197abe04629651028f83d48dc75d2b2/docs/openapi.yaml)。
 - Google Gemini：结构来源为 Google 提供的
   [Generative Language API Discovery 文档](https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta)，
   使用时结合 [Google 开发者站点政策](https://developers.google.com/terms/site-policies)

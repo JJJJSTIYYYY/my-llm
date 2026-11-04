@@ -29,8 +29,6 @@ def request_history(protocol, request):
 def request_limit(protocol, request):
     if protocol == "gemini":
         return request["generationConfig"]["maxOutputTokens"]
-    if protocol == "ollama":
-        return request["options"]["num_predict"]
     return request[
         {
             "openai_chat": "max_completion_tokens",
@@ -104,8 +102,7 @@ async def test_incremental_native_histories_cross_all_protocol_paths(upstream, s
                 for field in ("enable_message_cache", "message_cache_key", "message_transform")
             )
             assert initial == before and delta == delta_before
-            # Ollama binds each distinct request-header set to its SDK client.
-            assert sdk.created_clients == (2 if upstream == "ollama" else 1)
+            assert sdk.created_clients == 1
             assert key in llm.codec._message_cache
         assert key not in llm.codec._message_cache
     assert all(body.closed for body in sdk.bodies)
@@ -419,7 +416,7 @@ async def test_responses_generated_item_ids_remain_unique_across_assistant_delta
             assert json.loads(sdk.requests[-1].content)["input"][-1]["id"] == "msg_external"
 
 
-@pytest.mark.parametrize("source", ["ollama", "gemini", "legacy_chat"])
+@pytest.mark.parametrize("source", ["gemini", "legacy_chat"])
 async def test_idless_tool_deltas_keep_distinct_paired_ids_without_old_validation(
     monkeypatch, source
 ):
@@ -433,12 +430,6 @@ async def test_idless_tool_deltas_keep_distinct_paired_ids_without_old_validatio
                 {"role": "model", "parts": [{"function_call": call}]},
                 {"role": "user", "parts": [{"function_response": result}]},
             ]
-        if source == "ollama":
-            call = {"function": {"name": "weather", "arguments": {}}}
-            result = {"role": "tool", "tool_name": "weather", "content": value}
-            if explicit:
-                call["id"] = result["tool_call_id"] = "call_external"
-            return [{"role": "assistant", "tool_calls": [call]}, result]
         if explicit:
             return [
                 {

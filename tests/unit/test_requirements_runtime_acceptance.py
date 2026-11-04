@@ -62,20 +62,19 @@ def test_combined_decoder_collects_every_loss_before_one_directional_hook(direct
         calls.append(draft)
         assert losses.origin_source == context.origin_source == direction
         assert context.source_protocol == "anthropic"
-        assert context.target_protocol == "ollama"
+        assert context.target_protocol == "openai_chat"
         assert set(draft) == {"messages", "tools", "chunks"}
         assert draft["messages"][0]["content"] == "complete tail"
-        assert len(draft["tools"]) == 2 and draft["chunks"][-1]["done"]
+        assert (
+            len(draft["tools"]) == 2
+            and draft["chunks"][-1]["choices"][0]["finish_reason"] == "stop"
+        )
         assert [loss.origin_path for loss in losses] == [
             "$.messages[0].content[0]",
-            "$.tools[0].input_schema",
-            "$.tools[1].input_schema",
             "$.chunks[0].content_block",
         ]
         assert losses.items[0].origin_value is messages[0]["content"][0]
-        assert losses.items[1].origin_value is tools[0]["input_schema"]
-        assert losses.items[2].origin_value is tools[1]["input_schema"]
-        assert losses.items[3].origin_value is chunks[0]["content_block"]
+        assert losses.items[1].origin_value is chunks[0]["content_block"]
         draft["messages"][0]["content"] += " repaired"
         return {"replacement": "ignored"}
 
@@ -92,7 +91,7 @@ def test_combined_decoder_collects_every_loss_before_one_directional_hook(direct
         tools,
         chunks=chunks,
         input_format="anthropic",
-        target_format="ollama",
+        target_format="openai_chat",
         origin_source=direction,
     )
     assert calls == [result]
@@ -272,8 +271,6 @@ async def test_native_tool_events_have_complete_calls_only_after_source_eof(monk
                         for choice in event.get("choices", [])
                         for call in choice["delta"].get("tool_calls", [])
                     ]
-                elif stdio == "ollama":
-                    calls = [call["function"] for call in event["message"].get("tool_calls", [])]
                 elif stdio == "gemini":
                     calls = [
                         {

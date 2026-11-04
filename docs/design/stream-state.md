@@ -12,7 +12,6 @@
 | OpenAI Responses | [流事件](https://developers.openai.com/api/reference/resources/responses/streaming-events)：output_index 标识输出项，content_index / summary_index 标识文本或思考摘要部分；完成响应提供最终 output。 |
 | Anthropic | [Streaming messages](https://platform.claude.com/docs/en/build-with-claude/streaming)：内容块按 index 开启、增量更新和关闭；签名在块关闭前到达；display=omitted 时 thinking 文本可以为空。 |
 | Gemini GenerateContent | [生成接口](https://ai.google.dev/api/generate-content)、[Thought signatures](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures)：Part 上的签名应按原样保留，签名可能出现在空文本 Part；独立 Part 不按文本相等关系合并。 |
-| Ollama | [Chat](https://docs.ollama.com/api/chat)、[Streaming](https://docs.ollama.com/capabilities/streaming)、[Tool calling](https://docs.ollama.com/capabilities/tool-calling)：分别累积 content、thinking 和工具调用，done 表示响应完成。 |
 
 Gemini 的范围仍是 `generate_content_stream`。官方思考文档的部分旧链接目前指向
 Interactions；本次查阅 GenerateContent 专属文档，没有把 Interactions 的 step/index
@@ -30,12 +29,12 @@ Encoder 无状态，只翻译本次传入事件中已识别的字段。内部批
 | block_update | 按源引用更新块元数据，例如工具名称与 ID。 |
 | block_delta | 向已引用的块追加 text、reasoning、feedback_item 内部字段或 arguments 片段；是否发布文本由块的文本字段决定。 |
 | start | 源协议显式开始响应；在增量前生成目标开始帧。 |
-| block_append | 追加独立完整块，不携带源引用，例如 GenerateContent Part、Ollama 完整工具调用。 |
+| block_append | 追加独立完整块，不携带源引用，例如 GenerateContent Part。 |
 | block_stop | 源协议关闭指定块。 |
 | snapshot | 保存已识别的终态块，并使用与实时操作一致的源引用协调每个块；不附加原始消息。 |
 | metadata / usage / reason / finish | 更新已识别的响应级信息并标记协议终态；未知原生事件不透传。 |
 
-上表就是状态机接受的全部操作：五种协议的 Encoder 只产出这些类型，其他操作（例如引用注释）
+上表就是状态机接受的全部操作：四种协议的 Encoder 只产出这些类型，其他操作（例如引用注释）
 既不产生也不处理，收到未知类型会直接报错。因此增加响应语义时需要同时修改 Encoder 与状态机。
 
 metadata 操作统一使用 `{"type": "metadata", "values": {...}, "path": (...)}`。
@@ -90,7 +89,7 @@ EOF 本身不代表成功，必须收到源协议的终止操作。重复原生�
 
 [`test_stream_state.py`](../../tests/contract/test_stream_state.py) 使用独立编写的原生事件覆盖：
 
-- 五协议中间事件经 JSON 往返后，逐块或批量输入的结果一致。
+- 四协议中间事件经 JSON 往返后，逐块或批量输入的结果一致。
 - 改变同一文本和工具参数的分片方式，Unicode、嵌套 JSON 和结果保持一致。
 - 重复文本的引用信息按输出项及内容部分隔离。
 - 最终快照补齐多个缺失块和后缀；相互矛盾的已发布文本、遗漏已有块的快照报错。
@@ -104,7 +103,7 @@ EOF 本身不代表成功，必须收到源协议的终止操作。重复原生�
 [`test_stream_materialization.py`](../../tests/contract/test_stream_materialization.py) 还验证
 物化版本失效、工具参数单次解析，以及明确来源协议的 25 对公开输出不会反向修改缓存。
 metadata 契约测试覆盖嵌套路径更新、完整子树替换、显式 None、JSON 往返和调用方数据隔离；
-独立第六协议在自己的 Encoder 中声明 trace 字段并交给自己的 Decoder 输出，
+独立扩展协议在自己的 Encoder 中声明 trace 字段并交给自己的 Decoder 输出，
 无需改共享状态机即可增加已识别的响应元数据，同时跳过未配置的相邻字段。
 
 原生结构及验证来源见[协议模板](../reference/schema/README.md)，

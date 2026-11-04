@@ -236,7 +236,6 @@ def test_chat_usage_tail_does_not_apply_missing_text_defaults(profile_factory):
             },
         ),
         ("gemini", {"candidates": [{"content": {"parts": [{"text": "native text"}]}}]}),
-        ("ollama", {"message": {"content": "native text"}}),
     ],
 )
 def test_explicit_event_type_excludes_native_deltas(protocol, chunk, profile_factory):

@@ -5,13 +5,8 @@ from copy import deepcopy
 import pytest
 
 from my_llm import (
-    Attribute,
-    Config,
     ConfigurationError,
-    ModelProfile,
     MyCodec,
-    MyLLM,
-    ProviderProfile,
     SemanticLossError,
 )
 from tests.helpers.profiles import config, parameter
@@ -19,7 +14,7 @@ from tests.helpers.protocols import history
 from tests.helpers.requests import encode_request
 
 
-@pytest.mark.parametrize("protocol", ["anthropic", "gemini", "ollama"])
+@pytest.mark.parametrize("protocol", ["anthropic", "gemini"])
 def test_unsupported_native_option_is_skipped(profile_factory, protocol):
     request = encode_request(
         profile_factory(protocol, max_tokens=parameter("max_tokens", 2048, protocol=protocol)),
@@ -35,14 +30,13 @@ def test_gemini_cannot_override_owned_configuration(profile_factory, key):
         encode_request(profile_factory("gemini"), extra_body={key: {}})
 
 
-@pytest.mark.parametrize("protocol", ["anthropic", "gemini", "ollama"])
+@pytest.mark.parametrize("protocol", ["anthropic", "gemini"])
 def test_native_request_options_are_owned(profile_factory, protocol):
     values = {
         "anthropic": {"metadata": {"user_id": "original"}},
         "gemini": {
             "safety_settings": [{"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF"}]
         },
-        "ollama": {"options": {"temperature": 0.5}},
     }[protocol]
     before = deepcopy(values)
     profile = profile_factory(
@@ -55,8 +49,6 @@ def test_native_request_options_are_owned(profile_factory, protocol):
         request["config"]["safety_settings"][0]["threshold"] = "BLOCK_ONLY_HIGH"
     elif protocol == "anthropic":
         request["metadata"]["user_id"] = "changed"
-    else:
-        request["options"]["temperature"] = 1
     assert values == before
     assert profile.get("extra_body") == before
 
@@ -69,9 +61,7 @@ def test_unknown_anthropic_option_is_not_a_validation_error(profile_factory):
     assert "unexpected" not in request
 
 
-@pytest.mark.parametrize(
-    "source", ["openai_chat", "openai_responses", "anthropic", "gemini", "ollama"]
-)
+@pytest.mark.parametrize("source", ["openai_chat", "openai_responses", "anthropic", "gemini"])
 def test_chat_can_disable_compatible_reasoning_replay(profile_factory, source):
     codec = MyCodec()
     intermediate = codec.encode(history(source), input_format=source)
@@ -100,30 +90,6 @@ def test_chat_replays_compatible_reasoning_by_default_and_when_enabled(profile_f
     assert assistant["reasoning_content"] == ""
 
 
-def test_ollama_effort_mapping_can_use_model_defined_strings(profile_factory):
-    profile = profile_factory(
-        "ollama",
-        reasoning_effort=parameter("reasoning_effort", supports=True, protocol="ollama"),
-        reasoning_effort_mapping=config({"high": "deep"}),
-    )
-    request = encode_request(profile, reasoning_effort="high")
-    assert request["think"] == "deep"
-
-
-@pytest.mark.parametrize("retries", [1, 3])
-def test_ollama_cannot_silently_ignore_requested_retries(retries):
-    instance = MyLLM(
-        stdio_protocol="openai_chat",
-        provider=ProviderProfile(
-            protocol=Config(default_value="ollama"), max_retries=config(retries)
-        ),
-        model=ModelProfile(model=Attribute(default_value="demo")),
-    )
-    with pytest.raises(SemanticLossError, match="max_retries") as caught:
-        encode_request(instance.resolved_profile)
-    assert caught.value.draft["model"] == "demo"
-
-
 @pytest.mark.parametrize("protocol,field", [("openai_chat", "n"), ("gemini", "candidate_count")])
 def test_multiple_candidates_are_losses_before_native_execution(profile_factory, protocol, field):
     with pytest.raises(SemanticLossError, match="candidate") as caught:
@@ -134,7 +100,6 @@ def test_multiple_candidates_are_losses_before_native_execution(profile_factory,
 
 def test_native_sdk_configuration_objects_remain_usable_with_generated_parameters(profile_factory):
     from google.genai import types
-    from ollama import Options
 
     thinking = types.ThinkingConfig(thinking_budget=512, include_thoughts=False)
     request = encode_request(
@@ -143,9 +108,3 @@ def test_native_sdk_configuration_objects_remain_usable_with_generated_parameter
     assert request["config"]["thinking_config"]["thinking_budget"] == -1
     assert request["config"]["thinking_config"]["include_thoughts"] is True
     assert thinking.include_thoughts is False
-    options = Options(num_predict=7, temperature=0.2)
-    request = encode_request(
-        profile_factory("ollama"), max_tokens=10, extra_body={"options": options}
-    )
-    assert request["options"] == {"num_predict": 10, "temperature": 0.2}
-    assert options.num_predict == 7

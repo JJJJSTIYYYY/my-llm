@@ -65,17 +65,6 @@ class InputPolicy:
         return kind != "thinking" or feedback
 
 
-def pad_reasoning(message: dict, field: str, *, feedback: bool, has_tool_calls: bool) -> None:
-    """Fill an absent scalar reasoning field only when tool feedback is requested."""
-    if (
-        feedback
-        and has_tool_calls
-        and message.get("role") == "assistant"
-        and message.get(field) is None
-    ):
-        message[field] = ""
-
-
 def feedback_reasoning(profile: ResolvedProfile | None, *, has_tool_calls: bool) -> bool:
     """Whether an assistant message's reasoning belongs in request history."""
     if not supports_content("thinking", profile):

@@ -84,12 +84,6 @@ def convert_usage(value, source, target):
                 "total_token_count": 14,
             },
         ),
-        (
-            "ollama",
-            {"prompt_eval_count": 1, "eval_count": 2, "eval_duration": 123},
-            "openai_chat",
-            {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
-        ),
     ],
 )
 def test_counters_follow_native_accounting(source, value, target, expected):

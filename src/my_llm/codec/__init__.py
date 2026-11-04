@@ -14,7 +14,6 @@ __all__ = [
     "PreparedOptions",
     "AnthropicCodec",
     "GeminiCodec",
-    "OllamaCodec",
     "ChatCompletionsCodec",
     "ResponsesCodec",
 ]

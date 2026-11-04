@@ -9,7 +9,7 @@ from copy import deepcopy
 
 import pytest
 
-from my_llm import MessageValidationError, MyCodec, SemanticLossError
+from my_llm import MessageValidationError, MyCodec
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import PROTOCOLS, history, stream_events, tools
 
@@ -133,27 +133,11 @@ def test_open_tool_arguments_and_json_schema_keep_arbitrary_nested_keys(source, 
     native_messages = codec.convert([call], input_format="openai_chat", target_format=source)[
         "messages"
     ]
-    native_tools = (
-        deepcopy(declaration)
-        if source == "ollama"
-        else codec.convert(tools=declaration, input_format="openai_chat", target_format=source)[
-            "tools"
-        ]
-    )
+    native_tools = codec.convert(
+        tools=declaration, input_format="openai_chat", target_format=source
+    )["tools"]
     original = deepcopy((native_messages, native_tools))
 
-    if target == "ollama":
-        with pytest.raises(SemanticLossError) as captured:
-            codec.convert(native_messages, native_tools, input_format=source, target_format=target)
-        assert captured.value.losses.items[0].origin_value["vendor_schema_keyword"] == APPLICATION
-        converted = captured.value.draft
-        normalized = codec.encode(**converted, input_format=target)
-        content = [block for message in normalized["messages"] for block in message["content"]]
-        assert (
-            next(block for block in content if block["type"] == "tool_use")["input"] == APPLICATION
-        )
-        assert (native_messages, native_tools) == original
-        return
     converted = codec.convert(
         native_messages, native_tools, input_format=source, target_format=target
     )

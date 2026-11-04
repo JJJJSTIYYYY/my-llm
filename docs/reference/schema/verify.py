@@ -35,8 +35,6 @@ def validate(schema: dict, value) -> None:
 
 
 def frames(path: Path) -> tuple[list[dict], bool]:
-    if path.suffix == ".ndjson":
-        return [json.loads(line) for line in path.read_text().splitlines() if line], False
     events, done = [], False
     for frame in path.read_text().strip().split("\n\n"):
         data = "\n".join(line[6:] for line in frame.splitlines() if line.startswith("data: "))
@@ -103,10 +101,6 @@ def lifecycle(protocol: str, events: list[dict], done: bool, error: bool) -> Non
     elif protocol == "gemini":
         assert not done
         assert events[-1]["candidates"][0]["finishReason"] != "FINISH_REASON_UNSPECIFIED"
-    elif protocol == "ollama_chat":
-        assert not done
-        assert events[-1]["done"] is True
-        assert all(event["done"] is False for event in events[:-1])
 
 
 def main() -> None:
@@ -129,12 +123,12 @@ def main() -> None:
         for case in read(folder / "templates.json")["cases"]:
             validate(read(folder / case["schema"]), case["value"])
             counts["templates"] += 1
-        for path in sorted([*folder.glob("*.sse"), *folder.glob("*.ndjson")]):
+        for path in sorted(folder.glob("*.sse")):
             values, done = frames(path)
             error = ".error." in path.name
             schema_name = (
                 "error.schema.json"
-                if error and protocol in ("openai_chat", "ollama_chat")
+                if error and protocol == "openai_chat"
                 else "stream-event.schema.json"
             )
             for value in values:

@@ -1,7 +1,7 @@
 # 中间协议与语义损失契约
 
 本文定义中间层的固定支持集合与转换边界。`strict` 按用户确认：
-Chat、Responses、Anthropic 保留，Gemini、Ollama 静默丢弃。
+Chat、Responses、Anthropic 保留，Gemini 静默丢弃。
 
 ## 支持集合
 
@@ -44,7 +44,7 @@ Responses decoder 按内容项边界分组，内容未提供身份时使用消�
 `ReasoningContent.reasoning` 统一保存接口返回的可见思维文本，包括完整思维或摘要，流式文本实时累积。
 `feedback_item` 保存下一轮接口需要的原始回传值：Responses 的完整 reasoning item、
 Anthropic 的完整 `thinking` / `redacted_thinking` 块、Gemini 的原生 thought part，
-或 Chat / Ollama 的原始思维文本。完整回传值保留到块和响应终态，不产生公开字段增量。
+或 Chat 的原始思维文本。完整回传值保留到块和响应终态，不产生公开字段增量。
 同协议按回传策略使用该值；跨协议由 decoder 丢弃并记录语义损失，可见文本单独处理。
 源协议编码时不产生损失记录。
 
@@ -119,13 +119,12 @@ hook 可任意原地编辑 draft，进入 transport 或返回用户的对象身�
 `MessageStream.result` 返回该调用最终 draft 本身；重复读取不另做复制，也不与其他调用共享。
 hook 未传时为空函数，但不会改变默认的 `raise` 策略。
 
-Chat reasoning 进入 `reasoning_content`，Responses 进入 reasoning item，Ollama 进入
-`thinking`。Anthropic / Gemini 对历史思维所需签名不能伪造。工具图片只有 Responses /
+Chat reasoning 进入 `reasoning_content`，Responses 进入 reasoning item。Anthropic / Gemini 对历史思维所需签名不能伪造。工具图片只有 Responses /
 Anthropic 原生表达；其余目标报告损失。能力声明阻止已识别支持字段表达时，同样报告损失，
 包括不支持的生成控制和原生请求字段；仅 `supports_stream` 声明项目调用能力，禁用时直接拒绝生成。
 目标 Schema 无法保持工具参数约束时报告对应工具定义损失。
 
-消息 `name` 属于支持字段。Responses、Anthropic、Gemini、Ollama 无法表达消息名称时报告
+消息 `name` 属于支持字段。Responses、Anthropic、Gemini 无法表达消息名称时报告
 损失；Chat 保留名称，除非 Profile 禁用 `supports_message_name`，此时也报告损失。
 
 ## 生命周期与缓存
@@ -146,7 +145,7 @@ SDK 客户端仍由 `MyLLM` 实例持有并复用，到实例关闭时释放；�
 
 ## 验收与性能比较
 
-验收覆盖五协议请求 / 响应转换、三种损失策略、完整 draft 与原位 hook、签名回放、
+验收覆盖四协议请求 / 响应转换、三种损失策略、完整 draft 与原位 hook、签名回放、
 工具图片、未知字段删除、完整工具调用、usage、工厂隔离、并发与资源关闭。
 比较使用同一解释器、依赖、基准代码和双方均支持的负载；旧版源码单独快照。
 协议行为变化造成的事件数变化单独报告。时间测量不启用 tracemalloc；内存、缓存和

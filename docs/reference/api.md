@@ -166,7 +166,6 @@ async def retry_unconsumed(llm):
 | `openai_responses` | Responses input/output items / tools | output items 列表 | Responses 事件字典 |
 | `anthropic` | Messages role/content / tools | assistant role/content 字典 | Messages 事件字典 |
 | `gemini` | Content role/parts / tools | model role/parts 字典 | GenerateContentResponse 字典 |
-| `ollama` | Chat role/content / tools | assistant 消息字典 | ChatResponse 字典 |
 | `middleware` | `Message` / `FunctionTool` 具体模型 | `AssistantMessage` | `MessageEvent` 具体模型 |
 
 `middleware` 是必须显式指定的 stdio 名称，不注册新协议组件，也不能作为上游协议。
@@ -330,7 +329,7 @@ Parameter 覆盖时替换完整声明。Config 字典按键合并，嵌套值整
 | `base_url` | `Config[str]` | 服务地址；未设置时遵循 SDK 默认值 |
 | `api_key` | `InputParameter[str]` | 认证值及其位置；使用所选协议支持的密钥或认证头路径 |
 | `timeout` | `Config[float]` | 正数，单位为秒 |
-| `max_retries` | `Config[int]` | 非负重试次数；Ollama 仅接受未设置或 `0` |
+| `max_retries` | `Config[int]` | 非负重试次数 |
 | `supports_stream` | `Config[bool]` | 生成要求支持流，默认继承协议的 `True` |
 | `usage_mode` | `Config[str]` | 内置协议默认 `"none"`；协议不支持的非空模式在 Decoder 记录语义损失 |
 | `models` | `Attribute[list[ModelProfile]]` | 可选模型目录，不自动选择生成模型 |
@@ -486,7 +485,7 @@ Chat 上游将同一 assistant 的工具结果按到达顺序集中到其 `tool_
 请求 hook 可以异步执行，准备阶段会等待其完成；离线转换与输出 hook 仍为同步函数，
 具体值和示例见[迁移指南](../guides/semantic-loss.md)。
 
-Chat、Gemini、Ollama 分别提供 `prebuilt.move_tool_images_to_user_message`，由调用者显式导入并在
+Chat、Gemini 分别提供 `prebuilt.move_tool_images_to_user_message`，由调用者显式导入并在
 初始化时传入；不会自动改变请求行为或默认损失策略。预设读取实例解析后的
 `supports_vision`，不能发送的图片替换为 `[Unsupported Image]`，其他损失视为已处理。
 请求阶段的 `SemanticLossContext.profile` 提供解析后的 Profile；启用缓存时，
@@ -554,11 +553,11 @@ assert converted["messages"] == [{"role": "user", "parts": [{"text": "Hello"}]}]
 | `upstream(client, request, profile)` | 返回异步上下文管理器，迭代原生事件；退出时关闭响应，由调用者管理 client |
 
 `prepare` 的 `client` 参数来自 `client_parameters`。返回值中 `client` 是 SDK 构造参数，
-`request` 是 SDK 调用参数，`local` 包含 `stream` 和 `client_key`。
+`request` 是 SDK 调用参数，`local` 包含 `stream`。
 参数准备接口不创建模型客户端或发出上游模型请求；显式注册的异步请求 hook 可以执行图片下载等 I/O。
 新增注册仅对后续创建的实例可见；实现要求和完整接入示例见[协议接入指南](../guides/adding-protocol.md)。
 
-五个内置 Codec 类从 `my_llm.codec` 导入，均无需构造参数，提供 BaseCodec 接口：
+四个内置 Codec 类从 `my_llm.codec` 导入，均无需构造参数，提供 BaseCodec 接口：
 
 | 类 | 协议名 | 所需可选依赖 |
 | --- | --- | --- |
@@ -566,7 +565,6 @@ assert converted["messages"] == [{"role": "user", "parts": [{"text": "Hello"}]}]
 | `ResponsesCodec` | `openai_responses` | `my-llm-py[openai]` |
 | `AnthropicCodec` | `anthropic` | `my-llm-py[anthropic]` |
 | `GeminiCodec` | `gemini` | `my-llm-py[google-genai]` |
-| `OllamaCodec` | `ollama` | `my-llm-py[ollama]` |
 
 内置协议在对应依赖可用时自动注册，无需再次手动注册。
 

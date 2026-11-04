@@ -217,9 +217,7 @@ def test_invalid_request_parameters(profile_factory, kwargs):
         codec(profile_factory()).encode([{"role": "user", "content": "x"}], tools=omit, **kwargs)
 
 
-@pytest.mark.parametrize(
-    "protocol,key", [("openai_chat", "reasoning_content"), ("ollama", "thinking")]
-)
+@pytest.mark.parametrize("protocol,key", [("openai_chat", "reasoning_content")])
 @pytest.mark.parametrize("thinking", [True, False])
 @pytest.mark.parametrize("feedback", ["always", "when_tool_calls", "none"])
 @pytest.mark.parametrize("has_calls", [True, False])
@@ -256,7 +254,7 @@ def test_reasoning_replay_pads_tool_calls_according_to_feedback(
         assert result[key] == (visible if visible and same_protocol else "")
 
 
-@pytest.mark.parametrize("protocol", ["anthropic", "gemini", "ollama"])
+@pytest.mark.parametrize("protocol", ["anthropic", "gemini"])
 def test_native_generation_parameters_and_tools(profile_factory, protocol, function_tool):
     profile = profile_factory(
         protocol,
@@ -272,12 +270,9 @@ def test_native_generation_parameters_and_tools(profile_factory, protocol, funct
         assert request["config"]["max_output_tokens"] == 2048
         assert request["config"]["automatic_function_calling"]["disable"]
         assert request["config"]["thinking_config"]["include_thoughts"]
-    else:
-        assert request["options"]["num_predict"] == 2048
-        assert request["think"] is True
 
 
-@pytest.mark.parametrize("protocol", ["openai_chat", "anthropic", "gemini", "ollama"])
+@pytest.mark.parametrize("protocol", ["openai_chat", "anthropic", "gemini"])
 @pytest.mark.parametrize("policy", ["raise", "ignore", "hook"])
 def test_unsupported_previous_response_id_uses_loss_policy(profile_factory, protocol, policy):
     observed = []

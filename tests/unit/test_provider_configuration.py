@@ -82,7 +82,6 @@ def test_api_key_header_path_uses_the_official_sdk_header_option(monkeypatch, pr
         "openai_responses": "my_llm.codec.openai.responses.transport.AsyncOpenAI",
         "anthropic": "my_llm.codec.anthropic.transport.AsyncAnthropic",
         "gemini": "my_llm.codec.gemini.transport.genai.Client",
-        "ollama": "my_llm.codec.ollama.transport.AsyncOllama",
     }[protocol]
     monkeypatch.setattr(target, factory)
     llm = MyLLM(
@@ -98,7 +97,7 @@ def test_api_key_header_path_uses_the_official_sdk_header_option(monkeypatch, pr
     if protocol == "gemini":
         headers = options["http_options"].headers
     else:
-        headers = options["headers" if protocol == "ollama" else "default_headers"]
+        headers = options["default_headers"]
     assert headers == {header: "local-header-key"}
 
 
@@ -126,16 +125,6 @@ def test_api_key_source_is_fixed_in_profile():
         protocol=Config(default_value="openai_chat"), api_key=parameter("api_key", "local")
     )
     assert provider.api_key.source == "input"
-
-
-def test_ollama_rejects_an_sdk_api_key_argument():
-    with pytest.raises(ConfigurationError, match="Ollama api_key"):
-        MyLLM(
-            provider=ProviderProfile(
-                protocol=Config(default_value="ollama"), api_key=parameter("api_key", "local")
-            ),
-            model=ModelProfile(model=Attribute(default_value="demo")),
-        )
 
 
 @pytest.mark.parametrize("disabled", [False, omit])

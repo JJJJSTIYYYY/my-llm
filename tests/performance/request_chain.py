@@ -137,7 +137,7 @@ async def probe(workload, stream, concurrency, iterations):
                 }
             client_count = sdk.created_clients - 1
     assert peak_active == concurrency
-    assert client_count == (concurrency if workload.protocol == "ollama" else 1)
+    assert client_count == 1
     return {
         "memory": {"current_bytes": current, "peak_bytes": peak},
         "cache_before": before_cache,
@@ -166,7 +166,7 @@ async def run(options):
         "workload_definition": "native supported text/image/tool history and signed reasoning; cross-protocol intersection without reasoning; excludes unsupported file/audio/metadata/citations",
         "versions": {
             name: version(name)
-            for name in ("openai", "anthropic", "google-genai", "ollama", "httpx", "pydantic")
+            for name in ("openai", "anthropic", "google-genai", "httpx", "pydantic")
         },
         "memory_definition": "separate tracemalloc probes after warmup and gc.collect; excludes fixtures and client construction; includes returned result and captured HTTP observations; not RSS",
         "timing_definition": "real SDK over immediate in-memory HTTP; serial benchmark boundary unchanged; concurrent batches await all complete results, two warmup batches; default GC; no tracing during timing",

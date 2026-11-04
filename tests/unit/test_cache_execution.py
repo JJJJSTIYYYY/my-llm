@@ -84,7 +84,7 @@ async def test_warm_incremental_prepare_skips_old_translation_and_type_compilati
         assert native_filters == [initial_size + 1, initial_size + 1]
         assert len(cache.get(llm._message_cache_key)) == initial_size + 1
         assert (first, delta, declared) == original
-        assert not llm._clients
+        assert llm._client is None
         for name, after in caches().items():
             assert after["misses"] == before[name]["misses"], name
             assert after["currsize"] == before[name]["currsize"], name

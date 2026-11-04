@@ -6,7 +6,6 @@ from copy import deepcopy
 
 import pytest
 from google.genai import types
-from ollama import Message as OllamaMessage
 
 from my_llm import (
     AssistantMessage,
@@ -90,7 +89,7 @@ async def test_stream_retry_after_failure_cancel_or_early_close_keeps_one_batch(
         assert len(client.requests[1]["messages"]) == 1
 
 
-@pytest.mark.parametrize("source", ["ollama", "gemini", "legacy_chat"])
+@pytest.mark.parametrize("source", ["gemini", "legacy_chat"])
 async def test_retry_idless_tool_round_keeps_cached_call_ids_and_matching_results(
     monkeypatch, source
 ):
@@ -224,13 +223,9 @@ async def test_retried_messages_keep_current_tools_headers_and_generation_contro
         assert sdk.requests[1].headers["x-retry"] == "second"
 
 
-@pytest.mark.parametrize("source", ["ollama", "gemini"])
+@pytest.mark.parametrize("source", ["gemini"])
 async def test_equal_sdk_model_batches_have_stable_fingerprints(source):
-    message = (
-        OllamaMessage(role="user", content="retry-input")
-        if source == "ollama"
-        else types.Content(role="user", parts=[types.Part(text="retry-input")])
-    )
+    message = types.Content(role="user", parts=[types.Part(text="retry-input")])
     provider, model = profiles("openai_chat")
     with LocalSDK(
         "openai_chat", wire_frames("openai_chat", stream_events("openai_chat"), 61)

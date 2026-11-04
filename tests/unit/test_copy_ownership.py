@@ -7,7 +7,7 @@ import pytest
 from google.genai import types
 from pydantic import BaseModel
 
-from my_llm import MyCodec, SemanticLossError
+from my_llm import MyCodec
 from my_llm.codec.shared.options import resolve_options
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import PROTOCOLS, history, stream_events, tools
@@ -113,43 +113,6 @@ def test_repeated_public_requests_do_not_share_mutable_input(profile_factory, pr
     assert codec.request(intermediate, profile) == expected
 
 
-def test_ollama_native_schema_loss_preserves_caller_and_original_loss_value(profile_factory):
-    schema = {"type": "object", "additionalProperties": False}
-    native = {
-        "messages": [{"role": "user", "content": "complete tail"}],
-        "tools": [
-            {"type": "function", "function": {"name": "f", "parameters": schema}},
-            {"type": "function", "function": {"name": "later", "parameters": {"type": "object"}}},
-        ],
-    }
-    before = deepcopy(native)
-    profile = profile_factory("ollama", supports_function_calling=config(True))
-    decoder = MyCodec().decoder("ollama")
-
-    with pytest.raises(SemanticLossError) as caught:
-        decoder.native_request(native, profile)
-
-    assert native == before
-    assert native["tools"][0]["function"]["parameters"] is schema
-    loss = caught.value.losses.items[0]
-    assert loss.origin_value is schema
-    assert loss.origin_path == "$.tools[0].function.parameters"
-    draft = caught.value.draft
-    assert draft["tools"][0]["function"]["parameters"] == {"type": "object"}
-    assert draft["tools"][1]["function"]["name"] == "later"
-    assert draft["messages"][0]["content"] == "complete tail"
-    edit_containers(draft)
-    assert native == before
-
-
-def test_ollama_deferred_empty_images_still_belong_to_the_result(profile_factory):
-    native = {"messages": [{"role": "user", "content": "hello", "images": []}]}
-    profile = profile_factory("ollama", supports_vision=config(True))
-    result = MyCodec().decoder("ollama").native_request(native, profile)
-    result["messages"][0]["images"].append("new image")
-    assert native["messages"][0]["images"] == []
-
-
 def test_expanded_binding_owns_native_sdk_option_model(profile_factory):
     profile = profile_factory(
         "gemini",
@@ -203,7 +166,7 @@ class TrackedJSON(dict):
 def test_encoder_captures_open_tool_schema_once(protocol):
     schema = TrackedJSON({"type": "object", "properties": {"value": {"type": "string"}}})
     values = tools(protocol)
-    if protocol in ("openai_chat", "ollama"):
+    if protocol == "openai_chat":
         values[0]["function"]["parameters"] = schema
     elif protocol == "gemini":
         values[0]["function_declarations"][0]["parameters_json_schema"] = schema
@@ -230,7 +193,7 @@ def test_decoder_captures_open_tool_schema_once(protocol):
     assert schema == {"type": "object", "properties": {"value": {"type": "string"}}}
 
 
-@pytest.mark.parametrize("protocol", ["anthropic", "gemini", "ollama"])
+@pytest.mark.parametrize("protocol", ["anthropic", "gemini"])
 def test_encoder_captures_native_argument_object_once(protocol):
     payload = TrackedJSON({"nested": ["original"]})
     values = history(protocol)
@@ -479,7 +442,6 @@ def test_encoder_profile_routes_are_sdk_root_paths(protocol, profile_factory):
         "gemini": {
             "candidates": [{"content": {"parts": [{"text": "native"}]}}],
         },
-        "ollama": {"message": {"role": "assistant", "content": "native"}},
     }[protocol]
     event = {**text_event, "vendor": {"answer": "configured"}}
     profile = profile_factory(
@@ -719,21 +681,6 @@ def stream_payload_cases():
                     },
                 },
             ],
-            {},
-        ),
-        (
-            "ollama",
-            [
-                {
-                    "message": {
-                        "role": "assistant",
-                        "tool_calls": [
-                            {"function": {"name": "lookup", "arguments": payload}},
-                        ],
-                    }
-                }
-            ],
-            [{"type": "tool", "index": 0, "block": tool}],
             {},
         ),
         (

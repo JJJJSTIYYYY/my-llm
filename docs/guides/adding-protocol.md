@@ -7,7 +7,7 @@ Transport 只构造／调用 SDK、关闭客户端及本次响应。四个基类
 ## 目录与实例生命周期
 
 协议包包含 codec.py、transport.py、encoding/encoder.py、decoding/decoder.py；内容辅助放在各方向 content.py，
-双向共用规则按职责直接放在协议根目录。例如 Ollama 的公开 base64 Image 验证和 SDK 方法类型分析放在 schema.py，不再为单个模块建立 utils/。
+双向共用规则按职责直接放在协议根目录。例如 Anthropic 的内容规则放在 content.py，不再为单个模块建立 utils/。
 注册工厂每次创建独立 codec 与组件，允许实例状态；不能共享 adaptor 或可变组件。初始化文件只导出接口。
 不导入其他协议实现，也不让 Encoder / Decoder 相互导入或依赖 Transport。
 官方 SDK 类型和方法签名可用于静态 Schema 分析；SDK 客户端创建和调用只能出现在 Transport。
@@ -42,7 +42,7 @@ Decoder.result 默认返回首条消息；Responses 等协议可覆盖为列表�
 ## Decoder 的固定请求流程
 
 Decoder.prepare(intermediate, client) 返回 {client, request, local} 三部分字典：
-client 是 SDK 构造参数，request 是 SDK 调用参数，local 包含 stream 和 client_key。
+client 是 SDK 构造参数，request 是 SDK 调用参数，local 包含 stream。
 完整准备路径每次只调用一次 validate_parameters 返回 PreparedOptions，再交给 request。
 离线 Decoder.request 可自行准备一次 options；已提供 options 时直接复用。
 
@@ -64,18 +64,17 @@ assemble_request(messages, tools, profile, *, request: dict, **parameters) 只�
 | filter_messages / filter_tools | 只读借入原生叶，返回可独立修改的 SDK 值；根计划不会重复过滤同一叶。 |
 | _filter_message(message, policy, *, path, decode, feedback, **parameters) | 在基类的共同消息循环中处理一条消息；通过 InputPolicy 检查能力并调用 decode 建立 SDK 字段副本，返回 None 表示省略。 |
 | _message_inputs(messages, policy) | 默认逐条产生 (index, message, feedback)；需要跨原生 item 判断推理反馈时可覆盖分组逻辑。 |
-| message_delegated_paths | 消息过滤中需要由协议钩子捕获的叶路径，例如 Ollama 的 images。 |
+| message_delegated_paths | 消息过滤中需要由协议钩子捕获的叶路径，例如 Chat 的 content。 |
 | validate_request | 可覆盖的原生选项和组合约束检查，返回字典。 |
 | validate_profile / usage_modes | 构造期检查 SDK 路径与协议连接配置；声明支持的用量模式，不兼容模式在 Decoder 准备请求时记录损失。 |
 | client_parameters(profile) | 构造期把已解析连接配置映射到 SDK 构造 kwargs，不创建 SDK 客户端。 |
-| request_client(client, options) / client_key(client) | 默认复用实例字典及 None 键；SDK 把请求选项绑定客户端时生成请求独立变体。 |
 | allows_external_calls | 默认 False；服务端历史协议按需覆盖。 |
 
 不覆盖 final 的 request / prepare / native_request。tools=None 省略，tools=[] 显式发送空列表。
 BaseCodec.validate_profile 委托 Decoder；MyLLM 在构造时调用，并准备连接字典。
 MyCodec.request 是离线原生请求入口，共用 Decoder 请求流程；完整调用使用 MyCodec.prepare。
 中间消息的结构检查与工具关联收集共用一次遍历，关联错误在工具定义和控制项检查后报告。
-五种内置协议共用 BaseDecoder.filter_messages 的外层循环，不根据翻译标记跳过能力处理。
+四种内置协议共用 BaseDecoder.filter_messages 的外层循环，不根据翻译标记跳过能力处理。
 InputPolicy 在本次过滤开始时读取固定的模型能力和推理反馈配置，逐条检查仍保留损失来源与路径。
 message_transform、缓存和扩展 Decoder 产生的消息都经过该循环；返回后仍做最终 SDK Schema 校验，
 也会检查 filter_messages 自定义覆盖所作的修改。
@@ -92,7 +91,7 @@ def read_text_delta(encoder, event, profile):
 ```
 
 Schema 类型计划复用 cache/compiled_cache.py 的 CompiledCache 有界 LRU，只保存类型及编译规则。
-输入验证用只读 projected；Decoder 的原生 SDK 过滤使用计划 decode，隔离数据并记录无法匹配的值。
+输入验证使用计划的只读 project；Decoder 的原生 SDK 过滤使用计划 decode，隔离数据并记录无法匹配的值。
 其他需要独立可变数据的过滤使用 supported；每份请求仍单独验证。
 JSON Schema 的应用键不能作为协议字段删除。若先委派开放叶，协议钩子必须随后建立独立副本。
 
@@ -102,7 +101,7 @@ create_client(parameters: dict) 同步用已准备 kwargs 构造 SDK；默认 cl
 upstream(client, request: dict) 返回异步上下文管理器，把 **request 交给官方 SDK，
 完整消费、提前关闭、异常和取消时都释放本次响应，但不关闭借用的客户端。
 Transport 不接收 Profile、生成控制参数，也不解析路径、过滤或校验请求。
-MyLLM 根据 Decoder 生成的 client_key 管理实例缓存和最终关闭。
+MyLLM 延迟创建并复用一个实例级客户端，负责最终关闭。
 具体资源规则见[生命周期设计](../design/client-lifecycle.md)。
 
 ## Codec 组合
@@ -209,5 +208,5 @@ MyCodec / MyLLM 实例保留创建时的注册快照；注册新协议后需创�
 4. 验证正常、取消、失败、提前退出、并发隔离和客户端关闭。
 
 组件与依赖约束见[契约测试](../../tests/unit/test_native_codecs.py)和[边界测试](../../tests/contract/test_codec_boundaries.py)。
-独立第六协议的注册、默认值、请求与流集成示例见[注册测试](../../tests/integration/test_protocol_registration.py)。
+独立扩展协议的注册、默认值、请求与流集成示例见[注册测试](../../tests/integration/test_protocol_registration.py)。
 构建及完整验证命令见[开发规范](development.md)。

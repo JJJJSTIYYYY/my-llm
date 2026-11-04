@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Hashable, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import AsyncExitStack, aclosing
 from copy import deepcopy
 from dataclasses import replace
@@ -123,7 +123,7 @@ class MyLLM:
         self.model = deepcopy(model)
         self._stdio_protocol = stdio_protocol
         self._last_usage: Usage | None = None
-        self._clients: dict[Hashable, Any] = {}
+        self._client: Any = None
         self._client_resources = AsyncExitStack()
         self._closed = False
 
@@ -192,14 +192,13 @@ class MyLLM:
         self._check_open()
         profile = self.resolved_profile
         transport = self.codec.transport(profile.protocol)
-        key = prepared["local"]["client_key"]
-        if key not in self._clients:
+        if self._client is None:
             # SDK construction is synchronous: no task can interleave between
             # lookup and registration, including concurrent first requests.
             client = transport.create_client(prepared["client"])
             self._client_resources.push_async_callback(transport.close_client, client)
-            self._clients[key] = client
-        return self._clients[key]
+            self._client = client
+        return self._client
 
     async def aclose(self) -> None:
         """Close this instance and release its clients; repeated calls are harmless.
@@ -209,7 +208,7 @@ class MyLLM:
         """
         if not self._closed:
             self._closed = True
-            self._clients.clear()
+            self._client = None
             self.codec.expire_message_cache(self._message_cache_key)
             await self._client_resources.aclose()
 

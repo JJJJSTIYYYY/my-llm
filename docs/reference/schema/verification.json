@@ -1,17 +1,17 @@
 {
   "snapshot_date": "2026-10-17",
-  "validation": "Offline JSON Schema 2020-12, local ref closure, examples, SSE/NDJSON frames, lifecycle and artifact fingerprints",
+  "validation": "Offline JSON Schema 2020-12, local ref closure, examples, SSE frames, lifecycle and artifact fingerprints",
   "validator": "jsonschema 4.26.0",
   "remote_model_calls": false,
   "counts": {
-    "schemas": 24,
-    "templates": 59,
-    "stream_files": 19,
-    "stream_frames": 90
+    "schemas": 20,
+    "templates": 51,
+    "stream_files": 16,
+    "stream_frames": 85
   },
   "sha256": {
-    "NOTICE.md": "5b146fb611b31e981da08f6c599dff01f86b3763c510621ccea634e1e7be9740",
-    "README.md": "6166ba0f24babab473209dddee422972de8b95221f16cf82d4ae20c6912efdbc",
+    "NOTICE.md": "0c156a7cae41de2c109fee0b441122877b5d91934f118e564ac6fd088453c9fc",
+    "README.md": "48743efa4936a2f61221614c0fc176bc204c8d9c84f077491cc9a6c467fa3c0f",
     "anthropic/README.md": "984836ec8c12b6104c32478ae4b70264633021e1ec3cf041bd0cdb1bedb0e522",
     "anthropic/error.json": "cc9f321847abb22e3a9106c53b66c7dfe88c34a28bc96c8fcb83de542abfb76f",
     "anthropic/error.schema.json": "ca4ba71ef8fb63dbcbc12af87011fb11760ba8e6170d76b972a4aa24ac9b3109",
@@ -29,7 +29,7 @@
     "anthropic/stream.sse": "9a303b84bd6fa2856a4af3e9cba648c57790398c9a12ca3e5d07fa74767ab416",
     "anthropic/stream.tools.sse": "c229243260fae43e0823dc66566e1abfa27b9fdf680709bafa21df8ffde255f8",
     "anthropic/templates.json": "b3d233c511fbab8739942b44cb3c07812c0aad41ace2895018e29421cb4d4491",
-    "catalog.json": "532bf57499fc9d649e03a84895993758093eeb1968b7386f850f693f9450d2c9",
+    "catalog.json": "bd46fc23e175d9767c73090b7f67e6043b98fa7237d6b6efefa31fbd88109841",
     "gemini/README.md": "be0ea94bc465538259ac10626f58f0e7710513eabac4324893c2c6bf9ff1be27",
     "gemini/error.json": "94b3ecb7dba63ec83a926c7129768457cbc8a50b4e4890491785fd3f4ba3115a",
     "gemini/error.schema.json": "542cd4dce9c5e66c72fabdca608c0909097cc0aaf0897b43310575ffd0ec9f5b",
@@ -43,21 +43,7 @@
     "gemini/stream.tools.sse": "97b8248022acaf14c6709ba23a95928f10058263c594c3a88ab3e216956328dc",
     "gemini/templates.json": "2024804baf4af2c97185ce3295fdc9e328912dce3527848ef0a349dbe2d8fdfa",
     "licenses/anthropic-sdk.txt": "8bf96984ff8bcfae7e48cae76a529e8a25317ba9e02abf7fd3cc64fdf95657a6",
-    "licenses/ollama.txt": "5934ed2ce0d15154bcdb9c85203210abac0da4314af34081e36df4599f90b226",
     "licenses/openai.txt": "bcba3de214851cce46ed5af42d6698044616eeace887c3231bc7a20474ab639e",
-    "ollama_chat/README.md": "337447b8a93e7589ec6837623b40261093818ac0d49f061995f5fc5640f89c36",
-    "ollama_chat/error.json": "a4868670f40ab572d47ff9f5d0cc5e3f8bc019d3205285a54bf4c2f2dee491f2",
-    "ollama_chat/error.schema.json": "7f8752468a972ebf2cfd2fd8b22a31ba6b6786043d0a0f6e8ba41ee644bad7be",
-    "ollama_chat/http.json": "679c33e0da9dc479295662253a5a545988776766276df8f5af70fa13db8bc1f8",
-    "ollama_chat/request.json": "8cef3f571b521b1152ca92aeef7bdd013b34a939d4be696ab730fe4f489c1053",
-    "ollama_chat/request.schema.json": "aa407e07ceea250402d1ec96aed599246e4830bcf71e5f2d1b069aca5e8367ec",
-    "ollama_chat/response.json": "0764b4dbb43bc1fc26a67472e38d16fc0f315ce34beefd612adc5a4e32d24c80",
-    "ollama_chat/response.schema.json": "cb657edd894f23d4f71d31597fcde7171d650a828d6e59e08e2fe1ee6f8ecb5d",
-    "ollama_chat/stream-event.schema.json": "ee3229490a985e8be57463b1bb93fe6e4277baefc7824ddc1c1939f2dfd0fc10",
-    "ollama_chat/stream.error.ndjson": "b37010a8606bf693ae17d670989bcd70a26fb2292a82313a222cd9c3e144d5d2",
-    "ollama_chat/stream.ndjson": "97bffaeb6b3594fa41d60ac3c0f4a89e156af3d9e84c1978d693acac83ec48de",
-    "ollama_chat/stream.tools.ndjson": "6401dae5d5605a3920f9252505054c6cbc696434a25c11a669862cfbad5374b5",
-    "ollama_chat/templates.json": "85024bc7c189f6aa01b4fd16c81bdc08af7275bc1b72fc958d70c22037718527",
     "openai_chat/README.md": "bae151a0318fa8f7aca2ba7757ed63052779a0b3562119c2d1b3e719451787f8",
     "openai_chat/error.json": "3edda91498543bfc56de8b12412fc9a35813b1e1f0dad83339856a35381a3438",
     "openai_chat/error.schema.json": "936db5b53282cdf8b69268c38f95599edd6b4904faeece3ee376b1585f6e40c2",
@@ -89,7 +75,7 @@
     "openai_responses/stream.sse": "c410ed5b7a2f24ba4dbce15e7ad464f9efabd278e9d7914b0875797fdeee47d9",
     "openai_responses/stream.tools.sse": "6a1613a638240da83aad79e168f82d8277e0d4889da9a0d647487f2ba048119b",
     "openai_responses/templates.json": "8e102f59b9e5ac3f6b7edeb139e47e8bd359ef9b65748900238c5439305ba52e",
-    "sources.json": "cd60964e2e3a495dabd959afaba7fce6f7a7cb19bbb949f553dde2ef7820cd76",
-    "verify.py": "410a539aec7572d8f79a0bc0af347c71e1e3a67c8172fbd77ecc77d57970df70"
+    "sources.json": "3022ef7b28f51c8626e1d08eb5662b6eeed39606877f3ab85303c5976fc0316f",
+    "verify.py": "2c2604adbe14bb6d02b5b99678f4adbfc60961d361658df4ea8aba70fb7c4d28"
   }
 }

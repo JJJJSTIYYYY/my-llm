@@ -24,7 +24,7 @@ MyLLM 从 BaseCodec 统一组合的 Transport 获取 create_client，保存客�
 使用 `async with MyLLM(...) as llm` 或 `await llm.aclose()` 关闭实例。
 关闭前先完成或关闭所有响应流；关闭操作幂等，关闭后拒绝新请求和未启动的流。
 SDK 客户端按实例及其事件循环使用，不跨事件循环共享。
-实例退出时按资源栈顺序关闭所有缓存客户端；单个关闭失败仍会尝试其余清理回调。
+实例退出时通过资源栈关闭客户端。
 
 独立函数 generate 创建临时 MyLLM。收集式调用在返回或异常时关闭临时实例；
 流式调用将清理回调交给 MessageStream，完整消费、提前关闭、取消或异常都会释放临时实例。
@@ -34,7 +34,7 @@ SDK 客户端按实例及其事件循环使用，不跨事件循环共享。
 
 MyLLM 在构造时完成 Profile 解析、Decoder.validate_profile 和 Decoder.client_parameters，
 只保存已准备的连接字典，不创建客户端。每次调用的 Decoder.prepare 输出 client / request / local。
-MyLLM 根据 local.client_key 缓存客户端，Transport.create_client(client参数字典) 只负责 SDK 构造。
+MyLLM 复用实例级客户端，Transport.create_client(client参数字典) 只负责 SDK 构造。
 Transport.upstream(client, request) 执行最终请求；close_client 默认 await client.close()。
 Encoder 验证输入，Decoder 负责请求参数、Schema 过滤和原生验证；Transport 不接收 Profile 或原始控制项。
 Encoder / Decoder / Transport 不保存调用数据；已翻译历史由启用后的 MessageCache 保存。
@@ -46,13 +46,8 @@ Encoder / Decoder / Transport 不保存调用数据；已翻译历史由启用�
 | OpenAI Chat / Responses | AsyncOpenAI | await client.close() | SDK stream.close() |
 | Anthropic | AsyncAnthropic | await client.close() | SDK stream.close() |
 | Gemini | genai.Client | await client.aio.aclose()，finally client.close() | 生成器和本次响应体 |
-| Ollama | AsyncClient | await client.close() | SDK 生成器 aclose() |
 
-Ollama 的公开 chat 参数没有逐请求 headers 入口，headers 只能在 SDK 客户端创建时绑定。
-因此其 client_key 使用 profile 与调用选项合并后的请求头：相同请求头复用同一 SDK 客户端，
-不同请求头各自缓存，直到实例关闭。动态请求头组合越多，缓存客户端越多；
-不通过临时改写共享 headers 或访问 SDK 私有 HTTPX 属性实现逐请求覆盖。
-其他 SDK 将动态请求头放在请求参数中，不因生成参数或请求头变化重建客户端。
+各协议将动态请求头放在请求参数中，不因生成参数或请求头变化重建客户端。
 
 ## Gemini 响应隔离
 
@@ -74,8 +69,8 @@ Decoder 仅准备 SDK 参数而不创建客户端，以及配置校验的统一�
 [依赖边界测试](../../tests/contract/test_codec_boundaries.py)防止转换实现与 Transport 相互导入。
 [并发测试](../../tests/integration/test_concurrency.py)在关闭消息缓存时，用真实 SDK 和本地 HTTP transport 验证：
 
-- 五协议各有六路首次并发混合调用，响应在同步屏障汇合；SDK 客户端只创建一次，后续调用仍复用。
-- 原有 25 种上游 / I/O 组合继续检查内容、用量、生成选项和请求头隔离。
+- 四协议各有六路首次并发混合调用，响应在同步屏障汇合；SDK 客户端只创建一次，后续调用仍复用。
+- 原有 16 种上游 / I/O 组合继续检查内容、用量、生成选项和请求头隔离。
 - 一路提前退出、一路取消、一路失败时，其他响应和共享客户端保持打开，后续仍可生成。
 - 请求在不同任务间读取与关闭时，只清理对应响应，直到 MyLLM 退出才关闭客户端。
 
@@ -85,4 +80,3 @@ Decoder 仅准备 SDK 参数而不创建客户端，以及配置校验的统一�
 - [OpenAI 官方示例](https://developers.openai.com/cookbook/examples/agents_api/apps/data_analyst/readme)：应用生命周期结束时 await client.close()。
 - [Anthropic Python SDK](https://platform.claude.com/docs/en/cli-sdks-libraries/sdks/python#managing-http-resources)：客户端的显式关闭和上下文管理。
 - [Google Gen AI SDK](https://googleapis.github.io/python-genai/)：同一客户端多次调用，以及分别关闭同步与异步客户端。
-- [Ollama 官方 SDK 源码](https://github.com/ollama/ollama-python/blob/main/ollama/_client.py)：AsyncClient.close 与 chat 的公开参数。

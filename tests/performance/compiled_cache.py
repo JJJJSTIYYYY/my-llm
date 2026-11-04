@@ -62,7 +62,7 @@ async def benchmark(protocol, iterations, warmup):
                     samples[name].append(sample)
             assert results["cached"] == results["uncached"]
             assert (workload.messages, workload.tools) == original
-        assert not llm._clients
+        assert llm._client is None
         after = caches()
         for name, info in after.items():
             assert info["misses"] == before[name]["misses"], name
@@ -86,8 +86,7 @@ async def run(options):
         "source_sha256": source(),
         "harness_sha256": harness(),
         "versions": {
-            name: version(name)
-            for name in ("openai", "anthropic", "google-genai", "ollama", "pydantic")
+            name: version(name) for name in ("openai", "anthropic", "google-genai", "pydantic")
         },
         "iterations": options.iterations,
         "warmup": options.warmup,

@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 import pytest
-from ollama import Image, Message
 from pydantic import BaseModel, ConfigDict
 from typing_extensions import TypedDict
 
@@ -140,8 +139,6 @@ def test_system_unknown_fields_do_not_enter_intermediate_or_sdk_request(
             "budget",
             ConfigurationError,
         ),
-        ("ollama", {"think": {"invalid": True}}, "think", SemanticLossError),
-        ("ollama", {"options": {"temperature": "invalid"}}, "options", ConfigurationError),
     ],
 )
 def test_direct_native_requests_validate_generation_settings(
@@ -152,7 +149,6 @@ def test_direct_native_requests_validate_generation_settings(
         "openai_responses": {"input": [{"role": "user", "content": "hello"}]},
         "anthropic": {"messages": [{"role": "user", "content": "hello"}]},
         "gemini": {"contents": [{"role": "user", "parts": [{"text": "hello"}]}]},
-        "ollama": {"messages": [{"role": "user", "content": "hello"}]},
     }[protocol]
     request = {"model": "demo", **messages, **native}
     if protocol == "anthropic":
@@ -197,12 +193,6 @@ def test_anthropic_tool_json_schema_preserves_open_keywords(profile_factory):
     assert tool == original
 
 
-@pytest.mark.parametrize("message", [None, "invalid", {"role": "user", "images": [None]}])
-def test_ollama_invalid_messages_still_report_protocol_validation_errors(message):
-    with pytest.raises(MessageValidationError):
-        MyCodec().validate_input("ollama", [message])
-
-
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_request_projection_addresses_sdk_fields_without_reading_extensions(
     profile_factory, protocol
@@ -229,8 +219,6 @@ def test_request_projection_addresses_sdk_fields_without_reading_extensions(
         request["max_tokens"] = 2048
     elif protocol == "gemini":
         request["config"] = AddressedDict(temperature=None, vendor=Unreadable())
-    elif protocol == "ollama":
-        request["options"] = AddressedDict(temperature=None, vendor=Unreadable())
     else:
         request["temperature"] = None
 
@@ -247,7 +235,7 @@ def test_request_projection_addresses_sdk_fields_without_reading_extensions(
     assert type(filtered) is dict
     assert "vendor" not in filtered
     assert all("vendor" not in message for message in filtered[bound.message_path[0]])
-    container = filtered.get("config", filtered.get("options", filtered))
+    container = filtered.get("config", filtered)
     assert type(container) is dict
     if protocol != "anthropic":
         assert container["temperature"] is None
@@ -304,24 +292,6 @@ def test_anthropic_adaptive_profile_uses_actual_translated_thinking(path):
     thinking = request["thinking"] if path == "$.thinking" else request["extra_body"]["thinking"]
     assert thinking == {"type": "adaptive"}
     assert request["max_tokens"] == 512
-
-
-def test_ollama_sdk_message_images_survive_input_validation_and_request_projection():
-    image = Image(value=b"image-data")
-    message = Message(role="user", content="hello", images=[image])
-    profile = resolve_profiles(
-        ProviderProfile(protocol=Config(default_value="ollama")),
-        ModelProfile(model=Attribute(default_value="demo"), supports_vision=config(True)),
-    )
-    bound = MyCodec().decoder("ollama")
-
-    bound.validate_values([message], bound.message_type)
-    request = bound.native_request({"model": "demo", "messages": [message]}, profile)
-
-    assert request["messages"] == [
-        {"role": "user", "content": "hello", "images": ["aW1hZ2UtZGF0YQ=="]}
-    ]
-    assert image.value == b"image-data"
 
 
 def test_nested_request_history_and_tools_own_their_parent_containers(profile_factory):
@@ -467,24 +437,6 @@ def test_gemini_checks_known_config_values_beyond_thinking(profile_factory):
         MyCodec().decoder("gemini").native_request(request, profile_factory("gemini"))
     assert isinstance(caught.value.__cause__, ValidationError)
     assert "temperature" in str(caught.value.__cause__)
-
-
-def test_direct_ollama_request_preserves_sdk_options_explicit_none(profile_factory):
-    from ollama import Options
-
-    options = Options(temperature=None, num_predict=7)
-    request = (
-        MyCodec()
-        .decoder("ollama")
-        .native_request(
-            {"messages": [{"role": "user", "content": "hello"}], "options": options},
-            profile_factory("ollama"),
-        )
-    )
-
-    assert request["options"] == {"temperature": None, "num_predict": 7}
-    request["options"]["num_predict"] = 8
-    assert options.num_predict == 7
 
 
 def test_direct_gemini_request_projects_sdk_config_and_owns_nested_values(profile_factory):

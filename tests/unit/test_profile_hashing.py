@@ -254,13 +254,13 @@ async def test_generation_uses_the_reused_changed_configuration(monkeypatch):
 
 def test_precomputed_snapshot_still_undergoes_protocol_validation():
     provider = ProviderProfile(
-        protocol=Config(default_value="ollama"),
-        api_key=InputParameter(path="$.api_key", default_value="offline-test-value"),
+        protocol=Config(default_value="openai_chat"),
+        max_tokens=InputParameter(path="$.unsupported_parameter", default_value=128),
     )
     model = ModelProfile(model=Attribute(default_value="demo"))
     result = resolve_profiles_with_hash(provider, model)
 
-    with pytest.raises(ConfigurationError, match="Ollama api_key"):
+    with pytest.raises(ConfigurationError, match="max_tokens"):
         MyLLM(provider=provider, model=model, resolve_profile_with_hash=result)
 
 

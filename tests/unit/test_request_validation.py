@@ -153,7 +153,7 @@ def test_transformed_messages_keep_capability_checks_for_every_protocol(protocol
         )
     assert any(reason in loss.reason for loss in captured.value.losses)
     assert additions == original
-    assert not llm._clients
+    assert llm._client is None
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)

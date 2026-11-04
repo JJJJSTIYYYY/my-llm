@@ -35,10 +35,7 @@ def make_llm(*, stdio_protocol="openai_chat", **parameters):
 
 def assert_no_usage(value):
     if isinstance(value, dict):
-        assert not (
-            {"usage", "usage_metadata", "usageMetadata", "prompt_eval_count", "eval_count"}
-            & value.keys()
-        )
+        assert not ({"usage", "usage_metadata", "usageMetadata"} & value.keys())
         for child in value.values():
             assert_no_usage(child)
     elif isinstance(value, list):
@@ -65,7 +62,7 @@ def test_registry_and_llms_create_independent_components():
 def test_stdio_binding_cannot_be_reassigned():
     llm = make_llm()
     with pytest.raises(AttributeError):
-        llm.stdio_protocol = "ollama"
+        llm.stdio_protocol = "gemini"
     with pytest.raises(AttributeError):
         llm.resolved_profile = make_llm().resolved_profile
     assert llm.stdio_protocol == "openai_chat"
@@ -200,7 +197,7 @@ async def test_early_close_preserves_last_completed_usage(monkeypatch):
         assert llm.get_last_usage() == Usage(total=5)
 
 
-@pytest.mark.parametrize("stdio", ["openai_chat", "ollama"])
+@pytest.mark.parametrize("stdio", ["openai_chat"])
 async def test_all_tool_calls_are_emitted_together_with_complete_arguments(monkeypatch, stdio):
     client = FakeClient(
         [

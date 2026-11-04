@@ -73,7 +73,7 @@ def complete_inputs(messages):
     )
 
 
-@pytest.mark.parametrize("target", ["openai_responses", "anthropic", "gemini", "ollama"])
+@pytest.mark.parametrize("target", ["openai_responses", "anthropic", "gemini"])
 def test_message_name_loss_keeps_all_positions_and_complete_draft(target):
     messages = [
         {"role": "user", "name": "alice", "content": "first"},
@@ -93,9 +93,7 @@ def test_message_name_loss_keeps_all_positions_and_complete_draft(target):
     assert messages == before
 
 
-@pytest.mark.parametrize(
-    "target", ["openai_chat", "openai_responses", "anthropic", "gemini", "ollama"]
-)
+@pytest.mark.parametrize("target", ["openai_chat", "openai_responses", "anthropic", "gemini"])
 @pytest.mark.parametrize("policy", ["raise", "ignore", "hook"])
 async def test_message_name_request_policies_use_complete_sdk_draft(
     profile_factory, target, policy
@@ -158,7 +156,7 @@ def test_chat_supported_message_name_is_preserved_without_loss():
     )
 
 
-@pytest.mark.parametrize("target", ["openai_responses", "anthropic", "gemini", "ollama"])
+@pytest.mark.parametrize("target", ["openai_responses", "anthropic", "gemini"])
 def test_named_typed_output_uses_output_hook_with_final_result_identity(target):
     observed = []
 
@@ -320,7 +318,7 @@ def test_midpoint_is_concrete_and_models_have_independent_application_values():
     assert "metadata" in encoded.tools[0].parameters["properties"]
 
 
-@pytest.mark.parametrize("target", ["openai_chat", "gemini", "ollama"])
+@pytest.mark.parametrize("target", ["openai_chat", "gemini"])
 def test_all_image_losses_are_collected_with_original_positions_and_complete_tail(target):
     values = picture_history()
     with pytest.raises(SemanticLossError) as caught:
@@ -423,7 +421,7 @@ def test_hook_can_raise_and_reenter_an_independent_translation():
         nested = MyCodec().convert(
             [{"role": "user", "content": "nested"}],
             input_format="openai_chat",
-            target_format="ollama",
+            target_format="openai_chat",
         )
         assert nested["messages"][0]["content"] == "nested"
         raise LookupError("user decision")
@@ -569,7 +567,6 @@ async def test_unsupported_images_report_original_values_and_complete_draft(
 @pytest.mark.parametrize("target", PROTOCOLS)
 async def test_enabled_vision_preserves_supported_images_in_requests(profile_factory, target):
     messages = image_history()
-    del messages[0]["content"][1]  # Ollama supports base64 images.
     codec = MyCodec()
     prepared = await codec.prepare(
         {**complete_inputs(messages), "max_tokens": 128},

@@ -99,13 +99,13 @@ history = [
 - 找不到此前调用的工具结果会导致所在消息整条丢弃，包括同条消息中的普通文本和其他结果。
   本条消息对工具关联的修改也会撤销。Responses 指定 `previous_response_id` 时允许引用服务端调用。
 - 缺少调用 ID 时仅为已有调用分配技术标识；无 ID 的结果一律整条丢弃，不按名称或顺序推断关联。
-  先丢弃无效结果，再为仍无有效结果的已有调用补空。Gemini / Ollama 的源 Encoder 也不推断结果 ID。
+  先丢弃无效结果，再为仍无有效结果的已有调用补空。Gemini 的源 Encoder 也不推断结果 ID。
 - 全部消息被丢弃且没有可用缓存时抛出 `MessageValidationError`，不补造 user 消息；已有缓存时复用历史。
 
 修复不修改传入模型。启用消息缓存时仅修复当前增量批次，完整工具回合应放在同一批，
 不会重新解析缓存前缀。独立的严格工具关联验证仍可用于检查历史。
-工具结果必须携带明确 ID。Ollama 已安装 SDK 的历史字段不声明关联 ID，需可靠保存工具回合时，
-可使用 middleware stdio 保存 `ToolCall.call_id`，再原样填入 `ToolResult.call_id`；不会仅凭名称关联。
+工具结果必须携带明确 ID。使用 middleware stdio 时保存 `ToolCall.call_id`，
+再原样填入 `ToolResult.call_id`；不会仅凭名称关联。
 修复通过原有消息、内容及结果部件校验循环收集，最终检查不扫描工具表或重建消息列表；
 翻译在既有循环中惰性读取有效消息及必要的空结果。回传思维链补空规则共用同一实现。
 `ToolCall.arguments` 是完整 JSON 对象，结果对象/数组应先序列化为 `TextContent`，图片使用 `ImageContent`。

@@ -11,11 +11,8 @@ from tests.helpers.chat_history import assert_chat_tool_sequence
 from tests.helpers.protocols import stream_events
 from tests.helpers.schema import validate_request
 from tests.helpers.tool_images import HOOKS, consume, request_history, responses_history
-from tests.helpers.tool_images import unavailable_tool_images as unavailable_tool_images
 from tests.performance.transport import LocalSDK, wire_frames
 from tests.performance.workloads import profiles
-
-pytestmark = pytest.mark.usefixtures("unavailable_tool_images")
 
 
 @pytest.mark.parametrize("target", HOOKS)

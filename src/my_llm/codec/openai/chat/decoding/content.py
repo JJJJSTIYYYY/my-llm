@@ -9,6 +9,17 @@ from my_llm.codec.shared.input import input_content, without_feedback
 from my_llm.profile.resolution import ResolvedProfile
 
 
+def pad_reasoning(message: dict, *, feedback: bool, has_tool_calls: bool) -> None:
+    """Fill an absent scalar reasoning field only when tool feedback is requested."""
+    if (
+        feedback
+        and has_tool_calls
+        and message.get("role") == "assistant"
+        and message.get("reasoning_content") is None
+    ):
+        message["reasoning_content"] = ""
+
+
 def render_content(content: list[dict], *, role: str = "user") -> Any:
     """Render text and user images as Chat content, compacting text-only messages."""
     result = []

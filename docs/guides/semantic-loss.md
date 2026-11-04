@@ -8,7 +8,7 @@
 
 中间层仅支持文本、用户图片、工具结果图片、思维链、工具调用、函数定义和 usage。
 audio、file、用户 metadata、refusal、citations、cache_control 等在源编码时静默丢弃。
-按本次需求确认，`strict` 在 Chat / Responses / Anthropic 保留，在 Gemini / Ollama 丢弃。
+按本次需求确认，`strict` 在 Chat / Responses / Anthropic 保留，在 Gemini 丢弃。
 JSON Schema 内应用属性不按这些名称删除。
 
 如果目标无法表达已支持的值，默认抛出公开的 `SemanticLossError`。例如，Chat 无法表达
@@ -26,8 +26,8 @@ decoder 完整翻译后统一报出本批损失，请求在发送前处理，响
 `feedback_reasoning_item` 是输出 Parameter，选择回传值提取路径，`omit` 禁用提取。
 `should_feedback_reasoning_item` 只决定回传全部历史的回传值、工具调用消息的回传值或不回传，
 因回传策略排除的内容不记录损失；例如 `when_tool_calls` 会静默跳过没有工具调用的历史思考。
-Chat / Ollama 在回传策略启用且 assistant 含工具调用时，如果缺少思考正文，分别补
-`reasoning_content=""` / `thinking=""`，不依赖本次生成是否开启 reasoning。
+Chat 在回传策略启用且 assistant 含工具调用时，如果缺少思考正文，补
+`reasoning_content=""`，不依赖本次生成是否开启 reasoning。
 `none`、`omit` 或模型声明不支持 reasoning 时不补。Anthropic / Gemini 仍要求真实原生签名，不伪造空签名。
 
 创建 `MyLLM` 时选择策略，也可以在实例上二次设置：
@@ -55,7 +55,7 @@ hook 可以原地修改、抛错、
 
 ## 预设工具图片 hook
 
-Chat Completions、Gemini 和 Ollama 的 `prebuilt` 目录提供
+Chat Completions 和 Gemini 的 `prebuilt` 目录提供
 `move_tool_images_to_user_message`。它将本批工具结果中的图片按原顺序汇总到一条新的
 user 消息，追加到本次历史末尾；原工具结果保留文字和调用关联。
 
@@ -63,7 +63,6 @@ user 消息，追加到本次历史末尾；原工具结果保留文字和调用
 | --- | --- | --- |
 | Chat Completions | `my_llm.codec.openai.chat.prebuilt` | URL、Base64 |
 | Gemini | `my_llm.codec.gemini.prebuilt` | URL、Base64 |
-| Ollama | `my_llm.codec.ollama.prebuilt` | Base64；异步下载 URL 图片并转换为 Base64，失败时使用 `[Unsupported Image]` |
 
 选择与上游目标匹配的 hook，最外层仍可使用 Anthropic 或 Responses 等协议：
 
@@ -92,22 +91,15 @@ llm = MyLLM(
 其余语义损失视为已处理，不再抛错。
 图片来源支持 Anthropic、Responses、Gemini 原生字典 / SDK 对象和直接中间模型。
 
-Ollama 预设为异步函数：模型支持视觉时并发下载本批 URL 图片，跟随 HTTP 重定向，
-请求超时为 10 秒；依据文件内容识别 PNG、JPEG、GIF、WebP。相同 URL 在本批只下载一次，
-重复图片仍按原顺序保留。HTTP 错误、超时或非图片内容替换为 `[Unsupported Image]`。
-模型不支持视觉时直接插入占位符，不下载；下载取消时关闭连接并继续传播取消。
-
 启用 `enable_message_cache=True` 时，预设会显式补写新增 user 消息，并保留此前缓存的
 系统指令、历史及当前输入 fingerprint。下一轮增量请求继续携带图片；连续重发相同批次
 （包括尚未消费的流）不会重复插图；不同工具回合即使图片数据相同也分别保留。
-下载结果和失败占位符也会缓存；相同批次重试不重复下载。取消未完成的下载不会缓存修复，
-之后重试会重新下载。下载使用请求局部 HTTP 客户端，不复用模型客户端的认证或请求头。
 
 占位消息也遵循相同的缓存与重试规则。各协议的 `prebuilt` 自己记录已处理的批次，
 通过上下文中缓存批次的 `message_cache.extend(messages)` 补写新增消息。
 `message_cache.identity` 是连续重试共享的弱引用标识，新输入批次使用新标识；
 预设使用弱集合记录处理状态，缓存过期、清空或进入新批次后，旧状态可随之释放。
-缓存不保存 hook 状态，也不对补写消息去重；何时补写、是否重试及下载取消均由 hook 负责。
+缓存不保存 hook 状态，也不对补写消息去重；何时补写、是否重试均由 hook 负责。
 只有预设新增的原生消息会写入缓存，普通 draft 修改仍仅影响当前请求。
 预设不替换全部缓存，因此 Gemini 的系统指令也会保留。预设仅用于请求阶段，
 不补偿离线 `convert()` 或输出阶段的损失。
@@ -117,7 +109,7 @@ Ollama 预设为异步函数：模型支持视觉时并发下载本批 URL 图�
 重复读取返回本次最终结果本身。修改结果不影响其他调用或输入历史。
 
 工具参数仍可从上游逐片到达，但仅在成功读取完整响应后以完整调用输出。
-Chat / Ollama 的并行工具调用出现在一个最终 `tool_calls` 列表；Anthropic / Responses
+Chat 的并行工具调用出现在一个最终 `tool_calls` 列表；Anthropic / Responses
 使用原生工具生命周期事件，每个调用携带完整参数，不发送工具参数 delta。
 
 工具结果对象 / 数组在中间层序列化为文本；Gemini 目标使用 SDK 必需的 `{"result": text}`

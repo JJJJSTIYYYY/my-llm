@@ -212,15 +212,6 @@ UNSUPPORTED_INPUTS = {
             "metadata": {"secret": "discard"},
         }
     ],
-    "ollama": [
-        {
-            "role": "user",
-            "content": "keep",
-            "audio": {"invalid": True},
-            "file": {"invalid": True},
-            "metadata": {"secret": "discard"},
-        }
-    ],
 }
 
 
@@ -401,27 +392,6 @@ def test_strict_is_preserved_only_by_the_three_declared_protocols(source, target
     )
     result = MyCodec().convert(tools=[tool], input_format=source, target_format=target)
     assert ("strict" in str(result)) == (target in ("openai_chat", "openai_responses", "anthropic"))
-
-
-def test_ollama_schema_loss_preserves_later_tools_and_exact_schema_source():
-    result = [
-        {
-            "type": "function",
-            "function": {
-                "name": "f",
-                "parameters": {"type": "object", "additionalProperties": False},
-            },
-        },
-        {"type": "function", "function": {"name": "later", "parameters": {"type": "object"}}},
-    ]
-    with pytest.raises(SemanticLossError) as captured:
-        MyCodec().convert(tools=result, input_format="openai_chat", target_format="ollama")
-    assert captured.value.losses.items[0].origin_path == "$.tools[0].function.parameters"
-    assert captured.value.losses.items[0].origin_value == {
-        "type": "object",
-        "additionalProperties": False,
-    }
-    assert captured.value.draft["tools"][1]["function"]["name"] == "later"
 
 
 @pytest.mark.parametrize("protocol", ["anthropic", "gemini", "openai_responses"])

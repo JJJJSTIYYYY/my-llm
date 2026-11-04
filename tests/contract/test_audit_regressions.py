@@ -1,6 +1,5 @@
 """Independent regressions for the 2026-10-17 official protocol audit."""
 
-import base64
 import json
 from copy import deepcopy
 
@@ -9,7 +8,6 @@ from google.genai import types
 
 from my_llm import (
     IncompleteStreamError,
-    MessageValidationError,
     MyCodec,
     SemanticLossError,
 )
@@ -28,7 +26,6 @@ from tests.helpers.streaming import render
 from tests.helpers.tool_results import application_result_history
 
 PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="
-JPEG = "/9j/wAALCAABAAEBAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9sAQwACAgICAgIDAgIDBQMDAwUGBQUFBQYIBgYGBgYICggICAgICAoKCgoKCgoKDAwMDAwMDg4ODg4PDw8PDw8PDw8P/90ABAAB/9oACAEBAAA/AP38r//Z"
 
 
 def native_events(protocol, events, *, source=False):
@@ -74,15 +71,6 @@ def test_a01_gemini_native_schema_constraints_survive_explicit_normalization(
     before = incoming.model_dump(mode="json", exclude_none=True)
     codec = MyCodec()
     encoded = codec.encode(tools=[incoming], input_format="gemini")
-    if target == "ollama":
-        with pytest.raises(SemanticLossError, match="discard tool parameter schema") as captured:
-            codec.decode(**encoded, target_format=target)
-        assert (
-            captured.value.losses.items[0].origin_path
-            == "$.tools[0].function_declarations[0].parameters"
-        )
-        assert captured.value.draft["tools"][0]["function"]["name"] == "f"
-        return
     result = codec.decode(**encoded, target_format=target)["tools"]
     assert_native(result[0], TOOL_TYPES[target])
     normalized = codec.encode(tools=result, input_format=target)
@@ -194,40 +182,6 @@ def test_a05_source_control_fields_do_not_leak_into_chat():
     text = [{"role": "model", "parts": [{"text": "Hello", "thought": False}]}]
     result = codec.convert(text, input_format="gemini", target_format="openai_chat")["messages"]
     assert result == [{"role": "assistant", "content": "Hello"}]
-    call = [
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [{"function": {"index": 0, "name": "f", "arguments": {}}}],
-        }
-    ]
-    result = codec.convert(call, input_format="ollama", target_format="openai_chat")["messages"]
-    assert "index" not in result[0]["tool_calls"][0]["function"]
-    assert_native(result[0], MESSAGE_TYPES["openai_chat"])
-    native = codec.convert(call, input_format="ollama", target_format="ollama")["messages"]
-    assert native[0]["tool_calls"][0]["function"] == {"name": "f", "arguments": {}}
-
-
-@pytest.mark.parametrize("image,mime", [(PNG, "image/png"), (JPEG, "image/jpeg")])
-@pytest.mark.parametrize("target", ["openai_chat", "openai_responses", "anthropic", "gemini"])
-def test_a06_image_type_matches_bytes(target, image, mime):
-    assert base64.b64decode(image)
-    result = MyCodec().convert(
-        [{"role": "user", "content": "Image", "images": [image]}],
-        input_format="ollama",
-        target_format=target,
-    )["messages"]
-    assert mime in str(result)
-    assert image in str(result)
-    assert_native(result[0], MESSAGE_TYPES[target])
-
-
-@pytest.mark.parametrize("image", ["not base64", "aGVsbG8="])
-def test_a06_unknown_image_format_is_explicit(image):
-    with pytest.raises(MessageValidationError, match="image"):
-        MyCodec().encode(
-            [{"role": "user", "content": "", "images": [image]}], input_format="ollama"
-        )
 
 
 def test_a07_citation_deltas_are_outside_the_supported_field_set():
@@ -254,32 +208,6 @@ def test_a07_citation_deltas_are_outside_the_supported_field_set():
     assert collected["content"][0] == {"type": "text", "text": "Hello"}
     assert "citations" not in str(output)
     assert "citation" not in str(state.messages())
-
-
-@pytest.mark.parametrize(
-    "content,expected",
-    [
-        ([{"type": "text", "text": "O"}, {"type": "text", "text": "K"}], "OK"),
-        ({"result": 1}, '{"result": 1}'),
-        (None, ""),
-    ],
-)
-def test_a08_tool_result_becomes_an_ollama_string(content, expected):
-    incoming = [
-        {
-            "role": "assistant",
-            "content": [{"type": "tool_use", "id": "c", "name": "f", "input": {}}],
-        },
-        {
-            "role": "user",
-            "content": [{"type": "tool_result", "tool_use_id": "c", "content": content}],
-        },
-    ]
-    result = MyCodec().convert(incoming, input_format="anthropic", target_format="ollama")[
-        "messages"
-    ]
-    assert result[-1]["content"] == expected
-    assert_native(result[-1], MESSAGE_TYPES["ollama"])
 
 
 @pytest.mark.parametrize(
@@ -359,7 +287,6 @@ def test_a11_content_after_native_terminal_is_rejected(protocol):
             "delta": {"type": "text_delta", "text": "late"},
         },
         "gemini": {"candidates": [{"content": {"role": "model", "parts": [{"text": "late"}]}}]},
-        "ollama": {"done": False, "message": {"role": "assistant", "content": "late"}},
     }[protocol]
     with pytest.raises(IncompleteStreamError, match="terminal"):
         render(protocol, protocol, [*incoming, late])
@@ -386,8 +313,6 @@ def test_foreign_thinking_streams_can_be_consumed_without_forged_signatures(sour
         native[0]["candidates"][0]["content"]["parts"] = [
             {"text": "Thinking", "thought": True, "thought_signature": "c2ln"}
         ]
-    elif source == "ollama":
-        native[0]["message"] = {"role": "assistant", "content": "", "thinking": "Thinking"}
     else:
         item = {
             "type": "reasoning",
@@ -841,7 +766,6 @@ def test_response_stream_metadata_does_not_alias_request_state():
                 ],
             },
         ),
-        ("ollama", {"role": "user", "content": "beforeafter", "images": [PNG]}),
     ],
 )
 def test_source_image_roles_preserve_text_order_tool_images_and_origins(protocol, incoming, role):
@@ -851,8 +775,6 @@ def test_source_image_roles_preserve_text_order_tool_images_and_origins(protocol
         messages = application_result_history(protocol, payload)
         if protocol == "gemini":
             messages[-1]["parts"][0]["function_response"]["parts"] = [incoming["parts"][1]]
-        elif protocol == "ollama":
-            messages[-1]["images"] = incoming["images"]
     else:
         incoming["role"] = "model" if protocol == "gemini" and role == "assistant" else role
         messages = [incoming]
@@ -864,9 +786,9 @@ def test_source_image_roles_preserve_text_order_tool_images_and_origins(protocol
     )
     images = [part for part in content if part.type == "image"]
     assert len(images) == (1 if role in ("user", "tool") else 0)
-    if role in ("user", "tool") and protocol not in ("gemini", "ollama"):
+    if role in ("user", "tool") and protocol != "gemini":
         assert [part.type for part in content] == ["text", "image", "text"]
-    if role != "tool" and protocol != "ollama":
+    if role != "tool":
         field = "parts" if protocol == "gemini" else "content"
         assert content[-1].origin.path == f"$.messages[0].{field}[2]"
         assert content[-1].origin.value is incoming[field][2]

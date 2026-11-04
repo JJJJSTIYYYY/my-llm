@@ -34,7 +34,7 @@ async def main():
         {"role": "user", "content": [{"type": "text", "text": "Hello"}]}
     ]
     assert prepared["request"]["max_tokens"] == 512
-    assert prepared["local"] == {"stream": False, "client_key": None}
+    assert prepared["local"] == {"stream": False}
     assert prepared["request"]["stream"] is True
     print(prepared)
     return prepared

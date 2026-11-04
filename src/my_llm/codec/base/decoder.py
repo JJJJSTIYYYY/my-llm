@@ -478,12 +478,11 @@ class BaseDecoder(ABC):
         """Return client, request and local dictionaries for a complete encoded call.
 
         intermediate is the dictionary from BaseEncoder.request; client contains
-        prepared connection arguments. local contains stream and a client_key.
+        prepared connection arguments. local contains the stream flag.
         This method creates no SDK clients and sends no network request.
 
-        Validate generation controls once, derive request-specific connection
-        settings, and pass the typed middleware plus any translated-history
-        transform into request(). Return separate client, request and local
+        Validate generation controls once and pass the typed middleware plus any
+        translated-history transform into request(). Return separate client, request and local
         dictionaries so transport execution needs no profile or raw user options.
         """
         profile = intermediate["profile"]
@@ -493,7 +492,6 @@ class BaseDecoder(ABC):
             if key not in ("profile", "middleware", "message_transform")
         }
         options = self.validate_parameters(profile, **parameters)
-        client = self.request_client(client, options)
         return {
             "client": client,
             "request": self.request(
@@ -504,23 +502,12 @@ class BaseDecoder(ABC):
                 message_transform=intermediate.get("message_transform"),
                 **parameters,
             ),
-            "local": {"stream": parameters["stream"], "client_key": self.client_key(client)},
+            "local": {"stream": parameters["stream"]},
         }
 
     def client_parameters(self, profile: ResolvedProfile) -> dict:
         """Prepare connection arguments once per MyLLM, independently of calls."""
         return client_parameters(profile)
-
-    def request_client(self, client: dict, options: PreparedOptions) -> dict:
-        """Return read-only instance settings, or a request-local SDK variant."""
-        return client
-
-    def client_key(self, client: dict) -> Any:
-        """Return a hashable reuse key for client settings; the default is None.
-
-        Override when distinct connection settings require distinct clients.
-        """
-        return None
 
     @final
     def request_parameters(self, profile: ResolvedProfile, options: PreparedOptions) -> dict:

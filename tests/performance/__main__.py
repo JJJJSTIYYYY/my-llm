@@ -71,15 +71,7 @@ async def run(options):
         "dirty_worktree": dirty,
         "versions": {
             package: version(package)
-            for package in (
-                "my-llm-py",
-                "openai",
-                "anthropic",
-                "google-genai",
-                "ollama",
-                "httpx",
-                "pydantic",
-            )
+            for package in ("my-llm-py", "openai", "anthropic", "google-genai", "httpx", "pydantic")
         },
         "size": asdict(size),
         "warmup": options.warmup,

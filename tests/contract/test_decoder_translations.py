@@ -58,7 +58,6 @@ DELTA_PATHS = {
         "$.candidates[0].content.parts[0].text",
         "$.candidates[0].content.parts[0].text",
     ),
-    "ollama": ("$.message.content", "$.message.thinking"),
 }
 
 
@@ -236,7 +235,7 @@ def test_gemini_defaults_do_not_create_text_on_usage_or_finish_only_events(
     assert not any(op["type"] == "block_append" for op in operations)
 
 
-@pytest.mark.parametrize("protocol", ["openai_chat", "ollama"])
+@pytest.mark.parametrize("protocol", ["openai_chat"])
 @pytest.mark.parametrize("custom_path", [False, True])
 @pytest.mark.parametrize("actual_payload", [False, True])
 def test_terminal_events_do_not_append_missing_text_defaults(

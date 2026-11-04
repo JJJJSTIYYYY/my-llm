@@ -104,7 +104,7 @@ async def test_gemini_tool_images_preserve_or_report_original_values(
     messages, original_image = gemini_image_history(media, sdk)
     codec = MyCodec()
     profile = target_profile(profile_factory, target)
-    if target in ("openai_chat", "gemini", "ollama"):
+    if target in ("openai_chat", "gemini"):
         with pytest.raises(SemanticLossError) as caught:
             (await prepare(codec, messages, "gemini", profile))
         assert len(caught.value.losses.items) == 1
@@ -178,20 +178,6 @@ async def test_empty_tool_schema_is_preserved_or_reported_with_complete_draft(
     codec = MyCodec()
     profile = target_profile(profile_factory, target)
     inputs = {"messages": [{"role": "user", "content": "hi"}], "tools": tools, "stream": False}
-    if target == "ollama":
-        with pytest.raises(SemanticLossError) as caught:
-            (
-                await codec.prepare(
-                    inputs,
-                    profile,
-                    input_format="openai_chat",
-                    client=codec.client_parameters(profile),
-                )
-            )
-        assert caught.value.losses.items[0].origin_value is schema
-        assert caught.value.losses.items[0].origin_path == "$.tools[0].function.parameters"
-        assert caught.value.draft["tools"][1]["function"]["name"] == "later"
-        return
     request = (
         await codec.prepare(
             inputs, profile, input_format="openai_chat", client=codec.client_parameters(profile)

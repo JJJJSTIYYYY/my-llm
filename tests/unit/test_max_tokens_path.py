@@ -22,7 +22,6 @@ DEFAULT_PATHS = [
     ("openai_responses", "$.max_output_tokens"),
     ("anthropic", "$.max_tokens"),
     ("gemini", "$.config.max_output_tokens"),
-    ("ollama", "$.options.num_predict"),
 ]
 
 

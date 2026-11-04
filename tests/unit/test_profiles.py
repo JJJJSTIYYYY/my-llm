@@ -117,7 +117,7 @@ def test_explicit_invalid_model_protocol_does_not_fall_back_to_provider(protocol
         )
 
 
-@pytest.mark.parametrize("protocol", ["anthropic", "gemini", "ollama"])
+@pytest.mark.parametrize("protocol", ["anthropic", "gemini"])
 def test_native_protocols_keep_profile_defaults(protocol):
     native = resolve_profiles(
         ProviderProfile(protocol=Config(default_value=protocol)),

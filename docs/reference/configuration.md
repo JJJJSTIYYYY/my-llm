@@ -92,7 +92,7 @@ assert provider.get_parameters()["max_tokens"] is None
 assert model.get_attributes()["model"].default_value == "demo"
 ```
 
-`extra_body` / `extra_headers` 保留 Config，控制请求字段组的组装与合并：extra_body 在 Anthropic / Ollama 对应根字段组，Gemini 对应 config 组，Chat / Responses 对应 SDK overlay 组；headers 还参与 Ollama 客户端配置。
+`extra_body` / `extra_headers` 保留 Config，控制请求字段组的组装与合并：extra_body 在 Anthropic 对应根字段组，Gemini 对应 config 组，Chat / Responses 对应 SDK overlay 组。
 单个需要指定 path 路由的业务参数使用 Parameter。
 
 | source | 参数来源 | 例子 |
@@ -206,7 +206,6 @@ provider = ProviderProfile(
 | openai_responses | `$.max_output_tokens` | `$.delta` | `$.delta` |
 | anthropic | `$.max_tokens` | `$.delta.text` | `$.delta.thinking` |
 | gemini | `$.config.max_output_tokens` | `$.candidates[0].content.parts[0].text` | `$.candidates[0].content.parts[0].text` |
-| ollama | `$.options.num_predict` | `$.message.content` | `$.message.thinking` |
 
 `feedback_reasoning_item` 独立选择原生回传项，流式完整项和聚合结果由对应 codec 读取：
 
@@ -216,7 +215,6 @@ provider = ProviderProfile(
 | openai_responses | `$.item` | 完整原生 reasoning item |
 | anthropic | `$.content_block` | 完整 thinking / redacted_thinking block |
 | gemini | `$.candidates[0].content.parts[0]` | 原生 thought part |
-| ollama | `$.message.thinking` | 原始思维文本 |
 
 Responses 的提取上下文统一为 `{"item": native_reasoning_item}`，适用于历史、流式 item.done 和最终快照。
 自定义路径可用 `$.item.encrypted_content` 等 item 内路径；事件的同级字段不在该上下文内。
@@ -252,11 +250,10 @@ Provider 的 `add_models(ModelProfile | list[ModelProfile])` 按 ID 更新并保
 模型字符串不会触发 catalogue 查找。
 
 `stdio_protocol` 属于 MyLLM，决定输入输出协议。客户端由 MyLLM 延迟创建、复用和关闭，响应流按请求关闭。
-Ollama SDK 没有原生 max_retries 选项，仅接受默认值 None / omit / 0，正数在 Decoder 准备请求时记录语义损失。
 
 `api_key` 在创建 SDK 客户端时应用，其路径指向连接参数组：`$.api_key` 使用 SDK 密钥参数，
 `$.extra_headers.<头名>` 使用指定认证头。Decoder 将请求头映射到 SDK 的 default_headers、
-Gemini 的 HttpOptions.headers 或 Ollama 的 headers；密钥不会作为生成参数写入请求体。
+Gemini 的 HttpOptions.headers；密钥不会作为生成参数写入请求体。
 配置值是完整字符串，Authorization 的 Bearer 前缀也由配置显式提供：
 
 ```python
@@ -279,9 +276,8 @@ header_key = ProviderProfile(
 ```
 
 标准声明的 default_value 为 omit；Provider 的 None 继承协议声明，omit 禁用声明。
-Ollama 默认路径为 `$.extra_headers.Authorization`，其他协议为 `$.api_key`。
-Ollama SDK 没有 api_key 参数，须使用 header 路径。显式 extra_headers 中的同名头优先，
-generate 的 extra_headers 继续按现有规则覆盖；Ollama 的请求头仍参与客户端缓存键。
+默认路径为 `$.api_key`。显式 extra_headers 中的同名头优先，
+generate 的 extra_headers 继续按现有规则覆盖。
 省略密钥不会改变 SDK 自身的环境变量读取与认证要求。
 例如 Anthropic SDK 的 header 认证检查使用 `Authorization` 或 `X-Api-Key`，应按该大小写配置。
 原先的 `api_key=Config(...)` 需改为 `InputParameter(...)`，并显式提供 path。
@@ -318,7 +314,7 @@ reasoning_enable=omit 只关闭该自动路由，仍可独立使用 reasoning_ef
 reasoning_enable.supports=False 才表示模型不支持 reasoning，请求开启思考时同样记录语义损失。
 开启 reasoning 时才应用 reasoning_enable；支持强度时，映射结果写入 reasoning_effort 的路径，覆盖该参数的默认值。
 各协议默认值由 Codec 声明：Chat 使用 medium，Responses 使用 effort=medium、summary=detailed；
-Anthropic 使用 enabled 与 budget_tokens=1024，Gemini 使用 include_thoughts=True、thinking_budget=-1，Ollama 使用 True。
+Anthropic 使用 enabled 与 budget_tokens=1024，Gemini 使用 include_thoughts=True、thinking_budget=-1。
 Anthropic 的预算必须小于 max_tokens。模型支持的强度由具体协议和配置决定。
 
 ## 兼容配置迁移示例
@@ -423,7 +419,7 @@ class HeaderProvider(ProviderProfile):
 仍会受到本项目原生 Decoder 的标准结构校验；需要扩展对应 Codec / Decoder 实现该变体。
 这属于本项目的协议语义约束，SDK 的类型注解本身不代表运行时必然拒绝该值。
 SDK 正式 extra_body 等开放字典可以承载自定义数据。
-Profile.extra_body 在 Chat / Responses 中对应 SDK extra_body；Anthropic / Ollama 使用原生请求参数，
+Profile.extra_body 在 Chat / Responses 中对应 SDK extra_body；Anthropic 使用原生请求参数，
 Gemini 使用 config 参数。SDK 不提供的扩展入口不能通过虚构根参数补出。
 
 Decoder 按声明的消息、工具路径及官方 SDK 类型处理结构：
@@ -434,7 +430,6 @@ Decoder 按声明的消息、工具路径及官方 SDK 类型处理结构：
 | Responses | input | tools |
 | Anthropic | messages | tools |
 | Gemini | contents | config.tools |
-| Ollama | messages | tools |
 
 结构化协议字段按 SDK 类型过滤；已识别的 dict / Any 开放字段保留内部应用键值，
 例如工具参数、结果对象、JSON Schema 及 extra_body。

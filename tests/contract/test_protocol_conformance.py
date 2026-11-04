@@ -61,11 +61,6 @@ def canonical_history(messages, protocol):
                     block["id"] = "call_1"
                 elif block["type"] == "tool_result":
                     block["tool_use_id"] = "call_1"
-        elif protocol == "ollama":
-            # The installed SDK cannot carry association IDs in translated history.
-            message.pop("tool_call_id", None)
-            for call in message.get("tool_calls", []):
-                call.pop("id", None)
         elif protocol == "gemini":
             for part in message["parts"]:
                 for field in ("function_call", "function_response"):
@@ -194,10 +189,6 @@ def assert_stream_lifecycle(protocol, events, *, output=False):
         assert events[-1]["candidates"][0]["finish_reason"] == "STOP"
         if not output:
             assert events[-1]["usage_metadata"]["total_token_count"] == 3
-    else:
-        assert events[-1]["done"] is True
-        if not output:
-            assert events[-1]["eval_count"] == 2
 
 
 # A valid one-pixel PNG; conversion checks use actual image bytes, not text
@@ -208,8 +199,6 @@ PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip
 def image_message(protocol):
     if protocol == "gemini":
         return {"role": "user", "parts": [{"inline_data": {"mime_type": "image/png", "data": PNG}}]}
-    if protocol == "ollama":
-        return {"role": "user", "content": "", "images": [PNG]}
     if protocol == "anthropic":
         block = {
             "type": "image",
@@ -242,23 +231,17 @@ def test_image_messages_use_the_target_native_media_fields(source, target):
         assert result[0]["parts"][-1]["inline_data"] == {"mime_type": "image/png", "data": PNG}
     elif target == "anthropic":
         expected = image_message(target)["content"]
-        if source == "ollama":
-            expected.insert(0, {"type": "text", "text": ""})
         assert result[0]["content"] == expected
     elif target == "openai_responses":
         expected = image_message(target)["content"]
-        if source == "ollama":
-            expected.insert(0, {"type": "input_text", "text": ""})
         assert result[0]["content"] == expected
-    elif target == "ollama":
-        assert result[0]["images"] == [PNG]
     else:
         block = result[0]["content"][-1]
         assert block["type"] == "image_url"
         assert block["image_url"]["url"] == f"data:image/png;base64,{PNG}"
 
 
-@pytest.mark.parametrize("source", ["openai_chat", "anthropic", "gemini", "ollama"])
+@pytest.mark.parametrize("source", ["openai_chat", "anthropic", "gemini"])
 def test_output_limit_is_a_responses_incomplete_event(source):
     incoming = stream_events(source)
     if source == "openai_chat":
@@ -267,8 +250,6 @@ def test_output_limit_is_a_responses_incomplete_event(source):
         incoming[-2]["delta"]["stop_reason"] = "max_tokens"
     elif source == "gemini":
         incoming[-1]["candidates"][0]["finish_reason"] = "MAX_TOKENS"
-    else:
-        incoming[-1]["done_reason"] = "length"
     converted, _ = render(source, "openai_responses", incoming)
     final = converted[-1]
     assert final["type"] == "response.incomplete"
@@ -287,7 +268,7 @@ def test_filtering_is_not_reported_as_successful_responses_completion():
     assert_output_native(final, EVENT_TYPES["openai_responses"][final["type"]])
 
 
-@pytest.mark.parametrize("target", ["openai_responses", "anthropic", "gemini", "ollama"])
+@pytest.mark.parametrize("target", ["openai_responses", "anthropic", "gemini"])
 def test_native_thinking_events_use_only_target_supported_fields(target):
     incoming = stream_events("anthropic")
     incoming[1]["content_block"] = {"type": "thinking", "thinking": "", "signature": ""}

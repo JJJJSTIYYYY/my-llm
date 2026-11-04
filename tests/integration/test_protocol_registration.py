@@ -286,7 +286,7 @@ async def test_new_protocol_reuses_caches_with_unhashable_annotations(registered
                 messages=[{"speaker": "user", "body": body}], reasoning=True
             )
             assert result == {"speaker": "assistant", "body": "hello extension"}
-        client = next(iter(llm._clients.values()))
+        client = llm._client
         assert [request["dialog"][0]["body"] for request in client.requests] == [
             "first request",
             "second request",
@@ -494,7 +494,7 @@ async def test_independent_protocol_joins_conversion_and_request_lifecycle(
             result = result.result
         assert llm.stdio_protocol == (stdio or PROTOCOL)
         assert collected_text(stdio, result) == "hello extension"
-        client = next(iter(llm._clients.values()))
+        client = llm._client
         assert client.requests == [
             {
                 "model": "independent",
@@ -547,7 +547,7 @@ async def test_builtin_upstreams_render_registered_protocol_without_shared_chang
             assert streamed_text(None, chunks) == "Hello"
             result = result.result
         assert collected_text(None, result) == "Hello"
-        client = next(iter(llm._clients.values()))
+        client = llm._client
         assert client.streams_closed == 1
         assert not client.closed
         request = client.requests[0]
@@ -578,7 +578,7 @@ async def test_protocol_default_bindings_are_isolated_between_profiles_and_reque
     async with MyLLM(provider=provider, model=model, stdio_protocol=PROTOCOL) as llm:
         messages = [{"speaker": "user", "body": "hi"}]
         await llm.generate(messages=messages, reasoning=True)
-        client = next(iter(llm._clients.values()))
+        client = llm._client
         assert client.requests[0]["hint"] == {"level": 1}
         client.requests[0]["hint"]["level"] = 99
         await llm.generate(messages=messages, reasoning=True)

@@ -84,7 +84,7 @@ async def test_feedback_selects_history_without_semantic_loss(
     assert messages == before
 
 
-@pytest.mark.parametrize("target", ["openai_chat", "openai_responses", "ollama"])
+@pytest.mark.parametrize("target", ["openai_chat", "openai_responses"])
 async def test_tool_feedback_keeps_split_responses_reasoning_and_native_item_ids(
     profile_factory, target
 ):
@@ -192,9 +192,7 @@ async def test_feedback_cache_commits_filtered_history_without_hook_edits(profil
     assert "hook edit" not in str(cached)
 
 
-@pytest.mark.parametrize(
-    "protocol,field", [("openai_chat", "reasoning_content"), ("ollama", "thinking")]
-)
+@pytest.mark.parametrize("protocol,field", [("openai_chat", "reasoning_content")])
 @pytest.mark.parametrize("mode", ["always", "when_tool_calls", "none"])
 @pytest.mark.parametrize("has_calls", [True, False])
 def test_native_scalar_reasoning_feedback_matches_message_policy(
@@ -222,9 +220,7 @@ def test_native_scalar_reasoning_feedback_matches_message_policy(
     assert request == before
 
 
-@pytest.mark.parametrize(
-    "protocol,field", [("openai_chat", "reasoning_content"), ("ollama", "thinking")]
-)
+@pytest.mark.parametrize("protocol,field", [("openai_chat", "reasoning_content")])
 @pytest.mark.parametrize("mode", ["always", "when_tool_calls", "none", omit])
 @pytest.mark.parametrize("reasoning", [None, False, True])
 @pytest.mark.parametrize("has_calls", [False, True])
@@ -258,14 +254,12 @@ async def test_empty_reasoning_feedback_depends_on_history_policy_not_generation
     assert messages == before
 
 
-@pytest.mark.parametrize(
-    "protocol,field", [("openai_chat", "reasoning_content"), ("ollama", "thinking")]
-)
+@pytest.mark.parametrize("protocol,field", [("openai_chat", "reasoning_content")])
 @pytest.mark.parametrize("explicit_none", [False, True])
 def test_native_tool_messages_get_empty_reasoning_without_a_generation_reasoning_flag(
     profile_factory, protocol, field, explicit_none
 ):
-    call = {"function": {"name": "f", "arguments": {} if protocol == "ollama" else "{}"}}
+    call = {"function": {"name": "f", "arguments": "{}"}}
     if protocol == "openai_chat":
         call.update(id="c", type="function")
     request = {"messages": [{"role": "assistant", "tool_calls": [call], "content": ""}]}
@@ -281,9 +275,7 @@ def test_native_tool_messages_get_empty_reasoning_without_a_generation_reasoning
     assert request == before
 
 
-@pytest.mark.parametrize(
-    "protocol,field", [("openai_chat", "reasoning_content"), ("ollama", "thinking")]
-)
+@pytest.mark.parametrize("protocol,field", [("openai_chat", "reasoning_content")])
 async def test_empty_reasoning_is_not_injected_when_reasoning_is_unsupported(
     profile_factory, protocol, field
 ):
@@ -378,9 +370,7 @@ def test_unsupported_reasoning_output_uses_output_hook(profile_factory, protocol
     assert observed[0][2].origin_source == "output"
 
 
-@pytest.mark.parametrize(
-    "protocol,field", [("openai_chat", "reasoning_content"), ("ollama", "thinking")]
-)
+@pytest.mark.parametrize("protocol,field", [("openai_chat", "reasoning_content")])
 @pytest.mark.parametrize("mode", ["always", "when_tool_calls", "none"])
 def test_native_scalar_unsupported_reasoning_is_loss(profile_factory, protocol, field, mode):
     request = {"messages": [{"role": "assistant", "content": "answer", field: "reasoning"}]}
@@ -573,9 +563,6 @@ def test_native_images_are_loss_when_vision_is_disabled(profile_factory, protoco
     elif protocol == "gemini":
         image = {"inline_data": {"mime_type": "image/png", "data": "aW1hZ2U="}}
         request = {"contents": [{"role": "user", "parts": [image, {"text": "tail"}]}]}
-    else:
-        image = "aW1hZ2U="
-        request = {"messages": [{"role": "user", "content": "tail", "images": [image]}]}
     before = deepcopy(request)
     with pytest.raises(SemanticLossError) as caught:
         MyCodec().decoder(protocol).native_request(
@@ -592,13 +579,9 @@ def test_native_images_are_loss_when_vision_is_disabled(profile_factory, protoco
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_native_history_tools_are_loss_when_function_calling_is_disabled(profile_factory, protocol):
-    if protocol in ("openai_chat", "ollama"):
-        call = (
-            {"id": "c", "type": "function", "function": {"name": "f", "arguments": "{}"}}
-            if protocol == "openai_chat"
-            else {"function": {"name": "f", "arguments": {}}}
-        )
-        result = {"role": "tool", "tool_call_id": "c", "tool_name": "f", "content": "result"}
+    if protocol == "openai_chat":
+        call = {"id": "c", "type": "function", "function": {"name": "f", "arguments": "{}"}}
+        result = {"role": "tool", "tool_call_id": "c", "content": "result"}
         request = {
             "messages": [
                 {"role": "assistant", "content": "", "tool_calls": [call]},

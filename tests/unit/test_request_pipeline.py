@@ -98,7 +98,8 @@ async def test_complete_call_passes_through_codec_with_explicit_destinations(
     for intermediate, output in zip(intermediates, outputs):
         assert intermediate["middleware"].messages[0].protocol == stdio
         assert set(output) == {"client", "request", "local"}
-        assert "profile" not in output["request"] and "client_key" not in output["request"]
+        assert "profile" not in output["request"]
+        assert set(output["local"]) == {"stream"}
         assert "reasoning_effort" not in output["client"]
         assert "extra_body" not in output["local"]
         assert "api_key" not in output["request"]

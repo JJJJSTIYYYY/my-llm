@@ -100,5 +100,5 @@ async def test_invalid_gemini_config_is_a_configuration_error_before_client_crea
                 stream=streaming,
             )
         assert isinstance(caught.value.__cause__, ValidationError)
-        assert llm._clients == {}
+        assert llm._client is None
     assert body == original

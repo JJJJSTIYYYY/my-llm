@@ -8,7 +8,6 @@ import httpx
 from anthropic import AsyncAnthropic
 from google import genai
 from google.genai import types
-from ollama import AsyncClient
 from openai import AsyncOpenAI
 
 
@@ -20,18 +19,15 @@ def wire_frames(protocol: str, events: list[dict], chunk_bytes: int) -> tuple[by
                 mode="json", by_alias=True, exclude_none=True
             )
         encoded = json.dumps(event, ensure_ascii=False).encode()
-        if protocol == "ollama":
-            frames.append(encoded + b"\n")
-        else:
-            prefix = (
-                f"event: {event['type']}\n".encode()
-                if protocol in ("anthropic", "openai_responses")
-                else b""
-            )
-            frames.append(prefix + b"data: " + encoded + b"\n\n")
+        prefix = (
+            f"event: {event['type']}\n".encode()
+            if protocol in ("anthropic", "openai_responses")
+            else b""
+        )
+        frames.append(prefix + b"data: " + encoded + b"\n\n")
     if protocol == "openai_chat":
         frames.append(b"data: [DONE]\n\n")
-    # Splitting UTF-8 and SSE/NDJSON boundaries exercises the real SDK decoders.
+    # Splitting UTF-8 and SSE boundaries exercises the real SDK decoders.
     return tuple(
         frame[offset : offset + chunk_bytes]
         for frame in frames
@@ -73,11 +69,7 @@ class LocalSDK:
         return httpx.Response(
             200,
             stream=body,
-            headers={
-                "content-type": "application/x-ndjson"
-                if self.protocol == "ollama"
-                else "text/event-stream"
-            },
+            headers={"content-type": "text/event-stream"},
         )
 
     def __enter__(self):
@@ -87,7 +79,6 @@ class LocalSDK:
             "openai_responses": AsyncOpenAI,
             "anthropic": AsyncAnthropic,
             "gemini": genai.Client,
-            "ollama": AsyncClient,
         }[protocol]
 
         def factory(**kwargs):
@@ -105,8 +96,6 @@ class LocalSDK:
                     }
                 )
                 return sdk_class(**kwargs, http_options=options)
-            if protocol == "ollama":
-                return sdk_class(**kwargs, transport=transport, trust_env=False)
             http = httpx.AsyncClient(transport=transport, trust_env=False)
             self.http_clients.append(http)
             return sdk_class(**kwargs, http_client=http)
@@ -116,7 +105,6 @@ class LocalSDK:
             "openai_responses": "my_llm.codec.openai.responses.transport.AsyncOpenAI",
             "anthropic": "my_llm.codec.anthropic.transport.AsyncAnthropic",
             "gemini": "my_llm.codec.gemini.transport.genai.Client",
-            "ollama": "my_llm.codec.ollama.transport.AsyncOllama",
         }[protocol]
         self._patches.enter_context(patch(target, factory))
         return self

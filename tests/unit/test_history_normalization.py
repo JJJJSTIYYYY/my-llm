@@ -272,9 +272,6 @@ async def test_all_native_protocol_pairs_repair_tools_before_sdk_validation(
     profile_factory, source, target, repair
 ):
     messages = history(source)
-    if source == "ollama":
-        messages[1]["tool_calls"][0]["id"] = "call_1"
-        messages[2]["tool_call_id"] = "call_1"
     if repair == "missing_call":
         # Responses separates the assistant message from its call item.
         messages = [messages[0], messages[-1]]

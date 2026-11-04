@@ -25,9 +25,7 @@ def validate_workload(workload: Workload):
     for event in workload.events:
         schema = EVENT_TYPES[workload.protocol]
         assert_native(event, schema[event["type"]] if isinstance(schema, dict) else schema)
-    argument_schema = parameters(
-        workload.size, extended=workload.native and workload.protocol != "ollama"
-    )
+    argument_schema = parameters(workload.size, extended=workload.native)
     for call in workload.calls:
         Draft202012Validator(argument_schema).validate(call["input"])
 
@@ -72,17 +70,13 @@ def result_parts(protocol: str, result):
                     calls.append((call["name"], call["args"]))
         else:
             texts.append(message.get("content") or "")
-            thoughts.append(
-                message.get("reasoning_content" if protocol == "openai_chat" else "thinking", "")
-            )
+            thoughts.append(message.get("reasoning_content", ""))
             for call in message.get("tool_calls", []):
                 function = call["function"]
                 calls.append(
                     (
                         function["name"],
-                        json.loads(function["arguments"])
-                        if protocol == "openai_chat"
-                        else function["arguments"],
+                        json.loads(function["arguments"]),
                     )
                 )
     return "".join(texts), "".join(thoughts), calls
@@ -169,9 +163,7 @@ def validate_exchange(workload: Workload, stdio: str, result, sdk):
         calls = [
             (
                 call["function"]["name"],
-                json.loads(call["function"]["arguments"])
-                if protocol == "openai_chat"
-                else call["function"]["arguments"],
+                json.loads(call["function"]["arguments"]),
             )
             for message in body["messages"]
             for call in message.get("tool_calls", [])
@@ -179,17 +171,13 @@ def validate_exchange(workload: Workload, stdio: str, result, sdk):
         results = [message for message in body["messages"] if message["role"] == "tool"]
         result_values = [message["content"] for message in results]
         schemas = [function["parameters"] for function in functions]
-        images = (
-            [
-                part["image_url"]["url"].partition(",")[2]
-                for message in body["messages"]
-                if isinstance(message.get("content"), list)
-                for part in message["content"]
-                if part["type"] == "image_url"
-            ]
-            if protocol == "openai_chat"
-            else [image for message in body["messages"] for image in message.get("images", [])]
-        )
+        images = [
+            part["image_url"]["url"].partition(",")[2]
+            for message in body["messages"]
+            if isinstance(message.get("content"), list)
+            for part in message["content"]
+            if part["type"] == "image_url"
+        ]
     assert len(images) == (workload.size.rounds - 1) // 4 + 2
     assert all(
         base64.b64decode(image, altchars=b"-_", validate=True) == base64.b64decode(PNG)
@@ -198,7 +186,7 @@ def validate_exchange(workload: Workload, stdio: str, result, sdk):
     assert [function["name"] for function in functions] == [
         f"analyze_{index}" for index in range(workload.size.tools)
     ]
-    expected_schema = parameters(workload.size, extended=workload.native and protocol != "ollama")
+    expected_schema = parameters(workload.size, extended=workload.native)
     assert all(schema == expected_schema for schema in schemas)
     expected_calls = [
         (f"analyze_{index}", arguments(workload.size, index))

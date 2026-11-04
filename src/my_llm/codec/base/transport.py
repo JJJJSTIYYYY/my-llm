@@ -46,19 +46,15 @@ class BaseTransport(ABC):
 
 
 @asynccontextmanager
-async def owned_stream(
-    create: Callable[[], Awaitable[Any]],
-    *,
-    close_stream: str = "close",
-) -> AsyncIterator[Any]:
+async def owned_stream(create: Callable[[], Awaitable[Any]]) -> AsyncIterator[Any]:
     """Own one SDK response stream for the lifetime of an asynchronous context.
 
     Await create lazily when the context is entered, register the SDK close
-    method named by close_stream, and yield the native iterator. Normal exit,
+    method, and yield the native iterator. Normal exit,
     early exit, errors and cancellation run its cleanup. The SDK client used
     by create remains borrowed and is closed by MyLLM instead.
     """
     async with AsyncExitStack() as resources:
         upstream = await create()
-        resources.push_async_callback(getattr(upstream, close_stream))
+        resources.push_async_callback(upstream.close)
         yield upstream

@@ -48,56 +48,38 @@ def test_non_message_input_is_rejected():
             validate(value)
 
 
-@pytest.mark.parametrize("protocol", ["gemini", "ollama"])
+@pytest.mark.parametrize("protocol", ["gemini"])
 @pytest.mark.parametrize("first_result,second_result", [("first", "second"), ("second", "first")])
 def test_explicit_result_ids_do_not_fill_ids_on_other_results(
     protocol, first_result, second_result
 ):
-    if protocol == "gemini":
-        messages = [
-            {
-                "role": "model",
-                "parts": [
-                    {"function_call": {"id": "first", "name": "weather", "args": {}}},
-                    {"function_call": {"id": "second", "name": "weather", "args": {}}},
-                ],
-            },
-            {
-                "role": "user",
-                "parts": [
-                    {
-                        "function_response": {
-                            "id": first_result,
-                            "name": "weather",
-                            "response": {"result": first_result},
-                        }
-                    },
-                    {
-                        "function_response": {
-                            "name": "weather",
-                            "response": {"result": second_result},
-                        }
-                    },
-                ],
-            },
-        ]
-    else:
-        messages = [
-            {
-                "role": "assistant",
-                "tool_calls": [
-                    {"id": "first", "function": {"name": "weather", "arguments": {}}},
-                    {"id": "second", "function": {"name": "weather", "arguments": {}}},
-                ],
-            },
-            {
-                "role": "tool",
-                "tool_call_id": first_result,
-                "tool_name": "weather",
-                "content": first_result,
-            },
-            {"role": "tool", "tool_name": "weather", "content": second_result},
-        ]
+    messages = [
+        {
+            "role": "model",
+            "parts": [
+                {"function_call": {"id": "first", "name": "weather", "args": {}}},
+                {"function_call": {"id": "second", "name": "weather", "args": {}}},
+            ],
+        },
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "function_response": {
+                        "id": first_result,
+                        "name": "weather",
+                        "response": {"result": first_result},
+                    }
+                },
+                {
+                    "function_response": {
+                        "name": "weather",
+                        "response": {"result": second_result},
+                    }
+                },
+            ],
+        },
+    ]
     intermediate = MyCodec().encode(messages, input_format=protocol)["messages"]
     results = [b for m in intermediate for b in m["content"] if b.get("type") == "tool_result"]
     assert [b["tool_use_id"] for b in results] == [first_result, None]
@@ -105,37 +87,24 @@ def test_explicit_result_ids_do_not_fill_ids_on_other_results(
         validate_history(intermediate)
 
 
-@pytest.mark.parametrize("protocol", ["gemini", "ollama"])
+@pytest.mark.parametrize("protocol", ["gemini"])
 def test_generated_optional_call_ids_do_not_collide_with_explicit_ids(protocol):
-    if protocol == "gemini":
-        messages = [
-            {
-                "role": "model",
-                "parts": [
-                    {"function_call": {"id": "call_0_1", "name": "f", "args": {}}},
-                    {"function_call": {"name": "f", "args": {}}},
-                ],
-            },
-            {
-                "role": "user",
-                "parts": [
-                    {"function_response": {"id": "call_0_1", "name": "f", "response": {"ok": 1}}},
-                    {"function_response": {"name": "f", "response": {"ok": 2}}},
-                ],
-            },
-        ]
-    else:
-        messages = [
-            {
-                "role": "assistant",
-                "tool_calls": [
-                    {"id": "call_0_1", "function": {"name": "f", "arguments": {}}},
-                    {"function": {"name": "f", "arguments": {}}},
-                ],
-            },
-            {"role": "tool", "tool_call_id": "call_0_1", "tool_name": "f", "content": "1"},
-            {"role": "tool", "tool_name": "f", "content": "2"},
-        ]
+    messages = [
+        {
+            "role": "model",
+            "parts": [
+                {"function_call": {"id": "call_0_1", "name": "f", "args": {}}},
+                {"function_call": {"name": "f", "args": {}}},
+            ],
+        },
+        {
+            "role": "user",
+            "parts": [
+                {"function_response": {"id": "call_0_1", "name": "f", "response": {"ok": 1}}},
+                {"function_response": {"name": "f", "response": {"ok": 2}}},
+            ],
+        },
+    ]
     converter = MyCodec()
     intermediate = converter.encode(messages, input_format=protocol)["messages"]
     calls = [b["id"] for m in intermediate for b in m["content"] if b["type"] == "tool_use"]

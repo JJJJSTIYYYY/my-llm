@@ -8,8 +8,8 @@ codec 布局与接口以本页目录说明、[架构文档](../design/architectu
 运行时包位于 src/my_llm；应用调用方式见 [API 指南](../reference/api.md)，
 完整职责树见[架构文档](../design/architecture.md)。
 
-- codec/base 的 codec.py、encoder.py、decoder.py、transport.py 定义抽象契约，模块名与五种原生实现一致。
-- 五种协议各自维护 encoding 和 decoding；转换方法直接落在 encoder.py / decoder.py。
+- codec/base 的 codec.py、encoder.py、decoder.py、transport.py 定义抽象契约，模块名与四种原生实现一致。
+- 四种协议各自维护 encoding 和 decoding；转换方法直接落在 encoder.py / decoder.py。
   内容、字段及工具翻译辅助放在本方向的 content.py，双向共用的辅助直接放在本协议根目录，以 content.py、schema.py 等职责命名；生成参数映射、请求结构、验证与过滤放在 Decoder；官方 SDK 执行及资源关闭放在协议根目录的 transport.py。
   BaseCodec 声明 ProtocolDefaults 并组合 encoder / decoder / transport，转换与执行组件互不导入。
   仅在存在对应职责时保留辅助模块，不为每个转换方法或短小函数建立分组包。
@@ -60,8 +60,8 @@ conftest.py 只注册 pytest fixture；通用测试辅助代码使用 tests.help
 
 测试模块之间不相互导入，避免依赖收集顺序。只供本文件使用的小型辅助函数可留在测试文件中。
 协议预期样例仍独立于生产转换代码，移动文件不改变验证依据。
-注册及完整请求行为由[独立第六协议测试](../../tests/integration/test_protocol_registration.py)验证；
-该实现不复用五个内置协议的 Encoder / Decoder / Transport。
+注册及完整请求行为由[独立扩展协议测试](../../tests/integration/test_protocol_registration.py)验证；
+该实现不复用四个内置协议的 Encoder / Decoder / Transport。
 
 ## 验证
 

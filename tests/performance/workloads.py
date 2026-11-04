@@ -99,7 +99,7 @@ def native_tools(protocol: str, size: Size, native: bool):
         {
             "name": f"analyze_{index}",
             "description": text(512),
-            "parameters": parameters(size, extended=native and protocol != "ollama"),
+            "parameters": parameters(size, extended=native),
         }
         for index in range(size.tools)
     ]
@@ -167,7 +167,7 @@ def user_message(protocol: str, value: str, *, media: bool):
         if media:
             parts.append({"inline_data": {"mime_type": "image/png", "data": PNG}})
         return {"role": "user", "parts": parts}
-    return {"role": "user", "content": value, **({"images": [PNG]} if media else {})}
+    raise ValueError(f"unsupported protocol: {protocol!r}")
 
 
 def assistant_turn(protocol: str, index: int, calls: list, native: bool):
@@ -299,26 +299,7 @@ def assistant_turn(protocol: str, index: int, calls: list, native: bool):
                 ],
             },
         ]
-    return [
-        {
-            "role": "assistant",
-            "content": value,
-            **({"thinking": value} if native else {}),
-            "tool_calls": [
-                {"id": call["id"], "function": {"name": call["name"], "arguments": call["input"]}}
-                for call in calls
-            ],
-        },
-        *[
-            {
-                "role": "tool",
-                "tool_call_id": call["id"],
-                "tool_name": call["name"],
-                "content": rendered,
-            }
-            for call in calls
-        ],
-    ]
+    raise ValueError(f"unsupported protocol: {protocol!r}")
 
 
 def response_events(protocol: str, size: Size, native: bool, answer: str, reason: str, calls: list):
@@ -643,47 +624,14 @@ def response_events(protocol: str, size: Size, native: bool, answer: str, reason
         )
         return result
 
-    def event(message):
-        return {
-            "model": "benchmark",
-            "created_at": "2026-10-19T00:00:00Z",
-            "message": {"role": "assistant", "content": "", **message},
-            "done": False,
-        }
-
-    result = [event({"thinking": piece}) for piece in thoughts]
-    result.extend(event({"content": piece}) for piece in pieces)
-    result.append(
-        event(
-            {
-                "tool_calls": [
-                    {"function": {"name": call["name"], "arguments": call["input"]}}
-                    for call in calls
-                ]
-            }
-        )
-    )
-    result.append(
-        {
-            **event({}),
-            "done": True,
-            "done_reason": "stop",
-            "prompt_eval_count": 4096,
-            "eval_count": 2048,
-            "total_duration": 1,
-            "load_duration": 0,
-            "prompt_eval_duration": 0,
-            "eval_duration": 1,
-        }
-    )
-    return result
+    raise ValueError(f"unsupported protocol: {protocol!r}")
 
 
 def build(protocol: str, stdio: str, size: Size, *, native: bool) -> Workload:
     if native and protocol != stdio:
         raise ValueError("native workloads require matching upstream and I/O protocols")
     messages = []
-    if stdio in ("openai_chat", "openai_responses", "ollama"):
+    if stdio in ("openai_chat", "openai_responses"):
         messages.append({"role": "system", "content": text(size.text_chars)})
     if native and stdio in ("openai_chat", "openai_responses"):
         messages.append(
@@ -734,7 +682,7 @@ def profiles(protocol: str):
             protocol=Config(default_value=protocol),
             api_key=parameter(
                 "api_key",
-                "Bearer offline-benchmark" if protocol == "ollama" else "offline-benchmark",
+                "offline-benchmark",
                 protocol=protocol,
             ),
             base_url=config("https://benchmark.invalid"),
@@ -763,7 +711,6 @@ def controls(protocol: str):
         },
         "anthropic": {"temperature": 1.0},
         "gemini": {"temperature": 0.2, "top_p": 0.9, "candidate_count": 1},
-        "ollama": {"options": {"temperature": 0.2, "top_p": 0.9, "seed": 42}, "keep_alive": "5m"},
     }[protocol]
     return {
         "reasoning": True,

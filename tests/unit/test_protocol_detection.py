@@ -5,11 +5,13 @@ import pytest
 from my_llm import (
     Attribute,
     Config,
+    ConfigurationError,
     MessageValidationError,
     ModelProfile,
     MyCodec,
     MyLLM,
     ProviderProfile,
+    UnsupportedProviderError,
     generate,
 )
 from tests.helpers.profiles import parameter
@@ -27,7 +29,6 @@ def test_complete_native_history_identifies_one_protocol(protocol):
     [
         [{"role": "user", "content": "hello"}],
         [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
-        tools("openai_chat"),
         [],
         [{"unknown": "value"}],
         [{"role": "user", "content": "hello"}, {"role": "model", "parts": [{"text": "hi"}]}],
@@ -38,6 +39,22 @@ def test_non_unique_protocol_has_no_registration_order_fallback(values):
     assert codec.match_protocol(values) is None
     codec.codecs = dict(reversed(list(codec.codecs.items())))
     assert codec.match_protocol(values) is None
+
+
+def test_chat_tool_declarations_uniquely_identify_chat():
+    assert MyCodec().match_protocol(tools("openai_chat")) == "openai_chat"
+
+
+def test_removed_ollama_protocol_is_rejected_as_upstream_and_stdio():
+    model = ModelProfile(model=Attribute(default_value="demo"))
+    with pytest.raises(UnsupportedProviderError, match="ollama"):
+        MyLLM(provider=ProviderProfile(protocol=Config(default_value="ollama")), model=model)
+    with pytest.raises(ConfigurationError, match="ollama"):
+        MyLLM(
+            provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
+            model=model,
+            stdio_protocol="ollama",
+        )
 
 
 @pytest.mark.parametrize("upstream", PROTOCOLS)

@@ -21,8 +21,7 @@ class ProviderProfile(OverridableProfile):
         api_key: Input Parameter containing the authentication value and path.
             Use the SDK key path or an authentication-header path for the protocol.
         timeout: Config containing a positive timeout in seconds.
-        max_retries: Config containing a nonnegative retry count. Ollama accepts
-            only None, omit or zero.
+        max_retries: Config containing a nonnegative retry count.
         supports_stream: Config capability flag; must remain enabled for generation.
         usage_mode: Config containing a protocol-supported usage mode.
         models: Optional Attribute containing a list of ModelProfile entries.

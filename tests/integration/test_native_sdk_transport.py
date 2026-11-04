@@ -6,7 +6,6 @@ import httpx
 import pytest
 from anthropic import AsyncAnthropic
 from google import genai
-from ollama import AsyncClient
 
 from my_llm import Attribute, Config, ModelProfile, MyLLM, ProviderProfile
 from tests.helpers.profiles import config, parameter
@@ -17,10 +16,8 @@ from tests.helpers.transport import sse
 GenAIClient = genai.Client
 
 
-@pytest.mark.parametrize("protocol", ["anthropic", "gemini", "ollama"])
-@pytest.mark.parametrize(
-    "stdio", ["openai_chat", "openai_responses", "anthropic", "gemini", "ollama"]
-)
+@pytest.mark.parametrize("protocol", ["anthropic", "gemini"])
+@pytest.mark.parametrize("stdio", ["openai_chat", "openai_responses", "anthropic", "gemini"])
 @pytest.mark.parametrize("stream", [False, True])
 async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, stdio, stream):
     requests, http_clients = [], []
@@ -53,9 +50,6 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
                 return value
 
             events = wire(events)
-        if protocol == "ollama":
-            body = "\n".join(json.dumps(e) for e in events) + "\n"
-            return httpx.Response(200, text=body, headers={"Content-Type": "application/x-ndjson"})
         return httpx.Response(
             200,
             text=sse(events, anthropic=protocol == "anthropic").replace("data: [DONE]\n\n", ""),
@@ -80,15 +74,7 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
         http_clients.append(client._api_client._async_httpx_client)
         return client
 
-    if protocol == "ollama":
-
-        def ollama_factory(**kwargs):
-            client = AsyncClient(**kwargs, transport=httpx.MockTransport(handler))
-            http_clients.append(client._client)
-            return client
-
-        monkeypatch.setattr("my_llm.codec.ollama.transport.AsyncOllama", ollama_factory)
-    elif protocol == "anthropic":
+    if protocol == "anthropic":
         monkeypatch.setattr("my_llm.codec.anthropic.transport.AsyncAnthropic", factory)
     else:
         monkeypatch.setattr("my_llm.codec.gemini.transport.genai.Client", factory)
@@ -97,7 +83,7 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
             protocol=Config(default_value=protocol),
             api_key=parameter(
                 "api_key",
-                "Bearer local-test" if protocol == "ollama" else "local-test",
+                "local-test",
                 protocol=protocol,
             ),
             base_url=config("https://local.test"),
@@ -118,7 +104,6 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
                 {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"}
             ],
         },
-        "ollama": {},
     }[protocol]
     result = await llm.generate(
         messages=history(stdio), tools=tools(stdio), stream=stream, extra_body=options
@@ -154,34 +139,24 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
         assert calls
         if stdio != "gemini":
             assert "thoughtSignature" not in calls[0]
-    else:
-        assert requests[0].headers["Authorization"] == "Bearer local-test"
-        assert body["options"]["num_predict"] == 2048
-        assert requests[0].url.path == "/api/chat"
     assert all(not client.is_closed for client in http_clients)
     await llm.aclose()
     assert all(client.is_closed for client in http_clients)
 
 
-@pytest.mark.parametrize("protocol", ["anthropic", "ollama"])
+@pytest.mark.parametrize("protocol", ["anthropic"])
 @pytest.mark.parametrize("header", ["Authorization", "X-Api-Key"])
 @pytest.mark.parametrize("provider_override", [False, True])
 async def test_header_authentication_without_sdk_api_key(
     monkeypatch, protocol, header, provider_override
 ):
     requests, client_options = [], []
-    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OLLAMA_API_KEY"):
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
         monkeypatch.delenv(name, raising=False)
 
     def handler(request):
         requests.append(request)
         events = stream_events(protocol)
-        if protocol == "ollama":
-            return httpx.Response(
-                200,
-                text="\n".join(json.dumps(event) for event in events) + "\n",
-                headers={"Content-Type": "application/x-ndjson"},
-            )
         return httpx.Response(
             200,
             text=sse(events, anthropic=True).replace("data: [DONE]\n\n", ""),
@@ -191,16 +166,9 @@ async def test_header_authentication_without_sdk_api_key(
     def factory(**kwargs):
         client_options.append(kwargs)
         transport = httpx.MockTransport(handler)
-        if protocol == "anthropic":
-            return AsyncAnthropic(**kwargs, http_client=httpx.AsyncClient(transport=transport))
-        return AsyncClient(**kwargs, transport=transport)
+        return AsyncAnthropic(**kwargs, http_client=httpx.AsyncClient(transport=transport))
 
-    target = (
-        "my_llm.codec.anthropic.transport.AsyncAnthropic"
-        if protocol == "anthropic"
-        else "my_llm.codec.ollama.transport.AsyncOllama"
-    )
-    monkeypatch.setattr(target, factory)
+    monkeypatch.setattr("my_llm.codec.anthropic.transport.AsyncAnthropic", factory)
     async with MyLLM(
         provider=ProviderProfile(
             protocol=Config(default_value=protocol),
@@ -231,7 +199,7 @@ async def test_header_authentication_without_sdk_api_key(
         "request-override",
         expected,
     ]
-    assert len(client_options) == (2 if protocol == "ollama" else 1)
+    assert len(client_options) == 1
     assert all("local-header-test" not in request.content.decode() for request in requests)
     if header == "Authorization":
         assert all("x-api-key" not in request.headers for request in requests)

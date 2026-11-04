@@ -7,7 +7,7 @@ import textwrap
 import pytest
 
 
-@pytest.mark.parametrize("installed", [None, "openai", "anthropic", "google.genai", "ollama"])
+@pytest.mark.parametrize("installed", [None, "openai", "anthropic", "google.genai"])
 def test_only_installed_sdks_are_required(installed):
     script = textwrap.dedent(
         """
@@ -15,8 +15,8 @@ def test_only_installed_sdks_are_required(installed):
         import sys
 
         installed = sys.argv[1]
-        sdks = {"openai", "anthropic", "google.genai", "ollama"}
-        blocked = sdks - {installed}
+        sdks = {"openai", "anthropic", "google.genai"}
+        blocked = (sdks - {installed}) | {"ollama"}
 
         class MissingSDK(importlib.abc.MetaPathFinder):
             def find_spec(self, fullname, path=None, target=None):
@@ -33,16 +33,22 @@ def test_only_installed_sdks_are_required(installed):
             "openai": ("openai_chat", "openai_responses"),
             "anthropic": ("anthropic",),
             "google.genai": ("gemini",),
-            "ollama": ("ollama",),
         }
         exports = {
             "openai": "ChatCompletionsCodec",
             "anthropic": "AnthropicCodec",
             "google.genai": "GeminiCodec",
-            "ollama": "OllamaCodec",
         }
         converter = my_llm.MyCodec()
         assert set(converter.codecs) == set(protocols.get(installed, ()))
+        assert "OllamaCodec" not in my_llm.codec.__all__
+        assert not hasattr(my_llm.codec, "OllamaCodec")
+        try:
+            converter.decoder("ollama")
+        except my_llm.UnsupportedProviderError:
+            pass
+        else:
+            raise AssertionError("removed protocol was registered")
         for sdk, names in protocols.items():
             for protocol in names:
                 if sdk == installed:

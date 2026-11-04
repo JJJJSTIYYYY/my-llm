@@ -145,7 +145,7 @@ SDK 模型的 extra 策略不提供未知协议字段的透传能力。项目只
 
 ## 5. 用一个缩小类型把缓存展开
 
-下面的类型用于说明算法和观察内存对象，实际生产过滤仍读取五家官方 SDK 类型。
+下面的类型用于说明算法和观察内存对象，实际生产过滤仍读取三家官方 SDK 类型。
 
 ```python
 from typing import Any, Literal, NotRequired
@@ -303,7 +303,7 @@ plan.project(second)
 
 结构字段的筛选规则相同，区别在于应用 payload 是否需要独立修改。
 `project` 的调用方必须只读使用借用值；当前调用方是输入验证路径。
-测试覆盖了五家官方 SDK 的 `validate_python` 和 `dump_json` 不修改这些投影输入。
+测试覆盖了三家官方 SDK 的 `validate_python` 和 `dump_json` 不修改这些投影输入。
 
 `decode(value, path)` 与 `apply` 一样隔离可变 payload，并在遍历中传递原生路径；
 遇到无法匹配的 Union 值时记录损失、移除该值并继续处理其余字段或元素。
@@ -321,7 +321,7 @@ plan.project(second)
 把投影和独立副本的建立交给后续钩子一次完成。委派只用于 Decoder 的请求组装过程；
 普通 `supported(value, schema)` 没有委派路径，继续返回隔离结果。
 
-五种协议共用 `BaseDecoder.filter_messages` 的逐条循环，通过 `_filter_message` 在同一次
+四种协议共用 `BaseDecoder.filter_messages` 的逐条循环，通过 `_filter_message` 在同一次
 外层遍历中处理能力规则并调用 SDK 字段投影；Responses 的推理反馈按需由 `_message_inputs`
 提供分组上下文。翻译标记不会跳过处理。循环结束后仍校验 SDK Schema，以覆盖公开过滤钩子的修改。
 
@@ -374,7 +374,7 @@ Encoder / Decoder 对每批消息和工具解析计划并复用其 project / dec
 
 缓存强引用键与计划，计划又引用类型和子计划。因此，若运行中持续创建新的动态类型，
 这些类型在其入口被淘汰前也可能随缓存保留。注册的协议和其他外部对象仍可持有类型引用，
-因此 LRU 淘汰不承诺立即释放整个类型。普通新协议与五个内置协议使用相同策略。
+因此 LRU 淘汰不承诺立即释放整个类型。普通新协议与四个内置协议使用相同策略。
 
 ### 兼容服务的输入结构变化
 
@@ -456,7 +456,7 @@ first_output = compiled_cache.supported(first, Message)
 first_info = compiled_cache._compiled_plan.cache_info()
 second_output = compiled_cache.supported(second, Message)
 second_info = compiled_cache._compiled_plan.cache_info()
-readonly = compiled_cache.projected(second, Message)
+readonly = compiled_cache._plan(Message).project(second)
 plan = compiled_cache._plan(Message)
 
 assert "vendor_extra" not in first_output

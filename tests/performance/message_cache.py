@@ -120,7 +120,7 @@ async def benchmark(history_count, chars, *, delta_count, delta_chars, iteration
             assert results["direct"] == results["cached"]
             assert len(results["cached"]["request"]["messages"]) == len(full)
             assert json.dumps(full, ensure_ascii=False) == original
-        assert not llm._clients  # No SDK client or network I/O is used.
+        assert llm._client is None  # No SDK client or network I/O is used.
     finally:
         llm.codec.expire_message_cache(key)
     direct, cached = (summary(samples[name]) for name in ("direct", "cached"))

@@ -435,11 +435,6 @@ def supported(value, schema, *, delegated_paths=()):
     return _plan(schema, delegated_paths).apply(value)
 
 
-def projected(value, schema):
-    """Project SDK fields for read-only validation, borrowing atomic payloads."""
-    return _plan(schema).project(value)
-
-
 def declared_path(schema, keys):
     """Whether an SDK schema already declares a path, including open JSON leaves."""
     return _declared_path(SchemaKey(schema), keys)

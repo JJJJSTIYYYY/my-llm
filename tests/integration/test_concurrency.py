@@ -10,7 +10,6 @@ import pytest
 from anthropic import AsyncAnthropic
 from google import genai
 from google.genai import types
-from ollama import AsyncClient
 from openai import AsyncOpenAI
 
 from my_llm import (
@@ -76,10 +75,6 @@ def response_frames(protocol, index, *, signed=False):
             )
             for event in events
         ]
-    else:
-        events[-1].update(prompt_eval_count=prompt, eval_count=completion)
-    if protocol == "ollama":
-        return [(json.dumps(event) + "\n").encode() for event in events]
     frames = [
         sse([event], anthropic=protocol == "anthropic", done=False).encode() for event in events
     ]
@@ -145,7 +140,7 @@ class ConcurrentTransport:
             self.requests[index] = json.loads(request.content)
             body = ControlledBody(self, protocol, index)
             self.bodies[index] = body
-            content_type = "application/x-ndjson" if protocol == "ollama" else "text/event-stream"
+            content_type = "text/event-stream"
             return httpx.Response(200, stream=body, headers={"Content-Type": content_type})
 
         def factory(protocol, **kwargs):
@@ -164,9 +159,6 @@ class ConcurrentTransport:
                     ),
                 )
                 http = client._api_client._async_httpx_client
-            elif protocol == "ollama":
-                client = AsyncClient(**kwargs, transport=transport)
-                http = client._client
             else:
                 http = httpx.AsyncClient(transport=transport)
                 sdk = AsyncAnthropic if protocol == "anthropic" else AsyncOpenAI
@@ -185,10 +177,6 @@ class ConcurrentTransport:
         monkeypatch.setattr(
             "my_llm.codec.anthropic.transport.AsyncAnthropic",
             lambda **kw: factory("anthropic", **kw),
-        )
-        monkeypatch.setattr(
-            "my_llm.codec.ollama.transport.AsyncOllama",
-            lambda **kw: factory("ollama", **kw),
         )
         monkeypatch.setattr(
             "my_llm.codec.gemini.transport.genai.Client",
@@ -213,9 +201,7 @@ def make_llm(protocol, stdio):
             protocol=Config(default_value=protocol),
             api_key=parameter(
                 "api_key",
-                "Bearer local-concurrency-test"
-                if protocol == "ollama"
-                else "local-concurrency-test",
+                "local-concurrency-test",
                 protocol=protocol,
             ),
             base_url=config("https://local.test"),
@@ -245,10 +231,7 @@ def assert_reply(result, stdio, index):
 def assert_usage(events, stdio, index, state, protocol):
     def without_usage(value):
         if isinstance(value, dict):
-            assert (
-                not {"usage", "usage_metadata", "usageMetadata", "prompt_eval_count", "eval_count"}
-                & value.keys()
-            )
+            assert not {"usage", "usage_metadata", "usageMetadata"} & value.keys()
             for child in value.values():
                 without_usage(child)
         elif isinstance(value, list):
@@ -261,7 +244,7 @@ def assert_usage(events, stdio, index, state, protocol):
     usage = Usage.from_record(state.usage)
     assert usage.input == index + 1
     assert usage.output == index + 2
-    assert usage.total == (None if protocol in ("anthropic", "ollama") else 2 * index + 3)
+    assert usage.total == (None if protocol == "anthropic" else 2 * index + 3)
     return usage
 
 
@@ -316,7 +299,7 @@ async def test_one_instance_concurrent_stream_and_collected_requests(monkeypatch
         assert usage.input == index + 1 and usage.output == index + 2
     assert transport.peak == count
     transport.assert_responses_closed(count)
-    transport.assert_clients_open(count if protocol == "ollama" else 1)
+    transport.assert_clients_open(1)
     assert llm.stdio_protocol == stdio
     assert shared_tools == before_tools and histories == before_histories
     for index, body in transport.requests.items():
@@ -326,7 +309,6 @@ async def test_one_instance_concurrent_stream_and_collected_requests(monkeypatch
             "openai_responses": body.get("max_output_tokens"),
             "anthropic": body.get("max_tokens"),
             "gemini": body.get("generationConfig", {}).get("maxOutputTokens"),
-            "ollama": body.get("options", {}).get("num_predict"),
         }[protocol]
         assert maximum == 101 + index
     await llm.aclose()

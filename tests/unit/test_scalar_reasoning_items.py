@@ -18,27 +18,21 @@ from my_llm.runtime.state import StreamState
 from tests.helpers.profiles import config
 
 
-@pytest.fixture(params=["openai_chat", "ollama"])
-def scalar(request):
-    protocol = request.param
-    field = "reasoning_content" if protocol == "openai_chat" else "thinking"
+@pytest.fixture
+def scalar():
+    protocol = "openai_chat"
+    field = "reasoning_content"
 
     def chunk(**delta):
-        if protocol == "openai_chat":
-            return {"choices": [{"index": 0, "delta": delta, "finish_reason": None}]}
-        return {"message": {"role": "assistant", **delta}, "done": False}
+        return {"choices": [{"index": 0, "delta": delta, "finish_reason": None}]}
 
-    terminal = (
-        {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
-        if protocol == "openai_chat"
-        else {"message": {"role": "assistant", "content": ""}, "done": True}
-    )
+    terminal = {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
     return protocol, field, chunk, terminal
 
 
 def test_scalar_feedback_stream_uses_its_own_output_parameter(scalar, profile_factory):
     protocol, field, chunk, terminal = scalar
-    root = "$.choices[0].delta" if protocol == "openai_chat" else "$.message"
+    root = "$.choices[0].delta"
     profile = profile_factory(
         protocol,
         reasoning_content=OutputParameter(path=f"{root}.visible"),
@@ -65,7 +59,7 @@ def test_scalar_feedback_stream_uses_its_own_output_parameter(scalar, profile_fa
 
 def test_scalar_encrypted_object_is_retained_without_public_delta(scalar, profile_factory):
     protocol, _, chunk, terminal = scalar
-    root = "$.choices[0].delta" if protocol == "openai_chat" else "$.message"
+    root = "$.choices[0].delta"
     profile = profile_factory(
         protocol, feedback_reasoning_item=OutputParameter(path=f"{root}.private")
     )
@@ -91,7 +85,7 @@ def test_scalar_encrypted_object_is_retained_without_public_delta(scalar, profil
 
 def test_scalar_native_message_custom_feedback_is_separate(scalar, profile_factory):
     protocol, field, _, _ = scalar
-    root = "$.choices[0].delta" if protocol == "openai_chat" else "$.message"
+    root = "$.choices[0].delta"
     message = {"role": "assistant", "content": "answer", field: "visible", "private": "raw"}
     profile = profile_factory(
         protocol, feedback_reasoning_item=OutputParameter(path=f"{root}.private")
@@ -154,7 +148,7 @@ def test_native_output_reports_feedback_it_cannot_preserve(scalar):
 
 def test_feedback_update_keeps_earlier_public_event_stable(scalar, profile_factory):
     protocol, field, chunk, _ = scalar
-    root = "$.choices[0].delta" if protocol == "openai_chat" else "$.message"
+    root = "$.choices[0].delta"
     profile = profile_factory(
         protocol, feedback_reasoning_item=OutputParameter(path=f"{root}.private")
     )

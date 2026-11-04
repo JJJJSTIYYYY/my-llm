@@ -146,7 +146,6 @@ def test_codec_request_translates_before_native_assembly(profile_factory, protoc
             "openai_chat": "hello",
             "openai_responses": [{"type": "input_text", "text": "hello"}],
             "anthropic": [{"type": "text", "text": "hello"}],
-            "ollama": "hello",
         }[protocol]
         expected_message = {"role": "user", "content": expected_content}
         if protocol == "openai_responses":
@@ -257,16 +256,14 @@ def test_protocol_matching_rejects_malformed_nested_containers(values):
     assert all(codec.match_protocol(values) is None for codec in converter.codecs.values())
 
 
-@pytest.mark.parametrize("protocol", ["openai_chat", "ollama"])
+@pytest.mark.parametrize("protocol", ["openai_chat"])
 def test_nullable_native_calls_are_treated_as_absent(protocol):
     incoming = [{"role": "assistant", "content": None, "tool_calls": None}]
-    if protocol == "ollama":
-        incoming[0]["images"] = None
     converter = MyCodec()
     intermediate = converter.encode(incoming, input_format=protocol)
     assert intermediate["messages"][0]["content"] == []
     assert converter.decode(**intermediate, target_format=protocol)["messages"] == [
-        {"role": "assistant", "content": "" if protocol == "ollama" else None}
+        {"role": "assistant", "content": None}
     ]
     assert converter.decode(**intermediate, target_format="anthropic")["messages"] == [
         {"role": "assistant", "content": []}

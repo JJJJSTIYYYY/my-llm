@@ -34,17 +34,11 @@ def application_result_history(protocol, payload):
                 "parts": [{"function_response": {"id": "c", "name": "f", "response": payload}}],
             },
         ]
-    return [
-        {
-            "role": "assistant",
-            "tool_calls": [{"id": "c", "function": {"name": "f", "arguments": {}}}],
-        },
-        {"role": "tool", "tool_call_id": "c", "tool_name": "f", "content": payload},
-    ]
+    raise ValueError(f"unsupported protocol: {protocol!r}")
 
 
 def native_result_text(protocol, request):
-    if protocol in ("openai_chat", "ollama"):
+    if protocol == "openai_chat":
         return request["messages"][-1]["content"]
     if protocol == "openai_responses":
         content = request["input"][-1]["output"]

@@ -19,6 +19,7 @@ from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.openai.chat.decoding.content import (
     chat_call,
     foreign_block,
+    pad_reasoning,
     render_content,
     tool_text,
 )
@@ -34,7 +35,6 @@ from my_llm.codec.shared.input import (
     InputPolicy,
     input_content,
     message_feedback,
-    pad_reasoning,
 )
 from my_llm.codec.shared.options import (
     PreparedOptions,
@@ -132,7 +132,6 @@ class ChatCompletionsDecoder(BaseDecoder):
                 value.pop("reasoning_content", None)
         pad_reasoning(
             value,
-            "reasoning_content",
             feedback=policy.reasoning_feedback(has_tool_calls=True),
             has_tool_calls=bool(value.get("tool_calls") or value.get("function_call")),
         )
@@ -284,7 +283,6 @@ class ChatCompletionsDecoder(BaseDecoder):
                     value["reasoning_content"] = reasoning_text
                 pad_reasoning(
                     value,
-                    "reasoning_content",
                     feedback=profile is not None and feedback,
                     has_tool_calls=bool(calls),
                 )

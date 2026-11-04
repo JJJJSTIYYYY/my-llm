@@ -8,7 +8,7 @@ Decoder 应用参数路径、默认值、覆盖规则及目标 SDK Schema，输�
 {
     "client": {"api_key": "...", "base_url": "..."},
     "request": {"model": "...", "messages": [...], "stream": True},
-    "local": {"stream": True, "client_key": None},
+    "local": {"stream": True},
 }
 ```
 
@@ -74,7 +74,7 @@ MyLLM 的 Profile 解析从本实例 MyCodec 获取协议默认声明，后续�
 模型与边界详见[中间协议](protocol-middleware.md)。
 Encoder / Decoder 不创建 SDK 客户端，也不相互导入。官方类型与方法签名可用于静态 Schema 分析；
 实际 SDK 构造和调用只发生在 Transport。双向共用辅助按职责放在协议根目录，
-例如 anthropic/content.py、ollama/schema.py；单个模块不额外套 utils 目录。
+例如 anthropic/content.py；单个模块不额外套 utils 目录。
 包初始化文件只导出接口；公共执行逻辑不按具体协议名分支。
 
 目录按责任边界分组，不按方法数量拆分。中间协议只设三个实现模块；消息模型与 wire
@@ -96,7 +96,6 @@ Encoder / Decoder 的完整调用流程仍集中在所属类中。初始化文�
       → 输入 Encoder.request → 输入验证 → 消息与工具中间态
       → await BaseCodec.prepare → 上游 Decoder.prepare
           → validate_parameters（每次一次）
-          → request_client / client_key（SDK 的请求级客户端变体）
           → request → 当前批工具关联验证 → 消息翻译
           → 启用缓存时：按批次哈希合并消息列表，取得独立快照
           → 参数路径及默认值 → assemble_request
@@ -142,8 +141,7 @@ headers/body 按现有分层规则合并；嵌套 omit 删除目标值，生成 
 
 协议的 assemble_request 只把原生消息和工具写入已有参数字典；
 _request_parameters 追加协议独有控制，不重新解析生成选项。
-Ollama 的逐请求 headers 绑定在 SDK 客户端上，由 request_client 创建独立参数变体；相同 headers 复用客户端。
-其余协议把逐请求 headers 放在 request 中。
+逐请求 headers 放在 request 中，同一实例复用一个 SDK 客户端。
 
 ## 数据所有权与缓存
 
@@ -153,7 +151,7 @@ Decoder.request 调用只读私有翻译钩子，将借入的中间叶交给最�
 MessageStream.result 返回本调用最终 draft 本身，保证 output hook 的原位对象身份；get_last_usage 返回独立副本。
 
 根 Schema 计划委派 message_path / tool_path 叶，由 filter_messages / filter_tools 过滤一次；
-五种内置协议的消息过滤共用基类外层循环，各协议在 _filter_message 中处理一条消息。
+四种内置协议的消息过滤共用基类外层循环，各协议在 _filter_message 中处理一条消息。
 结构校验与工具关联修复在同一次中间消息遍历中完成。HistoryNormalizer 去重调用、合并相同 ID 的结果、
 补空结果，并整条丢弃包含孤立结果的消息；丢弃时撤销本条已收集的关联与合并修改。
 独立 HistoryValidator 保留严格校验用途。原始输入不被修改。
@@ -205,7 +203,7 @@ hook 修改本次请求不会自动更新缓存，相关维护由使用者负责
 ## 验证
 
 - [完整输入与准备生命周期](../../tests/unit/test_request_pipeline.py)：完整字段、三个目的地、连接仅解析一次、客户端复用及无重复结果复制。
-- [组件契约](../../tests/unit/test_native_codecs.py)、[依赖边界](../../tests/contract/test_codec_boundaries.py)与[独立第六协议](../../tests/integration/test_protocol_registration.py)。
+- [组件契约](../../tests/unit/test_native_codecs.py)、[依赖边界](../../tests/contract/test_codec_boundaries.py)与[独立扩展协议](../../tests/integration/test_protocol_registration.py)。
 - [Schema 计划](../../tests/unit/test_schema_filter_plans.py)、[原生请求边界](../../tests/unit/test_native_request_boundary.py)及[数据所有权](../../tests/unit/test_copy_ownership.py)。
 - [真实 SDK 并发与资源隔离](../../tests/integration/test_concurrency.py)及[客户端生命周期](../../tests/unit/test_client_lifecycle.py)。
 - [相同负载性能基准](../guides/performance.md)：完整请求时间、独立内存探针、缓存和真实重叠并发。

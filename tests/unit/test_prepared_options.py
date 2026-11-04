@@ -87,7 +87,6 @@ def test_responses_omitted_path_disables_generated_effort(profile_factory):
         ("openai_responses", {"stop": ["value"]}, "stop", "extra_body.stop"),
         ("anthropic", {"stop_sequences": ["value"]}, "stop_sequences", "stop_sequences"),
         ("gemini", {"stop_sequences": ["value"]}, "stop_sequences", "config.stop_sequences"),
-        ("ollama", {"options": {"stop": ["value"]}}, "options.stop", "options.stop"),
     ],
 )
 def test_prepared_options_and_requests_own_their_nested_values(

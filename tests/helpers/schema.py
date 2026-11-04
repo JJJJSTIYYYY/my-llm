@@ -13,8 +13,7 @@ ROOT = Path(__file__).resolve().parents[2] / "docs/reference/schema"
 
 @cache
 def schema(protocol: str, kind: str) -> dict:
-    folder = "ollama_chat" if protocol == "ollama" else protocol
-    return json.loads((ROOT / folder / f"{kind}.schema.json").read_text())
+    return json.loads((ROOT / protocol / f"{kind}.schema.json").read_text())
 
 
 @cache
@@ -44,10 +43,7 @@ def output_event_for_schema(protocol: str, value: dict) -> dict:
 
     def check(item):
         if isinstance(item, dict):
-            assert not (
-                {"usage", "usage_metadata", "usageMetadata", "prompt_eval_count", "eval_count"}
-                & item.keys()
-            )
+            assert not ({"usage", "usage_metadata", "usageMetadata"} & item.keys())
             for child in item.values():
                 check(child)
         elif isinstance(item, list):

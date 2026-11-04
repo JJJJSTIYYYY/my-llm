@@ -2,9 +2,6 @@
 
 from dataclasses import replace
 
-import httpx
-import pytest
-
 from my_llm import (
     AssistantMessage,
     ImageContent,
@@ -17,12 +14,10 @@ from my_llm import (
     omit,
 )
 from my_llm.codec.gemini.prebuilt import move_tool_images_to_user_message as gemini_hook
-from my_llm.codec.ollama.prebuilt import move_tool_images_to_user_message as ollama_hook
-from my_llm.codec.ollama.prebuilt import tool_images as ollama_images
 from my_llm.codec.openai.chat.prebuilt import move_tool_images_to_user_message as chat_hook
 from tests.performance.workloads import profiles
 
-HOOKS = {"openai_chat": chat_hook, "gemini": gemini_hook, "ollama": ollama_hook}
+HOOKS = {"openai_chat": chat_hook, "gemini": gemini_hook}
 URL = "https://example.com/a.png"
 DATA = "aW1hZ2U="
 
@@ -190,7 +185,6 @@ def expected_image_message(target):
                 {"inline_data": {"mime_type": "image/png", "data": DATA}},
             ],
         },
-        "ollama": {"role": "user", "content": "[Unsupported Image]", "images": [DATA]},
     }[target]
 
 
@@ -218,20 +212,6 @@ async def prepare(llm, messages, **options):
             message_cache_key=llm._message_cache_key,
         )
     )["request"]
-
-
-@pytest.fixture
-def unavailable_tool_images(monkeypatch):
-    """Keep legacy relocation tests offline while covering download failure fallback."""
-
-    def client(**options):
-        return httpx.AsyncClient(
-            **options,
-            transport=httpx.MockTransport(lambda request: httpx.Response(404)),
-            trust_env=False,
-        )
-
-    monkeypatch.setattr(ollama_images, "AsyncClient", client)
 
 
 async def consume(stream):

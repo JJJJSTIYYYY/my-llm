@@ -18,7 +18,6 @@ BUILTIN_CODECS = {
     "openai_responses": ("openai.responses.codec", "ResponsesCodec", "openai", "openai"),
     "anthropic": ("anthropic.codec", "AnthropicCodec", "anthropic", "anthropic"),
     "gemini": ("gemini.codec", "GeminiCodec", "google.genai", "google-genai"),
-    "ollama": ("ollama.codec", "OllamaCodec", "ollama", "ollama"),
 }
 
 _CODECS: dict[str, Callable[[], BaseCodec]] = {}

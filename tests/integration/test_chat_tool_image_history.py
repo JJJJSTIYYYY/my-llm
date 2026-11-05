@@ -10,7 +10,13 @@ from my_llm.codec.openai.chat.prebuilt import move_tool_images_to_user_message
 from tests.helpers.chat_history import assert_chat_tool_sequence
 from tests.helpers.protocols import stream_events
 from tests.helpers.schema import validate_request
-from tests.helpers.tool_images import configured_llm, consume
+from tests.helpers.tool_images import (
+    IMAGE_REFERENCE,
+    configured_llm,
+    consume,
+    image_references,
+    without_image_ids,
+)
 from tests.performance.transport import LocalSDK, wire_frames
 
 
@@ -119,11 +125,18 @@ async def test_hook_preserves_complete_parallel_tool_groups_on_wire_and_cached_r
             assert image_urls(body["messages"][-1]) == [
                 f"https://example.test/{key}.png" for key in result_ids
             ]
+            references = image_references(body["messages"][-1])
+            assert len(references) == len(set(references)) == len(result_ids)
+            tools = {m["tool_call_id"]: m for m in body["messages"] if m["role"] == "tool"}
+            for reference, call_id in zip(references, result_ids, strict=True):
+                assert reference in tools[call_id]["content"]
             assert len([m for m in body["messages"] if m["role"] == "tool"]) == count * rounds
             if attempt == 0:
                 first = body["messages"]
             else:
-                assert body["messages"] == first
+                assert without_image_ids(body["messages"]) == without_image_ids(first)
+                if cached:
+                    assert body["messages"] == first
         await llm.generate(messages=[{"role": "user", "content": "next"}])
         following = wire_request(chat_sdk)["messages"]
         assert_chat_tool_sequence(following)
@@ -214,11 +227,14 @@ async def test_pairing_fallback_and_image_hook_compose_on_final_wire(
             assert set(tools) == {"a", "b"}
             assert len([m for m in messages if m["role"] == "tool"]) == 2
             if repair == "duplicate_result":
-                assert tools["a"]["content"] == "result:aresult:a"
+                assert IMAGE_REFERENCE.sub("", tools["a"]["content"]) == "result:aresult:a"
             if repair in ("idless_result", "missing_result", "missing_all_results"):
                 assert tools["b"]["content"] == ""
             if repair == "image_only_results":
-                assert all(tool["content"] == "" for tool in tools.values())
+                assert all(
+                    IMAGE_REFERENCE.sub("", tool["content"]) == "" for tool in tools.values()
+                )
+                assert all(len(image_references(tool)) == 1 for tool in tools.values())
             if expected_ids:
                 assert image_urls(messages[-1]) == [
                     f"https://example.test/{key}.png" for key in expected_ids
@@ -284,7 +300,9 @@ async def test_tool_results_stay_contiguous_when_history_contains_ordinary_text(
         messages = wire_request(chat_sdk)["messages"]
         await llm.generate(messages=batch)
         retry = wire_request(chat_sdk)["messages"]
-        assert retry == messages
+        assert without_image_ids(retry) == without_image_ids(messages)
+        if cached:
+            assert retry == messages
         await llm.generate(messages=[{"role": "user", "content": "next"}])
         following = wire_request(chat_sdk)["messages"]
         assert_chat_tool_sequence(following)
@@ -297,10 +315,13 @@ async def test_tool_results_stay_contiguous_when_history_contains_ordinary_text(
     assert len(before_hook) == 2
     for snapshot in before_hook:
         assert_chat_tool_sequence(snapshot)
-    # Relocation appends a new user message; existing order comes from the request
-    # preparation/association fallback before the hook and is preserved on wire.
-    assert messages[:-1] == before_hook[0]
-    assert before_hook[1] == (retry if cached else retry[:-1])
+    # Tool text gains references in place; all other existing messages retain order.
+    restored = deepcopy(messages[:-1])
+    for message in restored:
+        if message["role"] == "tool":
+            message["content"] = IMAGE_REFERENCE.sub("", message["content"])
+    assert restored == before_hook[0]
+    assert before_hook[1] == (retry if cached else before_hook[0])
     assert sorted(call["id"] for m in messages for call in m.get("tool_calls", [])) == ["a", "b"]
     assert sorted(m["tool_call_id"] for m in messages if m["role"] == "tool") == ["a", "b"]
     # Deliberately enforce the requested protocol contract, without xfail or a

@@ -53,11 +53,21 @@ hook 可以原地修改、抛错、
 中间 stdio 的结果 draft 为 `AssistantMessage`，事件 draft 为 `MessageEvent` 列表。
 实时流只能基于已经收到的块作决定，不能预读未来内容。
 
-## 预设工具图片 hook
+## Chat 预设 hook
 
-Chat Completions 的 `prebuilt` 目录提供
-`move_tool_images_to_user_message`。它将本批工具结果中的图片按原顺序汇总到一条新的
-user 消息，追加到本次历史末尾；原工具结果保留文字和调用关联。
+Chat Completions 的 `prebuilt` 目录提供统一入口 `chat_semantic_loss_hook`，依次调用
+`reasoning_content_feedback` 与 `move_tool_images_to_user_message`；两者也可以单独导入。
+
+`reasoning_content_feedback` 在原生 `feedback_item` 无法回放时，将对应 assistant 消息的
+可见 `ReasoningContent.reasoning` 按顺序拼接到 Chat `reasoning_content`。它依据 decoder
+记录的目标消息位置处理，不使用源消息下标猜测位置；Responses 的拆分消息合并、工具结果
+重排和缓存前缀不会把推理补到其他消息上。它不提取签名、加密内容或 redacted 数据，
+没有可见文本时不制造思维链。回传策略 `none`、`when_tool_calls` 及模型能力仍由 Profile 控制。
+
+`move_tool_images_to_user_message` 为每张工具结果图片生成唯一的 `image_<uuid>`，在原图片
+位置写入 `[Image: image_<uuid>]`，保留前后文字和调用关联。图片按损失报告顺序汇总到
+历史末尾的一条新 user 消息，每张图片前用相同引用标注，从而关联图片与原工具结果。
+相同图片出现多次时分别分配 ID；并行工具结果继续紧邻所属 assistant 调用消息。
 
 | 上游目标 | 导入位置 | 图片支持 |
 | --- | --- | --- |
@@ -67,14 +77,14 @@ user 消息，追加到本次历史末尾；原工具结果保留文字和调用
 
 ```python
 from my_llm import MyLLM
-from my_llm.codec.openai.chat.prebuilt import move_tool_images_to_user_message
+from my_llm.codec.openai.chat.prebuilt import chat_semantic_loss_hook
 
 llm = MyLLM(
     provider=provider,  # 已配置为 openai_chat 上游。
     model=model,
     stdio_protocol="openai_responses",
     semantic_loss_protocol="hook",
-    input_semantic_loss_hook=move_tool_images_to_user_message,
+    input_semantic_loss_hook=chat_semantic_loss_hook,
     enable_message_cache=True,
 )
 ```
@@ -90,18 +100,24 @@ llm = MyLLM(
 其余语义损失视为已处理，不再抛错。
 图片来源支持 Anthropic、Responses 原生字典 / SDK 对象和直接中间模型。
 
-启用 `enable_message_cache=True` 时，预设会显式补写新增 user 消息，并保留此前缓存的
-系统指令、历史及当前输入 fingerprint。下一轮增量请求继续携带图片；连续重发相同批次
-（包括尚未消费的流）不会重复插图；不同工具回合即使图片数据相同也分别保留。
+启用 `enable_message_cache=True` 时，预设会显式同步修复后的推理、工具结果引用和新增
+user 消息，并保留此前缓存的系统指令、历史及当前输入 fingerprint。下一轮增量请求
+继续携带这些内容；连续重发相同批次（包括尚未消费的流）保持相同 ID，不会重复修复；
+不同工具回合即使图片数据相同也分别生成 ID。关闭缓存时，每次准备请求重新生成 ID。
 
 占位消息也遵循相同的缓存与重试规则。各协议的 `prebuilt` 自己记录已处理的批次，
-通过上下文中缓存批次的 `message_cache.extend(messages)` 补写新增消息。
+通过上下文中缓存批次的 `message_cache.replace(messages)` 同步完整的修复后历史；
+自定义 hook 仍可用 `message_cache.extend(messages)` 仅追加消息。
 `message_cache.identity` 是连续重试共享的弱引用标识，新输入批次使用新标识；
 预设使用弱集合记录处理状态，缓存过期、清空或进入新批次后，旧状态可随之释放。
 缓存不保存 hook 状态，也不对补写消息去重；何时补写、是否重试均由 hook 负责。
-只有预设新增的原生消息会写入缓存，普通 draft 修改仍仅影响当前请求。
-预设仅补写新增消息，用于请求阶段，
-不补偿离线 `convert()` 或输出阶段的损失。
+预设只用于请求阶段，不补偿离线 `convert()` 或输出阶段的损失。
+普通 hook 修改仍不会自动回写缓存，必须显式调用上述缓存接口。
+
+Chat 的相关损失项通过 `loss.target` 提供 `SemanticLossTarget`：`message_index` 为完整
+目标消息列表的下标，`field` 为原生字段，`source_value` 为该字段对应的中间层消息或内容块。
+这些信息仅用于关联损失和修复目标，不作为 SDK 请求字段发送；`origin_value` 和
+`origin_path` 仍指向原始输入。
 
 这些预设是显式启用的补偿行为，不会再次翻译 hook 已修改的原生 draft。
 交给 transport、交付事件以及最终结果使用该 draft；`MessageStream.result`

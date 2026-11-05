@@ -17,6 +17,7 @@ from my_llm.basic.semantic_loss import (
     SemanticLossContext,
     SemanticLossGroup,
     SemanticLossItem,
+    SemanticLossTarget,
 )
 from my_llm.codec import (
     BaseCodec,
@@ -96,6 +97,7 @@ __all__ = [
     "SemanticLossError",
     "BaseSemanticLossAdaptor",
     "SemanticLossItem",
+    "SemanticLossTarget",
     "SemanticLossGroup",
     "SemanticLossContext",
     "Attribute",

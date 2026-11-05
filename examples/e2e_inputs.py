@@ -27,7 +27,7 @@ from my_llm import (
     UserMessage,
 )
 from my_llm.codec.base.transport import BaseTransport
-from my_llm.codec.openai.chat.prebuilt import move_tool_images_to_user_message
+from my_llm.codec.openai.chat.prebuilt import chat_semantic_loss_hook
 from my_llm.codec.shared.options import path_value
 
 PROTOCOLS = ("openai_chat", "openai_responses", "anthropic")
@@ -546,7 +546,7 @@ async def input_scenario(
         model=model,
         stdio_protocol=stdio,
         semantic_loss_protocol="hook" if image else semantic_loss_protocol,
-        input_semantic_loss_hook=move_tool_images_to_user_message if image else None,
+        input_semantic_loss_hook=chat_semantic_loss_hook if image else None,
     ) as llm:
         messages, tools = history(stdio, case, "call_myllm_" + uuid4().hex)
         before = deepcopy((messages, tools))
@@ -561,7 +561,7 @@ async def input_scenario(
                 raise AssertionError("mixed tool-result image did not trigger semantic loss")
             llm.set_semantic_loss_policy(
                 semantic_loss_protocol="hook",
-                input_semantic_loss_hook=move_tool_images_to_user_message,
+                input_semantic_loss_hook=chat_semantic_loss_hook,
             )
             control = {"outcome": "local_semantic_loss", "losses": losses}
         else:
@@ -584,14 +584,17 @@ async def input_scenario(
         if image:
             native = request["messages"]
             tool = next(m for m in native if m["role"] == "tool")
-            assert tool["content"] == RESULT_TEXT
+            assert tool["content"].startswith(RESULT_TEXT)
+            reference = tool["content"][len(RESULT_TEXT) :]
+            assert reference.startswith("[Image: image_") and reference.endswith("]")
             assert native[-1]["role"] == "user"
             if case == "tool_result_images":
                 assert native[-1]["content"] == [
-                    {"type": "image_url", "image_url": {"url": DATA_URL}}
+                    {"type": "text", "text": reference + "\n"},
+                    {"type": "image_url", "image_url": {"url": DATA_URL}},
                 ]
             else:
-                assert native[-1]["content"] == "[Unsupported Image]"
+                assert native[-1]["content"] == reference + "\n[Unsupported Image]\n"
             assert (
                 native.index(tool)
                 == next(i for i, m in enumerate(native) if m.get("tool_calls")) + 1

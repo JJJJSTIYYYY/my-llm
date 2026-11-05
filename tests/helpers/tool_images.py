@@ -1,5 +1,7 @@
 """Independent native image fixtures and opt-in preset request helpers."""
 
+import json
+import re
 from dataclasses import replace
 
 from my_llm import (
@@ -13,12 +15,22 @@ from my_llm import (
     UserMessage,
     omit,
 )
-from my_llm.codec.openai.chat.prebuilt import move_tool_images_to_user_message as chat_hook
+from my_llm.codec.openai.chat.prebuilt import chat_semantic_loss_hook as chat_hook
 from tests.performance.workloads import profiles
 
 HOOKS = {"openai_chat": chat_hook}
 URL = "https://example.com/a.png"
 DATA = "aW1hZ2U="
+IMAGE_REFERENCE = re.compile(r"\[Image: image_[0-9a-f]{32}\]")
+
+
+def image_references(message):
+    return IMAGE_REFERENCE.findall(str(message["content"]))
+
+
+def without_image_ids(value):
+    """Compare independent preparations without requiring their UUIDs to repeat."""
+    return IMAGE_REFERENCE.sub("[Image: generated]", json.dumps(value, sort_keys=True))
 
 
 def picture_history():
@@ -99,12 +111,14 @@ def history(source):
     }[source]()
 
 
-def expected_image_message(target):
+def expected_image_message(target, references):
     return {
         "openai_chat": {
             "role": "user",
             "content": [
+                {"type": "text", "text": references[0] + "\n"},
                 {"type": "image_url", "image_url": {"url": URL}},
+                {"type": "text", "text": references[1] + "\n"},
                 {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{DATA}"}},
             ],
         }

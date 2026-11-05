@@ -104,9 +104,12 @@ decoder 把无法表达的支持值记为 `SemanticLossItem(origin_value, origin
 `SemanticLossError(draft, SemanticLossGroup(items, origin_source), context)`。
 请求的 draft 是完整 SDK 请求；响应的 draft 是本次要交付的完整消息或事件列表。
 实时流只能处理当前已收到的批次，不预读未来块；签名完整性在完整块 / 终态再校验。
+Chat 请求翻译可额外关联 `SemanticLossTarget`，记录目标消息下标、字段和对应的中间层值。
+工具结果排序完成后确定下标，缓存前缀追加后调整偏移，供显式预设精确修复；
+这些关联只附在损失项上，不进入中间层模型字段、消息缓存或原生请求。
 
 `SemanticLossContext` 包含源协议、目标协议、方向和阶段。请求阶段还提供解析后的 `profile`，
-以及启用缓存时的 `message_cache` 批次句柄，供显式注册的 hook 补写原生消息。
+以及启用缓存时的 `message_cache` 批次句柄，供显式注册的 hook 追加或替换原生历史。
 上下文不选择或调用预设，也不会自动缓存 hook 修改。`BaseCodec` 捕获错误并交给
 实例所有的 `BaseSemanticLossAdaptor`。默认 `raise`；`ignore` 无日志、无损失历史；
 `hook` 调用相应函数 `(draft, losses, context)`，函数返回值忽略；异步请求准备会直接等待

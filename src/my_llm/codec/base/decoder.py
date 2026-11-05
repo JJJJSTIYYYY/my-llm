@@ -12,6 +12,7 @@ from my_llm.basic.semantic_loss import (
     SemanticLossContext,
     SemanticLossItem,
     collect_losses,
+    offset_loss_targets,
     report_loss,
 )
 from my_llm.cache.compiled_cache import (
@@ -473,7 +474,9 @@ class BaseDecoder(ABC):
         # native_request establishes the independently mutable SDK ownership.
         native_messages = self._messages(messages, profile, **parameters)
         if message_transform is not None:
+            batch_size = len(native_messages)
             native_messages = message_transform(native_messages)
+            offset_loss_targets(len(native_messages) - batch_size)
         native_tools = self._tools(tools, profile, **parameters) if tools is not None else None
         request = self.assemble_request(
             native_messages,

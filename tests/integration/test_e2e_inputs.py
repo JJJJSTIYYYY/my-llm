@@ -300,13 +300,16 @@ async def test_input_matrix_sends_invalid_controls_and_profile_repaired_history(
                 assistant = next(m for m in body["messages"] if m.get("tool_calls"))
                 assert assistant["reasoning_content"] == ""
             if case in inputs.IMAGE_CASES:
-                assert results[0][1] == inputs.RESULT_TEXT
+                assert results[0][1].startswith(inputs.RESULT_TEXT)
+                reference = results[0][1][len(inputs.RESULT_TEXT) :]
+                assert reference.startswith("[Image: image_") and reference.endswith("]")
                 last = body["messages"][-1]
                 assert last["role"] == "user"
                 if case == "tool_result_images":
-                    assert last["content"][0]["image_url"]["url"] == inputs.DATA_URL
+                    assert last["content"][0] == {"type": "text", "text": reference + "\n"}
+                    assert last["content"][1]["image_url"]["url"] == inputs.DATA_URL
                 else:
-                    assert last["content"] == "[Unsupported Image]"
+                    assert last["content"] == reference + "\n[Unsupported Image]\n"
         events = json.loads(json.dumps(stream_events(upstream)).replace('"Hello"', '"E2E_OK"'))
         return httpx.Response(
             200,

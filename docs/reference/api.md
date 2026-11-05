@@ -484,13 +484,19 @@ Chat 上游将同一 assistant 的工具结果按到达顺序集中到其 `tool_
 请求 hook 可以异步执行，准备阶段会等待其完成；离线转换与输出 hook 仍为同步函数，
 具体值和示例见[迁移指南](../guides/semantic-loss.md)。
 
-Chat 提供 `prebuilt.move_tool_images_to_user_message`，由调用者显式导入并在
-初始化时传入；不会自动改变请求行为或默认损失策略。预设读取实例解析后的
-`supports_vision`，不能发送的图片替换为 `[Unsupported Image]`，其他损失视为已处理。
+Chat 提供 `prebuilt.chat_semantic_loss_hook`，统一调用 `reasoning_content_feedback` 和
+`move_tool_images_to_user_message`，三者均可显式导入。推理预设将无法回放的原生反馈降级为
+对应消息的可见推理；图片预设在工具结果原位置写入唯一图片 ID，并在新增 user 消息中
+用同一 ID 引用图片。它读取实例解析后的 `supports_vision`，不能发送的图片在引用后写入
+`[Unsupported Image]`。其他损失视为已处理；默认损失策略不变。
 请求阶段的 `SemanticLossContext.profile` 提供解析后的 Profile；启用缓存时，
 `context.message_cache.extend(messages)` 可显式补写本批新增原生消息并保留输入 fingerprint。
+`context.message_cache.replace(messages)` 显式替换完整缓存历史，同时保留批次 identity 和
+输入 fingerprint；Chat 预设用它同步推理、工具结果和新增 user 消息。
 `message_cache.identity` 提供连续重试共享的弱引用标识；预设自己记录已处理批次并决定是否补写，
 缓存不保存预设状态或执行补写去重。
+Chat 相关损失项的可选 `target: SemanticLossTarget` 提供目标 `message_index`、`field` 和
+对应的中间层 `source_value`，供请求 hook 精确修复；原始来源仍由 `origin_value` / `origin_path` 表示。
 
 流事件过滤接口返回的 usage；成功结束后调用 `get_last_usage()` 获取独立的 `Usage`。
 未报告字段为 `None`，非流式结果不含 usage。关闭消息缓存后的并发调用中，该接口代表最后完成的流式调用。

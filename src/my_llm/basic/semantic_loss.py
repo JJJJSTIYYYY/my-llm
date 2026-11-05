@@ -20,10 +20,20 @@ type LossPolicy = Literal["raise", "ignore", "hook"]
 
 
 @dataclass(slots=True)
+class SemanticLossTarget:
+    """A native message field and its canonical source, available to request hooks."""
+
+    field: str
+    source_value: object
+    message_index: int | None = None
+
+
+@dataclass(slots=True)
 class SemanticLossItem:
     origin_value: object
     origin_path: str
     reason: str = "target cannot express a supported value"
+    target: SemanticLossTarget | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(slots=True)
@@ -99,6 +109,32 @@ class _LossCollection:
 
 
 _collection: ContextVar[_LossCollection | None] = ContextVar("my_llm_semantic_loss", default=None)
+_target: ContextVar[SemanticLossTarget | None] = ContextVar(
+    "my_llm_semantic_loss_target", default=None
+)
+
+
+@contextmanager
+def loss_target(target: SemanticLossTarget):
+    """Associate losses in one content conversion with its eventual native field."""
+    token = _target.set(target)
+    try:
+        yield
+    finally:
+        _target.reset(token)
+
+
+def offset_loss_targets(offset: int) -> None:
+    """Account for cached native history prepended to the translated input batch."""
+    collection = _collection.get()
+    if collection is None or not offset:
+        return
+    seen = set()
+    for item in collection.items.values():
+        target = item.target
+        if target is not None and target.message_index is not None and id(target) not in seen:
+            target.message_index += offset
+            seen.add(id(target))
 
 
 @contextmanager
@@ -122,6 +158,7 @@ def report_loss(value: object, reason: str, *, path: str | None = None) -> None:
         getattr(value, "origin_value", value),
         path or getattr(value, "origin_path", "$"),
         reason,
+        _target.get(),
     )
     collection = _collection.get()
     collection.items.setdefault((item.origin_path, item.reason), item)

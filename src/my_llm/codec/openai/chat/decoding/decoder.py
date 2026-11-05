@@ -13,7 +13,7 @@ from my_llm.basic.exceptions import (
     MessageValidationError,
     ResponseFailedError,
 )
-from my_llm.basic.semantic_loss import report_loss
+from my_llm.basic.semantic_loss import SemanticLossTarget, loss_target, report_loss
 from my_llm.cache.compiled_cache import _MISSING, _plan, parameter_types
 from my_llm.codec.base.decoder import BaseDecoder
 from my_llm.codec.openai.chat.decoding.content import (
@@ -223,6 +223,7 @@ class ChatCompletionsDecoder(BaseDecoder):
         """
         result = []
         tool_groups = {}
+        targets = {}
         for index, message, feedback in message_feedback(messages, profile):
             name_supported = message.get("name") is None or content_capability(
                 message["name"],
@@ -235,30 +236,34 @@ class ChatCompletionsDecoder(BaseDecoder):
             tool_results = []
             calls = []
             reasoning = []
+            reasoning_target = SemanticLossTarget("reasoning_content", message)
             for block in message["content"]:
                 if not input_content(block, profile, feedback=feedback):
                     continue
-                if context_owner != constants.PROTOCOL:
-                    block = foreign_block(block)
-                if block is None:
-                    continue
                 kind = block["type"]
                 if kind == "tool_result":
-                    tool_results.append(
-                        {
+                    target = SemanticLossTarget("content", block)
+                    with loss_target(target):
+                        value = {
                             "role": "tool",
                             "tool_call_id": block["tool_use_id"],
                             "content": tool_text(block, profile),
                         }
-                    )
+                    targets[id(value)] = target
+                    tool_results.append(value)
                     continue
-                content.append(block)
-                if kind == "tool_use":
-                    calls.append(chat_call(block))
-                elif kind == "thinking":
-                    value = scalar_reasoning(block, feedback=profile is not None)
-                    if value is not None:
-                        reasoning.append(value)
+                with loss_target(reasoning_target):
+                    if context_owner != constants.PROTOCOL:
+                        block = foreign_block(block)
+                    if block is None:
+                        continue
+                    content.append(block)
+                    if kind == "tool_use":
+                        calls.append(chat_call(block))
+                    elif kind == "thinking":
+                        value = scalar_reasoning(block, feedback=profile is not None)
+                        if value is not None:
+                            reasoning.append(value)
             if content or not tool_results:
                 value = {
                     **select(message, *constants.MESSAGE_IDENTITY_FIELDS),
@@ -277,6 +282,7 @@ class ChatCompletionsDecoder(BaseDecoder):
                     has_tool_calls=bool(calls),
                 )
                 group = [value]
+                targets[id(value)] = reasoning_target
                 result.append(group)
                 for call in calls:
                     tool_groups[call["id"]] = group
@@ -288,7 +294,11 @@ class ChatCompletionsDecoder(BaseDecoder):
                     result.append([tool_result])
                 else:
                     group.append(tool_result)
-        return list(chain.from_iterable(result))
+        native = list(chain.from_iterable(result))
+        for index, message in enumerate(native):
+            if (target := targets.get(id(message))) is not None:
+                target.message_index = index
+        return native
 
     def _tools(
         self, tools: list, profile: ResolvedProfile | None = None, **parameters: Any

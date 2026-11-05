@@ -28,8 +28,10 @@ from tests.helpers.tool_images import (
     configured_llm,
     expected_image_message,
     history,
+    image_references,
     picture_history,
     prepare,
+    without_image_ids,
 )
 from tests.performance.workloads import PNG, profiles
 
@@ -46,13 +48,18 @@ async def test_presets_move_images_without_mutating_inputs_and_preserve_retries(
     first = await prepare(llm, messages)
     retry = await prepare(llm, messages)
     key = "messages"
-    expected = expected_image_message(target)
-    assert first[key][-1] == retry[key][-1] == expected
-    assert first[key] == retry[key]
+    references = image_references(first[key][-1])
+    assert len(references) == len(set(references)) == 2
+    expected = expected_image_message(target, references)
+    assert first[key][-1] == expected
+    assert without_image_ids(first[key]) == without_image_ids(retry[key])
+    if cached:
+        assert first[key] == retry[key]
     if target == "openai_chat":
         assert_chat_tool_sequence(first[key])
         assert_chat_tool_sequence(retry[key])
-    assert "beforeafter" in str(first)
+    tool = next(message for message in first[key] if message["role"] == "tool")
+    assert tool["content"] == f"before{references[0]}{references[1]}after"
     assert_input_native(first[key][-1], MESSAGE_TYPES[target])
     assert messages == before
     if cached:
@@ -72,7 +79,7 @@ async def test_presets_move_images_without_mutating_inputs_and_preserve_retries(
 
 @pytest.mark.parametrize("target", HOOKS)
 async def test_presets_retry_after_cache_extension_failure(monkeypatch, target):
-    extend = MessageCacheBatch.extend
+    replace = MessageCacheBatch.replace
     attempts = 0
 
     def fail_once(batch, messages):
@@ -80,16 +87,16 @@ async def test_presets_retry_after_cache_extension_failure(monkeypatch, target):
         attempts += 1
         if attempts == 1:
             raise RuntimeError("cache write failed")
-        extend(batch, messages)
+        replace(batch, messages)
 
-    monkeypatch.setattr(MessageCacheBatch, "extend", fail_once)
+    monkeypatch.setattr(MessageCacheBatch, "replace", fail_once)
     llm = configured_llm(target, cached=True)
     with pytest.raises(RuntimeError, match="cache write failed"):
         await prepare(llm, picture_history())
     request = await prepare(llm, picture_history())
     retry = await prepare(llm, picture_history())
     key = "messages"
-    assert request[key][-1] == expected_image_message(target)
+    assert request[key][-1] == expected_image_message(target, image_references(request[key][-1]))
     assert retry[key] == request[key]
     assert attempts == 2
 
@@ -101,8 +108,11 @@ async def test_expiring_cache_allows_same_input_to_be_handled_again(target):
     llm.codec.expire_message_cache(llm._message_cache_key)
     following = await prepare(llm, picture_history())
     key = "messages"
-    assert first[key] == following[key]
-    assert following[key][-1] == expected_image_message(target)
+    assert without_image_ids(first[key]) == without_image_ids(following[key])
+    assert first[key] != following[key]
+    assert following[key][-1] == expected_image_message(
+        target, image_references(following[key][-1])
+    )
 
 
 @pytest.mark.parametrize("target", HOOKS)
@@ -112,7 +122,7 @@ async def test_presets_accept_unrelated_losses_while_still_moving_images(target)
     )
     request = await prepare(llm, picture_history(), max_tokens=128)
     key = "messages"
-    assert request[key][-1] == expected_image_message(target)
+    assert request[key][-1] == expected_image_message(target, image_references(request[key][-1]))
 
 
 @pytest.mark.parametrize("target", HOOKS)
@@ -121,7 +131,9 @@ async def test_presets_insert_placeholders_for_models_without_vision(target, vis
     llm = configured_llm(target, cached=True, supports_vision=vision)
     request = await prepare(llm, picture_history())
     assert URL not in str(request) and DATA not in str(request)
-    assert "beforeafter" in str(request)
+    tool = next(message for message in request["messages"] if message["role"] == "tool")
+    references = image_references(tool)
+    assert tool["content"] == f"before{references[0]}{references[1]}after"
     assert str(request).count("[Unsupported Image]") == 2
     key = "messages"
     retry = await prepare(llm, picture_history())
@@ -149,7 +161,7 @@ async def test_presets_use_the_resolved_profile_snapshot(target):
     model.supports_vision = Config(default_value=False)
     request = await prepare(llm, picture_history())
     key = "messages"
-    assert request[key][-1] == expected_image_message(target)
+    assert request[key][-1] == expected_image_message(target, image_references(request[key][-1]))
 
 
 @pytest.mark.parametrize("target", HOOKS)
@@ -187,8 +199,16 @@ async def test_repeated_image_values_are_not_deduplicated_inside_one_tool_result
         2, deepcopy(messages[1]["content"][0]["content"][1])
     )
     request = await prepare(configured_llm("openai_chat"), messages)
-    assert [part["image_url"]["url"] for part in request["messages"][-1]["content"]] == [
+    assert [
+        part["image_url"]["url"]
+        for part in request["messages"][-1]["content"]
+        if part["type"] == "image_url"
+    ] == [
         URL,
         URL,
         f"data:image/png;base64,{DATA}",
     ]
+    references = image_references(request["messages"][-1])
+    assert len(references) == len(set(references)) == 3
+    tool = next(message for message in request["messages"] if message["role"] == "tool")
+    assert tool["content"] == "before" + "".join(references) + "after"

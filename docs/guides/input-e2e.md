@@ -25,7 +25,8 @@ API 密钥只在运行时读取，不进入源码、报告或命令参数。
 
 输入修复共 **34 个场景**。每个历史修复场景先发一次未经消息修复的原生 API 对照，再执行
 `generate(stream=False)` 和 `generate(stream=True)`；图片场景先在本地验证严格策略抛出
-`SemanticLossError`，然后通过库提供的 `move_tool_images_to_user_message` 完成两种调用。
+`SemanticLossError`，然后通过库提供的 `chat_semantic_loss_hook` 完成两种调用，
+并验证原工具结果中的图片 ID 与新增 user 消息的图片引用对应。
 完整成功执行共 **98 次 API 请求**。两种 generate 模式均使用库的上游 SSE 路径。
 
 推理回传另有 **6 个场景、24 次请求**，每项在严格 `raise` 策略下分别完成流式、汇总两轮工具调用。

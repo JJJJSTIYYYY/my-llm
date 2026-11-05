@@ -159,3 +159,10 @@ class MessageCacheBatch:
             raise ConfigurationError("message cache extension requires staged history and a list")
         self._history.messages = [*self._history.messages, *capture(messages)]
         self.commit()
+
+    def replace(self, messages: list) -> None:
+        """Publish an owned repaired history, preserving the batch identity and fingerprint."""
+        if self._history is None or not isinstance(messages, list):
+            raise ConfigurationError("message cache replacement requires staged history and a list")
+        self._history.messages = capture(messages)
+        self.commit()

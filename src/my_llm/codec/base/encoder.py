@@ -1,6 +1,7 @@
 """Native parsing into the fixed, SDK-independent middleware field set."""
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, final
 
 from my_llm.basic.data import dictionaries, dictionary_views, read
@@ -9,10 +10,17 @@ from my_llm.cache.compiled_cache import validate_values
 from my_llm.codec.shared.conversion import match_all
 from my_llm.codec.shared.options import path_value
 from my_llm.middleware.models import FunctionTool, Message, messages_from_wire, tools_from_wire
-from my_llm.middleware.protocol import ProtocolMiddleWare
 from my_llm.middleware.stream import StreamBatch, stream_from_wire
 from my_llm.profile.resolution import ResolvedProfile
 from my_llm.profile.types import Omit, OutputParameter
+
+
+@dataclass(slots=True)
+class _RequestValues:
+    """Canonical request values retain each source message's repair boundary."""
+
+    messages: list[dict]
+    tools: list[dict] | None
 
 
 class BaseEncoder(ABC):
@@ -57,8 +65,10 @@ class BaseEncoder(ABC):
 
         inputs must contain messages and tools. Normalize dictionaries or supported
         SDK models into readable views, validate recognized input against this
-        protocol's schemas, and project supported fields into typed middleware
-        messages/tools. Unknown source fields do not enter the middleware.
+        protocol's schemas, and project supported fields into canonical middleware
+        messages/tools. Preserve source-message boundaries for association repair;
+        the public messages() method separately projects flat typed models.
+        Unknown source fields do not enter the middleware.
 
         The returned dictionary preserves generation options and adds profile and
         middleware for BaseDecoder.prepare. Input projection uses standard source
@@ -76,15 +86,13 @@ class BaseEncoder(ABC):
         return {
             **{key: value for key, value in inputs.items() if key not in ("messages", "tools")},
             "profile": profile,
-            "middleware": ProtocolMiddleWare(
-                messages=messages_from_wire(
-                    self._messages(
-                        history,
-                        None,
-                        enable_message_cache=inputs.get("enable_message_cache", False),
-                    )
+            "middleware": _RequestValues(
+                messages=self._messages(
+                    history,
+                    None,
+                    enable_message_cache=inputs.get("enable_message_cache", False),
                 ),
-                tools=tools_from_wire(self._tools(tools, None)) if tools is not None else None,
+                tools=self._tools(tools, None) if tools is not None else None,
             ),
         }
 

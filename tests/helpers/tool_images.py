@@ -9,7 +9,7 @@ from my_llm import (
     MyLLM,
     TextContent,
     ToolCall,
-    ToolResult,
+    ToolMessage,
     UserMessage,
     omit,
 )
@@ -77,19 +77,15 @@ def responses_history():
 def middleware_history():
     return [
         AssistantMessage("assistant", [ToolCall("c", "look", {})]),
-        UserMessage(
+        ToolMessage(
             "user",
             [
-                ToolResult(
-                    "c",
-                    [
-                        TextContent("before"),
-                        ImageContent(ImageSource(type="url", url=URL)),
-                        ImageContent(ImageSource(type="base64", data=DATA, media_type="image/png")),
-                        TextContent("after"),
-                    ],
-                )
+                TextContent("before"),
+                ImageContent(ImageSource(type="url", url=URL)),
+                ImageContent(ImageSource(type="base64", data=DATA, media_type="image/png")),
+                TextContent("after"),
             ],
+            call_id="c",
         ),
         UserMessage("user", [TextContent("tail")]),
     ]

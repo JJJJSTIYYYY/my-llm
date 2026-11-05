@@ -10,7 +10,7 @@ from my_llm import (
     MyCodec,
     TextContent,
     ToolCall,
-    ToolResult,
+    ToolMessage,
     UserMessage,
     omit,
 )
@@ -32,10 +32,10 @@ def normalize(messages, **options):
 
 def test_orphan_results_are_discarded_and_valid_duplicates_merge_without_mutating_input():
     messages = [
-        UserMessage("user", [ToolResult("c", [TextContent("discarded")])]),
+        ToolMessage("user", [TextContent("discarded")], call_id="c"),
         AssistantMessage("assistant", [ToolCall("c", "weather", {"city": "Shanghai"})]),
-        UserMessage("user", [ToolResult("c", [TextContent("first")])]),
-        UserMessage("user", [ToolResult("c", [TextContent("first"), TextContent("second")])]),
+        ToolMessage("user", [TextContent("first")], call_id="c"),
+        ToolMessage("user", [TextContent("first"), TextContent("second")], call_id="c"),
         UserMessage("user", [TextContent("tail")]),
     ]
     before = deepcopy(messages)
@@ -75,23 +75,43 @@ def test_missing_results_follow_their_call_message_and_duplicate_calls_keep_surr
 def test_idless_results_discard_the_whole_message_and_leave_only_empty_padding():
     messages = [
         AssistantMessage("assistant", [ToolCall("a", "f"), ToolCall("b", "g")]),
-        UserMessage(
-            "user",
-            [
-                TextContent("discarded before"),
-                ToolResult(None, [TextContent("discarded partial result")]),
-                ToolResult("orphan", [TextContent("discarded orphan")]),
-                TextContent("discarded after"),
-                ToolResult("b", [TextContent("discarded later result")]),
+        {
+            "role": "user",
+            "content": [
+                TextContent("discarded before").to_wire(),
+                {
+                    "type": "tool_result",
+                    "tool_use_id": None,
+                    "content": [{"type": "text", "text": "discarded partial result"}],
+                },
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "orphan",
+                    "content": [{"type": "text", "text": "discarded orphan"}],
+                },
+                TextContent("discarded after").to_wire(),
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "b",
+                    "content": [{"type": "text", "text": "discarded later result"}],
+                },
             ],
-        ),
-        UserMessage(
-            "user",
-            [
-                ToolResult(None, [TextContent("real first")]),
-                ToolResult(None, [TextContent("real second")]),
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": None,
+                    "content": [{"type": "text", "text": "real first"}],
+                },
+                {
+                    "type": "tool_result",
+                    "tool_use_id": None,
+                    "content": [{"type": "text", "text": "real second"}],
+                },
             ],
-        ),
+        },
     ]
     before = deepcopy(messages)
     result = normalize(messages)
@@ -107,15 +127,19 @@ def test_discarded_message_cannot_modify_a_previously_merged_tool_result():
     result = normalize(
         [
             AssistantMessage("assistant", [ToolCall("c", "f")]),
-            UserMessage("user", [ToolResult("c", [TextContent("original")])]),
-            UserMessage(
-                "user",
-                [
-                    ToolResult("c", [TextContent("discarded merge")]),
-                    TextContent("discarded text"),
-                    ToolResult("orphan", []),
+            ToolMessage("user", [TextContent("original")], call_id="c"),
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "c",
+                        "content": [{"type": "text", "text": "discarded merge"}],
+                    },
+                    TextContent("discarded text").to_wire(),
+                    {"type": "tool_result", "tool_use_id": "orphan", "content": []},
                 ],
-            ),
+            },
         ]
     )
     validate_history(result)
@@ -127,8 +151,8 @@ def test_missing_call_ids_are_distinct_but_never_assigned_to_idless_results():
     result = normalize(
         [
             AssistantMessage("assistant", [ToolCall(None, "f"), ToolCall(None, "f")]),
-            UserMessage("user", [ToolResult(None, [TextContent("first")], name="f")]),
-            UserMessage("user", [ToolResult(None, [TextContent("second")], name="f")]),
+            ToolMessage("user", [TextContent("first")], call_id=None, name="f"),
+            ToolMessage("user", [TextContent("second")], call_id=None, name="f"),
         ]
     )
     validate_history(result)
@@ -141,8 +165,8 @@ def test_missing_call_ids_are_distinct_but_never_assigned_to_idless_results():
 def test_external_result_references_stay_external_and_merge_repeated_content():
     result = normalize(
         [
-            UserMessage("user", [ToolResult("server", [TextContent("first")])]),
-            UserMessage("user", [ToolResult("server", [TextContent("first")])]),
+            ToolMessage("user", [TextContent("first")], call_id="server"),
+            ToolMessage("user", [TextContent("first")], call_id="server"),
         ],
         allow_external_calls=True,
     )
@@ -155,7 +179,7 @@ def test_external_result_references_stay_external_and_merge_repeated_content():
 def test_local_call_reusing_an_external_completed_id_is_discarded():
     result = normalize(
         [
-            UserMessage("user", [ToolResult("server", [TextContent("first")])]),
+            ToolMessage("user", [TextContent("first")], call_id="server"),
             AssistantMessage("assistant", [ToolCall("server", "f", {"x": 1})]),
         ],
         allow_external_calls=True,
@@ -316,7 +340,7 @@ async def test_all_orphan_results_fail_without_inventing_a_user_prompt(profile_f
         (
             await codec.prepare(
                 {
-                    "messages": [UserMessage("user", [ToolResult("c", [TextContent("result")])])],
+                    "messages": [ToolMessage("user", [TextContent("result")], call_id="c")],
                     "tools": omit,
                     "stream": False,
                     "max_tokens": 2048,
@@ -332,13 +356,14 @@ async def test_all_orphan_results_fail_without_inventing_a_user_prompt(profile_f
 async def test_orphan_message_is_removed_with_all_its_text_in_every_target(profile_factory, target):
     messages = [
         UserMessage("user", [TextContent("keep first")]),
-        UserMessage(
+        ToolMessage(
             "user",
             [
                 TextContent("discarded before"),
-                ToolResult("orphan", [TextContent("discarded result")]),
+                TextContent("discarded result"),
                 TextContent("discarded after"),
             ],
+            call_id="orphan",
         ),
         UserMessage("user", [TextContent("keep last")]),
     ]
@@ -480,7 +505,7 @@ def test_idless_result_is_discarded_even_with_a_unique_matching_tool_name():
     result = normalize(
         [
             AssistantMessage("assistant", [ToolCall("weather", "weather")]),
-            UserMessage("user", [ToolResult(None, [TextContent("discarded")], name="weather")]),
+            ToolMessage("user", [TextContent("discarded")], call_id=None, name="weather"),
         ]
     )
     validate_history(result)
@@ -494,9 +519,9 @@ def test_chat_request_groups_results_without_a_semantic_loss_hook(profile_factor
     messages = [
         AssistantMessage("assistant", [ToolCall("a", "f"), ToolCall("b", "g")]),
         {"role": role, "content": [{"type": "text", "text": "first ordinary message"}]},
-        UserMessage("user", [ToolResult("b", [TextContent("second result")])]),
+        ToolMessage("user", [TextContent("second result")], call_id="b"),
         UserMessage("user", [TextContent("second ordinary message")]),
-        UserMessage("user", [ToolResult("a", [TextContent("first result")])]),
+        ToolMessage("user", [TextContent("first result")], call_id="a"),
     ]
     before = deepcopy(messages)
     request = (
@@ -515,7 +540,7 @@ def test_chat_request_groups_results_without_a_semantic_loss_hook(profile_factor
 
 def test_offline_chat_conversion_keeps_standalone_tool_results():
     converted = MyCodec().decode(
-        [UserMessage("user", [ToolResult("external", [TextContent("result")])])],
+        [ToolMessage("user", [TextContent("result")], call_id="external")],
         target_format="openai_chat",
     )
     assert converted["messages"] == [

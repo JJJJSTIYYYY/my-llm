@@ -23,7 +23,7 @@ from my_llm import (
     SemanticLossError,
     TextContent,
     ToolCall,
-    ToolResult,
+    ToolMessage,
     UserMessage,
     generate,
     omit,
@@ -135,7 +135,11 @@ async def test_typed_input_never_infers_or_uses_a_native_stdio(stdio):
             ],
             omit,
         ),
-        ([UserMessage("user", [ToolResult("a", [TextContent(42)])])], omit),
+        ([ToolMessage("user", [TextContent(42)], call_id="a")], omit),
+        ([ToolMessage("assistant", [TextContent("result")], call_id="a")], omit),
+        ([ToolMessage("user", [ReasoningContent("private")], call_id="a")], omit),
+        ([ToolMessage("user", [ToolCall("b", "f")], call_id="a")], omit),
+        ([ToolMessage("user", [[TextContent("nested")]], call_id="a")], omit),
         ([AssistantMessage("assistant", [ReasoningContent(reasoning=123)])], omit),
         ([UserMessage("user", [TextContent("hi")])], [{"name": "f"}]),
         ([UserMessage("user", [TextContent("hi")])], [FunctionTool("f", strict="yes")]),
@@ -166,14 +170,14 @@ async def test_direct_input_losses_keep_actual_objects_and_complete_request(poli
     image = ImageContent(ImageSource("url", url="https://example.com/a.png"))
     history = [
         AssistantMessage("assistant", [ToolCall("a", "f")]),
-        UserMessage("user", [ToolResult("a", [TextContent("ok"), image])]),
+        ToolMessage("user", [TextContent("ok"), image], call_id="a"),
         UserMessage("user", [TextContent("tail")]),
     ]
     observations = []
 
     def hook(draft, losses, context):
         assert losses.items[0].origin_value is image
-        assert losses.items[0].origin_path == "$.messages[1].content[0].content[1]"
+        assert losses.items[0].origin_path == "$.messages[1].content[1]"
         assert context.source_protocol == "middleware"
         assert draft["messages"][-1]["content"] == "tail"
         draft["temperature"] = 0.2
@@ -310,7 +314,7 @@ async def test_one_shot_helper_supports_typed_io_and_closes_clients():
 def test_all_public_middleware_field_types_are_exported():
     for name in (
         "MessageContent",
-        "ResultContent",
+        "ToolResult",
         "JsonObject",
         "JsonValue",
         "ItemIdentity",
@@ -382,7 +386,7 @@ async def test_decoder_repairs_history_and_retains_generation_validation():
         await stream.aclose()
         with pytest.raises(MessageValidationError, match="no usable history"):
             await llm.generate(
-                messages=[UserMessage("user", [ToolResult("a", [TextContent("x")])])], stream=True
+                messages=[ToolMessage("user", [TextContent("x")], call_id="a")], stream=True
             )
         with pytest.raises(ConfigurationError):
             await llm.generate(messages=[UserMessage("user", [TextContent("x")])], max_tokens=-1)
@@ -434,10 +438,8 @@ async def test_prepared_request_owns_nested_application_data(protocol):
                 for part in message.content:
                     if isinstance(part, ToolCall):
                         part.arguments.clear()
-                    elif isinstance(part, ToolResult):
-                        for child in part.content:
-                            if isinstance(child, TextContent):
-                                child.text = "changed after prepare"
+                    elif isinstance(message, ToolMessage) and isinstance(part, TextContent):
+                        part.text = "changed after prepare"
             async with stream:
                 async for _ in stream:
                     pass

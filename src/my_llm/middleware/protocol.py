@@ -18,7 +18,7 @@ from my_llm.middleware.models import (
     ReasoningContent,
     TextContent,
     ToolCall,
-    ToolResult,
+    ToolMessage,
 )
 from my_llm.middleware.stream import StreamBatch, Usage
 from my_llm.middleware.validation import RESULT_CONTENT_TYPES
@@ -88,7 +88,7 @@ def wire_values(values: list) -> list:
 
 def _valid_content(part: MessageContent, role: str) -> bool:
     """Check a typed content model and whether its role permits that content."""
-    if not isinstance(part, (TextContent, ImageContent, ReasoningContent, ToolCall, ToolResult)):
+    if not isinstance(part, (TextContent, ImageContent, ReasoningContent, ToolCall)):
         return False
     if not _valid_item(part.item):
         return False
@@ -118,16 +118,6 @@ def _valid_content(part: MessageContent, role: str) -> bool:
             and bool(part.name)
             and isinstance(part.arguments, dict)
         )
-    if isinstance(part, ToolResult):
-        return (
-            role == "user"
-            and isinstance(part.content, list)
-            and all(
-                getattr(value, "type", None) in RESULT_CONTENT_TYPES
-                and _valid_content(value, "user")
-                for value in part.content
-            )
-        )
     return False
 
 
@@ -141,20 +131,8 @@ def _valid_item(item: ItemIdentity | None) -> bool:
 
 
 def _input_origin(part: MessageContent, path: str) -> MessageContent:
-    """Attach missing provenance through shallow replacements, including result parts."""
-    content = {}
-    if isinstance(part, ToolResult):
-        children = []
-        changed = False
-        for index, value in enumerate(part.content):
-            child = _input_origin(value, f"{path}.content[{index}]")
-            children.append(child)
-            changed |= child is not value
-        if changed:
-            content["content"] = children
-    if part.origin is None:
-        content["origin"] = Origin(path, part)
-    return replace(part, **content) if content else part
+    """Attach missing provenance through shallow replacements."""
+    return replace(part, origin=Origin(path, part)) if part.origin is None else part
 
 
 def generation_input(messages, tools) -> ProtocolMiddleWare:
@@ -180,11 +158,15 @@ def generation_input(messages, tools) -> ProtocolMiddleWare:
             )
         if not _valid_item(message.item) or not isinstance(message.content, list):
             raise MessageValidationError("invalid middleware content or content role")
+        if isinstance(message, ToolMessage) and message.role != "user":
+            raise MessageValidationError("tool messages require the user role")
         path = f"$.messages[{index}]"
         parts = []
         changed = message.origin is None
         for offset, part in enumerate(message.content):
-            if not _valid_content(part, message.role):
+            if not _valid_content(part, message.role) or (
+                isinstance(message, ToolMessage) and part.type not in RESULT_CONTENT_TYPES
+            ):
                 raise MessageValidationError("invalid middleware content or content role")
             located = _input_origin(part, f"{path}.content[{offset}]")
             parts.append(located)

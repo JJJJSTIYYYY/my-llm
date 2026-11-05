@@ -12,7 +12,7 @@ from my_llm import (
     SemanticLossError,
     TextContent,
     ToolCall,
-    ToolResult,
+    ToolMessage,
     UserMessage,
     omit,
 )
@@ -44,7 +44,7 @@ def reasoning_history(protocol):
             [reasoning("tool reasoning"), ToolCall("c", "f")],
             protocol=protocol,
         ),
-        UserMessage("user", [ToolResult("c", [TextContent("tool result")])]),
+        ToolMessage("user", [TextContent("tool result")], call_id="c"),
         UserMessage("user", [TextContent("complete tail")]),
     ]
 
@@ -228,7 +228,7 @@ async def test_empty_reasoning_feedback_depends_on_history_policy_not_generation
     messages = [message]
     if has_calls:
         message.content.append(ToolCall("c", "f"))
-        messages.append(UserMessage("user", [ToolResult("c", [TextContent("ok")])]))
+        messages.append(ToolMessage("user", [TextContent("ok")], call_id="c"))
     before = deepcopy(messages)
     codec = MyCodec()
     profile = profile_factory(
@@ -488,7 +488,7 @@ async def test_history_tool_calls_and_results_are_losses_without_tool_definition
 ):
     messages = [
         AssistantMessage("assistant", [ToolCall("c", "f")]),
-        UserMessage("user", [ToolResult("c", [TextContent("result")])]),
+        ToolMessage("user", [TextContent("result")], call_id="c"),
         UserMessage("user", [TextContent("tail")]),
     ]
     before = deepcopy(messages)
@@ -522,10 +522,10 @@ async def test_history_tool_calls_and_results_are_losses_without_tool_definition
         assert len(losses) == 2
         assert [loss.origin_path for loss in losses] == [
             "$.messages[0].content[0]",
-            "$.messages[1].content[0]",
+            "$.messages[1]",
         ]
         assert losses.items[0].origin_value is messages[0].content[0]
-        assert losses.items[1].origin_value is messages[1].content[0]
+        assert losses.items[1].origin_value is messages[1]
         assert all("not support function calling" in loss.reason for loss in losses)
     assert messages == before
 

@@ -1,5 +1,6 @@
 """Every middleware field survives its neutral projection, without native syntax."""
 
+from copy import deepcopy
 from dataclasses import fields, is_dataclass
 
 import pytest
@@ -22,7 +23,6 @@ from my_llm import (
     TextContent,
     ToolCall,
     ToolMessage,
-    ToolResult,
     Usage,
     UserMessage,
 )
@@ -97,21 +97,6 @@ CONTENT_CASES = [
             "item": identity(),
         },
     ),
-    (
-        ToolResult,
-        {
-            "call_id": "call-3",
-            "name": "add",
-            "content": [
-                TextContent("42", item=identity()),
-                ImageContent(
-                    ImageSource(type="base64", data="aW1hZ2U=", media_type="image/png"),
-                    item=identity(),
-                ),
-            ],
-            "item": identity(),
-        },
-    ),
 ]
 
 
@@ -140,7 +125,6 @@ def test_all_populated_content_fields_survive_roundtrip(model, supplied):
         (ImageContent, {"source": ImageSource(type="url", url="https://example.com/image.png")}),
         (ReasoningContent, {}),
         (ToolCall, {"call_id": None, "name": "add"}),
-        (ToolResult, {"call_id": None, "content": []}),
     ],
 )
 def test_minimal_content_defaults_survive_roundtrip(model, supplied):
@@ -180,7 +164,14 @@ def test_all_image_source_fields_survive_roundtrip(kind):
         (AssistantMessage, "assistant", [TextContent("answer", item=identity())]),
         (InstructionMessage, "system", [TextContent("instruction")]),
         (InstructionMessage, "developer", [TextContent("instruction")]),
-        (ToolMessage, "user", [ToolResult("call-3", [TextContent("42")], name="add")]),
+        (
+            ToolMessage,
+            "user",
+            [
+                TextContent("42"),
+                ImageContent(ImageSource("url", url="https://example.com/result.png")),
+            ],
+        ),
     ],
 )
 def test_all_message_fields_survive_roundtrip(model, role, content):
@@ -192,6 +183,8 @@ def test_all_message_fields_survive_roundtrip(model, role, content):
         "item": identity(),
         "coalesce": True,
     }
+    if model is ToolMessage:
+        supplied["call_id"] = "call-3"
     assert_fields_exercised(model, supplied, implicit=("origin",))
     original = model(**supplied, origin=Origin("$.original.message", object()))
     restored = messages_from_wire([original.to_wire()])[0]
@@ -200,6 +193,70 @@ def test_all_message_fields_survive_roundtrip(model, role, content):
     assert restored.origin.path == original.origin.path
     assert restored.origin.value is original.origin.value
     assert restored.to_wire() == original.to_wire()
+
+
+@pytest.mark.parametrize("content", [[], [TextContent("first"), TextContent("second")]])
+def test_tool_message_owns_mutable_call_id_with_flat_result_content(content):
+    message = ToolMessage("user", content, call_id="original")
+    message.call_id = "updated"
+    restored = messages_from_wire([message.to_wire()])[0]
+    assert isinstance(restored, ToolMessage)
+    assert restored.call_id == "updated"
+    assert [part.text for part in restored.content] == [part.text for part in content]
+    assert restored.to_wire()["content"][0]["tool_use_id"] == "updated"
+
+
+def test_mixed_wire_message_splits_results_without_losing_order_identity_or_origins():
+    raw = {
+        "role": "user",
+        "protocol": "example",
+        "content": [
+            {"type": "text", "text": "before"},
+            {
+                "type": "tool_result",
+                "tool_use_id": "a",
+                "name": "lookup",
+                "item": {"id": "result-a", "status": "completed"},
+                "content": [
+                    {"type": "text", "text": "answer"},
+                    {
+                        "type": "image",
+                        "source": {"type": "url", "url": "https://example.com/a.png"},
+                    },
+                ],
+            },
+            {"type": "text", "text": "between"},
+            {"type": "tool_result", "tool_use_id": "b", "content": []},
+            {"type": "text", "text": "after"},
+        ],
+    }
+    before = deepcopy(raw)
+    messages = messages_from_wire([raw])
+    assert [type(message) for message in messages] == [
+        UserMessage,
+        ToolMessage,
+        UserMessage,
+        ToolMessage,
+        UserMessage,
+    ]
+    assert [messages[index].content[0].text for index in (0, 2, 4)] == [
+        "before",
+        "between",
+        "after",
+    ]
+    first, second = messages[1], messages[3]
+    assert (first.call_id, first.name, first.item.id, first.item.status) == (
+        "a",
+        "lookup",
+        "result-a",
+        "completed",
+    )
+    assert [type(part) for part in first.content] == [TextContent, ImageContent]
+    assert first.origin.path == "$.messages[0].content[1]"
+    assert first.content[1].origin.path == "$.messages[0].content[1].content[1]"
+    assert second.call_id == "b" and second.content == []
+    assert all(message.protocol == "example" for message in messages)
+    assert raw == before
 
 
 @pytest.mark.parametrize("strict", [False, True, None])

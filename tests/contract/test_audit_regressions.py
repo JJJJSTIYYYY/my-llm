@@ -658,7 +658,7 @@ def test_source_image_roles_preserve_text_order_tool_images_and_origins(protocol
         messages = [incoming]
     original = deepcopy(messages)
     message = MyCodec().encode(messages, input_format=protocol).messages[-1]
-    content = message.content[0].content if role == "tool" else message.content
+    content = message.content
     assert "".join(part.text for part in content if part.type == "text") == ("beforeafter")
     images = [part for part in content if part.type == "image"]
     assert len(images) == (1 if role in ("user", "tool") else 0)

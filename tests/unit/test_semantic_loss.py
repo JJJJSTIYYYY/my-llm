@@ -15,7 +15,7 @@ from my_llm import (
     ReasoningContent,
     SemanticLossError,
     TextContent,
-    ToolResult,
+    ToolMessage,
     UserMessage,
 )
 from my_llm.middleware.models import content_from_wire
@@ -441,8 +441,8 @@ def test_adaptor_has_distinct_directional_hooks(policy):
 
 def test_typed_tool_result_contains_only_supported_parts():
     encoded = MyCodec().encode(picture_history(), input_format="anthropic")
-    assert isinstance(encoded.messages[1].content[0], ToolResult)
-    assert len(encoded.messages[1].content[0].content) == 4
+    assert isinstance(encoded.messages[1], ToolMessage)
+    assert len(encoded.messages[1].content) == 4
 
 
 @pytest.mark.parametrize("streaming", [False, True])

@@ -32,7 +32,6 @@ from my_llm import (
     TextContent,
     ToolCall,
     ToolMessage,
-    ToolResult,
     UserMessage,
 )
 
@@ -133,7 +132,7 @@ def tool_turn(protocol, result):
         name, args = call.name, call.arguments
         history = [
             result,
-            ToolMessage("user", [ToolResult(call.call_id, [TextContent("42")], name=name)]),
+            ToolMessage("user", [TextContent("42")], call_id=call.call_id, name=name),
         ]
     elif protocol == "openai_chat":
         calls = result.get("tool_calls", [])

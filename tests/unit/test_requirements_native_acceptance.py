@@ -1,6 +1,7 @@
 """Reverse acceptance of supported content and native-only discard boundaries."""
 
 import json
+from copy import deepcopy
 
 import pytest
 
@@ -46,6 +47,33 @@ async def test_application_arrays_with_type_keys_remain_tool_text(source, target
         target_profile(profile_factory, target),
     )
     assert json.loads(native_result_text(target, request)) == payload
+
+
+@pytest.mark.parametrize("source", PROTOCOLS)
+@pytest.mark.parametrize("target", PROTOCOLS)
+@pytest.mark.parametrize("payload", [[], "[]"])
+async def test_empty_native_tool_parts_stay_distinct_from_json_array_text(
+    source, target, payload, profile_factory
+):
+    messages = application_result_history(source, payload)
+    before = deepcopy(messages)
+    codec = MyCodec()
+    result = codec.encode(messages, input_format=source).messages[-1]
+    assert result.call_id == "c"
+    assert [part.text for part in result.content] == ([] if payload == [] else ["[]"])
+
+    request = await prepare(codec, messages, source, target_profile(profile_factory, target))
+    if target == "openai_chat":
+        assert request["messages"][-1]["content"] == ("" if payload == [] else "[]")
+    else:
+        actual = (
+            request["input"][-1]["output"]
+            if target == "openai_responses"
+            else request["messages"][-1]["content"][0]["content"]
+        )
+        text_type = "input_text" if target == "openai_responses" else "text"
+        assert actual == ([] if payload == [] else [{"type": text_type, "text": "[]"}])
+    assert messages == before
 
 
 @pytest.mark.parametrize("source", ["openai_chat", "openai_responses", "anthropic"])

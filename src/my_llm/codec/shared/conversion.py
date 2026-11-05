@@ -145,9 +145,10 @@ def text_result(value) -> str:
 
 
 def tool_result_content(value: Any, *, native_types: frozenset[str]) -> Any:
-    """Serialize application data; let source codecs project native content lists."""
+    """Serialize application data; preserve native content lists, including empty ones."""
     if isinstance(value, dict) or (
         isinstance(value, list)
+        and value
         and not any(isinstance(part, dict) and part.get("type") in native_types for part in value)
     ):
         return json.dumps(value, ensure_ascii=False)

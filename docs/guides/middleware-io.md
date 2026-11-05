@@ -59,19 +59,19 @@ reply = await llm.generate(messages=middle.messages, tools=middle.tools)
 | 用途 | 公开类型 |
 | --- | --- |
 | 历史 | `Message`、`UserMessage`、`AssistantMessage`、`InstructionMessage`、`ToolMessage` |
-| 内容 | `TextContent`、`ImageContent`、`ImageSource`、`ReasoningContent`、`ToolCall`、`ToolResult` |
-| 工具与类型别名 | `FunctionTool`、`MessageContent`、`ResultContent`、`JsonObject`、`JsonValue` |
+| 内容 | `TextContent`、`ImageContent`、`ImageSource`、`ReasoningContent`、`ToolCall` |
+| 工具与类型别名 | `FunctionTool`、`MessageContent`、`ToolResult`、`JsonObject`、`JsonValue` |
 | 公开生成结果 | `AssistantMessage`、`MessageEvent` |
 | 转换容器 | `ProtocolMiddleWare`、`StreamBatch` |
 | 源项身份 | `ItemIdentity` |
 | 用量和来源 | `Usage`、`Origin` |
 
-历史角色为 `user`、`assistant`、`system`、`developer`。工具结果使用 `user` 角色的
-`ToolResult` 内容块；`ToolMessage` 是这种消息的辅助类型，其 `call_id` 从内容块读取。
+历史角色为 `user`、`assistant`、`system`、`developer`。每个工具调用的结果使用一条
+`ToolMessage`，由消息的 `call_id` 关联调用，`content` 直接保存有序文本和图片列表。
 不要将原生 Chat 的 `role="tool"` 搬到中间消息中。
 
 ```python
-from my_llm import AssistantMessage, FunctionTool, ToolCall, ToolMessage, ToolResult
+from my_llm import AssistantMessage, FunctionTool, TextContent, ToolCall, ToolMessage, UserMessage
 
 tools = [
     FunctionTool(
@@ -86,7 +86,7 @@ tools = [
 ]
 history = [
     AssistantMessage("assistant", [ToolCall("call_1", "lookup", {"name": "示例"})]),
-    ToolMessage("user", [ToolResult("call_1", [TextContent("查询结果")])]),
+    ToolMessage("user", [TextContent("查询结果")], call_id="call_1"),
     UserMessage("user", [TextContent("请继续")]),
 ]
 ```
@@ -105,7 +105,7 @@ history = [
 修复不修改传入模型。启用消息缓存时仅修复当前增量批次，完整工具回合应放在同一批，
 不会重新解析缓存前缀。独立的严格工具关联验证仍可用于检查历史。
 工具结果必须携带明确 ID。使用 middleware stdio 时保存 `ToolCall.call_id`，
-再原样填入 `ToolResult.call_id`；不会仅凭名称关联。
+再原样填入 `ToolMessage.call_id`；不会仅凭名称关联。
 修复通过原有消息、内容及结果部件校验循环收集，最终检查不扫描工具表或重建消息列表；
 翻译在既有循环中惰性读取有效消息及必要的空结果。回传思维链补空规则共用同一实现。
 `ToolCall.arguments` 是完整 JSON 对象，结果对象/数组应先序列化为 `TextContent`，图片使用 `ImageContent`。
@@ -114,7 +114,7 @@ history = [
 
 `Message` 和所有内容块都可携带 `item=ItemIdentity(id=..., status=...)`，用于保留源输出项身份，
 当前主要用于 Responses 回放。应用通常直接保存 encoder 或生成接口返回的模型，无须手动设置。
-`ToolCall.call_id` / `ToolResult.call_id` 关联工具调用与结果，和源输出项 id 的用途不同。
+`ToolCall.call_id` / `ToolMessage.call_id` 关联工具调用与结果，和源输出项 id 的用途不同。
 流事件的 `source_ref` 是源块地址，`index` 是本次返回内容的顺序。
 
 思维模型始终使用 `ReasoningContent`：`reasoning` 为可见文本，`feedback_item` 为原生回传值，

@@ -446,7 +446,7 @@ def test_responses_tool_result_keeps_native_item_identity_for_every_content_form
     assert [item["id"] for item in restored] == ["fc_original", "output_original"]
     assert [item["status"] for item in restored] == ["completed", "completed"]
     assert [item["call_id"] for item in restored] == ["call_original", "call_original"]
-    assert encoded.messages[1].content[0].item.id == "output_original"
+    assert encoded.messages[1].item.id == "output_original"
     assert "42" in str(restored[1]["output"])
 
 

@@ -56,7 +56,7 @@ Middleware 另在每种上游验证三个策略场景：
 
 Middleware 场景直接构造 `UserMessage` 与 `FunctionTool`，不通过原生转换生成输入。
 结果须为 `AssistantMessage`，流事件须为 `MessageEvent`；工具以完整 `ToolCall` 交付，
-事件与结果中的调用 ID 必须一致。第二轮使用 `ToolMessage` / `ToolResult` 回传结果。
+事件与结果中的调用 ID 必须一致。第二轮使用 `ToolMessage` 回传结果。
 
 ## 2026-10-31 实测结果
 

@@ -17,14 +17,13 @@ encoder 负责原生投影，decoder 负责目标表达，Transport 只执行 SD
 | `UserMessage` | 继承 `Message` 全部字段，无新增字段 | `role=user`；有序文本和图片 |
 | `InstructionMessage` | 继承 `Message` 全部字段，无新增字段 | `role=system / developer`；有序文本 |
 | `AssistantMessage` | 继承 `Message` 全部字段，无新增字段 | `role=assistant`；有序文本、思维和工具调用 |
-| `ToolMessage` | 继承 `Message` 全部字段，无新增字段 | `role=user`；用 `ToolResult` 保存工具结果；只读属性 `call_id` 从内容中读取 |
+| `ToolMessage` | 继承 `Message` 字段，仅新增必填的 `call_id: str`，并重写 `to_wire()` | `role=user`；一条消息对应一次调用，内容直接为有序文本 / 图片；`name` 和 `item` 保存结果名称及源结果项身份 |
 | `ItemIdentity` | `id`、`status` | 通用的可选源项身份，当前用于 Responses 回放；两个字段均为可选字符串 |
 | `TextContent` | `text`、`origin`、`type`、`item` | 通用文本，`type=text`；`item` 当前保留 Responses 项身份 |
 | `ImageContent` | `source`、`origin`、`type`、`item` | 通用图片，`type=image`；`item` 当前保留 Responses 项身份 |
 | `ImageSource` | `type`、`url`、`data`、`media_type` | 通用；`type=url` 使用 URL，`type=base64` 使用数据与媒体类型；不下载 URL |
 | `ReasoningContent` | `reasoning`、`feedback_item`、`item`、`origin`、`type` | `reasoning: str \| None` 保存可见思维；`feedback_item: Any \| None` 保存原生回传值；固定 `type=thinking`，来源协议由消息或流批次标识 |
 | `ToolCall` | `call_id`、`name`、`arguments`、`origin`、`type`、`item` | 通用完整调用，`type=tool_use`、`arguments: JsonObject`；`item` 当前保留 Responses 项身份 |
-| `ToolResult` | `call_id`、`content`、`name`、`origin`、`type`、`item` | 通用结果，`type=tool_result`；有序文本 / 图片；`item` 当前保留 Responses 结果项身份 |
 | `FunctionTool` | `name`、`description`、`parameters`、`strict`、`origin` | 通用函数声明；`parameters: JsonObject` 保留应用 Schema；`strict` 按上文协议集合处理 |
 | `StreamBatch` | `protocol`、`events` | encoder 到状态机的内部载体；`events: list[dict]` 是有序操作，不作为应用流事件使用 |
 | `MessageEvent` | `type`、`index`、`source_ref`、`block`、`tool_index`、`field`、`value`、`reason`、`messages` | 通用公开事件；工具调用完整，终态携带具体消息模型；各类型的有效字段见[使用指南](../guides/middleware-io.md#流式输出) |
@@ -58,7 +57,8 @@ Anthropic 的完整 `thinking` / `redacted_thinking` 块，
 
 模型属性与少量 wire 键有明确映射：`ReasoningContent` 使用同名的 `reasoning` 和 `feedback_item`；
 `ToolCall.call_id → id`、`arguments → input`、
-`ToolResult.call_id → tool_use_id`；工具声明使用 `functions` 分组。
+`ToolMessage.call_id → tool_use_id`；工具消息投影时生成内部 `tool_result` 包装，公共 `content` 直接为文本 / 图片列表。
+原生消息含有多个结果或混合普通内容时，公共模型按原顺序拆为独立消息；原生请求准备保留源消息的整体修复边界。工具声明使用 `functions` 分组。
 这些键属于中间契约，不接受旧版字段别名。`JsonObject` 是 `dict[str, JsonValue]` 的类型别名，
 运行时仍使用普通字典。
 

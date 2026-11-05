@@ -34,7 +34,7 @@ from my_llm import (
     ReasoningContent,
     TextContent,
     ToolCall,
-    ToolResult,
+    ToolMessage,
 )
 from my_llm.codec.openai.chat.transport import ChatCompletionsTransport
 
@@ -266,7 +266,7 @@ async def main():
         emit("insufficient_first_turn", tool_count=len(calls), feedback_blocks=len(feedback))
         return
     assert all(p.feedback_item == (p.reasoning or "") for p in feedback)
-    tool_result = Message("user", [ToolResult(calls[0].call_id, [TextContent('{"value":719}')])])
+    tool_result = ToolMessage("user", [TextContent('{"value":719}')], call_id=calls[0].call_id)
     history = [PROMPT, first, tool_result]
     before = deepcopy(history)
 

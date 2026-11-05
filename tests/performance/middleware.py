@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 
-from my_llm import MyCodec, MyLLM, ToolResult
+from my_llm import MyCodec, MyLLM
 from tests.helpers.protocols import PROTOCOLS
 from tests.performance.fingerprint import harness, source
 from tests.performance.request_chain import probe
@@ -33,10 +33,7 @@ def direct_workload(workload):
     encoded = MyCodec().encode(workload.messages, workload.tools, input_format=workload.protocol)
 
     def part(value):
-        changes = {"origin": None}
-        if isinstance(value, ToolResult):
-            changes["content"] = [part(child) for child in value.content]
-        return replace(value, **changes)
+        return replace(value, origin=None)
 
     return replace(
         workload,

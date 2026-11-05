@@ -254,12 +254,12 @@ async def print_stream(llm, prompt):
 
 | 类型 | 公开契约 |
 | --- | --- |
-| `Message`、`UserMessage`、`AssistantMessage`、`InstructionMessage`、`ToolMessage` | `role` 与有序 `content`；可选 `name`、来源 `protocol`、`item`、`coalesce`、`origin`；具体类型不增加字段 |
+| `Message`、`UserMessage`、`AssistantMessage`、`InstructionMessage` | `role` 与有序 `content`；可选 `name`、来源 `protocol`、`item`、`coalesce`、`origin`；具体类型不增加字段 |
 | `TextContent` | `text`；固定 `type="text"`，可选 `item`、`origin` |
 | `ImageContent`、`ImageSource` | 图片内容的 `source`、固定 `type="image"`、可选 `item/origin`；来源的 `type="url" / "base64"` 及 `url/data/media_type`；用户消息和工具结果可使用 |
 | `ReasoningContent` | 可选 `reasoning: str \| None`、`feedback_item: Any \| None`、`item`、`origin`；固定 `type="thinking"`。可见文本实时输出，回传值保留原生对象，跨协议丢弃并记录损失 |
 | `ToolCall` | `call_id`、`name`、完整 `arguments: JsonObject`；可选 `item`、`origin`；固定 `type="tool_use"` |
-| `ToolResult` | `call_id`、有序 `content: list[ResultContent]`；可选 `name`、`item`、`origin`；固定 `type="tool_result"` |
+| `ToolMessage` | 继承消息字段，仅新增必填的 `call_id: str`（仅关键字参数）并重写 `to_wire()`；`content` 直接保存文本和图片，`name` 和 `item` 属于工具结果 |
 | `FunctionTool` | `name` 及可选 `description`、`parameters: JsonObject`、`strict`、`origin` |
 | `ItemIdentity` | 可选 `id`、`status`；保存源输出项身份，与工具的 `call_id` 和流块的 `source_ref` 分开 |
 | `Origin` | `path`、`value`；仅供错误定位，不作为 payload 字段输出 |
@@ -267,11 +267,11 @@ async def print_stream(llm, prompt):
 | `ProtocolMiddleWare` | 可选 `messages`、`tools`、`stream`、`usage`；生成时传模型列表属性；字典投影中 `stream` 对应 `chunks` |
 | `StreamBatch` | `protocol` 和内部操作 `events: list[dict]`，供 encoder 与状态机交互；应用流使用 `MessageEvent` |
 | `MessageEvent` | `type`、可选 `index`、`source_ref`、`block`、`tool_index`、`field`、`value`、`reason`、`messages`；各事件有效字段见[流式输出](../guides/middleware-io.md#流式输出) |
-| `MessageContent`、`ResultContent` | 分别为消息支持内容的联合类型、`TextContent \| ImageContent` |
+| `MessageContent`、`ToolResult` | 分别为消息支持内容的联合类型、`TextContent \| ImageContent` |
 | `JsonValue`、`JsonObject` | JSON 值和 `dict[str, JsonValue]` 类型别名，使用普通 Python 值与字典，无额外包装 |
 
 消息及所有内容块最多各有一个可选 `item: ItemIdentity`。源项合并后内容仍保留自身项身份；
-工具结果通过 `call_id` 对应调用，`ToolMessage.call_id` 是从结果内容读取的只读属性。
+工具结果通过 `call_id` 对应调用，`ToolMessage.call_id` 是可直接构造和修改的消息字段。
 `reasoning` 统一保存可见思维文本，`feedback_item` 保存原生回传项；跨协议时仅后者丢弃并记录语义损失。
 
 `to_wire()` 提供显式投影并借用部分嵌套值；它不提供深拷贝或自动校验。

@@ -9,6 +9,7 @@ from dataclasses import field as dataclass_field
 from typing import Any, Literal
 
 from my_llm.basic.data import capture
+from my_llm.basic.exceptions import MessageValidationError
 from my_llm.basic.semantic_loss import originated
 from my_llm.middleware.validation import validate_content, validate_messages, validate_tools
 
@@ -163,34 +164,13 @@ class ToolCall(ProtocolValue):
         return _located(_with_item(value, self.item), self.origin)
 
 
-type ResultContent = TextContent | ImageContent
-
-
-@dataclass(slots=True)
-class ToolResult(ProtocolValue):
-    call_id: str | None
-    content: list[ResultContent]
-    name: str | None = None
-    origin: Origin | None = dataclass_field(default=None, repr=False)
-    type: Literal["tool_result"] = dataclass_field(default="tool_result", init=False)
-    item: ItemIdentity | None = None
-
-    def to_wire(self) -> dict:
-        """Project the associated call ID and canonical text/image result parts."""
-        value = {
-            "type": "tool_result",
-            "tool_use_id": self.call_id,
-            "content": [part.to_wire() for part in self.content],
-        }
-        if self.name is not None:
-            value["name"] = self.name
-        return _located(_with_item(value, self.item), self.origin)
+type ToolResult = TextContent | ImageContent
 
 
 type MessageContent = TextContent | ImageContent | ReasoningContent | ToolCall | ToolResult
 
 
-def _result_content(value: object, path: str) -> list[ResultContent]:
+def _result_content(value: object, path: str) -> list[ToolResult]:
     """Normalize tool results to typed parts, JSON-serializing untagged application data."""
     if value is None:
         return []
@@ -240,13 +220,7 @@ def content_from_validated_wire(value: dict, path: str = "$") -> MessageContent:
             origin,
             _item(value),
         )
-    return ToolResult(
-        value["tool_use_id"],
-        _result_content(value["content"], f"{origin.path}.content"),
-        value.get("name"),
-        origin,
-        _item(value),
-    )
+    raise MessageValidationError(f"{path}: tool results must be read as ToolMessage")
 
 
 @dataclass(slots=True)
@@ -288,15 +262,30 @@ class InstructionMessage(Message):
     __slots__ = ()
 
 
+@dataclass(slots=True, kw_only=True)
 class ToolMessage(Message):
-    """A tool result associated with a prior call."""
+    """One call's ordered text/image results, with identity owned by the message."""
 
-    __slots__ = ()
+    call_id: str
 
-    @property
-    def call_id(self) -> str | None:
-        """Read the first tool-result call ID, or None when no result exists."""
-        return next((p.call_id for p in self.content if isinstance(p, ToolResult)), None)
+    def to_wire(self) -> dict:
+        """Wrap flat public result parts in the internal tool-result envelope."""
+        block = {
+            "type": "tool_result",
+            "tool_use_id": self.call_id,
+            "content": [part.to_wire() for part in self.content],
+        }
+        if self.name is not None:
+            block["name"] = self.name
+        result = {
+            "role": self.role,
+            "content": [_located(_with_item(block, self.item), self.origin)],
+        }
+        if self.protocol is not None:
+            result["protocol"] = self.protocol
+        if self.coalesce:
+            result["coalesce"] = True
+        return _located(result, self.origin)
 
 
 def messages_from_wire(values: list) -> list[Message]:
@@ -318,30 +307,51 @@ def messages_from_validated_wire(values: list) -> list[Message]:
         role = raw["role"]
         protocol = raw.get("protocol")
         origin = Origin.from_value(raw, f"$.messages[{index}]")
-        content = [
-            content_from_validated_wire(block, f"{origin.path}.content[{offset}]")
-            for offset, block in enumerate(raw["content"])
-        ]
         model = (
             AssistantMessage
             if role == "assistant"
             else InstructionMessage
             if role in ("system", "developer")
-            else ToolMessage
-            if any(isinstance(p, ToolResult) for p in content)
             else UserMessage
         )
-        result.append(
-            model(
-                role,
-                content,
-                raw.get("name"),
-                protocol,
-                _item(raw),
-                bool(raw.get("coalesce")),
-                origin,
+        content = []
+
+        def append_message() -> None:
+            result.append(
+                model(
+                    role,
+                    content,
+                    raw.get("name"),
+                    protocol,
+                    _item(raw),
+                    bool(raw.get("coalesce")),
+                    origin,
+                )
             )
-        )
+
+        for offset, block in enumerate(raw["content"]):
+            path = f"{origin.path}.content[{offset}]"
+            if block["type"] != "tool_result":
+                content.append(content_from_validated_wire(block, path))
+                continue
+            if content:
+                append_message()
+                content = []
+            block_origin = Origin.from_value(block, path)
+            result.append(
+                ToolMessage(
+                    role,
+                    _result_content(block["content"], f"{block_origin.path}.content"),
+                    block.get("name"),
+                    protocol,
+                    _item(block),
+                    bool(raw.get("coalesce")),
+                    block_origin,
+                    call_id=block["tool_use_id"],
+                )
+            )
+        if content or not raw["content"]:
+            append_message()
     return result
 
 

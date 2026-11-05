@@ -30,6 +30,42 @@ def scalar():
     return protocol, field, chunk, terminal
 
 
+@pytest.mark.parametrize("profiled", [False, True])
+@pytest.mark.parametrize(
+    "fragments,expected",
+    [([], None), ([None], None), ([""], ""), (["", "thought", ""], "thought")],
+)
+def test_chat_reasoning_stream_preserves_empty_text_and_matches_native_history(
+    scalar, profile_factory, profiled, fragments, expected
+):
+    protocol, field, chunk, terminal = scalar
+    profile = profile_factory(protocol) if profiled else None
+    codec = MyCodec()
+    encoder = codec.codecs[protocol].encoder
+    state = StreamState("demo")
+    for event in [
+        *(chunk(**{field: value}) for value in fragments),
+        chunk(content="answer"),
+        terminal,
+    ]:
+        state.feed(encoder.chunks([event], profile))
+    state.finish()
+    result = codec.result(state.messages(), input_format=protocol, target_format="middleware")
+    reasoning = [part for part in result.content if isinstance(part, ReasoningContent)]
+    if expected is None:
+        assert reasoning == []
+    else:
+        assert len(reasoning) == 1
+        assert reasoning[0].reasoning == reasoning[0].feedback_item == expected
+    native = {"role": "assistant", "content": "answer"}
+    if fragments:
+        native[field] = expected
+    restored = encoder.messages([native], profile)[0]
+    assert [part.to_wire() for part in reasoning] == [
+        part.to_wire() for part in restored.content if isinstance(part, ReasoningContent)
+    ]
+
+
 def test_scalar_feedback_stream_uses_its_own_output_parameter(scalar, profile_factory):
     protocol, field, chunk, terminal = scalar
     root = "$.choices[0].delta"
@@ -95,6 +131,22 @@ def test_scalar_native_message_custom_feedback_is_separate(scalar, profile_facto
     assert block.feedback_item == "raw"
 
 
+@pytest.mark.parametrize(
+    "custom,expected", [({}, "visible"), ({"private": None}, None), ({"private": "raw"}, "raw")]
+)
+def test_native_chat_result_replays_standard_reasoning_when_custom_field_is_absent(
+    scalar, profile_factory, custom, expected
+):
+    protocol, field, _, _ = scalar
+    message = {"role": "assistant", "content": "answer", field: "visible", **custom}
+    profile = profile_factory(
+        protocol, feedback_reasoning_item=OutputParameter(path="$.choices[0].delta.private")
+    )
+    block = codec_for(protocol).encoder.messages([message], profile)[0].content[1]
+    assert block.reasoning == "visible"
+    assert block.feedback_item == expected
+
+
 @pytest.mark.parametrize("disabled", [omit, OutputParameter(path="$.private", supports=False)])
 def test_output_feedback_declaration_filters_only_feedback(scalar, profile_factory, disabled):
     protocol, _, _, _ = scalar
@@ -135,11 +187,10 @@ def test_unrepresentable_scalar_feedback_reports_loss_instead_of_crashing(scalar
         MyCodec().decoder(protocol).messages([message], profile_factory(protocol))
 
 
-def test_native_output_reports_feedback_it_cannot_preserve(scalar):
+@pytest.mark.parametrize("feedback", ["raw", {"encrypted": "raw"}])
+def test_native_output_reports_feedback_it_cannot_preserve(scalar, feedback):
     protocol, _, _, _ = scalar
-    message = Message(
-        "assistant", [ReasoningContent("visible", {"encrypted": "raw"})], protocol=protocol
-    )
+    message = Message("assistant", [ReasoningContent("visible", feedback)], protocol=protocol)
     with pytest.raises(SemanticLossError, match="feedback_item") as captured:
         MyCodec().decoder(protocol).messages([message])
     assert "visible" in str(captured.value.draft)

@@ -16,7 +16,16 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
-from e2e_inputs import IMAGE_CASES, INPUT_CASES, REASONING_CASES, eligible, input_scenario
+from e2e_inputs import (
+    IMAGE_CASES,
+    INPUT_CASES,
+    LIVE_CASES,
+    REASONING_CASES,
+    REPLAY_CASES,
+    eligible,
+    input_scenario,
+    replay_scenario,
+)
 
 from my_llm import (
     AssistantMessage,
@@ -60,7 +69,11 @@ def provider(protocol, key, *, reasoning=False):
     body = {
         "openai_chat": {"reasoning_effort": "low" if reasoning else "none"},
         "openai_responses": {"reasoning": {"effort": "low" if reasoning else "none"}},
-        "anthropic": {"thinking": {"type": "enabled" if reasoning else "disabled"}},
+        "anthropic": {
+            "thinking": {"type": "enabled", "budget_tokens": 1024}
+            if reasoning
+            else {"type": "disabled"}
+        },
     }[protocol]
     overrides = {}
     if protocol == "openai_chat":
@@ -70,6 +83,7 @@ def provider(protocol, key, *, reasoning=False):
             path="$.choices[0].delta.reasoning",
             default_value=None,
         )
+        overrides["feedback_reasoning_item"] = OutputParameter(path="$.choices[0].delta.reasoning")
     return ProviderProfile(
         protocol=Config(default_value=protocol),
         base_url=config("https://token.sensenova.cn" + ("" if protocol == "anthropic" else "/v1")),
@@ -81,7 +95,7 @@ def provider(protocol, key, *, reasoning=False):
         extra_body=config(body),
         max_tokens=InputParameter(
             path="$.max_output_tokens" if protocol == "openai_responses" else "$.max_tokens",
-            default_value=1024,
+            default_value=2048 if reasoning else 1024,
         ),
         timeout=config(60.0),
         max_retries=config(0),
@@ -395,7 +409,7 @@ async def run(
                 cases = (
                     *BASE_CASES,
                     *(POLICY_CASES if stdio == "middleware" else ()),
-                    *(case for case in INPUT_CASES if eligible(upstream, stdio, case)),
+                    *(case for case in LIVE_CASES if eligible(upstream, stdio, case)),
                 )
                 for case in cases:
                     if args.case and case not in args.case:
@@ -407,6 +421,8 @@ async def run(
                         "semantic_loss_protocol": (
                             "hook"
                             if case in (*POLICY_CASES, *IMAGE_CASES)
+                            else "raise"
+                            if case in REPLAY_CASES
                             else args.semantic_loss_protocol
                         ),
                     }
@@ -426,7 +442,15 @@ async def run(
                     started = time.monotonic()
                     evidence = {}
                     try:
-                        if case in INPUT_CASES:
+                        if case in REPLAY_CASES:
+                            operation = replay_scenario(
+                                provider_factory(upstream, key, reasoning=True),
+                                model_factory(args.model, case),
+                                stdio,
+                                request_interval=args.request_interval,
+                                evidence=evidence,
+                            )
+                        elif case in INPUT_CASES:
                             operation = input_scenario(
                                 provider_factory(upstream, key, reasoning=case in REASONING_CASES),
                                 model_factory(args.model, case),
@@ -481,7 +505,7 @@ def main():
     parser.add_argument("--model", default=MODEL)
     parser.add_argument("--upstream", nargs="+", choices=PROTOCOLS)
     parser.add_argument("--stdio", nargs="+", choices=STDIO_PROTOCOLS)
-    parser.add_argument("--case", nargs="+", choices=(*BASE_CASES, *POLICY_CASES, *INPUT_CASES))
+    parser.add_argument("--case", nargs="+", choices=(*BASE_CASES, *POLICY_CASES, *LIVE_CASES))
     parser.add_argument(
         "--validate", action="store_true", help="prepare input cases without network"
     )

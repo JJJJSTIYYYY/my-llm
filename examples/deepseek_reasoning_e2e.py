@@ -19,7 +19,7 @@ import logging
 import resource
 from pathlib import Path
 
-from e2e_inputs import INPUT_CASES, PROTOCOLS, STDIO_PROTOCOLS
+from e2e_inputs import INPUT_CASES, LIVE_CASES, PROTOCOLS, STDIO_PROTOCOLS
 from sensenova_e2e import BASE_CASES, config, run
 
 from my_llm import Attribute, InputParameter, ModelProfile, OutputParameter, ProviderProfile
@@ -32,7 +32,12 @@ def provider(protocol, key, *, reasoning=False):
     body = {
         "openai_chat": {"thinking": {"type": enabled}, "reasoning_effort": "low"},
         "openai_responses": {"reasoning": {"effort": effort}},
-        "anthropic": {"thinking": {"type": enabled}, "output_config": {"effort": "low"}},
+        "anthropic": {
+            "thinking": {"type": "enabled", "budget_tokens": 1024}
+            if reasoning
+            else {"type": "disabled"},
+            "output_config": {"effort": "low"},
+        },
     }[protocol]
     overrides = {}
     if protocol == "openai_chat":
@@ -56,7 +61,7 @@ def provider(protocol, key, *, reasoning=False):
         max_retries=config(0),
         max_tokens=InputParameter(
             path="$.max_output_tokens" if protocol == "openai_responses" else "$.max_tokens",
-            default_value=1024,
+            default_value=2048 if reasoning else 1024,
         ),
         extra_body=config(body),
         **overrides,
@@ -77,9 +82,7 @@ def main():
     parser.add_argument("--model", default="deepseek-flash")
     parser.add_argument("--upstream", nargs="+", choices=PROTOCOLS)
     parser.add_argument("--stdio", nargs="+", choices=STDIO_PROTOCOLS)
-    parser.add_argument(
-        "--case", nargs="+", choices=(*BASE_CASES, *INPUT_CASES), default=INPUT_CASES
-    )
+    parser.add_argument("--case", nargs="+", choices=(*BASE_CASES, *LIVE_CASES))
     parser.add_argument("--report", type=Path)
     parser.add_argument("--request-interval", type=float, default=0.0, metavar="SECONDS")
     parser.add_argument("--retry-failed", action="store_true")
@@ -88,6 +91,7 @@ def main():
     )
     parser.add_argument("--semantic-loss-protocol", choices=("raise", "ignore"), default="ignore")
     args = parser.parse_args()
+    args.case = args.case or (INPUT_CASES if args.validate else LIVE_CASES)
     if args.request_interval < 0:
         parser.error("--request-interval must be nonnegative")
     if args.retry_failed and (args.report is None or not args.report.is_file()):

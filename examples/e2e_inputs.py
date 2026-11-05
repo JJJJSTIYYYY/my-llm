@@ -8,20 +8,27 @@ authentication failures nor rate limits count as evidence of invalid history.
 import asyncio
 import json
 import re
+from contextlib import asynccontextmanager
 from copy import deepcopy
+from hashlib import sha256
 from uuid import uuid4
+
+from httpx import AsyncClient
 
 from my_llm import (
     AssistantMessage,
     FunctionTool,
     MyLLM,
+    ReasoningContent,
     SemanticLossError,
     TextContent,
     ToolCall,
     ToolMessage,
     UserMessage,
 )
+from my_llm.codec.base.transport import BaseTransport
 from my_llm.codec.openai.chat.prebuilt import move_tool_images_to_user_message
+from my_llm.codec.shared.options import path_value
 
 PROTOCOLS = ("openai_chat", "openai_responses", "anthropic")
 STDIO_PROTOCOLS = (*PROTOCOLS, "middleware")
@@ -29,6 +36,8 @@ REASONING_CASES = ("reasoning_missing", "reasoning_null", "reasoning_empty")
 HISTORY_CASES = ("missing_tool_result", "orphan_tool_result")
 IMAGE_CASES = ("tool_result_images", "tool_result_image_placeholders")
 INPUT_CASES = (*REASONING_CASES, *HISTORY_CASES, *IMAGE_CASES)
+REPLAY_CASES = ("reasoning_replay",)
+LIVE_CASES = (*INPUT_CASES, *REPLAY_CASES)
 SCHEMA = {"type": "object", "properties": {}, "additionalProperties": False}
 PROMPT = (
     "The audit tool has already been called. Reply with exactly E2E_OK, even if its result "
@@ -46,11 +55,255 @@ RESULT_TEXT = "TOOL_TEXT_MUST_BE_PRESERVED"
 
 def eligible(upstream, stdio, case):
     """Reasoning padding and the prebuilt image handler belong to Chat targets."""
+    if case in REPLAY_CASES:
+        return stdio in (upstream, "middleware")
     if case in REASONING_CASES:
         return upstream == "openai_chat" and (case == "reasoning_missing" or stdio == "openai_chat")
     if case in IMAGE_CASES:
         return upstream == "openai_chat" and stdio in ("openai_responses", "anthropic")
     return case in HISTORY_CASES
+
+
+class _ObservedTransport(BaseTransport):
+    """Observe real SDK events and serialized HTTP bodies without changing them."""
+
+    def __init__(self, transport, evidence):
+        self.transport = transport
+        self.evidence = evidence
+        self.requests = []
+        self.responses = []
+
+    async def _request(self, request):
+        self.requests.append(json.loads(request.content))
+        self.evidence["requests"] += 1
+
+    def create_client(self, parameters):
+        return self.transport.create_client(
+            {
+                **parameters,
+                "http_client": AsyncClient(event_hooks={"request": [self._request]}),
+            }
+        )
+
+    async def close_client(self, client):
+        await self.transport.close_client(client)
+
+    @asynccontextmanager
+    async def upstream(self, client, request):
+        recorded = []
+        self.responses.append(recorded)
+        async with self.transport.upstream(client, request) as events:
+
+            async def observed():
+                async for event in events:
+                    recorded.append(event.model_dump(mode="json", exclude_unset=True))
+                    yield event
+
+            yield observed()
+
+
+def _reasoning_items(protocol, messages):
+    """Read native replay fields directly, independently of the codec under test."""
+    if protocol == "openai_chat":
+        return [
+            message["reasoning_content"]
+            for message in messages
+            if message.get("role") == "assistant" and "reasoning_content" in message
+        ]
+    if protocol == "openai_responses":
+        return [item for item in messages if item.get("type") == "reasoning"]
+    return [
+        part
+        for message in messages
+        for part in message.get("content", [])
+        if isinstance(part, dict) and part.get("type") in ("thinking", "redacted_thinking")
+    ]
+
+
+def _source_reasoning(protocol, events, profile):
+    if protocol == "openai_chat":
+        binding = profile.parameter("reasoning_content", "output")
+        return [
+            "".join(
+                value
+                for event in events
+                if isinstance(value := path_value(event, binding.path), str)
+            )
+        ]
+    if protocol == "openai_responses":
+        completed = [
+            event["response"]["output"]
+            for event in events
+            if event.get("type") == "response.completed"
+        ]
+        assert completed, "missing original completed Responses output"
+        return _reasoning_items(protocol, completed[-1])
+    blocks = {}
+    for event in events:
+        kind = event.get("type")
+        if kind == "content_block_start":
+            part = event["content_block"]
+            if part["type"] in ("thinking", "redacted_thinking"):
+                blocks[event["index"]] = deepcopy(part)
+        elif kind == "content_block_delta" and event["index"] in blocks:
+            delta = event["delta"]
+            field = {"thinking_delta": "thinking", "signature_delta": "signature"}.get(
+                delta["type"]
+            )
+            if field:
+                block = blocks[event["index"]]
+                block[field] = block.get(field, "") + delta[field]
+    return [blocks[index] for index in sorted(blocks)]
+
+
+def _has_reasoning(items):
+    for item in items:
+        if isinstance(item, str) and item.strip():
+            return True
+        if isinstance(item, dict):
+            if (
+                item.get("encrypted_content")
+                or item.get("data")
+                or item.get("thinking", "").strip()
+            ):
+                return True
+            if any(
+                part.get("text", "").strip()
+                for key in ("content", "summary")
+                for part in item.get(key) or []
+            ):
+                return True
+    return False
+
+
+def _fingerprint(items):
+    return sha256(json.dumps(items, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def _tools(protocol):
+    if protocol == "middleware":
+        return [FunctionTool("audit_value", "Read the audit value.", SCHEMA, strict=False)]
+    if protocol == "openai_chat":
+        return [{"type": "function", "function": {"name": "audit_value", "parameters": SCHEMA}}]
+    if protocol == "openai_responses":
+        return [{"type": "function", "name": "audit_value", "parameters": SCHEMA, "strict": False}]
+    return [{"name": "audit_value", "input_schema": SCHEMA}]
+
+
+def _replay_turn(stdio, result, value):
+    if stdio == "middleware":
+        calls = [part for part in result.content if isinstance(part, ToolCall)]
+        assert len(calls) == 1 and calls[0].name == "audit_value" and calls[0].arguments == {}
+        return [result, ToolMessage("user", [TextContent(value)], call_id=calls[0].call_id)]
+    if stdio == "openai_chat":
+        calls = result.get("tool_calls", [])
+        assert len(calls) == 1 and calls[0]["function"]["name"] == "audit_value"
+        assert json.loads(calls[0]["function"]["arguments"]) == {}
+        return [result, {"role": "tool", "tool_call_id": calls[0]["id"], "content": value}]
+    if stdio == "openai_responses":
+        calls = [item for item in result if item["type"] == "function_call"]
+        assert len(calls) == 1 and calls[0]["name"] == "audit_value"
+        assert json.loads(calls[0]["arguments"]) == {}
+        return [
+            *result,
+            {"type": "function_call_output", "call_id": calls[0]["call_id"], "output": value},
+        ]
+    calls = [part for part in result["content"] if part["type"] == "tool_use"]
+    assert len(calls) == 1 and calls[0]["name"] == "audit_value" and calls[0]["input"] == {}
+    return [
+        result,
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": calls[0]["id"], "content": value}],
+        },
+    ]
+
+
+async def _collect(llm, messages, tools, stream, request_interval):
+    await asyncio.sleep(request_interval)
+    result = await llm.generate(messages=messages, tools=tools, stream=stream)
+    if stream:
+        async with result:
+            async for _ in result:
+                pass
+        result = result.result
+    return result
+
+
+async def replay_scenario(provider, model, stdio, *, request_interval=0.0, evidence=None):
+    """Require nonempty real reasoning to survive both turns without padding."""
+    evidence = {} if evidence is None else evidence
+    evidence.update(requests=0, roundtrips=[])
+    prompt_text = (
+        "Think briefly about why an external lookup is necessary, then call audit_value "
+        "exactly once with no arguments to obtain an unknown number. After receiving its "
+        "result, reply with that number only and do not call the tool again."
+    )
+    for stream in (False, True):
+        async with MyLLM(
+            provider=provider, model=model, stdio_protocol=stdio, semantic_loss_protocol="raise"
+        ) as llm:
+            upstream = llm.resolved_profile.protocol
+            observed = _ObservedTransport(llm.codec.transport(upstream), evidence)
+            llm.codec.codecs[upstream].transport = observed
+            prompt = (
+                UserMessage("user", [TextContent(prompt_text)])
+                if stdio == "middleware"
+                else {"role": "user", "content": prompt_text}
+            )
+            tools = _tools(stdio)
+            first = await _collect(llm, [prompt], tools, stream, request_interval)
+            source = _source_reasoning(upstream, observed.responses[0], llm.resolved_profile)
+            assert _has_reasoning(source), (
+                "upstream returned no nonempty reasoning; padding cannot satisfy this test"
+            )
+            returned = (
+                [part.feedback_item for part in first.content if isinstance(part, ReasoningContent)]
+                if stdio == "middleware"
+                else _reasoning_items(stdio, first if stdio == "openai_responses" else [first])
+            )
+            record = {
+                "stream": stream,
+                "source_items": len(source),
+                "source_sha256": _fingerprint(source),
+                "returned_sha256": _fingerprint(returned),
+            }
+            evidence["roundtrips"].append(record)
+            if stdio == "middleware" and upstream == "openai_chat":
+                assert [
+                    part.reasoning for part in first.content if isinstance(part, ReasoningContent)
+                ] == source, "visible Chat reasoning changed"
+            record["returned_exact"] = returned == source
+            assert record["returned_exact"], "MyLLM's first result changed the original reasoning"
+            value = str(int(uuid4().hex[:7], 16))
+            messages = [prompt, *_replay_turn(stdio, first, value)]
+            before = deepcopy(messages)
+            prepared = await prepare(llm, messages, tools)
+            prepared_items = _reasoning_items(
+                upstream, prepared["input" if upstream == "openai_responses" else "messages"]
+            )
+            record["prepared_exact"] = prepared_items == source
+            record["prepared_sha256"] = _fingerprint(prepared_items)
+            assert record["prepared_exact"], (
+                "next request preparation changed the original reasoning"
+            )
+            final = await _collect(llm, messages, tools, stream, request_interval)
+            assert len(observed.requests) == 2, "unexpected number of real HTTP requests"
+            body = observed.requests[1]
+            replayed = _reasoning_items(
+                upstream, body["input" if upstream == "openai_responses" else "messages"]
+            )
+            record["wire_exact"] = replayed == source
+            record["wire_sha256"] = _fingerprint(replayed)
+            assert record["wire_exact"], "actual HTTP request did not replay the original reasoning"
+            assert _has_reasoning(replayed), "empty reasoning padding reached the wire"
+            paired = wire_summary(upstream, body)
+            assert paired["calls"] == paired["results"] == 1 and paired["ids_paired"]
+            assert paired["empty_results"] == 0
+            assert answer(final, stdio).strip() == value, "tool roundtrip did not complete"
+            assert messages == before, "replay changed caller history"
+            record["nonempty_replay"] = True
+    return evidence
 
 
 def history(protocol, case, call_id):
@@ -69,7 +322,6 @@ def history(protocol, case, call_id):
             messages.append(result)
         if orphan:
             messages.append(ToolMessage("user", [TextContent(ORPHAN_TEXT)], call_id=orphan_id))
-        declared = [FunctionTool("audit_value", "Read the audit value.", SCHEMA, strict=False)]
     elif protocol == "openai_chat":
         assistant = {
             "role": "assistant",
@@ -91,7 +343,6 @@ def history(protocol, case, call_id):
             messages.append({"role": "tool", "tool_call_id": call_id, "content": RESULT_TEXT})
         if orphan:
             messages.append({"role": "tool", "tool_call_id": orphan_id, "content": ORPHAN_TEXT})
-        declared = [{"type": "function", "function": {"name": "audit_value", "parameters": SCHEMA}}]
     elif protocol == "openai_responses":
         parts = [{"type": "input_text", "text": RESULT_TEXT}]
         if image:
@@ -106,9 +357,6 @@ def history(protocol, case, call_id):
             messages.append(
                 {"type": "function_call_output", "call_id": orphan_id, "output": ORPHAN_TEXT}
             )
-        declared = [
-            {"type": "function", "name": "audit_value", "parameters": SCHEMA, "strict": False}
-        ]
     else:
         assert protocol == "anthropic"
         parts = [{"type": "text", "text": RESULT_TEXT}]
@@ -144,8 +392,7 @@ def history(protocol, case, call_id):
                     ],
                 }
             )
-        declared = [{"name": "audit_value", "input_schema": SCHEMA}]
-    return messages, declared
+    return messages, _tools(protocol)
 
 
 def wire_summary(protocol, request):

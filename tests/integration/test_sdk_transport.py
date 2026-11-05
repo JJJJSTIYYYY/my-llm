@@ -16,6 +16,64 @@ from tests.helpers.schema import validate_request
 from tests.helpers.transport import sse
 
 
+@pytest.mark.parametrize("stdio", ["openai_chat", "middleware"])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("fragments", [("",), ("", "thought", "")])
+async def test_empty_chat_reasoning_survives_official_sdk_with_strict_policy(
+    monkeypatch, stdio, stream, fragments
+):
+    from my_llm import ReasoningContent, TextContent, UserMessage
+    from tests.helpers.protocols import chat_event
+
+    incoming = [
+        *(chat_event(reasoning=value) for value in fragments),
+        chat_event(content="answer"),
+        chat_event(finish="stop"),
+    ]
+
+    def handler(request):
+        return httpx.Response(
+            200, text=sse(incoming), headers={"Content-Type": "text/event-stream"}
+        )
+
+    def factory(**kwargs):
+        return AsyncOpenAI(
+            **kwargs, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        )
+
+    monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
+    async with MyLLM(
+        provider=ProviderProfile(
+            protocol=config("openai_chat"), api_key=parameter("api_key", "local-test")
+        ),
+        model=ModelProfile(model=Attribute(default_value="demo")),
+        stdio_protocol=stdio,
+        semantic_loss_protocol="raise",
+    ) as llm:
+        messages = (
+            [UserMessage("user", [TextContent("hi")])]
+            if stdio == "middleware"
+            else [{"role": "user", "content": "hi"}]
+        )
+        result = await llm.generate(messages=messages, stream=stream)
+        if stream:
+            async with result:
+                events = [event async for event in result]
+            assert events
+            result = result.result
+        if stdio == "middleware":
+            reasoning = [part for part in result.content if isinstance(part, ReasoningContent)]
+            assert len(reasoning) == 1
+            assert reasoning[0].reasoning == reasoning[0].feedback_item == "".join(fragments)
+            assert (
+                "".join(part.text for part in result.content if isinstance(part, TextContent))
+                == "answer"
+            )
+        else:
+            assert result["content"] == "answer"
+            assert (result.get("reasoning_content") or "") == "".join(fragments)
+
+
 @pytest.mark.parametrize("protocol", ["openai_chat", "openai_responses"])
 @pytest.mark.parametrize("stdio", ["openai_chat", "openai_responses", "anthropic"])
 @pytest.mark.parametrize("stream", [False, True])

@@ -34,8 +34,8 @@ Middleware 另在每种上游验证三个策略场景：
 - `should_feedback_reasoning_item="when_tool_calls"` 时省略没有工具调用的历史思维，不产生输入损失。
 
 原有测试共 45 个场景、57 次上游请求。新增的
-[输入修复与工具图片测试](input-e2e.md) 共 34 个场景、98 次请求，默认也会执行；
-完整成功运行合计 79 个场景、155 次请求。失败和补跑会改变实际请求总数。
+[输入修复、工具图片与推理回传测试](input-e2e.md) 共 40 个场景、122 次请求，默认也会执行；
+完整成功运行合计 85 个场景、179 次请求。失败和补跑会改变实际请求总数。
 策略场景使用独立实例和 `hook` 策略；其他场景使用命令行指定的损失策略。
 汇总与流式模式都使用库的上游 SSE 执行路径，未独立验证供应商 HTTP 非流式响应。
 客户端和响应流通过异步上下文关闭，本例不独立测量连接资源泄漏。
@@ -52,6 +52,7 @@ Middleware 另在每种上游验证三个策略场景：
 | `--upstream openai_chat` | 仅测指定上游，可传多个 |
 | `--stdio middleware` | 仅测指定输入/输出格式，可传多个 |
 | `--case capability_losses feedback_none feedback_when_tool_calls` | 仅测指定场景；策略场景只在 Middleware 格式运行 |
+| `--case reasoning_replay` | 严格检查上一轮非空原生推理与下一轮实际 HTTP 回传一致，覆盖同协议及 Middleware 格式 |
 | `--request-interval SECONDS` | 调整每次请求前的等待时间 |
 | `--semantic-loss-protocol raise` | 使用严格损失策略 |
 | `--validate` | 不读取密钥、不联网，检查新增输入用例的请求准备结果 |

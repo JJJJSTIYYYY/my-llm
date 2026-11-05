@@ -9,7 +9,7 @@ import pytest
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 
-from tests.helpers.protocols import stream_events
+from tests.helpers.protocols import chat_event, response_completed, stream_events
 from tests.helpers.transport import sse
 
 EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
@@ -41,6 +41,200 @@ MATRIX = [
         )
     )
 ]
+
+
+def replay_events(protocol, vendor, value=None, *, empty=False):
+    thought = "" if empty else "Original thought\nsecond line"
+    if protocol == "openai_chat":
+        if value is not None:
+            return [chat_event(content=value), chat_event(finish="stop")]
+        first = chat_event()
+        first["choices"][0]["delta"][
+            "reasoning" if vendor == "sensenova_e2e" else "reasoning_content"
+        ] = thought
+        return [
+            first,
+            chat_event(
+                calls=[
+                    {
+                        "index": 0,
+                        "id": "call_original",
+                        "type": "function",
+                        "function": {"name": "audit_value", "arguments": "{}"},
+                    }
+                ]
+            ),
+            chat_event(finish="tool_calls"),
+        ]
+    if protocol == "openai_responses":
+        items = (
+            [
+                {
+                    "type": "message",
+                    "id": "msg_final",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [
+                        {"type": "output_text", "text": value, "annotations": [], "logprobs": []}
+                    ],
+                }
+            ]
+            if value is not None
+            else [
+                {
+                    "type": "reasoning",
+                    "id": "rs_original",
+                    "status": "completed",
+                    "summary": [{"type": "summary_text", "text": thought}],
+                },
+                {
+                    "type": "function_call",
+                    "id": "fc_original",
+                    "status": "completed",
+                    "call_id": "call_original",
+                    "name": "audit_value",
+                    "arguments": "{}",
+                },
+            ]
+        )
+        return [response_completed(items)]
+    content = (
+        [{"type": "text", "text": value}]
+        if value is not None
+        else [
+            {"type": "thinking", "thinking": thought, "signature": "original-signature"},
+            {"type": "tool_use", "id": "call_original", "name": "audit_value", "input": {}},
+        ]
+    )
+    events = [
+        {
+            "type": "message_start",
+            "message": {
+                "id": "msg_original",
+                "type": "message",
+                "role": "assistant",
+                "model": "local-example",
+                "content": [],
+                "usage": {"input_tokens": 1, "output_tokens": 0},
+            },
+        }
+    ]
+    for index, part in enumerate(content):
+        events.extend(
+            [
+                {"type": "content_block_start", "index": index, "content_block": part},
+                {"type": "content_block_stop", "index": index},
+            ]
+        )
+    return [
+        *events,
+        {
+            "type": "message_delta",
+            "delta": {
+                "stop_reason": "end_turn" if value is not None else "tool_use",
+                "stop_sequence": None,
+            },
+            "usage": {"output_tokens": 2},
+        },
+        {"type": "message_stop"},
+    ]
+
+
+@pytest.mark.parametrize("vendor", ["deepseek_reasoning_e2e", "sensenova_e2e"])
+@pytest.mark.parametrize("upstream", PROTOCOLS)
+@pytest.mark.parametrize("middleware", [False, True])
+async def test_reasoning_replay_matches_original_response_and_actual_http_body(
+    monkeypatch, vendor, upstream, middleware
+):
+    monkeypatch.syspath_prepend(str(EXAMPLES))
+    example = importlib.import_module(vendor)
+    inputs = importlib.import_module("e2e_inputs")
+    requests, clients = [], []
+
+    def handler(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        calls, results = calls_and_results(upstream, body)
+        value = None
+        if calls:
+            assert len(results) == 1 and calls[0] == results[0][0]
+            value = results[0][1]
+            if isinstance(value, list):
+                value = "".join(part["text"] for part in value)
+            if upstream == "openai_chat":
+                assert body["messages"][1]["reasoning_content"] == "Original thought\nsecond line"
+        return httpx.Response(
+            200,
+            text=sse(
+                replay_events(upstream, vendor, value),
+                anthropic=upstream == "anthropic",
+                done=upstream == "openai_chat",
+            ),
+            headers={"Content-Type": "text/event-stream"},
+        )
+
+    def observed_client(**kwargs):
+        client = httpx.AsyncClient(**kwargs, transport=httpx.MockTransport(handler))
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(inputs, "AsyncClient", observed_client)
+    result = await inputs.replay_scenario(
+        example.provider(upstream, "local-example-key", reasoning=True),
+        example.model_profile("local-example", "reasoning_replay"),
+        "middleware" if middleware else upstream,
+    )
+    assert result["requests"] == len(requests) == 4
+    assert len(result["roundtrips"]) == 2
+    assert all(
+        row["returned_exact"]
+        and row["prepared_exact"]
+        and row["wire_exact"]
+        and row["nonempty_replay"]
+        for row in result["roundtrips"]
+    )
+    assert all(client.is_closed for client in clients)
+    assert "Original thought" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("failure", ["empty_source", "feedback_disabled"])
+async def test_replay_rejects_empty_or_dropped_reasoning_before_a_second_api_call(
+    monkeypatch, failure
+):
+    monkeypatch.syspath_prepend(str(EXAMPLES))
+    example = importlib.import_module("deepseek_reasoning_e2e")
+    inputs = importlib.import_module("e2e_inputs")
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=sse(
+                replay_events(
+                    "openai_chat", "deepseek_reasoning_e2e", empty=failure == "empty_source"
+                )
+            ),
+            headers={"Content-Type": "text/event-stream"},
+        )
+
+    monkeypatch.setattr(
+        inputs,
+        "AsyncClient",
+        lambda **kwargs: httpx.AsyncClient(**kwargs, transport=httpx.MockTransport(handler)),
+    )
+    model = example.model_profile("local-example", "reasoning_replay")
+    if failure == "feedback_disabled":
+        model.should_feedback_reasoning_item.default_value = "none"
+    evidence = {}
+    with pytest.raises(AssertionError, match="no nonempty reasoning|request preparation changed"):
+        await inputs.replay_scenario(
+            example.provider("openai_chat", "local-example-key", reasoning=True),
+            model,
+            "openai_chat",
+            evidence=evidence,
+        )
+    assert evidence["requests"] == len(requests) == 1
 
 
 def calls_and_results(upstream, body):
@@ -77,7 +271,7 @@ async def test_input_matrix_sends_invalid_controls_and_profile_repaired_history(
         requests.append(body)
         assert body["model"] == "local-example" and body["stream"] is True
         token_field = "max_output_tokens" if upstream == "openai_responses" else "max_tokens"
-        assert body[token_field] == 1024
+        assert body[token_field] == (2048 if case in inputs.REASONING_CASES else 1024)
         calls, results = calls_and_results(upstream, body)
         assert len(calls) == 1
         if calls[0].startswith("call_raw_"):

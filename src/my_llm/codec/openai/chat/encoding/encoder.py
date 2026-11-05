@@ -160,12 +160,14 @@ class ChatCompletionsEncoder(BaseEncoder):
                 )
             )
             reasoning = message.get("reasoning_content")
+            # Standard Chat results keep replay text even without a custom field.
             feedback = (
                 self.parameter_value(
                     {"choices": [{"delta": message}]},
                     profile,
                     "feedback_reasoning_item",
                     constants.REASONING_PATH,
+                    default=reasoning,
                 )
                 if custom_feedback
                 else reasoning
@@ -280,7 +282,8 @@ class ChatCompletionsEncoder(BaseEncoder):
                         use_default=choice.get("finish_reason") is None,
                         event=True,
                     )
-                    if value:
+                    # Empty reasoning must stay aligned with its replay value.
+                    if value or (kind == "thinking" and value == ""):
                         ops.append(
                             {
                                 "type": "block_delta",

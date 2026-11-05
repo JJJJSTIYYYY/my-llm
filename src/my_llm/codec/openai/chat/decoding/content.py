@@ -4,7 +4,7 @@ from typing import Any
 
 import my_llm.codec.openai.chat.constants as constants
 from my_llm.basic.semantic_loss import report_loss
-from my_llm.codec.shared.conversion import json_arguments, text_result
+from my_llm.codec.shared.conversion import json_arguments, source_uri, text_result
 from my_llm.codec.shared.input import input_content, without_feedback
 from my_llm.profile.resolution import ResolvedProfile
 
@@ -31,11 +31,9 @@ def render_content(content: list[dict], *, role: str = "user") -> Any:
             if role != "user":
                 report_loss(block, "Chat can represent images only in user messages")
                 continue
-            source = block.get("source", {})
-            uri = source.get("url")
-            if source.get("type") == "base64":
-                uri = f"data:{source['media_type']};base64,{source['data']}"
-            result.append({"type": "image_url", "image_url": {"url": uri}})
+            result.append(
+                {"type": "image_url", "image_url": {"url": source_uri(block.get("source", {}))}}
+            )
     if all(block["type"] == "text" for block in result):
         return "".join(block["text"] for block in result) or (None if role == "assistant" else "")
     return result

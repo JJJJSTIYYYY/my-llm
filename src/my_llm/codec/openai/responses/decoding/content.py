@@ -5,7 +5,7 @@ from typing import Any
 
 import my_llm.codec.openai.responses.constants as constants
 from my_llm.basic.semantic_loss import report_loss
-from my_llm.codec.shared.conversion import select, text_result
+from my_llm.codec.shared.conversion import select, source_uri, text_result
 from my_llm.codec.shared.input import input_content, without_feedback
 from my_llm.profile.resolution import ResolvedProfile
 
@@ -42,11 +42,13 @@ def render_content(
             if role == "assistant":
                 report_loss(block, "Responses assistant output cannot represent images")
                 continue
-            source = block.get("source", {})
-            uri = source.get("url")
-            if source.get("type") == "base64":
-                uri = f"data:{source['media_type']};base64,{source['data']}"
-            result.append({"type": "input_image", "image_url": uri, "detail": "auto"})
+            result.append(
+                {
+                    "type": "input_image",
+                    "image_url": source_uri(block.get("source", {})),
+                    "detail": "auto",
+                }
+            )
     return result
 
 

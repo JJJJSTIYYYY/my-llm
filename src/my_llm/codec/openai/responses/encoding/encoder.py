@@ -11,7 +11,6 @@ from my_llm.basic.semantic_loss import originated
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.openai.responses.encoding.content import (
     encode_content,
-    tool_operations,
 )
 from my_llm.codec.shared.conversion import (
     arguments,
@@ -26,6 +25,7 @@ from my_llm.codec.shared.stream import (
     optional_usage,
     project_metadata,
     record,
+    tool_operations,
 )
 from my_llm.profile.resolution import ResolvedProfile
 
@@ -258,7 +258,9 @@ class ResponsesEncoder(BaseEncoder):
         delivery belong to StreamState rather than this protocol parser.
         """
         result = []
+        chunk_offset = parameters.get("chunk_offset", 0)
         for event_index, event in enumerate(chunks):
+            event_path = f"$.chunks[{chunk_offset + event_index}]"
             kind = event.get("type")
             if kind in constants.FAILED_INCOMPLETE_ERROR_EVENTS or event.get("error"):
                 error = (
@@ -365,7 +367,7 @@ class ResponsesEncoder(BaseEncoder):
                         self._snapshot(
                             output,
                             profile=profile,
-                            path=f"$.chunks[{parameters.get('chunk_offset', 0) + event_index}].response.output",
+                            path=f"{event_path}.response.output",
                         ),
                         {
                             "type": "finish",
@@ -436,7 +438,6 @@ class ResponsesEncoder(BaseEncoder):
                         metadata(header, path=("response_items", str(index))),
                     )
             for operation_index, operation in enumerate(ops):
-                event_path = f"$.chunks[{parameters.get('chunk_offset', 0) + event_index}]"
                 if "block" in operation and not hasattr(operation["block"], "origin_path"):
                     operation["block"] = originated(operation["block"], event_path, event)
                 origin_path, origin_value = event_path, event
@@ -474,7 +475,7 @@ class ResponsesEncoder(BaseEncoder):
 
     def _item_metadata(self, item: dict) -> dict:
         """Record native output-item headers for identity-preserving stream rendering."""
-        return project_metadata(item, tuple((key, key) for key in constants.ITEM_METADATA_FIELDS))
+        return project_metadata(item, constants.ITEM_FIELD_TO_MIDDLEWARE_METADATA)
 
     def _snapshot(
         self,

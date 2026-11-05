@@ -12,7 +12,6 @@ from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.openai.chat.encoding.content import (
     encode_content,
     tool_block,
-    tool_operations,
 )
 from my_llm.codec.shared.conversion import (
     mapping_list,
@@ -27,6 +26,7 @@ from my_llm.codec.shared.stream import (
     optional_usage,
     project_metadata,
     record,
+    tool_operations,
 )
 from my_llm.profile.resolution import ResolvedProfile
 from my_llm.profile.types import Parameter
@@ -248,6 +248,7 @@ class ChatCompletionsEncoder(BaseEncoder):
         delivery belong to StreamState rather than this protocol parser.
         """
         result = []
+        chunk_offset = parameters.get("chunk_offset", 0)
         for event_index, event in enumerate(chunks):
             if event.get("type") == "error" or event.get("error"):
                 raise ResponseFailedError(
@@ -304,8 +305,14 @@ class ChatCompletionsEncoder(BaseEncoder):
                     ops.append(feedback_operation(BlockRef("thinking"), feedback))
                 for call in delta.get("tool_calls") or []:
                     if call.get("type", "function") == "function":
+                        function = call.get("function", {})
                         ops.extend(
-                            tool_operations(BlockRef("tool_use", call.get("index", 0)), call)
+                            tool_operations(
+                                BlockRef("tool_use", call.get("index", 0)),
+                                call_id=call.get("id"),
+                                name=function.get("name"),
+                                arguments=function.get("arguments"),
+                            )
                         )
                 if choice.get("finish_reason") is not None:
                     ops.append(
@@ -315,8 +322,8 @@ class ChatCompletionsEncoder(BaseEncoder):
                             "allow_tail": ["metadata", "usage"],
                         }
                     )
+            event_path = f"$.chunks[{chunk_offset + event_index}]"
             for operation_index, operation in enumerate(ops):
-                event_path = f"$.chunks[{parameters.get('chunk_offset', 0) + event_index}]"
                 if "block" in operation and not hasattr(operation["block"], "origin_path"):
                     operation["block"] = originated(operation["block"], event_path, event)
                 origin_path, origin_value = event_path, event

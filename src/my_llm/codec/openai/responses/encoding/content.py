@@ -5,7 +5,6 @@ from typing import Any
 import my_llm.codec.openai.responses.constants as constants
 from my_llm.basic.semantic_loss import originated
 from my_llm.codec.shared.conversion import blocks, select, uri_source
-from my_llm.codec.shared.stream import BlockRef
 
 
 def encode_content(
@@ -23,26 +22,5 @@ def encode_content(
             continue
         result.append(
             originated(value, path if isinstance(content, str) else f"{path}[{index}]", block)
-        )
-    return result
-
-
-def tool_operations(ref: BlockRef, *, call_id=None, name=None, arguments=None) -> list[dict]:
-    """Build identity updates and argument deltas for a source-addressed function call."""
-    block = {"type": "tool_use"}
-    if call_id:
-        block["id"] = call_id
-    if name:
-        block["name"] = name
-    result = [{"type": "block_update", "ref": ref, "block": block}]
-    if arguments is not None:
-        result.append(
-            {
-                "type": "block_delta",
-                "ref": ref,
-                "kind": "tool_use",
-                "field": "arguments",
-                "value": arguments,
-            }
         )
     return result

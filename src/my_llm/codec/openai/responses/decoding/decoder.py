@@ -32,7 +32,6 @@ from my_llm.codec.shared.input import (
     input_content,
     message_feedback,
 )
-from my_llm.codec.shared.options import PreparedOptions, validate_request_options
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
 from my_llm.profile.types import Omit
@@ -52,6 +51,8 @@ class ResponsesDecoder(BaseDecoder):
     supports_previous_response_id = True
 
     request_schema = parameter_types(AsyncResponses.create)
+    protected_request_fields = constants.REQUEST_ENVELOPE_FIELDS
+    request_body_containers = constants.BODY_CONTAINERS
 
     def _message_inputs(
         self, messages: list, policy: InputPolicy
@@ -119,16 +120,6 @@ class ResponsesDecoder(BaseDecoder):
     def allows_external_calls(self, previous_response_id) -> bool:
         """Allow unmatched local result IDs when previous_response_id supplies server history."""
         return previous_response_id is not None and not isinstance(previous_response_id, Omit)
-
-    def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
-        """Validate shared controls and protect Responses fields from extra-body replacement."""
-        options = super().validate_parameters(profile, **parameters)
-        return validate_request_options(
-            profile,
-            options,
-            protected=constants.REQUEST_ENVELOPE_FIELDS,
-            containers=constants.BODY_CONTAINERS,
-        )
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
         """Validate output-token limits and the types of supported reasoning controls."""

@@ -27,11 +27,13 @@ from my_llm.codec.shared.conversion import validate_history
 from my_llm.codec.shared.input import InputPolicy
 from my_llm.codec.shared.options import (
     PreparedOptions,
+    check_protected,
     delete_path,
     path_value,
     request_parameters,
     resolve_options,
     set_path,
+    validate_parameter_paths,
 )
 from my_llm.codec.shared.output import output_chunks, output_messages
 from my_llm.middleware.history import HistoryNormalizer
@@ -77,6 +79,8 @@ class BaseDecoder(ABC):
     headers_field: str | None = "$.extra_headers"
     body_overlay: str | None = None
     omit_empty_body = False
+    protected_request_fields: set[str] | None = None
+    request_body_containers: tuple[str, ...] = ()
 
     usage_modes = ("none", "native")
     supports_previous_response_id = False
@@ -125,6 +129,8 @@ class BaseDecoder(ABC):
         reasoning_effort, extra_headers and extra_body. previous_response_id must be a
         nonempty ID. Invalid options raise ConfigurationError;
         unsupported controls are retained as losses for the completed request.
+        Protocols declare protected_request_fields and request_body_containers
+        to protect their managed request envelope before message translation.
         """
         if not isinstance(parameters.get("stream", False), bool):
             raise ConfigurationError("stream must be a bool")
@@ -145,6 +151,14 @@ class BaseDecoder(ABC):
                         ),
                     ),
                 )
+        if self.protected_request_fields is not None:
+            check_protected(options.body, self.protected_request_fields)
+            validate_parameter_paths(
+                profile,
+                options,
+                protected=self.protected_request_fields,
+                containers=self.request_body_containers,
+            )
         return options
 
     @final

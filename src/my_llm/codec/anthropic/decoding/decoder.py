@@ -31,7 +31,6 @@ from my_llm.codec.shared.input import (
     input_content,
     message_feedback,
 )
-from my_llm.codec.shared.options import PreparedOptions, validate_request_options
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
 from my_llm.profile.types import Parameter
@@ -51,6 +50,7 @@ class AnthropicDecoder(BaseDecoder):
     tool_path = constants.TOOL_PATH
 
     request_schema = REQUEST_SCHEMA
+    protected_request_fields = constants.REQUEST_ENVELOPE_FIELDS
 
     def _filter_message(
         self,
@@ -123,13 +123,6 @@ class AnthropicDecoder(BaseDecoder):
                 filtered["input_schema"] = capture(original["input_schema"])
             result.append(filtered)
         return result
-
-    def validate_parameters(self, profile: ResolvedProfile, **parameters: Any) -> PreparedOptions:
-        """Validate shared controls and protect Anthropic fields from extra-body replacement."""
-        options = super().validate_parameters(profile, **parameters)
-        return validate_request_options(
-            profile, options, protected=constants.REQUEST_ENVELOPE_FIELDS, containers=()
-        )
 
     def validate_request(self, request: dict, profile: ResolvedProfile, **parameters: Any) -> dict:
         """Validate required history/token limits, system blocks and thinking configuration."""

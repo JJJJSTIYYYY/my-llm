@@ -109,4 +109,10 @@ RESPONSE_FIELD_TO_MIDDLEWARE_METADATA = (
     ("model", "model"),
     ("created_at", "created_at"),
 )
-ITEM_METADATA_FIELDS = ("id", "type", "status", "name", "call_id")
+ITEM_FIELD_TO_MIDDLEWARE_METADATA = (
+    ("id", "id"),
+    ("type", "type"),
+    ("status", "status"),
+    ("name", "name"),
+    ("call_id", "call_id"),
+)

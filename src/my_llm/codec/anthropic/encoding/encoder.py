@@ -165,6 +165,7 @@ class AnthropicEncoder(BaseEncoder):
         custom_reasoning = isinstance(reasoning_parameter, OutputParameter) and (
             reasoning_parameter.path != constants.REASONING_PATH or reasoning_parameter.event_type
         )
+        chunk_offset = parameters.get("chunk_offset", 0)
         for event_index, event in enumerate(chunks):
             if event.get("type") == "error" or event.get("error"):
                 raise ResponseFailedError(
@@ -333,8 +334,8 @@ class AnthropicEncoder(BaseEncoder):
                     )
             if not ops:
                 continue
+            event_path = f"$.chunks[{chunk_offset + event_index}]"
             for operation_index, operation in enumerate(ops):
-                event_path = f"$.chunks[{parameters.get('chunk_offset', 0) + event_index}]"
                 if "block" in operation and not hasattr(operation["block"], "origin_path"):
                     operation["block"] = originated(operation["block"], event_path, event)
                 origin_path, origin_value = event_path, event

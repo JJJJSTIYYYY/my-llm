@@ -5,7 +5,6 @@ from typing import Any
 import my_llm.codec.openai.chat.constants as constants
 from my_llm.basic.semantic_loss import originated
 from my_llm.codec.shared.conversion import arguments, blocks, select, uri_source
-from my_llm.codec.shared.stream import BlockRef
 
 
 def encode_content(
@@ -40,25 +39,3 @@ def tool_block(call: dict, *, call_id: str | None = None) -> dict:
         "name": fn.get("name"),
         "input": arguments(fn.get("arguments", {})),
     }
-
-
-def tool_operations(ref: BlockRef, call: dict) -> list[dict]:
-    """Translate recognized fragments, preserving only open argument data."""
-    fn = call.get("function", {})
-    block = {"type": "tool_use"}
-    if call.get("id"):
-        block["id"] = call["id"]
-    if fn.get("name"):
-        block["name"] = fn["name"]
-    result = [{"type": "block_update", "ref": ref, "block": block}]
-    if fn.get("arguments") is not None:
-        result.append(
-            {
-                "type": "block_delta",
-                "ref": ref,
-                "kind": "tool_use",
-                "field": "arguments",
-                "value": fn["arguments"],
-            }
-        )
-    return result

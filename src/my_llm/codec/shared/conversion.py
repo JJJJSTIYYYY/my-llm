@@ -45,6 +45,13 @@ def uri_source(uri: str) -> dict:
     }
 
 
+def source_uri(source: dict) -> str | None:
+    """Render an intermediate URL or Base64 media source as a URI."""
+    if source.get("type") == "base64":
+        return f"data:{source['media_type']};base64,{source['data']}"
+    return source.get("url")
+
+
 def text(content: list[dict]) -> str:
     """Concatenate text blocks while ignoring other content kinds."""
     return "".join(b.get("text", "") for b in content if b.get("type") == "text")

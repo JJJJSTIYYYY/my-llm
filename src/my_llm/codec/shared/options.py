@@ -315,16 +315,3 @@ def request_parameters(
     if options.effort is not None and effort is not None:
         _apply_parameter(request, effort, generated=options.effort, overlay=overlay)
     return request
-
-
-def validate_request_options(
-    profile: ResolvedProfile,
-    options: PreparedOptions,
-    *,
-    protected: set[str],
-    containers: tuple[str, ...] = (),
-) -> PreparedOptions:
-    """Protect request envelopes and validate all configured parameter routes."""
-    check_protected(options.body, protected)
-    validate_parameter_paths(profile, options, protected=protected, containers=containers)
-    return options

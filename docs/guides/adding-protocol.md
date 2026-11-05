@@ -196,6 +196,8 @@ MyCodec / MyLLM 实例保留创建时的注册快照；注册新协议后需创�
 - 流控制数据只保留中间协议明确声明的 id、模型、终止与回放分组身份；不能通过 metadata 钩子扩展用户 metadata 支持。
 - options 提供参数路径操作与生成选项；BaseEncoder / BaseDecoder 固定参数读取和请求应用流程，
   cache/compiled_cache 提供 Codec 共用的 Schema 规则；shared/conversion 验证历史关联；base/transport 集中保存执行契约与共用响应关闭辅助。
+- Decoder 通过 protected_request_fields 声明受保护的请求字段，request_body_containers 声明
+  参数路径中的请求体容器；BaseDecoder.validate_parameters 在消息翻译前统一检查，协议常量保存在各自的 constants.py。
 跨协议来回翻译不保证无损。不能把其他协议的密文解释为本协议的签名，也不通过隐藏记录恢复跨协议无法表达的信息。
 标准签名与密文必须在对应协议实现中明确处理。详见[翻译字段边界](../design/translation-boundaries.md)。
 

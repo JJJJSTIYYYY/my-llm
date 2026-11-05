@@ -54,6 +54,33 @@ class BlockRef(NamedTuple):
     part: int = 0
 
 
+def tool_operations(
+    ref: BlockRef,
+    *,
+    call_id: str | None = None,
+    name: str | None = None,
+    arguments: str | None = None,
+) -> list[dict]:
+    """Build middleware call identity updates and incremental JSON argument deltas."""
+    block = {"type": "tool_use"}
+    if call_id:
+        block["id"] = call_id
+    if name:
+        block["name"] = name
+    result = [{"type": "block_update", "ref": ref, "block": block}]
+    if arguments is not None:
+        result.append(
+            {
+                "type": "block_delta",
+                "ref": ref,
+                "kind": "tool_use",
+                "field": "arguments",
+                "value": arguments,
+            }
+        )
+    return result
+
+
 def feedback_operation(ref: BlockRef, value: object) -> dict:
     """Accumulate scalar feedback privately or retain a completed opaque object."""
     if isinstance(value, str):

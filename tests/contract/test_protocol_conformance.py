@@ -61,13 +61,6 @@ def canonical_history(messages, protocol):
                     block["id"] = "call_1"
                 elif block["type"] == "tool_result":
                     block["tool_use_id"] = "call_1"
-        elif protocol == "gemini":
-            for part in message["parts"]:
-                for field in ("function_call", "function_response"):
-                    if field in part:
-                        assert part[field]["name"] == "weather"
-                        if "id" in part[field]:
-                            part[field]["id"] = "call_1"
     return result
 
 
@@ -80,18 +73,6 @@ def test_histories_match_independent_native_expectations(source, target):
     for message in converted:
         assert_native(message, MESSAGE_TYPES[target])
     expected = history(target)
-    # Gemini requires an object result. Converting that object into a text-only
-    # result preserves its JSON, rather than silently extracting a chosen key.
-    if source == "gemini" and target != "gemini":
-        field = "output" if target == "openai_responses" else "content"
-        if target == "anthropic":
-            expected[-1]["content"][0]["content"] = '{"result": "Sunny"}'
-        else:
-            expected[-1][field] = '{"result": "Sunny"}'
-    if source == target == "gemini":
-        expected[-1]["parts"][0]["function_response"]["response"] = {
-            "result": '{"result": "Sunny"}'
-        }
     assert canonical_history(converted, target) == canonical_history(expected, target)
 
 
@@ -129,10 +110,6 @@ def test_stream_events_match_official_models_and_lifecycle(source, target, mode)
             "chunks"
         ]
 
-    if source == "gemini" and target != "gemini":
-        with pytest.raises(SemanticLossError, match="signature"):
-            operation()
-        return
     converted = operation()
     for event in converted:
         schema = EVENT_TYPES[target]
@@ -185,20 +162,14 @@ def assert_stream_lifecycle(protocol, events, *, output=False):
             elif event["type"] == "content_block_stop":
                 closed.append(event["index"])
         assert opened == closed
-    elif protocol == "gemini":
-        assert events[-1]["candidates"][0]["finish_reason"] == "STOP"
-        if not output:
-            assert events[-1]["usage_metadata"]["total_token_count"] == 3
 
 
 # A valid one-pixel PNG; conversion checks use actual image bytes, not text
-# labelled image/png. Gemini fixtures use SDK JSON names, not REST camelCase.
+# labelled image/png.
 PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="
 
 
 def image_message(protocol):
-    if protocol == "gemini":
-        return {"role": "user", "parts": [{"inline_data": {"mime_type": "image/png", "data": PNG}}]}
     if protocol == "anthropic":
         block = {
             "type": "image",
@@ -227,9 +198,7 @@ def test_image_messages_use_the_target_native_media_fields(source, target):
     ]
     assert len(result) == 1
     assert_native(result[0], MESSAGE_TYPES[target])
-    if target == "gemini":
-        assert result[0]["parts"][-1]["inline_data"] == {"mime_type": "image/png", "data": PNG}
-    elif target == "anthropic":
+    if target == "anthropic":
         expected = image_message(target)["content"]
         assert result[0]["content"] == expected
     elif target == "openai_responses":
@@ -241,15 +210,13 @@ def test_image_messages_use_the_target_native_media_fields(source, target):
         assert block["image_url"]["url"] == f"data:image/png;base64,{PNG}"
 
 
-@pytest.mark.parametrize("source", ["openai_chat", "anthropic", "gemini"])
+@pytest.mark.parametrize("source", ["openai_chat", "anthropic"])
 def test_output_limit_is_a_responses_incomplete_event(source):
     incoming = stream_events(source)
     if source == "openai_chat":
         incoming[-2]["choices"][0]["finish_reason"] = "length"
     elif source == "anthropic":
         incoming[-2]["delta"]["stop_reason"] = "max_tokens"
-    elif source == "gemini":
-        incoming[-1]["candidates"][0]["finish_reason"] = "MAX_TOKENS"
     converted, _ = render(source, "openai_responses", incoming)
     final = converted[-1]
     assert final["type"] == "response.incomplete"
@@ -268,7 +235,7 @@ def test_filtering_is_not_reported_as_successful_responses_completion():
     assert_output_native(final, EVENT_TYPES["openai_responses"][final["type"]])
 
 
-@pytest.mark.parametrize("target", ["openai_responses", "anthropic", "gemini"])
+@pytest.mark.parametrize("target", ["openai_responses", "anthropic"])
 def test_native_thinking_events_use_only_target_supported_fields(target):
     incoming = stream_events("anthropic")
     incoming[1]["content_block"] = {"type": "thinking", "thinking": "", "signature": ""}
@@ -325,18 +292,11 @@ def test_required_stream_fields_are_not_hidden_by_sdk_defaults(kind, field):
         assert_native(event, EVENT_TYPES["openai_responses"][kind])
 
 
-def test_sdk_extra_field_permissiveness_does_not_validate_foreign_signatures():
+def test_sdk_extra_field_permissiveness_does_not_validate_unknown_fields():
     message = history("anthropic")[1]
-    message["content"][1]["thought_signature"] = "c2lnbmVk"
+    message["content"][1]["vendor_extension"] = "unsupported"
     with pytest.raises(AssertionError):
         assert_native(message, MESSAGE_TYPES["anthropic"])
-
-
-def test_gemini_result_requires_a_name_even_when_sdk_allows_its_absence():
-    message = history("gemini")[-1]
-    message["parts"][0]["function_response"].pop("name")
-    with pytest.raises(AssertionError):
-        assert_native(message, MESSAGE_TYPES["gemini"])
 
 
 def test_cumulative_anthropic_usage_is_overwritten_without_losing_cache_counts():

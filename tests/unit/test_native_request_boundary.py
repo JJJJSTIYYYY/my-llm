@@ -60,31 +60,20 @@ def test_open_model_unknown_fields_are_filtered_before_validation_and_repeated_r
         bound.native_request({"messages": [invalid]}, profile)
 
 
-@pytest.mark.parametrize("target", ["anthropic", "gemini"])
+@pytest.mark.parametrize("target", ["anthropic"])
 @pytest.mark.parametrize("role", ["system", "developer"])
-@pytest.mark.parametrize("source", ["openai_chat", "gemini"])
+@pytest.mark.parametrize("source", ["openai_chat"])
 def test_system_unknown_fields_do_not_enter_intermediate_or_sdk_request(
     profile_factory, source, role, target
 ):
-    system = (
-        {
-            "role": role,
-            "parts": [{"text": "instructions", "vendor_block": {"nested": [1, None]}}],
-        }
-        if source == "gemini"
-        else {
-            "role": role,
-            "content": [
-                {"type": "text", "text": "instructions", "vendor_block": {"nested": [1, None]}}
-            ],
-        }
-    )
+    system = {
+        "role": role,
+        "content": [
+            {"type": "text", "text": "instructions", "vendor_block": {"nested": [1, None]}}
+        ],
+    }
     system["vendor_message"] = {"nested": [None, {"keep": True}]}
-    user = (
-        {"role": "user", "parts": [{"text": "hello"}]}
-        if source == "gemini"
-        else {"role": "user", "content": "hello"}
-    )
+    user = {"role": "user", "content": "hello"}
     history = [system, user]
     original = deepcopy(history)
     codec = MyCodec()
@@ -98,10 +87,7 @@ def test_system_unknown_fields_do_not_enter_intermediate_or_sdk_request(
     assert history == original
     assert intermediate == before_request
     assert "vendor_" not in str(request)
-    if target == "anthropic":
-        assert request["system"] == [{"type": "text", "text": "instructions"}]
-    else:
-        assert request["config"]["system_instruction"]["parts"][0]["text"] == "instructions"
+    assert request["system"] == [{"type": "text", "text": "instructions"}]
 
 
 @pytest.mark.parametrize(
@@ -131,14 +117,6 @@ def test_system_unknown_fields_do_not_enter_intermediate_or_sdk_request(
         ("openai_responses", {"max_output_tokens": -1}, "max_tokens", ConfigurationError),
         ("openai_responses", {"reasoning": {"effort": 5}}, "reasoning", ConfigurationError),
         ("openai_responses", {"reasoning": 5}, "reasoning", SemanticLossError),
-        ("gemini", {"config": {"max_output_tokens": -1}}, "max_tokens", ConfigurationError),
-        ("gemini", {"config": {"candidate_count": 2}}, "candidate", SemanticLossError),
-        (
-            "gemini",
-            {"config": {"thinking_config": {"include_thoughts": True, "thinking_budget": 0}}},
-            "budget",
-            ConfigurationError,
-        ),
     ],
 )
 def test_direct_native_requests_validate_generation_settings(
@@ -148,7 +126,6 @@ def test_direct_native_requests_validate_generation_settings(
         "openai_chat": {"messages": [{"role": "user", "content": "hello"}]},
         "openai_responses": {"input": [{"role": "user", "content": "hello"}]},
         "anthropic": {"messages": [{"role": "user", "content": "hello"}]},
-        "gemini": {"contents": [{"role": "user", "parts": [{"text": "hello"}]}]},
     }[protocol]
     request = {"model": "demo", **messages, **native}
     if protocol == "anthropic":
@@ -217,8 +194,6 @@ def test_request_projection_addresses_sdk_fields_without_reading_extensions(
     request[bound.message_path[0]] = messages
     if protocol == "anthropic":
         request["max_tokens"] = 2048
-    elif protocol == "gemini":
-        request["config"] = AddressedDict(temperature=None, vendor=Unreadable())
     else:
         request["temperature"] = None
 
@@ -235,7 +210,7 @@ def test_request_projection_addresses_sdk_fields_without_reading_extensions(
     assert type(filtered) is dict
     assert "vendor" not in filtered
     assert all("vendor" not in message for message in filtered[bound.message_path[0]])
-    container = filtered.get("config", filtered)
+    container = filtered
     assert type(container) is dict
     if protocol != "anthropic":
         assert container["temperature"] is None
@@ -373,99 +348,6 @@ def test_nested_request_paths_delegate_to_override_hooks_once_and_capture_payloa
     assert messages[0]["content"] == "hello"
     assert schema["properties"]["name"] == {"type": "string"}
     assert metadata["application"]["nested"] == [1]
-
-
-@pytest.mark.parametrize("sdk_config", [False, True])
-def test_gemini_nested_tool_schemas_and_other_open_config_are_captured_once(
-    profile_factory, sdk_config
-):
-    from google.genai import types
-
-    captures = []
-
-    class Captured(dict):
-        def __deepcopy__(self, memo):
-            captures.append(self)
-            return deepcopy(dict(self), memo)
-
-    tool_schema = Captured(type="object", properties={"name": {"type": "string"}})
-    output_schema = Captured(type="object", properties={"answer": {"type": "string"}})
-    request = {
-        "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
-        "config": {
-            "tools": [
-                {
-                    "function_declarations": [
-                        {"name": "lookup", "parameters_json_schema": tool_schema}
-                    ]
-                }
-            ],
-            "response_json_schema": output_schema,
-        },
-    }
-    if sdk_config:
-        request["config"] = types.GenerateContentConfig(**request["config"])
-
-    result = (
-        MyCodec()
-        .decoder("gemini")
-        .native_request(
-            request,
-            profile_factory("gemini", supports_function_calling=config(True)),
-        )
-    )
-
-    assert len(captures) == 2
-    assert sum(item is tool_schema for item in captures) == 1
-    assert sum(item is output_schema for item in captures) == 1
-    result["config"]["tools"][0]["function_declarations"][0]["parameters_json_schema"][
-        "properties"
-    ]["name"] = {}
-    result["config"]["response_json_schema"]["properties"]["answer"] = {}
-    assert tool_schema["properties"]["name"] == {"type": "string"}
-    assert output_schema["properties"]["answer"] == {"type": "string"}
-
-
-def test_gemini_checks_known_config_values_beyond_thinking(profile_factory):
-    from pydantic import ValidationError
-
-    request = {
-        "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
-        "config": {"temperature": "invalid"},
-    }
-    with pytest.raises(ConfigurationError, match="invalid Gemini config") as caught:
-        MyCodec().decoder("gemini").native_request(request, profile_factory("gemini"))
-    assert isinstance(caught.value.__cause__, ValidationError)
-    assert "temperature" in str(caught.value.__cause__)
-
-
-def test_direct_gemini_request_projects_sdk_config_and_owns_nested_values(profile_factory):
-    from google.genai import types
-
-    config = types.GenerateContentConfig(
-        temperature=None,
-        system_instruction=types.Content(parts=[types.Part(text="instructions")]),
-        thinking_config=types.ThinkingConfig(thinking_budget=512, include_thoughts=False),
-    )
-    request = (
-        MyCodec()
-        .decoder("gemini")
-        .native_request(
-            {"contents": [{"role": "user", "parts": [{"text": "hello"}]}], "config": config},
-            profile_factory(
-                "gemini",
-                reasoning_effort=parameter("reasoning_effort", supports=True, protocol="gemini"),
-            ),
-        )
-    )
-
-    assert request["config"] == {
-        "temperature": None,
-        "system_instruction": {"parts": [{"text": "instructions"}]},
-        "thinking_config": {"thinking_budget": 512, "include_thoughts": False},
-    }
-    request["config"]["system_instruction"]["parts"][0]["text"] = "changed"
-    assert config.system_instruction.parts[0].text == "instructions"
 
 
 def test_direct_chat_request_preserves_explicit_none_extra_body(profile_factory):

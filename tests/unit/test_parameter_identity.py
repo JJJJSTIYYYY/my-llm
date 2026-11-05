@@ -252,7 +252,6 @@ def test_generated_enable_wins_over_native_body_and_preserves_input(protocol):
         "openai_chat": {"reasoning_effort": "low"},
         "openai_responses": {"reasoning": {"summary": "auto"}},
         "anthropic": {"thinking": {"type": "disabled"}},
-        "gemini": {"thinking_config": {"thinking_budget": 0}},
     }[protocol]
     before = deepcopy(body)
     request = encode_request(profile, reasoning=True, extra_body=body)

@@ -21,7 +21,6 @@ DEFAULT_PATHS = [
     ("openai_chat", "$.max_completion_tokens"),
     ("openai_responses", "$.max_output_tokens"),
     ("anthropic", "$.max_tokens"),
-    ("gemini", "$.config.max_output_tokens"),
 ]
 
 

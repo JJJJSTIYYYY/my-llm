@@ -114,10 +114,7 @@ async def run(options):
         "created_at_utc": datetime.now(UTC).isoformat(),
         "python": sys.version,
         "platform": platform.platform(),
-        "versions": {
-            name: version(name)
-            for name in ("openai", "anthropic", "google-genai", "httpx", "pydantic")
-        },
+        "versions": {name: version(name) for name in ("openai", "anthropic", "httpx", "pydantic")},
         "size": asdict(Size()),
         "iterations": options.iterations,
         "warmup": options.warmup,

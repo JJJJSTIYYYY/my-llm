@@ -1,6 +1,6 @@
 {
   "snapshot_date": "2026-10-17",
-  "scope": "OpenAI Responses, OpenAI Chat Completions, Gemini GenerateContent, Anthropic Messages only; all reachable source-defined structures, previews separated.",
+  "scope": "OpenAI Responses, OpenAI Chat Completions, Anthropic Messages only; all reachable source-defined structures, previews separated.",
   "openai": {
     "url": "https://raw.githubusercontent.com/openai/openai-openapi/d156763a484eb247e116e0ea345e16344b0049ba/openapi.json",
     "commit": "d156763a484eb247e116e0ea345e16344b0049ba",
@@ -8,11 +8,6 @@
     "sha256": "f3d4299aadfff5e35cfd578168a0175b72dbe0a4cf40ffb47c5bd6ecca0305cd",
     "bytes": 4863203,
     "changed_after_initial_download": false
-  },
-  "gemini": {
-    "url": "https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta",
-    "revision": "20261015",
-    "sha256": "7c10e431c615909bbf5bf3d109804a63c1af56eb197b761b822c06ae6a672813"
   },
   "anthropic": {
     "sdk": "anthropic",
@@ -33,7 +28,6 @@
   "normalization": {
     "descriptions": "Long source prose and examples omitted; structural keywords and reachable definitions retained.",
     "openapi": "All local component refs rewritten to $defs. No flattening of allOf/anyOf/oneOf.",
-    "gemini": "Discovery converted to JSON Schema; explicitly Required descriptions become required; model moved to URL path. This is a derived schema, not an official JSON Schema release.",
     "anthropic": "SDK-based structural schema, not a published official OpenAPI. Pydantic export does not enforce every server-side semantic rule.",
     "validation": "Schema validity and examples are checked locally; lifecycle and model support require separate checks."
   },

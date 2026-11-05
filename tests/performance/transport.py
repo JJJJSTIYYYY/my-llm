@@ -6,18 +6,12 @@ from unittest.mock import patch
 
 import httpx
 from anthropic import AsyncAnthropic
-from google import genai
-from google.genai import types
 from openai import AsyncOpenAI
 
 
 def wire_frames(protocol: str, events: list[dict], chunk_bytes: int) -> tuple[bytes, ...]:
     frames = []
     for event in events:
-        if protocol == "gemini":
-            event = types.GenerateContentResponse.model_validate(event).model_dump(
-                mode="json", by_alias=True, exclude_none=True
-            )
         encoded = json.dumps(event, ensure_ascii=False).encode()
         prefix = (
             f"event: {event['type']}\n".encode()
@@ -78,24 +72,11 @@ class LocalSDK:
             "openai_chat": AsyncOpenAI,
             "openai_responses": AsyncOpenAI,
             "anthropic": AsyncAnthropic,
-            "gemini": genai.Client,
         }[protocol]
 
         def factory(**kwargs):
             self.created_clients += 1
             transport = httpx.MockTransport(self.respond)
-            if protocol == "gemini":
-                options = kwargs.pop("http_options")
-                options = options.model_copy(
-                    update={
-                        "async_client_args": {
-                            **options.async_client_args,
-                            "transport": transport,
-                            "trust_env": False,
-                        }
-                    }
-                )
-                return sdk_class(**kwargs, http_options=options)
             http = httpx.AsyncClient(transport=transport, trust_env=False)
             self.http_clients.append(http)
             return sdk_class(**kwargs, http_client=http)
@@ -104,7 +85,6 @@ class LocalSDK:
             "openai_chat": "my_llm.codec.openai.chat.transport.AsyncOpenAI",
             "openai_responses": "my_llm.codec.openai.responses.transport.AsyncOpenAI",
             "anthropic": "my_llm.codec.anthropic.transport.AsyncAnthropic",
-            "gemini": "my_llm.codec.gemini.transport.genai.Client",
         }[protocol]
         self._patches.enter_context(patch(target, factory))
         return self

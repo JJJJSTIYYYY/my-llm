@@ -8,8 +8,6 @@ from copy import deepcopy
 import httpx
 import pytest
 from anthropic import AsyncAnthropic
-from google import genai
-from google.genai import types
 from openai import AsyncOpenAI
 
 from my_llm import (
@@ -19,15 +17,12 @@ from my_llm import (
     MyCodec,
     MyLLM,
     ProviderProfile,
-    SemanticLossError,
 )
 from my_llm.middleware.stream import Usage
 from my_llm.runtime.state import StreamState
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import PROTOCOLS, history, stream_events, tools
 from tests.helpers.transport import sse
-
-GenAIClient = genai.Client
 
 
 def replace_strings(value, replacements):
@@ -41,15 +36,10 @@ def replace_strings(value, replacements):
     return value
 
 
-def response_frames(protocol, index, *, signed=False):
+def response_frames(protocol, index):
     events = replace_strings(
         stream_events(protocol, tool=True), {"Hello": f"reply-{index}", "上海": f"city-{index}"}
     )
-    if protocol == "gemini" and not signed:
-        for event in events:
-            for candidate in event.get("candidates", []):
-                for part in candidate.get("content", {}).get("parts", []):
-                    part.pop("thought_signature", None)
     # Give every lane distinct counters as well as text and tool arguments.
     prompt, completion = index + 1, index + 2
     if protocol == "openai_chat":
@@ -63,18 +53,6 @@ def response_frames(protocol, index, *, signed=False):
     elif protocol == "anthropic":
         events[0]["message"]["usage"].update(input_tokens=prompt)
         events[-2]["usage"].update(output_tokens=completion)
-    elif protocol == "gemini":
-        events[-1]["usage_metadata"].update(
-            prompt_token_count=prompt,
-            candidates_token_count=completion,
-            total_token_count=prompt + completion,
-        )
-        events = [
-            types.GenerateContentResponse.model_validate(event).model_dump(
-                mode="json", by_alias=True, exclude_none=True
-            )
-            for event in events
-        ]
     frames = [
         sse([event], anthropic=protocol == "anthropic", done=False).encode() for event in events
     ]
@@ -92,7 +70,7 @@ class ControlledBody(httpx.AsyncByteStream):
         self.resume = asyncio.Event()
 
     async def __aiter__(self):
-        frames = response_frames(self.protocol, self.index, signed=self.harness.signed)
+        frames = response_frames(self.protocol, self.index)
         self.harness.active.add(self.index)
         self.harness.peak = max(self.harness.peak, len(self.harness.active))
         text_seen = False
@@ -119,7 +97,6 @@ class ConcurrentTransport:
         self.paused = paused
         self.every_frame = every_frame
         self.failure_index = None
-        self.signed = False
         self.requests = {}
         self.bodies = {}
         self.clients = []
@@ -145,24 +122,9 @@ class ConcurrentTransport:
 
         def factory(protocol, **kwargs):
             transport = httpx.MockTransport(lambda request: handler(protocol, request))
-            if protocol == "gemini":
-                options = kwargs.pop("http_options")
-                client = GenAIClient(
-                    **kwargs,
-                    http_options=options.model_copy(
-                        update={
-                            "async_client_args": {
-                                **(options.async_client_args or {}),
-                                "transport": transport,
-                            }
-                        }
-                    ),
-                )
-                http = client._api_client._async_httpx_client
-            else:
-                http = httpx.AsyncClient(transport=transport)
-                sdk = AsyncAnthropic if protocol == "anthropic" else AsyncOpenAI
-                client = sdk(**kwargs, http_client=http)
+            http = httpx.AsyncClient(transport=transport)
+            sdk = AsyncAnthropic if protocol == "anthropic" else AsyncOpenAI
+            client = sdk(**kwargs, http_client=http)
             self.clients.append(http)
             return client
 
@@ -177,10 +139,6 @@ class ConcurrentTransport:
         monkeypatch.setattr(
             "my_llm.codec.anthropic.transport.AsyncAnthropic",
             lambda **kw: factory("anthropic", **kw),
-        )
-        monkeypatch.setattr(
-            "my_llm.codec.gemini.transport.genai.Client",
-            lambda **kw: factory("gemini", **kw),
         )
 
     def assert_responses_closed(self, count):
@@ -213,8 +171,7 @@ def make_llm(protocol, stdio):
             max_tokens=parameter("max_tokens", 2048, protocol=protocol),
             supports_function_calling=config(True),
         ),
-        # Exercise unique format binding while other requests are in flight.
-        stdio_protocol=None if stdio == "gemini" else stdio,
+        stdio_protocol=stdio,
     )
 
 
@@ -231,7 +188,7 @@ def assert_reply(result, stdio, index):
 def assert_usage(events, stdio, index, state, protocol):
     def without_usage(value):
         if isinstance(value, dict):
-            assert not {"usage", "usage_metadata", "usageMetadata"} & value.keys()
+            assert not {"usage"} & value.keys()
             for child in value.values():
                 without_usage(child)
         elif isinstance(value, list):
@@ -308,7 +265,6 @@ async def test_one_instance_concurrent_stream_and_collected_requests(monkeypatch
             "openai_chat": body.get("max_completion_tokens"),
             "openai_responses": body.get("max_output_tokens"),
             "anthropic": body.get("max_tokens"),
-            "gemini": body.get("generationConfig", {}).get("maxOutputTokens"),
         }[protocol]
         assert maximum == 101 + index
     await llm.aclose()
@@ -442,22 +398,4 @@ async def test_request_can_be_closed_from_another_task_without_closing_shared_cl
                 pass
         assert_reply(streams[1].result, "openai_chat", 1)
         transport.assert_responses_closed(2)
-    assert transport.clients[0].is_closed
-
-
-async def test_gemini_signature_loss_closes_only_the_response(monkeypatch):
-    transport = ConcurrentTransport(monkeypatch, 1)
-    transport.signed = True
-    async with make_llm("gemini", "openai_chat") as llm:
-        stream = await llm.generate(
-            messages=[{"role": "user", "content": "request-0"}], stream=True
-        )
-        with pytest.raises(SemanticLossError) as captured:
-            async with stream:
-                _ = [event async for event in stream]
-        assert captured.value.losses.origin_source == "output"
-        assert "thought_signature" in str(captured.value.losses.items[0].origin_value)
-        assert stream.result is None
-        transport.assert_responses_closed(1)
-        transport.assert_clients_open(1)
     assert transport.clients[0].is_closed

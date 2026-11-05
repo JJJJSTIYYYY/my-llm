@@ -21,7 +21,6 @@ OPEN_FIELDS = {
     "input",
     "parameters",
     "input_schema",
-    "parameters_json_schema",
     "metadata",
 }
 
@@ -351,24 +350,19 @@ def test_direct_intermediate_known_structures_filter_nested_unknown_fields(proto
 @pytest.mark.parametrize("target", PROTOCOLS)
 def test_open_tool_result_objects_preserve_application_keys_in_all_targets(target):
     incoming = [
-        {"role": "model", "parts": [{"function_call": {"id": "c1", "name": "f", "args": {}}}]},
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "c1", "name": "f", "input": {}}],
+        },
         {
             "role": "user",
-            "parts": [{"function_response": {"id": "c1", "name": "f", "response": APPLICATION}}],
+            "content": [{"type": "tool_result", "tool_use_id": "c1", "content": APPLICATION}],
         },
     ]
     original = deepcopy(incoming)
     codec = MyCodec()
 
-    converted = codec.convert(incoming, input_format="gemini", target_format=target)["messages"]
-    if target == "gemini":
-        # The SDK requires an object envelope around the canonical text result.
-        # Decoding text as JSON would guess an application type and add work.
-        native_response = converted[-1]["parts"][0]["function_response"]["response"]
-        assert set(native_response) == {"result"}
-        assert json.loads(native_response["result"]) == APPLICATION
-        assert incoming == original
-        return
+    converted = codec.convert(incoming, input_format="anthropic", target_format=target)["messages"]
     intermediate = codec.encode(converted, input_format=target)["messages"]
     result = next(
         block
@@ -432,89 +426,6 @@ def test_chat_tool_result_text_blocks_are_protocol_structures_not_open_payloads(
     assert_no_unknown(encoded)
     assert_no_unknown(result)
     assert "ok" in str(result)
-    assert incoming == original
-
-
-def test_gemini_part_metadata_and_unknown_siblings_are_discarded():
-    from google.genai import types
-
-    from tests.helpers.sdk import assert_native
-
-    payload = {UNKNOWN: {"source": {"nested": [1, None]}, "type": "application"}}
-    clean = [{"role": "user", "parts": [{"text": "known", "part_metadata": payload}]}]
-    assert_native(clean[0], types.Content)
-    incoming = deepcopy(clean)
-    incoming[0][UNKNOWN] = {"root": True}
-    incoming[0]["parts"][0][UNKNOWN] = {"part": True}
-    original = deepcopy(incoming)
-    codec = MyCodec()
-
-    encoded = codec.encode(incoming, input_format="gemini")
-    result = codec.decode(**encoded, target_format="gemini")["messages"]
-
-    assert "part_metadata" not in encoded["messages"][0]["content"][0]
-    assert UNKNOWN not in encoded["messages"][0]
-    assert UNKNOWN not in encoded["messages"][0]["content"][0]
-    assert result == [{"role": "user", "parts": [{"text": "known"}]}]
-    assert_native(result[0], types.Content)
-    assert incoming == original
-    result[0]["parts"][0]["text"] = "changed"
-    assert incoming == original
-
-
-@pytest.mark.parametrize("behavior", ["BLOCKING", "NON_BLOCKING"])
-def test_gemini_function_response_schema_and_behavior_are_outside_supported_tools(behavior):
-    from google.genai import types
-
-    from tests.helpers.sdk import assert_native
-
-    schema = {
-        "type": "object",
-        "properties": {"payload": {"type": "object"}},
-        "vendor_schema_keyword": {UNKNOWN: {"nested": [1, None]}},
-    }
-    clean = [
-        {
-            "function_declarations": [
-                {
-                    "name": "f",
-                    "description": "Function",
-                    "parameters_json_schema": {"type": "object"},
-                    "response_json_schema": schema,
-                    "behavior": behavior,
-                }
-            ]
-        }
-    ]
-    assert_native(clean[0], types.Tool)
-    incoming = deepcopy(clean)
-    incoming[0][UNKNOWN] = {"tool": True}
-    incoming[0]["function_declarations"][0][UNKNOWN] = {"function": True}
-    original = deepcopy(incoming)
-    codec = MyCodec()
-
-    encoded = codec.encode(tools=incoming, input_format="gemini")
-    result = codec.decode(**encoded, target_format="gemini")["tools"]
-
-    function = encoded["tools"][0]["functions"][0]
-    assert "response_json_schema" not in function
-    assert "behavior" not in function
-    assert UNKNOWN not in encoded["tools"][0]
-    assert UNKNOWN not in function
-    assert result == [
-        {
-            "function_declarations": [
-                {
-                    "name": "f",
-                    "description": "Function",
-                    "parameters_json_schema": {"type": "object"},
-                }
-            ]
-        }
-    ]
-    assert_native(result[0], types.Tool)
-    assert incoming == original
-    result[0]["function_declarations"][0]["parameters_json_schema"]["type"] = "array"
     assert incoming == original
 
 

@@ -73,7 +73,7 @@ def complete_inputs(messages):
     )
 
 
-@pytest.mark.parametrize("target", ["openai_responses", "anthropic", "gemini"])
+@pytest.mark.parametrize("target", ["openai_responses", "anthropic"])
 def test_message_name_loss_keeps_all_positions_and_complete_draft(target):
     messages = [
         {"role": "user", "name": "alice", "content": "first"},
@@ -93,7 +93,7 @@ def test_message_name_loss_keeps_all_positions_and_complete_draft(target):
     assert messages == before
 
 
-@pytest.mark.parametrize("target", ["openai_chat", "openai_responses", "anthropic", "gemini"])
+@pytest.mark.parametrize("target", ["openai_chat", "openai_responses", "anthropic"])
 @pytest.mark.parametrize("policy", ["raise", "ignore", "hook"])
 async def test_message_name_request_policies_use_complete_sdk_draft(
     profile_factory, target, policy
@@ -156,7 +156,7 @@ def test_chat_supported_message_name_is_preserved_without_loss():
     )
 
 
-@pytest.mark.parametrize("target", ["openai_responses", "anthropic", "gemini"])
+@pytest.mark.parametrize("target", ["openai_responses", "anthropic"])
 def test_named_typed_output_uses_output_hook_with_final_result_identity(target):
     observed = []
 
@@ -318,7 +318,7 @@ def test_midpoint_is_concrete_and_models_have_independent_application_values():
     assert "metadata" in encoded.tools[0].parameters["properties"]
 
 
-@pytest.mark.parametrize("target", ["openai_chat", "gemini"])
+@pytest.mark.parametrize("target", ["openai_chat"])
 def test_all_image_losses_are_collected_with_original_positions_and_complete_tail(target):
     values = picture_history()
     with pytest.raises(SemanticLossError) as caught:

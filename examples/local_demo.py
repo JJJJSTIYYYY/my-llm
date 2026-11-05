@@ -1,4 +1,4 @@
-"""Offline demonstration of standard messages/tools across five protocols.
+"""Offline demonstration of standard messages/tools across three protocols.
 
 Run with uv run python examples/local_demo.py. No credentials or network needed.
 """
@@ -28,8 +28,8 @@ def main():
         }
     ]
     print(
-        "Gemini tools:",
-        codec.convert(tools=tools, input_format="openai_chat", target_format="gemini")["tools"],
+        "Anthropic tools:",
+        codec.convert(tools=tools, input_format="openai_chat", target_format="anthropic")["tools"],
     )
 
 

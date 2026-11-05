@@ -123,7 +123,7 @@ async def cached_conversation(provider, model):
 下一批列表；Responses 的返回 items 使用 `[*reply, ...]` 展开。增量也可以包含 system、developer、
 assistant 或一整批工具调用及结果；工具回合应放在同一批。工具关联只在当前批次修复，
 已缓存的对应关系不会重复解析或修复，具体规则见[工具回合](../guides/middleware-io.md#模型与工具回合)。
-Anthropic、Gemini 已有普通消息缓存时，可以单独追加 system 消息。
+Anthropic 已有普通消息缓存时，可以单独追加 system 消息。
 
 缓存保存消息翻译得到的列表，不保存 SDK 请求字段。当前批次先与历史合并，再由 Decoder 组装、
 校验完整请求；请求准备完成后，在调用语义损失 adaptor 之前保存这份翻译结果。
@@ -165,7 +165,6 @@ async def retry_unconsumed(llm):
 | `openai_chat` | Chat messages / tools | assistant 消息字典 | ChatCompletionChunk 字典 |
 | `openai_responses` | Responses input/output items / tools | output items 列表 | Responses 事件字典 |
 | `anthropic` | Messages role/content / tools | assistant role/content 字典 | Messages 事件字典 |
-| `gemini` | Content role/parts / tools | model role/parts 字典 | GenerateContentResponse 字典 |
 | `middleware` | `Message` / `FunctionTool` 具体模型 | `AssistantMessage` | `MessageEvent` 具体模型 |
 
 `middleware` 是必须显式指定的 stdio 名称，不注册新协议组件，也不能作为上游协议。
@@ -259,7 +258,7 @@ async def print_stream(llm, prompt):
 | `TextContent` | `text`；固定 `type="text"`，可选 `item`、`origin` |
 | `ImageContent`、`ImageSource` | 图片内容的 `source`、固定 `type="image"`、可选 `item/origin`；来源的 `type="url" / "base64"` 及 `url/data/media_type`；用户消息和工具结果可使用 |
 | `ReasoningContent` | 可选 `reasoning: str \| None`、`feedback_item: Any \| None`、`item`、`origin`；固定 `type="thinking"`。可见文本实时输出，回传值保留原生对象，跨协议丢弃并记录损失 |
-| `ToolCall` | `call_id`、`name`、完整 `arguments: JsonObject`；可选 `signature`、`opaque_protocol`、`item`、`origin`；固定 `type="tool_use"` |
+| `ToolCall` | `call_id`、`name`、完整 `arguments: JsonObject`；可选 `item`、`origin`；固定 `type="tool_use"` |
 | `ToolResult` | `call_id`、有序 `content: list[ResultContent]`；可选 `name`、`item`、`origin`；固定 `type="tool_result"` |
 | `FunctionTool` | `name` 及可选 `description`、`parameters: JsonObject`、`strict`、`origin` |
 | `ItemIdentity` | 可选 `id`、`status`；保存源输出项身份，与工具的 `call_id` 和流块的 `source_ref` 分开 |
@@ -485,7 +484,7 @@ Chat 上游将同一 assistant 的工具结果按到达顺序集中到其 `tool_
 请求 hook 可以异步执行，准备阶段会等待其完成；离线转换与输出 hook 仍为同步函数，
 具体值和示例见[迁移指南](../guides/semantic-loss.md)。
 
-Chat、Gemini 分别提供 `prebuilt.move_tool_images_to_user_message`，由调用者显式导入并在
+Chat 提供 `prebuilt.move_tool_images_to_user_message`，由调用者显式导入并在
 初始化时传入；不会自动改变请求行为或默认损失策略。预设读取实例解析后的
 `supports_vision`，不能发送的图片替换为 `[Unsupported Image]`，其他损失视为已处理。
 请求阶段的 `SemanticLossContext.profile` 提供解析后的 Profile；启用缓存时，
@@ -509,9 +508,9 @@ codec = MyCodec()
 converted = codec.convert(
     messages=[{"role": "user", "content": "Hello"}],
     input_format="openai_chat",
-    target_format="gemini",
+    target_format="anthropic",
 )
-assert converted["messages"] == [{"role": "user", "parts": [{"text": "Hello"}]}]
+assert converted["messages"] == [{"role": "user", "content": [{"type": "text", "text": "Hello"}]}]
 ```
 
 ### 转换方法
@@ -564,7 +563,6 @@ assert converted["messages"] == [{"role": "user", "parts": [{"text": "Hello"}]}]
 | `ChatCompletionsCodec` | `openai_chat` | `my-llm-py[openai]` |
 | `ResponsesCodec` | `openai_responses` | `my-llm-py[openai]` |
 | `AnthropicCodec` | `anthropic` | `my-llm-py[anthropic]` |
-| `GeminiCodec` | `gemini` | `my-llm-py[google-genai]` |
 
 内置协议在对应依赖可用时自动注册，无需再次手动注册。
 

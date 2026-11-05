@@ -41,32 +41,6 @@ def test_every_tool_conversion_preserves_schema(source, target):
     assert chat[0]["function"]["parameters"]["properties"]["city"] == {"type": "string"}
 
 
-def test_signed_anthropic_and_gemini_replay():
-    codec = MyCodec()
-    for protocol, message in (
-        (
-            "anthropic",
-            {
-                "role": "assistant",
-                "content": [
-                    {"type": "thinking", "thinking": "hmm", "signature": "signed"},
-                    {"type": "redacted_thinking", "data": "opaque"},
-                ],
-            },
-        ),
-        (
-            "gemini",
-            {
-                "role": "model",
-                "parts": [{"text": "hmm", "thought": True, "thought_signature": "c2lnbmVk"}],
-            },
-        ),
-    ):
-        assert codec.convert([message], input_format=protocol, target_format=protocol)[
-            "messages"
-        ] == [message]
-
-
 def test_converter_can_be_reused_for_unrelated_paths():
     codec = MyCodec()
     for source, target in zip(PROTOCOLS, reversed(PROTOCOLS)):
@@ -120,3 +94,16 @@ def test_chat_image_detail_is_not_part_of_the_supported_field_set():
     assert result[0]["content"] == [
         {"type": "input_image", "image_url": "https://example.test/p.png", "detail": "auto"}
     ]
+
+
+def test_signed_anthropic_replay():
+    message = {
+        "role": "assistant",
+        "content": [
+            {"type": "thinking", "thinking": "hmm", "signature": "signed"},
+            {"type": "redacted_thinking", "data": "opaque"},
+        ],
+    }
+    assert MyCodec().convert([message], input_format="anthropic", target_format="anthropic")[
+        "messages"
+    ] == [message]

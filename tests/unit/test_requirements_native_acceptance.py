@@ -35,98 +35,6 @@ async def prepare(codec, messages, source, profile):
     )["request"]
 
 
-def gemini_image_history(media, sdk):
-    image = (
-        {"inline_data": {"mime_type": "image/png", "data": b"png"}}
-        if media == "inline"
-        else {"file_data": {"mime_type": "image/png", "file_uri": "https://example.test/p.png"}}
-    )
-    parts = [
-        {"inline_data": {"mime_type": "audio/wav", "data": Unreadable()}},
-        image,
-        {"file_data": {"mime_type": "application/pdf", "file_uri": Unreadable()}},
-    ]
-    messages = [
-        {"role": "model", "parts": [{"function_call": {"id": "c", "name": "f", "args": {}}}]},
-        {
-            "role": "user",
-            "parts": [
-                {
-                    "function_response": {
-                        "id": "c",
-                        "name": "f",
-                        "response": {"result": "ok"},
-                        "parts": parts,
-                    }
-                }
-            ],
-        },
-    ]
-    if sdk:
-        from google.genai import types
-
-        native_parts = []
-        for part in parts:
-            field = next(iter(part))
-            model = (
-                types.FunctionResponseBlob
-                if field == "inline_data"
-                else types.FunctionResponseFileData
-            )
-            native_parts.append(
-                types.FunctionResponsePart.model_construct(
-                    **{field: model.model_construct(**part[field])}
-                )
-            )
-        messages = [
-            types.Content(**messages[0]),
-            types.Content.model_construct(
-                role="user",
-                parts=[
-                    types.Part.model_construct(
-                        function_response=types.FunctionResponse.model_construct(
-                            id="c", name="f", response={"result": "ok"}, parts=native_parts
-                        )
-                    )
-                ],
-            ),
-        ]
-        image = native_parts[1]
-    return messages, image
-
-
-@pytest.mark.parametrize("target", PROTOCOLS)
-@pytest.mark.parametrize("media", ["inline", "file"])
-@pytest.mark.parametrize("sdk", [False, True])
-async def test_gemini_tool_images_preserve_or_report_original_values(
-    target, media, sdk, profile_factory
-):
-    messages, original_image = gemini_image_history(media, sdk)
-    codec = MyCodec()
-    profile = target_profile(profile_factory, target)
-    if target in ("openai_chat", "gemini"):
-        with pytest.raises(SemanticLossError) as caught:
-            (await prepare(codec, messages, "gemini", profile))
-        assert len(caught.value.losses.items) == 1
-        loss = caught.value.losses.items[0]
-        assert loss.origin_value is original_image
-        assert loss.origin_path == "$.messages[1].parts[0].function_response.parts[1]"
-        assert "ok" in str(caught.value.draft)
-        assert "image/png" not in str(caught.value.draft)
-        return
-    request = await prepare(codec, messages, "gemini", profile)
-    parts = (
-        request["input"][-1]["output"]
-        if target == "openai_responses"
-        else request["messages"][-1]["content"][0]["content"]
-    )
-    assert len(parts) == 2
-    assert json.loads(parts[0]["text"]) == {"result": "ok"}
-    image = parts[1]
-    assert image["type"] == ("input_image" if target == "openai_responses" else "image")
-    assert ("cG5n" if media == "inline" else "https://example.test/p.png") in str(image)
-
-
 @pytest.mark.parametrize("source", PROTOCOLS)
 @pytest.mark.parametrize("target", PROTOCOLS)
 async def test_application_arrays_with_type_keys_remain_tool_text(source, target, profile_factory):
@@ -189,8 +97,6 @@ async def test_empty_tool_schema_is_preserved_or_reported_with_complete_draft(
         else request["tools"][0]["parameters"]
         if target == "openai_responses"
         else request["tools"][0]["input_schema"]
-        if target == "anthropic"
-        else request["config"]["tools"][0]["function_declarations"][0]["parameters_json_schema"]
     )
     assert actual == {}
 
@@ -261,7 +167,7 @@ def test_chat_custom_calls_drop_without_affecting_function_partials(target):
 def test_foreign_feedback_owner_is_taken_from_the_message_protocol(target):
     from my_llm import AssistantMessage, ReasoningContent
 
-    owner = "gemini" if target == "anthropic" else "anthropic"
+    owner = "openai_responses" if target == "anthropic" else "anthropic"
     message = AssistantMessage(
         role="assistant",
         protocol=owner,
@@ -276,14 +182,13 @@ def test_foreign_feedback_owner_is_taken_from_the_message_protocol(target):
         MyCodec().decode([message], target_format=target)
 
 
-@pytest.mark.parametrize("target", ["anthropic", "gemini", "openai_responses"])
+@pytest.mark.parametrize("target", ["anthropic", "openai_responses"])
 @pytest.mark.parametrize("owner", ["message", "context"])
 def test_native_feedback_uses_the_message_or_source_context(target, owner):
     from my_llm import AssistantMessage, ReasoningContent
 
     feedback = {
         "anthropic": {"type": "thinking", "thinking": "reason", "signature": "signed"},
-        "gemini": {"text": "reason", "thought": True, "thought_signature": "c2lnbmVk"},
         "openai_responses": {
             "type": "reasoning",
             "summary": [{"type": "summary_text", "text": "reason"}],
@@ -317,16 +222,5 @@ def test_foreign_feedback_owner_is_checked_on_public_response_blocks(target):
         MyCodec().decode(
             chunks=[{"type": "block_stop", "index": 0, "block": block}],
             target_format=target,
-            source_protocol="gemini" if target == "anthropic" else "anthropic",
+            source_protocol="openai_responses" if target == "anthropic" else "anthropic",
         )
-
-
-@pytest.mark.parametrize("target", PROTOCOLS)
-@pytest.mark.parametrize("parameters", [{}, {"parameters": None}, {"parameters_json_schema": None}])
-def test_gemini_missing_tool_schema_does_not_become_an_explicit_empty_schema(target, parameters):
-    result = MyCodec().convert(
-        tools=[{"function_declarations": [{"name": "f", **parameters}]}],
-        input_format="gemini",
-        target_format=target,
-    )
-    assert "f" in str(result)

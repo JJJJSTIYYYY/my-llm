@@ -5,7 +5,6 @@ import json
 from copy import deepcopy
 
 import pytest
-from google.genai import types
 
 from my_llm import (
     AssistantMessage,
@@ -14,14 +13,14 @@ from my_llm import (
     SemanticLossError,
     TextContent,
 )
-from tests.helpers.protocols import PROTOCOLS, history, stream_events, tools
+from tests.helpers.protocols import PROTOCOLS, stream_events, tools
 from tests.helpers.transport import FakeClient
 from tests.performance.transport import LocalSDK, wire_frames
 from tests.performance.workloads import profiles
 
 
 def native_history(protocol, request):
-    return request[{"openai_responses": "input", "gemini": "contents"}.get(protocol, "messages")]
+    return request[{"openai_responses": "input"}.get(protocol, "messages")]
 
 
 async def consume(stream):
@@ -89,30 +88,18 @@ async def test_stream_retry_after_failure_cancel_or_early_close_keeps_one_batch(
         assert len(client.requests[1]["messages"]) == 1
 
 
-@pytest.mark.parametrize("source", ["gemini", "legacy_chat"])
-async def test_retry_idless_tool_round_keeps_cached_call_ids_and_matching_results(
-    monkeypatch, source
-):
-    batch = (
-        [
-            {"role": "assistant", "function_call": {"name": "weather", "arguments": "{}"}},
-            {"role": "function", "name": "weather", "content": "Sunny"},
-        ]
-        if source == "legacy_chat"
-        else history(source)[1:]
-    )
-    if source == "gemini":
-        for part in batch[0]["parts"]:
-            if "function_call" in part:
-                part["function_call"].pop("id", None)
-        batch[1]["parts"][0]["function_response"].pop("id", None)
+async def test_retry_idless_tool_round_keeps_cached_call_ids_and_matching_results(monkeypatch):
+    batch = [
+        {"role": "assistant", "function_call": {"name": "weather", "arguments": "{}"}},
+        {"role": "function", "name": "weather", "content": "Sunny"},
+    ]
     client = FakeClient(stream_events("openai_chat"), failure=RuntimeError("retry request"))
     monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", lambda **kwargs: client)
     provider, model = profiles("openai_chat")
     async with MyLLM(
         provider=provider,
         model=model,
-        stdio_protocol="openai_chat" if source == "legacy_chat" else source,
+        stdio_protocol="openai_chat",
         enable_message_cache=True,
     ) as llm:
         with pytest.raises(RuntimeError, match="retry request"):
@@ -223,26 +210,6 @@ async def test_retried_messages_keep_current_tools_headers_and_generation_contro
         assert sdk.requests[1].headers["x-retry"] == "second"
 
 
-@pytest.mark.parametrize("source", ["gemini"])
-async def test_equal_sdk_model_batches_have_stable_fingerprints(source):
-    message = types.Content(role="user", parts=[types.Part(text="retry-input")])
-    provider, model = profiles("openai_chat")
-    with LocalSDK(
-        "openai_chat", wire_frames("openai_chat", stream_events("openai_chat"), 61)
-    ) as sdk:
-        async with MyLLM(
-            provider=provider,
-            model=model,
-            stdio_protocol=source,
-            enable_message_cache=True,
-        ) as llm:
-            await llm.generate(messages=[message])
-            await llm.generate(messages=[deepcopy(message)])
-        first, latest = [json.loads(request.content)["messages"] for request in sdk.requests]
-        assert first == latest
-        assert len(latest) == 1
-
-
 async def test_adaptor_rejection_keeps_translation_cached_and_retries_deduplicate():
     provider, model = profiles("anthropic")
     batch = [{"role": "user", "content": "second-input", "name": "named-user"}]
@@ -267,7 +234,7 @@ async def test_adaptor_rejection_keeps_translation_cached_and_retries_deduplicat
         ]
 
 
-@pytest.mark.parametrize("upstream", ["anthropic", "gemini"])
+@pytest.mark.parametrize("upstream", ["anthropic"])
 async def test_retried_system_only_batch_retains_one_instruction_and_cached_user_history(upstream):
     provider, model = profiles(upstream)
     batch = [{"role": "system", "content": "retry-instruction"}]
@@ -287,11 +254,7 @@ async def test_retried_system_only_batch_retains_one_instruction_and_cached_user
         assert len(retries) == 2
         for request in retries:
             assert native_history(upstream, request) == native_history(upstream, initial)
-            instruction = (
-                request["system"]
-                if upstream == "anthropic"
-                else request["systemInstruction"]["parts"]
-            )
+            instruction = request["system"]
             assert [part["text"] for part in instruction] == ["retry-instruction"]
 
 
@@ -326,3 +289,24 @@ async def test_retry_runs_loss_hook_and_uses_current_controls_without_readding_h
             "hook-added",
         ]
         assert first["max_tokens"] == 11 and retry["max_tokens"] == 12
+
+
+async def test_equal_sdk_model_batches_have_stable_fingerprints():
+    from openai.types.chat import ChatCompletionMessage
+
+    message = ChatCompletionMessage(role="assistant", content="retry-input")
+    provider, model = profiles("openai_chat")
+    with LocalSDK(
+        "openai_chat", wire_frames("openai_chat", stream_events("openai_chat"), 61)
+    ) as sdk:
+        async with MyLLM(
+            provider=provider,
+            model=model,
+            stdio_protocol="openai_chat",
+            enable_message_cache=True,
+        ) as llm:
+            await llm.generate(messages=[message])
+            await llm.generate(messages=[deepcopy(message)])
+        first, latest = [json.loads(request.content)["messages"] for request in sdk.requests]
+        assert first == latest
+        assert len(latest) == 1

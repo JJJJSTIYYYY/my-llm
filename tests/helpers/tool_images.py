@@ -13,11 +13,10 @@ from my_llm import (
     UserMessage,
     omit,
 )
-from my_llm.codec.gemini.prebuilt import move_tool_images_to_user_message as gemini_hook
 from my_llm.codec.openai.chat.prebuilt import move_tool_images_to_user_message as chat_hook
 from tests.performance.workloads import profiles
 
-HOOKS = {"openai_chat": chat_hook, "gemini": gemini_hook}
+HOOKS = {"openai_chat": chat_hook}
 URL = "https://example.com/a.png"
 DATA = "aW1hZ2U="
 
@@ -55,71 +54,6 @@ def picture_history():
         },
         {"role": "user", "content": "complete tail"},
     ]
-
-
-class Unreadable:
-    def __deepcopy__(self, memo):
-        raise AssertionError("an unsupported native field was traversed")
-
-
-def gemini_image_history(media, sdk):
-    image = (
-        {"inline_data": {"mime_type": "image/png", "data": b"png"}}
-        if media == "inline"
-        else {"file_data": {"mime_type": "image/png", "file_uri": "https://example.test/p.png"}}
-    )
-    parts = [
-        {"inline_data": {"mime_type": "audio/wav", "data": Unreadable()}},
-        image,
-        {"file_data": {"mime_type": "application/pdf", "file_uri": Unreadable()}},
-    ]
-    messages = [
-        {"role": "model", "parts": [{"function_call": {"id": "c", "name": "f", "args": {}}}]},
-        {
-            "role": "user",
-            "parts": [
-                {
-                    "function_response": {
-                        "id": "c",
-                        "name": "f",
-                        "response": {"result": "ok"},
-                        "parts": parts,
-                    }
-                }
-            ],
-        },
-    ]
-    if sdk:
-        from google.genai import types
-
-        native_parts = []
-        for part in parts:
-            field = next(iter(part))
-            model = (
-                types.FunctionResponseBlob
-                if field == "inline_data"
-                else types.FunctionResponseFileData
-            )
-            native_parts.append(
-                types.FunctionResponsePart.model_construct(
-                    **{field: model.model_construct(**part[field])}
-                )
-            )
-        messages = [
-            types.Content(**messages[0]),
-            types.Content.model_construct(
-                role="user",
-                parts=[
-                    types.Part.model_construct(
-                        function_response=types.FunctionResponse.model_construct(
-                            id="c", name="f", response={"result": "ok"}, parts=native_parts
-                        )
-                    )
-                ],
-            ),
-        ]
-        image = native_parts[1]
-    return messages, image
 
 
 def responses_history():
@@ -177,14 +111,7 @@ def expected_image_message(target):
                 {"type": "image_url", "image_url": {"url": URL}},
                 {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{DATA}"}},
             ],
-        },
-        "gemini": {
-            "role": "user",
-            "parts": [
-                {"file_data": {"file_uri": URL}},
-                {"inline_data": {"mime_type": "image/png", "data": DATA}},
-            ],
-        },
+        }
     }[target]
 
 
@@ -221,5 +148,5 @@ async def consume(stream):
     return stream.result
 
 
-def request_history(protocol, request):
-    return request["contents" if protocol == "gemini" else "messages"]
+def request_history(request):
+    return request["messages"]

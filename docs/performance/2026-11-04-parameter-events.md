@@ -1,6 +1,6 @@
 # Parameter 与 event_type 性能审查（2026-11-04）
 
-> 历史报告：数据来自移除 Ollama 协议前的版本，保留用于复核；当前支持范围与测试场景见[性能测试指南](../guides/performance.md)。
+> 历史报告：数据来自移除 Ollama / Gemini 协议前的版本，保留用于复核；当前支持范围与测试场景见[性能测试指南](../guides/performance.md)。
 
 本次类型拆分和输出事件路由在 10 个原生场景的交替复测中，P50 变化中位数为 **+0.22%**，
 范围 **-1.80%～+2.06%**。存在可简化的重复匹配和提前读取回退字段；本轮实验未证明它们能
@@ -52,7 +52,7 @@ P95 的数十毫秒尖峰不能仅凭短样本解释为事件匹配回退。GC �
 [Chat](../../src/my_llm/codec/openai/chat/encoding/encoder.py#L272)、
 [Responses](../../src/my_llm/codec/openai/responses/encoding/encoder.py#L407)、
 [Anthropic 自定义反馈](../../src/my_llm/codec/anthropic/encoding/encoder.py#L338) 和
-[Gemini 自定义输出](../../src/my_llm/codec/gemini/encoding/encoder.py#L296) 已先调用
+[Gemini 自定义输出](https://github.com/JJJJSTIYYYY/my-llm/blob/0d13d6842904f1a970866e43e49d767e331ed6c0/src/my_llm/codec/gemini/encoding/encoder.py#L296) 已先调用
 `parameter_matches_event()`，之后又给 `parameter_value()` 传 `event=True`，重复查询绑定及匹配类型。
 候选只移除这四处重复标记。仍由 BaseEncoder 提供通用匹配，协议 Encoder 决定原生事件条件和提取时机。
 未先匹配的 Ollama 与 Gemini 自定义反馈仍保留 `event=True`。

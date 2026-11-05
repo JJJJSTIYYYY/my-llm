@@ -85,9 +85,7 @@ async def run(options):
         "platform": platform.platform(),
         "source_sha256": source(),
         "harness_sha256": harness(),
-        "versions": {
-            name: version(name) for name in ("openai", "anthropic", "google-genai", "pydantic")
-        },
+        "versions": {name: version(name) for name in ("openai", "anthropic", "pydantic")},
         "iterations": options.iterations,
         "warmup": options.warmup,
         "definition": (

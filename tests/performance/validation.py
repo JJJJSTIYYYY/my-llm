@@ -61,13 +61,6 @@ def result_parts(protocol: str, result):
                     thoughts.append(block["thinking"])
                 elif block["type"] == "tool_use":
                     calls.append((block["name"], block["input"]))
-        elif protocol == "gemini":
-            for part in message["parts"]:
-                if "text" in part:
-                    (thoughts if part.get("thought") else texts).append(part["text"])
-                if "function_call" in part:
-                    call = part["function_call"]
-                    calls.append((call["name"], call["args"]))
         else:
             texts.append(message.get("content") or "")
             thoughts.append(message.get("reasoning_content", ""))
@@ -109,10 +102,7 @@ def validate_exchange(workload: Workload, stdio: str, result, sdk):
     body = json.loads(sdk.requests[-1].content)
     validate_request(workload.protocol, body)
     assert sdk.requests[-1].headers["x-benchmark"] == "request"
-    if workload.protocol == "gemini":
-        assert "/models/benchmark:" in sdk.requests[-1].url.path
-    else:
-        assert body["model"] == "benchmark"
+    assert body["model"] == "benchmark"
     assert all("__my_llm_codec_" not in key for key in body)
     protocol = workload.protocol
     if protocol == "openai_responses":
@@ -140,24 +130,6 @@ def validate_exchange(workload: Workload, stdio: str, result, sdk):
         result_values = [block["content"] for block in results]
         schemas = [function["input_schema"] for function in functions]
         images = [block["source"]["data"] for block in blocks if block["type"] == "image"]
-    elif protocol == "gemini":
-        functions = [
-            function for tool in body["tools"] for function in tool["functionDeclarations"]
-        ]
-        parts = [part for message in body["contents"] for part in message["parts"]]
-        calls = [
-            (part["functionCall"]["name"], part["functionCall"]["args"])
-            for part in parts
-            if "functionCall" in part
-        ]
-        results = [part for part in parts if "functionResponse" in part]
-        result_values = [part["functionResponse"]["response"] for part in results]
-        schemas = [function["parameters_json_schema"] for function in functions]
-        images = [
-            part["inlineData"]["data"]
-            for part in parts
-            if part.get("inlineData", {}).get("mimeType") == "image/png"
-        ]
     else:
         functions = [tool["function"] for tool in body["tools"]]
         calls = [

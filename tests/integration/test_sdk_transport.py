@@ -17,7 +17,7 @@ from tests.helpers.transport import sse
 
 
 @pytest.mark.parametrize("protocol", ["openai_chat", "openai_responses"])
-@pytest.mark.parametrize("stdio", ["openai_chat", "openai_responses", "anthropic", "gemini"])
+@pytest.mark.parametrize("stdio", ["openai_chat", "openai_responses", "anthropic"])
 @pytest.mark.parametrize("stream", [False, True])
 async def test_official_openai_transport_all_stdio_formats(monkeypatch, protocol, stdio, stream):
     requests, clients = [], []

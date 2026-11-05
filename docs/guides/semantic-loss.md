@@ -8,11 +8,11 @@
 
 中间层仅支持文本、用户图片、工具结果图片、思维链、工具调用、函数定义和 usage。
 audio、file、用户 metadata、refusal、citations、cache_control 等在源编码时静默丢弃。
-按本次需求确认，`strict` 在 Chat / Responses / Anthropic 保留，在 Gemini 丢弃。
+`strict` 在 Chat / Responses / Anthropic 均保留。
 JSON Schema 内应用属性不按这些名称删除。
 
 如果目标无法表达已支持的值，默认抛出公开的 `SemanticLossError`。例如，Chat 无法表达
-工具结果图片；Anthropic / Gemini 无法把外来无有效签名的历史思维直接回放。思维不会拼入
+工具结果图片；Anthropic 无法把外来无有效签名的历史思维直接回放。思维不会拼入
 最终回答，图片不会自动变成工具文本。错误提供 `.draft`、`.losses.items` 和 `.context`，
 单项的 `.origin_value` 引用原始来源对象，不复制或遍历其中未支持的字段，并提供`$.messages[...].content[...]` 形式的 `.origin_path` 与原因。
 decoder 完整翻译后统一报出本批损失，请求在发送前处理，响应在交付前处理。
@@ -28,7 +28,7 @@ decoder 完整翻译后统一报出本批损失，请求在发送前处理，响
 因回传策略排除的内容不记录损失；例如 `when_tool_calls` 会静默跳过没有工具调用的历史思考。
 Chat 在回传策略启用且 assistant 含工具调用时，如果缺少思考正文，补
 `reasoning_content=""`，不依赖本次生成是否开启 reasoning。
-`none`、`omit` 或模型声明不支持 reasoning 时不补。Anthropic / Gemini 仍要求真实原生签名，不伪造空签名。
+`none`、`omit` 或模型声明不支持 reasoning 时不补。Anthropic 仍要求真实原生签名，不伪造空签名。
 
 创建 `MyLLM` 时选择策略，也可以在实例上二次设置：
 
@@ -55,14 +55,13 @@ hook 可以原地修改、抛错、
 
 ## 预设工具图片 hook
 
-Chat Completions 和 Gemini 的 `prebuilt` 目录提供
+Chat Completions 的 `prebuilt` 目录提供
 `move_tool_images_to_user_message`。它将本批工具结果中的图片按原顺序汇总到一条新的
 user 消息，追加到本次历史末尾；原工具结果保留文字和调用关联。
 
 | 上游目标 | 导入位置 | 图片支持 |
 | --- | --- | --- |
 | Chat Completions | `my_llm.codec.openai.chat.prebuilt` | URL、Base64 |
-| Gemini | `my_llm.codec.gemini.prebuilt` | URL、Base64 |
 
 选择与上游目标匹配的 hook，最外层仍可使用 Anthropic 或 Responses 等协议：
 
@@ -89,7 +88,7 @@ llm = MyLLM(
 `omit` 的结果。支持时搬移可表示的图片；模型不支持图片或协议无法表示该图片时，
 逐张插入 `[Unsupported Image]`。工具调用仍需启用 `supports_function_calling`。
 其余语义损失视为已处理，不再抛错。
-图片来源支持 Anthropic、Responses、Gemini 原生字典 / SDK 对象和直接中间模型。
+图片来源支持 Anthropic、Responses 原生字典 / SDK 对象和直接中间模型。
 
 启用 `enable_message_cache=True` 时，预设会显式补写新增 user 消息，并保留此前缓存的
 系统指令、历史及当前输入 fingerprint。下一轮增量请求继续携带图片；连续重发相同批次
@@ -101,7 +100,7 @@ llm = MyLLM(
 预设使用弱集合记录处理状态，缓存过期、清空或进入新批次后，旧状态可随之释放。
 缓存不保存 hook 状态，也不对补写消息去重；何时补写、是否重试均由 hook 负责。
 只有预设新增的原生消息会写入缓存，普通 draft 修改仍仅影响当前请求。
-预设不替换全部缓存，因此 Gemini 的系统指令也会保留。预设仅用于请求阶段，
+预设仅补写新增消息，用于请求阶段，
 不补偿离线 `convert()` 或输出阶段的损失。
 
 这些预设是显式启用的补偿行为，不会再次翻译 hook 已修改的原生 draft。
@@ -112,8 +111,7 @@ llm = MyLLM(
 Chat 的并行工具调用出现在一个最终 `tool_calls` 列表；Anthropic / Responses
 使用原生工具生命周期事件，每个调用携带完整参数，不发送工具参数 delta。
 
-工具结果对象 / 数组在中间层序列化为文本；Gemini 目标使用 SDK 必需的 `{"result": text}`
-对象包装。即使文本外观是 JSON，也按文本传递，避免再次猜测应用数据类型。
+工具结果对象 / 数组在中间层序列化为文本。即使文本外观是 JSON，也按文本传递，避免再次猜测应用数据类型。
 
 usage 不出现在公开事件或非流式结果中。流成功结束后，`llm.get_last_usage()` 返回独立的
 `Usage`，包含 `input`、`output`、`total`、`cached`、`reasoning`；未返回的字段为 `None`，

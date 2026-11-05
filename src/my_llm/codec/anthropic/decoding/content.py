@@ -9,12 +9,10 @@ from my_llm.profile.resolution import ResolvedProfile
 
 
 def foreign_block(block: dict) -> dict | None:
-    """Adapt foreign content for Anthropic and report reasoning/signature losses."""
+    """Adapt foreign content for Anthropic and report reasoning losses."""
     kind = block.get("type")
     if kind == "thinking":
         return without_feedback(block)
-    if kind in constants.MIDDLEWARE_TEXT_TOOL_USE_TYPES and block.get("signature") is not None:
-        report_loss(block, "Anthropic cannot preserve another protocol's reasoning signature")
     if kind == "tool_result":
         content = block.get("content")
         return {

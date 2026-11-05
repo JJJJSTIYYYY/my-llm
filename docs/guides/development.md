@@ -8,8 +8,8 @@ codec 布局与接口以本页目录说明、[架构文档](../design/architectu
 运行时包位于 src/my_llm；应用调用方式见 [API 指南](../reference/api.md)，
 完整职责树见[架构文档](../design/architecture.md)。
 
-- codec/base 的 codec.py、encoder.py、decoder.py、transport.py 定义抽象契约，模块名与四种原生实现一致。
-- 四种协议各自维护 encoding 和 decoding；转换方法直接落在 encoder.py / decoder.py。
+- codec/base 的 codec.py、encoder.py、decoder.py、transport.py 定义抽象契约，模块名与三种原生实现一致。
+- 三种协议各自维护 encoding 和 decoding；转换方法直接落在 encoder.py / decoder.py。
   内容、字段及工具翻译辅助放在本方向的 content.py，双向共用的辅助直接放在本协议根目录，以 content.py、schema.py 等职责命名；生成参数映射、请求结构、验证与过滤放在 Decoder；官方 SDK 执行及资源关闭放在协议根目录的 transport.py。
   BaseCodec 声明 ProtocolDefaults 并组合 encoder / decoder / transport，转换与执行组件互不导入。
   仅在存在对应职责时保留辅助模块，不为每个转换方法或短小函数建立分组包。
@@ -37,7 +37,7 @@ Decoder._messages / _tools 与公开 messages / tools 均返回普通 list，不
 包初始化文件负责组合公开导出；应用、示例和公共接口测试继续使用
 `from my_llm import MyLLM, ModelProfile, ProviderProfile`。
 
-导入子模块时可以通过所属包引用模块本身，例如 `from my_llm.codec.gemini import transport`；
+导入子模块时可以通过所属包引用模块本身，例如 `from my_llm.codec.anthropic import transport`；
 不通过包的重导出反向获取实现类。为避免定义阶段的循环依赖而已有的函数内延迟导入保留。
 Ruff 统一导入顺序并禁止相对导入；结构契约检查实现代码不依赖包的符号重导出。
 

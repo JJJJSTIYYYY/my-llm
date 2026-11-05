@@ -62,7 +62,6 @@ INPUT_ITEM_TYPE_TO_MIDDLEWARE_BLOCK_TYPE = {
     "function_call": "tool_use",
     "function_call_output": "tool_result",
 }
-MIDDLEWARE_TEXT_TOOL_USE_TYPES = ("text", "tool_use")
 MIDDLEWARE_TEXT_IMAGE_TOOL_USE_TYPES = ("text", "image", "tool_use")
 REASONING_FUNCTION_CALL_ITEM_TYPES = ("reasoning", "function_call")
 TOOL_RESULT_NATIVE_PART_TYPES = frozenset(

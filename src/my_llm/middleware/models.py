@@ -153,8 +153,6 @@ class ToolCall(ProtocolValue):
     call_id: str | None
     name: str
     arguments: JsonObject = dataclass_field(default_factory=dict)
-    signature: str | None = None
-    opaque_protocol: str | None = None
     origin: Origin | None = dataclass_field(default=None, repr=False)
     type: Literal["tool_use"] = dataclass_field(default="tool_use", init=False)
     item: ItemIdentity | None = None
@@ -162,10 +160,6 @@ class ToolCall(ProtocolValue):
     def to_wire(self) -> dict:
         """Project tool identity/name while borrowing the argument object inside the pipeline."""
         value = {"type": "tool_use", "id": self.call_id, "name": self.name, "input": self.arguments}
-        if self.signature is not None:
-            value["signature"] = self.signature
-        if self.opaque_protocol is not None:
-            value["protocol"] = self.opaque_protocol
         return _located(_with_item(value, self.item), self.origin)
 
 
@@ -196,7 +190,7 @@ class ToolResult(ProtocolValue):
 type MessageContent = TextContent | ImageContent | ReasoningContent | ToolCall | ToolResult
 
 
-def _result_content(value: object, path: str, protocol: str | None) -> list[ResultContent]:
+def _result_content(value: object, path: str) -> list[ResultContent]:
     """Normalize tool results to typed parts, JSON-serializing untagged application data."""
     if value is None:
         return []
@@ -204,22 +198,19 @@ def _result_content(value: object, path: str, protocol: str | None) -> list[Resu
         return [TextContent(value, Origin(path, value))]
     if isinstance(value, list) and all(isinstance(v, dict) and "type" in v for v in value):
         return [
-            content_from_validated_wire(raw, f"{path}[{index}]", protocol)
-            for index, raw in enumerate(value)
+            content_from_validated_wire(raw, f"{path}[{index}]") for index, raw in enumerate(value)
         ]
     # Objects and arrays of application values are supported text results.
     return [TextContent(json.dumps(value, ensure_ascii=False), Origin(path, value))]
 
 
-def content_from_wire(value: dict, path: str = "$", protocol: str | None = None) -> MessageContent:
+def content_from_wire(value: dict, path: str = "$") -> MessageContent:
     """Read canonical content; invalid structure raises MessageValidationError."""
     validate_content(value, path)
-    return content_from_validated_wire(value, path, protocol)
+    return content_from_validated_wire(value, path)
 
 
-def content_from_validated_wire(
-    value: dict, path: str = "$", protocol: str | None = None
-) -> MessageContent:
+def content_from_validated_wire(value: dict, path: str = "$") -> MessageContent:
     """Project content already checked by validate_content, without revalidation."""
     kind = value["type"]
     origin = Origin.from_value(value, path)
@@ -246,14 +237,12 @@ def content_from_validated_wire(
             value["id"],
             value["name"],
             capture(value["input"]),
-            value.get("signature"),
-            value.get("protocol", protocol),
             origin,
             _item(value),
         )
     return ToolResult(
         value["tool_use_id"],
-        _result_content(value["content"], f"{origin.path}.content", protocol),
+        _result_content(value["content"], f"{origin.path}.content"),
         value.get("name"),
         origin,
         _item(value),
@@ -330,7 +319,7 @@ def messages_from_validated_wire(values: list) -> list[Message]:
         protocol = raw.get("protocol")
         origin = Origin.from_value(raw, f"$.messages[{index}]")
         content = [
-            content_from_validated_wire(block, f"{origin.path}.content[{offset}]", protocol)
+            content_from_validated_wire(block, f"{origin.path}.content[{offset}]")
             for offset, block in enumerate(raw["content"])
         ]
         model = (

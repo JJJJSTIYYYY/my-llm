@@ -36,7 +36,6 @@ NATIVE_FUNCTION_METADATA_FIELDS = ("name", "description", "strict")
 MESSAGE_ROLES = ("user", "assistant", "system", "developer", "tool")
 TOOL_RESULT_ROLES = ("tool", "function")
 MESSAGE_CONTENT_TYPES = {"file", "image_url", "input_audio", "refusal", "text"}
-MIDDLEWARE_TEXT_TOOL_USE_TYPES = ("text", "tool_use")
 MIDDLEWARE_TEXT_IMAGE_THINKING_TOOL_USE_TOOL_RESULT_TYPES = (
     "text",
     "image",

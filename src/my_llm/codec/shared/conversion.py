@@ -89,17 +89,6 @@ def source_protocol(value: dict) -> str | None:
     return value.get("protocol")
 
 
-def allocate_call_id(used: set[str], preferred: str) -> str:
-    """Choose a deterministic synthetic ID that cannot shadow an explicit call."""
-    candidate = preferred
-    suffix = 0
-    while candidate in used:
-        suffix += 1
-        candidate = f"{preferred}_{suffix}"
-    used.add(candidate)
-    return candidate
-
-
 def mapping_list(value) -> bool:
     """Whether a value is a list containing only dictionaries."""
     return isinstance(value, list) and all(isinstance(item, dict) for item in value)

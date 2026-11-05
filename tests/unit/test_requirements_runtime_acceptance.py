@@ -271,16 +271,6 @@ async def test_native_tool_events_have_complete_calls_only_after_source_eof(monk
                         for choice in event.get("choices", [])
                         for call in choice["delta"].get("tool_calls", [])
                     ]
-                elif stdio == "gemini":
-                    calls = [
-                        {
-                            "name": part["function_call"]["name"],
-                            "arguments": part["function_call"]["args"],
-                        }
-                        for candidate in event.get("candidates", [])
-                        for part in candidate["content"]["parts"]
-                        if "function_call" in part
-                    ]
                 elif stdio == "anthropic":
                     assert event.get("delta", {}).get("type") != "input_json_delta"
                     block = event.get("content_block", {})

@@ -2,9 +2,9 @@
 
 import pytest
 
-from my_llm import MyCodec, ToolCall
+from my_llm import MyCodec
 from my_llm.runtime.state import StreamState
-from tests.helpers.protocols import PROTOCOLS, chat_event
+from tests.helpers.protocols import chat_event
 
 
 @pytest.mark.parametrize(
@@ -33,24 +33,6 @@ def test_reasoning_separates_visible_text_and_native_feedback(item, reasoning):
     assert block.feedback_item == item
     restored = codec.decode(encoded.messages, target_format="openai_responses")["messages"]
     assert restored[0]["encrypted_content"] == "opaque"
-
-
-@pytest.mark.parametrize("sdk", [False, True])
-@pytest.mark.parametrize("target", PROTOCOLS)
-def test_nullable_gemini_arguments_form_an_empty_argument_object(sdk, target):
-    from google.genai import types
-
-    message = {"role": "model", "parts": [{"function_call": {"name": "clock", "args": None}}]}
-    if sdk:
-        message = types.Content.model_validate(message)
-    codec = MyCodec()
-    encoded = codec.encode([message], input_format="gemini")
-    assert encoded.messages[0].content[0].arguments == {}
-    rendered = codec.decode(encoded.messages, target_format=target)["messages"]
-    restored = codec.encode(rendered, input_format=target)
-    calls = [part for part in restored.messages[0].content if isinstance(part, ToolCall)]
-    assert len(calls) == 1
-    assert calls[0].arguments == {}
 
 
 @pytest.mark.parametrize("sdk", [False, True])

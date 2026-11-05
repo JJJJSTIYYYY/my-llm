@@ -5,7 +5,6 @@ from typing import Annotated, get_args, get_origin
 
 from anthropic.types import MessageParam, RawMessageStreamEvent
 from anthropic.types import ToolParam as AnthropicToolParam
-from google.genai import types
 from openai.types.chat import (
     ChatCompletionChunk,
     ChatCompletionMessageParam,
@@ -20,7 +19,6 @@ MESSAGE_TYPES = {
     "openai_chat": ChatCompletionMessageParam,
     "openai_responses": ResponseInputItemParam,
     "anthropic": MessageParam,
-    "gemini": types.Content,
 }
 
 
@@ -28,7 +26,6 @@ TOOL_TYPES = {
     "openai_chat": ChatCompletionToolParam,
     "openai_responses": ToolParam,
     "anthropic": AnthropicToolParam,
-    "gemini": types.Tool,
 }
 
 
@@ -54,7 +51,6 @@ EVENT_TYPES = {
     "openai_chat": ChatCompletionChunk,
     "openai_responses": event_models(ResponseStreamEvent),
     "anthropic": event_models(RawMessageStreamEvent),
-    "gemini": types.GenerateContentResponse,
 }
 
 
@@ -101,20 +97,6 @@ def assert_native(value, schema):
     adapter = TypeAdapter(schema)
     validated = adapter.validate_python(value)
     assert_no_ignored_fields(value, validated)
-    # Some SDK models mark these as Optional for convenience, while the REST
-    # contract requires them. Do not let model permissiveness weaken the oracle.
-    if schema is types.Content:
-        assert value.get("role", "user") in ("user", "model")
-        for part in value["parts"]:
-            for field in ("function_call", "function_response"):
-                if field in part:
-                    assert isinstance(part[field].get("name"), str) and part[field]["name"]
-            if "function_response" in part:
-                assert isinstance(part["function_response"].get("response"), dict)
-    if schema is types.Tool:
-        for function in value.get("function_declarations", []):
-            assert isinstance(function.get("name"), str) and function["name"]
-            assert isinstance(function.get("description"), str)
 
 
 def assert_output_native(value, schema):

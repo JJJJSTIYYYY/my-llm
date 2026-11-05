@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-PROTOCOLS = ("openai_chat", "openai_responses", "anthropic", "gemini")
+PROTOCOLS = ("openai_chat", "openai_responses", "anthropic")
 CHAT_HISTORY = [
     {"role": "user", "content": "Weather?"},
     {
@@ -80,35 +80,6 @@ def history(protocol):
                 "content": [{"type": "tool_result", "tool_use_id": "call_1", "content": "Sunny"}],
             },
         ]
-    if protocol == "gemini":
-        return [
-            {"role": "user", "parts": [{"text": "Weather?"}]},
-            {
-                "role": "model",
-                "parts": [
-                    {"text": "Checking"},
-                    {
-                        "function_call": {
-                            "id": "call_1",
-                            "name": "weather",
-                            "args": {"city": "上海"},
-                        }
-                    },
-                ],
-            },
-            {
-                "role": "user",
-                "parts": [
-                    {
-                        "function_response": {
-                            "id": "call_1",
-                            "name": "weather",
-                            "response": {"result": "Sunny"},
-                        }
-                    }
-                ],
-            },
-        ]
     raise ValueError(f"unsupported protocol: {protocol!r}")
 
 
@@ -125,18 +96,6 @@ def tools(protocol):
                 "description": "Weather",
                 "strict": False,
                 "input_schema": function["parameters"],
-            }
-        ]
-    if protocol == "gemini":
-        return [
-            {
-                "function_declarations": [
-                    {
-                        "name": "weather",
-                        "description": "Weather",
-                        "parameters_json_schema": function["parameters"],
-                    }
-                ]
             }
         ]
     raise ValueError(f"unsupported protocol: {protocol!r}")
@@ -383,28 +342,5 @@ def stream_events(protocol, *, tool=False):
                 "usage": {"output_tokens": 2},
             },
             {"type": "message_stop"},
-        ]
-    if protocol == "gemini":
-        parts = [{"text": "Hello"}]
-        if tool:
-            parts.append(
-                {
-                    "function_call": {"id": "call_1", "name": "weather", "args": {"city": "上海"}},
-                    "thought_signature": "c2lnbmVk",
-                }
-            )
-        return [
-            {
-                "response_id": "gem_1",
-                "candidates": [{"index": 0, "content": {"role": "model", "parts": parts}}],
-            },
-            {
-                "candidates": [{"index": 0, "finish_reason": "STOP"}],
-                "usage_metadata": {
-                    "prompt_token_count": 1,
-                    "candidates_token_count": 2,
-                    "total_token_count": 3,
-                },
-            },
         ]
     raise ValueError(f"unsupported protocol: {protocol!r}")

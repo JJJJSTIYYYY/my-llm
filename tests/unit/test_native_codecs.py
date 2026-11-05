@@ -130,30 +130,25 @@ def test_codec_request_translates_before_native_assembly(profile_factory, protoc
         supports_function_calling=config(True),
     )
     intermediate = converter.encode(
-        messages=[{"role": "user", "parts": [{"text": "hello"}]}],
-        tools=tools("gemini"),
-        input_format="gemini",
+        messages=[{"role": "user", "content": "hello"}],
+        tools=tools("openai_chat"),
+        input_format="openai_chat",
     )
     before = deepcopy(intermediate)
     request = converter.codecs[protocol].request(**intermediate, profile=profile, max_tokens=50)
-    if protocol == "gemini":
-        assert request["contents"] == [{"role": "user", "parts": [{"text": "hello"}]}]
-        assert request["config"]["max_output_tokens"] == 50
-        assert request["config"]["tools"][0]["function_declarations"][0]["name"] == "weather"
-    else:
-        history_key = "input" if protocol == "openai_responses" else "messages"
-        expected_content = {
-            "openai_chat": "hello",
-            "openai_responses": [{"type": "input_text", "text": "hello"}],
-            "anthropic": [{"type": "text", "text": "hello"}],
-        }[protocol]
-        expected_message = {"role": "user", "content": expected_content}
-        if protocol == "openai_responses":
-            expected_message["type"] = "message"
-        assert request[history_key] == [expected_message]
-        assert request["tools"] == converter.decoder(protocol).filter_tools(
-            converter.decoder(protocol).tools(intermediate["tools"], profile), profile
-        )
+    history_key = "input" if protocol == "openai_responses" else "messages"
+    expected_content = {
+        "openai_chat": "hello",
+        "openai_responses": [{"type": "input_text", "text": "hello"}],
+        "anthropic": [{"type": "text", "text": "hello"}],
+    }[protocol]
+    expected_message = {"role": "user", "content": expected_content}
+    if protocol == "openai_responses":
+        expected_message["type"] = "message"
+    assert request[history_key] == [expected_message]
+    assert request["tools"] == converter.decoder(protocol).filter_tools(
+        converter.decoder(protocol).tools(intermediate["tools"], profile), profile
+    )
     assert intermediate == before
 
 

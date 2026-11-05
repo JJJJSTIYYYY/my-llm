@@ -27,7 +27,6 @@ from tests.helpers.tool_images import (
     URL,
     configured_llm,
     expected_image_message,
-    gemini_image_history,
     history,
     picture_history,
     prepare,
@@ -46,7 +45,7 @@ async def test_presets_move_images_without_mutating_inputs_and_preserve_retries(
     llm = configured_llm(target, source, cached)
     first = await prepare(llm, messages)
     retry = await prepare(llm, messages)
-    key = "contents" if target == "gemini" else "messages"
+    key = "messages"
     expected = expected_image_message(target)
     assert first[key][-1] == retry[key][-1] == expected
     assert first[key] == retry[key]
@@ -89,7 +88,7 @@ async def test_presets_retry_after_cache_extension_failure(monkeypatch, target):
         await prepare(llm, picture_history())
     request = await prepare(llm, picture_history())
     retry = await prepare(llm, picture_history())
-    key = "contents" if target == "gemini" else "messages"
+    key = "messages"
     assert request[key][-1] == expected_image_message(target)
     assert retry[key] == request[key]
     assert attempts == 2
@@ -101,24 +100,9 @@ async def test_expiring_cache_allows_same_input_to_be_handled_again(target):
     first = await prepare(llm, picture_history())
     llm.codec.expire_message_cache(llm._message_cache_key)
     following = await prepare(llm, picture_history())
-    key = "contents" if target == "gemini" else "messages"
+    key = "messages"
     assert first[key] == following[key]
     assert following[key][-1] == expected_image_message(target)
-
-
-@pytest.mark.parametrize("target", HOOKS)
-@pytest.mark.parametrize("sdk", [False, True])
-@pytest.mark.parametrize("media", ["inline", "file"])
-async def test_presets_read_gemini_tool_images_without_inspecting_unknown_parts(target, sdk, media):
-    messages, _ = gemini_image_history(media, sdk)
-    request = await prepare(configured_llm(target, "gemini"), messages)
-    key = "contents" if target == "gemini" else "messages"
-    message = request[key][-1]
-    assert message["role"] == "user"
-    assert ("cG5n" if media == "inline" else "https://example.test/p.png") in str(message)
-    assert_input_native(message, MESSAGE_TYPES[target])
-    if target == "openai_chat":
-        assert_chat_tool_sequence(request[key])
 
 
 @pytest.mark.parametrize("target", HOOKS)
@@ -127,7 +111,7 @@ async def test_presets_accept_unrelated_losses_while_still_moving_images(target)
         target, max_tokens=parameter("max_tokens", protocol=target, supports=False)
     )
     request = await prepare(llm, picture_history(), max_tokens=128)
-    key = "contents" if target == "gemini" else "messages"
+    key = "messages"
     assert request[key][-1] == expected_image_message(target)
 
 
@@ -139,7 +123,7 @@ async def test_presets_insert_placeholders_for_models_without_vision(target, vis
     assert URL not in str(request) and DATA not in str(request)
     assert "beforeafter" in str(request)
     assert str(request).count("[Unsupported Image]") == 2
-    key = "contents" if target == "gemini" else "messages"
+    key = "messages"
     retry = await prepare(llm, picture_history())
     assert retry[key] == request[key]
     following = await prepare(llm, [{"role": "user", "content": "next"}])
@@ -164,7 +148,7 @@ async def test_presets_use_the_resolved_profile_snapshot(target):
     )
     model.supports_vision = Config(default_value=False)
     request = await prepare(llm, picture_history())
-    key = "contents" if target == "gemini" else "messages"
+    key = "messages"
     assert request[key][-1] == expected_image_message(target)
 
 

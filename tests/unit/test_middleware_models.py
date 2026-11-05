@@ -94,8 +94,6 @@ CONTENT_CASES = [
             "call_id": "call-3",
             "name": "add",
             "arguments": {"a": 19, "b": 23, "nested": [None, True, {"key": 0.5}]},
-            "signature": "signature",
-            "opaque_protocol": "example",
             "item": identity(),
         },
     ),

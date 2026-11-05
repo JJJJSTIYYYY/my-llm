@@ -42,12 +42,10 @@ def render_content(content: list[dict], *, role: str = "user") -> Any:
 
 
 def foreign_block(block: dict) -> dict | None:
-    """Retain representable foreign content and report opaque reasoning/signature losses."""
+    """Retain representable foreign content and report opaque reasoning losses."""
     kind = block.get("type")
     if kind == "thinking":
         block = without_feedback(block)
-    elif kind in constants.MIDDLEWARE_TEXT_TOOL_USE_TYPES and block.get("signature") is not None:
-        report_loss(block, "Chat cannot preserve another protocol's thought signature")
     return (
         block
         if kind in constants.MIDDLEWARE_TEXT_IMAGE_THINKING_TOOL_USE_TOOL_RESULT_TYPES

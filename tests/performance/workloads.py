@@ -114,19 +114,6 @@ def native_tools(protocol: str, size: Size, native: bool):
             }
             for function in functions
         ]
-    if protocol == "gemini":
-        return [
-            {
-                "function_declarations": [
-                    {
-                        "name": function["name"],
-                        "description": function["description"],
-                        "parameters_json_schema": function["parameters"],
-                    }
-                    for function in functions
-                ]
-            }
-        ]
     return [{"type": "function", "function": function} for function in functions]
 
 
@@ -162,11 +149,6 @@ def user_message(protocol: str, value: str, *, media: bool):
                 }
             )
         return {"role": "user", "content": content}
-    if protocol == "gemini":
-        parts = [{"text": value}]
-        if media:
-            parts.append({"inline_data": {"mime_type": "image/png", "data": PNG}})
-        return {"role": "user", "parts": parts}
     raise ValueError(f"unsupported protocol: {protocol!r}")
 
 
@@ -257,43 +239,6 @@ def assistant_turn(protocol: str, index: int, calls: list, native: bool):
                         "tool_use_id": call["id"],
                         "content": [{"type": "text", "text": rendered}],
                         "is_error": False,
-                    }
-                    for call in calls
-                ],
-            },
-        ]
-    if protocol == "gemini":
-        return [
-            {
-                "role": "model",
-                "parts": [
-                    *(
-                        [{"text": value, "thought": True, "thought_signature": SIGNATURE}]
-                        if native
-                        else []
-                    ),
-                    {"text": value},
-                    *[
-                        {
-                            "function_call": {
-                                "id": call["id"],
-                                "name": call["name"],
-                                "args": call["input"],
-                            },
-                        }
-                        for call in calls
-                    ],
-                ],
-            },
-            {
-                "role": "user",
-                "parts": [
-                    {
-                        "function_response": {
-                            "id": call["id"],
-                            "name": call["name"],
-                            "response": output,
-                        }
                     }
                     for call in calls
                 ],
@@ -581,48 +526,6 @@ def response_events(protocol: str, size: Size, native: bool, answer: str, reason
             ]
         )
         return result
-    if protocol == "gemini":
-
-        def event(parts):
-            return {
-                "response_id": "gem_benchmark",
-                "model_version": "benchmark",
-                "candidates": [{"index": 0, "content": {"role": "model", "parts": parts}}],
-            }
-
-        result = [
-            event([{"text": piece, "thought": True, "thought_signature": SIGNATURE}])
-            for piece in thoughts
-        ]
-        result.extend(event([{"text": piece}]) for piece in pieces)
-        result.append(
-            event(
-                [
-                    {
-                        "function_call": {
-                            "id": call["id"],
-                            "name": call["name"],
-                            "args": call["input"],
-                        },
-                    }
-                    for call in calls
-                ]
-            )
-        )
-        result.append(
-            {
-                "response_id": "gem_benchmark",
-                "candidates": [{"index": 0, "finish_reason": "STOP"}],
-                "usage_metadata": {
-                    "prompt_token_count": 4096,
-                    "candidates_token_count": 2048,
-                    "total_token_count": 6272,
-                    "thoughts_token_count": 128,
-                    "cached_content_token_count": 512,
-                },
-            }
-        )
-        return result
 
     raise ValueError(f"unsupported protocol: {protocol!r}")
 
@@ -710,7 +613,6 @@ def controls(protocol: str):
             "store": False,
         },
         "anthropic": {"temperature": 1.0},
-        "gemini": {"temperature": 0.2, "top_p": 0.9, "candidate_count": 1},
     }[protocol]
     return {
         "reasoning": True,

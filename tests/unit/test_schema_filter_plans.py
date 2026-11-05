@@ -464,10 +464,8 @@ def test_official_sdk_validation_and_serialization_do_not_mutate_projected_input
         parameters = declarations[0]["function"]["parameters"]
     elif protocol == "openai_responses":
         parameters = declarations[0]["parameters"]
-    elif protocol == "anthropic":
-        parameters = declarations[0]["input_schema"]
     else:
-        parameters = declarations[0]["function_declarations"][0]["parameters_json_schema"]
+        parameters = declarations[0]["input_schema"]
     parameters["properties"]["payload"] = {
         "type": "object",
         "properties": {

@@ -45,20 +45,8 @@ Encoder / Decoder / Transport 不保存调用数据；已翻译历史由启用�
 | --- | --- | --- | --- |
 | OpenAI Chat / Responses | AsyncOpenAI | await client.close() | SDK stream.close() |
 | Anthropic | AsyncAnthropic | await client.close() | SDK stream.close() |
-| Gemini | genai.Client | await client.aio.aclose()，finally client.close() | 生成器和本次响应体 |
 
 各协议将动态请求头放在请求参数中，不因生成参数或请求头变化重建客户端。
-
-## Gemini 响应隔离
-
-共享 SDK 客户端时，HTTP response hook 不能再捕获某一次请求的资源栈。
-hook 通过 ContextVar 取得当前 SDK 读取对应的请求栈，登记本次响应体的 aclose。
-重试产生的多个响应体也分别登记。
-
-上下文只包围 SDK 流创建和每次 anext，不跨越向调用者 yield 的位置。
-这样响应流可以在一个任务中读取，再从另一任务关闭或继续读取，
-不会复位另一个上下文的 token，也不会清理相邻请求的响应体。
-每个请求仍显式关闭 SDK 生成器及其底层响应体，保留提前退出时的即时清理保证。
 
 ## 验证与依据
 
@@ -69,8 +57,8 @@ Decoder 仅准备 SDK 参数而不创建客户端，以及配置校验的统一�
 [依赖边界测试](../../tests/contract/test_codec_boundaries.py)防止转换实现与 Transport 相互导入。
 [并发测试](../../tests/integration/test_concurrency.py)在关闭消息缓存时，用真实 SDK 和本地 HTTP transport 验证：
 
-- 四协议各有六路首次并发混合调用，响应在同步屏障汇合；SDK 客户端只创建一次，后续调用仍复用。
-- 原有 16 种上游 / I/O 组合继续检查内容、用量、生成选项和请求头隔离。
+- 三协议各有六路首次并发混合调用，响应在同步屏障汇合；SDK 客户端只创建一次，后续调用仍复用。
+- 9 种上游 / I/O 组合继续检查内容、用量、生成选项和请求头隔离。
 - 一路提前退出、一路取消、一路失败时，其他响应和共享客户端保持打开，后续仍可生成。
 - 请求在不同任务间读取与关闭时，只清理对应响应，直到 MyLLM 退出才关闭客户端。
 
@@ -79,4 +67,3 @@ Decoder 仅准备 SDK 参数而不创建客户端，以及配置校验的统一�
 
 - [OpenAI 官方示例](https://developers.openai.com/cookbook/examples/agents_api/apps/data_analyst/readme)：应用生命周期结束时 await client.close()。
 - [Anthropic Python SDK](https://platform.claude.com/docs/en/cli-sdks-libraries/sdks/python#managing-http-resources)：客户端的显式关闭和上下文管理。
-- [Google Gen AI SDK](https://googleapis.github.io/python-genai/)：同一客户端多次调用，以及分别关闭同步与异步客户端。

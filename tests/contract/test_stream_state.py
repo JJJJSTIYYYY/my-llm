@@ -9,7 +9,7 @@ from copy import deepcopy
 
 import pytest
 
-from my_llm import IncompleteStreamError, MessageValidationError, MyCodec, SemanticLossError
+from my_llm import IncompleteStreamError, MessageValidationError, MyCodec
 from my_llm.codec.shared.stream import metadata
 from my_llm.runtime.state import StreamState
 from tests.helpers.protocols import PROTOCOLS, chat_event, response_completed, stream_events
@@ -134,11 +134,6 @@ def test_accumulation_survives_json_round_trips_and_batch_boundaries(source, bat
         ]
         emitted.extend(state.feed(json.loads(json.dumps(encoded))))
     emitted.extend(state.finish())
-    if source == "gemini":
-        with pytest.raises(SemanticLossError, match="signature"):
-            codec.decode(chunks=emitted, target_format="anthropic")
-        assert native == before
-        return
     output = codec.decode(chunks=emitted, target_format="anthropic")["chunks"]
     validate_events("anthropic", output, output=True)
     reconstructed = StreamState("demo")
@@ -298,7 +293,7 @@ def test_empty_thinking_and_redacted_blocks_keep_order_and_signatures():
     assert reconstructed.messages() == state.messages()
 
 
-@pytest.mark.parametrize("target", ["anthropic", "openai_responses", "gemini"])
+@pytest.mark.parametrize("target", ["anthropic", "openai_responses"])
 def test_tool_and_following_text_wait_for_success_and_keep_source_order(target):
     incoming = anthropic_events(
         [
@@ -336,44 +331,6 @@ def test_tool_and_following_text_wait_for_success_and_keep_source_order(target):
             "function_call",
             "message",
         ]
-    else:
-        parts = [
-            part
-            for event in output
-            for candidate in event["candidates"]
-            for part in candidate["content"]["parts"]
-        ]
-        assert "function_call" in parts[0] and parts[1]["text"] == "after"
-
-
-@pytest.mark.parametrize("thinking", [False, True])
-def test_signed_empty_gemini_parts_are_not_dropped_or_merged(thinking):
-    parts = [
-        {"text": "", "thought_signature": "c2lnMQ=="},
-        {"text": "", "thought_signature": "c2lnMg=="},
-    ]
-    if thinking:
-        for part in parts:
-            part["thought"] = True
-    incoming = [
-        {"candidates": [{"content": {"role": "model", "parts": parts}, "finish_reason": "STOP"}]}
-    ]
-    validate_events("gemini", incoming)
-    output, state = render("gemini", "gemini", incoming)
-    validate_events("gemini", output, output=True)
-    streamed = [
-        part
-        for event in output
-        for candidate in event["candidates"]
-        for part in candidate["content"]["parts"]
-    ]
-    collected = MyCodec().decode(state.messages(), target_format="gemini")["messages"][0]["parts"]
-    if thinking:
-        assert streamed == parts
-        assert collected == parts
-    else:
-        assert all("thought_signature" not in part for part in [*streamed, *collected])
-        assert not any(part.get("text") for part in [*streamed, *collected])
 
 
 def test_reasoning_summary_parts_share_one_visible_block_and_keep_native_feedback():

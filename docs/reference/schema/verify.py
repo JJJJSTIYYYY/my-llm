@@ -98,9 +98,6 @@ def lifecycle(protocol: str, events: list[dict], done: bool, error: bool) -> Non
                 if event["type"] == "content_block_stop":
                     closed.add(event["index"])
         assert opened == closed
-    elif protocol == "gemini":
-        assert not done
-        assert events[-1]["candidates"][0]["finishReason"] != "FINISH_REASON_UNSPECIFIED"
 
 
 def main() -> None:

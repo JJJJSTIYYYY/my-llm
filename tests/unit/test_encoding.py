@@ -254,7 +254,7 @@ def test_reasoning_replay_pads_tool_calls_according_to_feedback(
         assert result[key] == (visible if visible and same_protocol else "")
 
 
-@pytest.mark.parametrize("protocol", ["anthropic", "gemini"])
+@pytest.mark.parametrize("protocol", ["anthropic"])
 def test_native_generation_parameters_and_tools(profile_factory, protocol, function_tool):
     profile = profile_factory(
         protocol,
@@ -262,17 +262,12 @@ def test_native_generation_parameters_and_tools(profile_factory, protocol, funct
         supports_function_calling=config(True),
     )
     request = encode_request(profile, tools=[function_tool], reasoning=True)
-    if protocol == "anthropic":
-        assert request["max_tokens"] == 2048
-        assert request["thinking"]["budget_tokens"] == 1024
-        assert request["tools"][0]["input_schema"]["type"] == "object"
-    elif protocol == "gemini":
-        assert request["config"]["max_output_tokens"] == 2048
-        assert request["config"]["automatic_function_calling"]["disable"]
-        assert request["config"]["thinking_config"]["include_thoughts"]
+    assert request["max_tokens"] == 2048
+    assert request["thinking"]["budget_tokens"] == 1024
+    assert request["tools"][0]["input_schema"]["type"] == "object"
 
 
-@pytest.mark.parametrize("protocol", ["openai_chat", "anthropic", "gemini"])
+@pytest.mark.parametrize("protocol", ["openai_chat", "anthropic"])
 @pytest.mark.parametrize("policy", ["raise", "ignore", "hook"])
 def test_unsupported_previous_response_id_uses_loss_policy(profile_factory, protocol, policy):
     observed = []

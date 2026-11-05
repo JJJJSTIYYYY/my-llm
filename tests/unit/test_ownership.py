@@ -73,5 +73,5 @@ def test_converter_never_mutates_input_or_profile():
             messages, input_format="openai_chat", target_format=protocol, profile=profile
         )
         assert "nested" not in converted["messages"][0]
-        converted["messages"][0]["content" if protocol != "gemini" else "parts"] = "changed"
+        converted["messages"][0]["content"] = "changed"
     assert messages == before

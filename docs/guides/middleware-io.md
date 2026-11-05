@@ -2,7 +2,7 @@
 
 应用可以直接使用从 `my_llm` 导出的具体模型收发消息。构造实例时必须显式设置
 `stdio_protocol="middleware"`；中间模型不参与协议推断，也不能混入原生协议的消息和工具列表。
-`model.protocol` 优先于 `provider.protocol` 选择真实上游，例如 `openai_chat`、`anthropic` 或 `gemini`；
+`model.protocol` 优先于 `provider.protocol` 选择真实上游，例如 `openai_chat`、`openai_responses` 或 `anthropic`；
 Model 未设置协议时继承 Provider。
 
 ```python
@@ -99,7 +99,7 @@ history = [
 - 找不到此前调用的工具结果会导致所在消息整条丢弃，包括同条消息中的普通文本和其他结果。
   本条消息对工具关联的修改也会撤销。Responses 指定 `previous_response_id` 时允许引用服务端调用。
 - 缺少调用 ID 时仅为已有调用分配技术标识；无 ID 的结果一律整条丢弃，不按名称或顺序推断关联。
-  先丢弃无效结果，再为仍无有效结果的已有调用补空。Gemini 的源 Encoder 也不推断结果 ID。
+  先丢弃无效结果，再为仍无有效结果的已有调用补空。源 Encoder 不推断结果 ID。
 - 全部消息被丢弃且没有可用缓存时抛出 `MessageValidationError`，不补造 user 消息；已有缓存时复用历史。
 
 修复不修改传入模型。启用消息缓存时仅修复当前增量批次，完整工具回合应放在同一批，

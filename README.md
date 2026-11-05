@@ -12,7 +12,7 @@
 
 </div>
 
-my-llm-py 是一个 Python 异步 LLM 协议适配库，支持 OpenAI Chat、OpenAI Responses、Anthropic、Gemini 四种协议自由组合。
+my-llm-py 是一个 Python 异步 LLM 协议适配库，支持 OpenAI Chat、OpenAI Responses、Anthropic 三种协议自由组合。
 
 **用一种协议请求另一种协议的 API，按输入协议返回结果。标准协议直接转换，非标准协议通过配置兼容。**
 
@@ -65,7 +65,6 @@ pip install 'my-llm-py[all]'
 ```sh
 pip install 'my-llm-py[openai]'
 pip install 'my-llm-py[anthropic]'
-pip install 'my-llm-py[google-genai]'
 pip install 'my-llm-py[openai,anthropic]'
 ```
 
@@ -152,10 +151,10 @@ from my_llm import MyCodec
 converted = MyCodec().convert(
     [{"role": "user", "content": "你好"}],
     input_format="openai_chat",
-    target_format="gemini",
+    target_format="anthropic",
 )
 print(converted["messages"])
-# [{"role": "user", "parts": [{"text": "你好"}]}]
+# [{"role": "user", "content": [{"type": "text", "text": "你好"}]}]
 ```
 
 ## 支持的协议
@@ -167,7 +166,6 @@ print(converted["messages"])
 | `openai_chat` | OpenAI Chat Completions 及兼容服务 |
 | `openai_responses` | OpenAI Responses 及兼容服务 |
 | `anthropic` | Anthropic Messages |
-| `gemini` | Gemini GenerateContent |
 
 同一实例的消息与工具使用同一种输入输出协议。
 
@@ -175,13 +173,12 @@ print(converted["messages"])
 
 **3×4 十二条真实 API 路径验证（2026-10-25），补跑后 36 个场景全部通过。**
 
-| 输入/输出协议 ↓ \ 上游 API → | Chat Completions | Responses | Anthropic Messages | Gemini Content |
-| --- | --- | --- | --- | --- |
-| `openai_chat` | ✅ 已验证 | ✅ 已验证 | ✅ 已验证 | ➖ 离线验证 |
-| `openai_responses` | ✅ 已验证 | ✅ 已验证 | ✅ 已验证 | ➖ 离线验证 |
-| `anthropic` | ✅ 已验证 | ✅ 已验证 | ✅ 已验证 | ➖ 离线验证 |
-| `middleware` | ✅ 已验证 | ✅ 已验证 | ✅ 已验证 | ➖ 离线验证 |
-| `gemini` | ➖ 离线验证 | ➖ 离线验证 | ➖ 离线验证 | ➖ 离线验证 |
+| 输入/输出协议 ↓ \ 上游 API → | Chat Completions | Responses | Anthropic Messages |
+| --- | --- | --- | --- |
+| `openai_chat` | ✅ 已验证 | ✅ 已验证 | ✅ 已验证 |
+| `openai_responses` | ✅ 已验证 | ✅ 已验证 | ✅ 已验证 |
+| `anthropic` | ✅ 已验证 | ✅ 已验证 | ✅ 已验证 |
+| `middleware` | ✅ 已验证 | ✅ 已验证 | ✅ 已验证 |
 
 每条路径覆盖文本汇总、流式增量与汇总一致性，以及工具调用、参数组装和工具结果回传。
 汇总模式也通过上游 SSE 执行，本轮未单独验证供应商的 HTTP 非流式响应。
@@ -207,7 +204,7 @@ uv build
 
 - [API 使用指南](docs/reference/api.md)：生成、流式消费、工具回合与格式转换。
 - [配置指南](docs/reference/configuration.md)：连接、模型、思考参数与兼容服务。
-- [协议模板](docs/reference/schema/README.md)：四种协议的请求、返回和流事件。
+- [协议模板](docs/reference/schema/README.md)：三种协议的请求、返回和流事件。
 - [扩展协议](docs/guides/adding-protocol.md) · [本地开发](docs/guides/development.md) · [构建验证](docs/guides/building.md)
 - [全部文档](docs/README.md)
 

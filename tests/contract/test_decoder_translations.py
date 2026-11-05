@@ -54,10 +54,6 @@ DELTA_PATHS = {
     "openai_chat": ("$.choices[0].delta.content", "$.choices[0].delta.reasoning_content"),
     "openai_responses": ("$.delta", "$.delta"),
     "anthropic": ("$.delta.text", "$.delta.thinking"),
-    "gemini": (
-        "$.candidates[0].content.parts[0].text",
-        "$.candidates[0].content.parts[0].text",
-    ),
 }
 
 
@@ -204,37 +200,6 @@ def test_responses_known_item_header_does_not_copy_unknown_metadata():
     }
 
 
-@pytest.mark.parametrize("custom_path", [False, True])
-def test_gemini_defaults_do_not_create_text_on_usage_or_finish_only_events(
-    custom_path, profile_factory
-):
-    overrides = {
-        "content": parameter(
-            "content",
-            "fallback",
-            protocol="gemini",
-            path="$.vendor.answer" if custom_path else None,
-        ),
-        "reasoning_content": parameter(
-            "reasoning_content",
-            "fallback thought",
-            protocol="gemini",
-            path="$.vendor.thought" if custom_path else None,
-        ),
-    }
-    profile = profile_factory("gemini", **overrides)
-    events = [
-        {"usage_metadata": {"prompt_token_count": 1}},
-        {"candidates": [{"finish_reason": "STOP"}]},
-    ]
-    operations = [
-        op
-        for batch in MyCodec().codecs["gemini"].encoder.chunks(events, profile)
-        for op in batch["events"]
-    ]
-    assert not any(op["type"] == "block_append" for op in operations)
-
-
 @pytest.mark.parametrize("protocol", ["openai_chat"])
 @pytest.mark.parametrize("custom_path", [False, True])
 @pytest.mark.parametrize("actual_payload", [False, True])
@@ -261,11 +226,7 @@ def test_terminal_events_do_not_append_missing_text_defaults(
         ),
     }
     profile = profile_factory(protocol, **overrides)
-    event = (
-        {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
-        if protocol == "openai_chat"
-        else {"done": True, "message": {}}
-    )
+    event = {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
     if actual_payload:
         set_path(event, "$.vendor.answer" if custom_path else DELTA_PATHS[protocol][0], "last")
     operations = [

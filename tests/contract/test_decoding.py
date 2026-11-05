@@ -13,7 +13,6 @@ from my_llm import (
     MyCodec,
     ResponseFailedError,
     ResponseIncompleteError,
-    SemanticLossError,
 )
 from my_llm.runtime.state import StreamState
 from tests.helpers.protocols import PROTOCOLS, stream_events
@@ -26,11 +25,6 @@ from tests.helpers.streaming import render
 def test_native_streams_convert_to_complete_target_streams(source, target, tool):
     incoming = stream_events(source, tool=tool)
     before = deepcopy(incoming)
-    if source == "gemini" and target != "gemini" and tool:
-        with pytest.raises(SemanticLossError, match="signature"):
-            render(source, target, incoming)
-        assert incoming == before
-        return
     output, state = render(source, target, incoming)
     assert incoming == before
     assert state.finished
@@ -109,56 +103,11 @@ def test_function_argument_fragments_are_not_emitted():
     assert tools[0]["block"]["input"] == {"city": "上海"}
 
 
-def test_gemini_thought_signature_and_anthropic_signature_survive_stream_collection():
-    _, gemini = render("gemini", "gemini", stream_events("gemini", tool=True))
-    block = next(b for m in gemini.messages() for b in m["content"] if b.get("type") == "tool_use")
-    assert block["signature"] == "c2lnbmVk"
-    incoming = stream_events("anthropic")
-    incoming[1]["content_block"] = {"type": "thinking", "thinking": "", "signature": ""}
-    incoming[2]["delta"] = {"type": "thinking_delta", "thinking": "Hello"}
-    incoming.insert(
-        3,
-        {
-            "type": "content_block_delta",
-            "index": 0,
-            "delta": {"type": "signature_delta", "signature": "signed"},
-        },
-    )
-    _, anthropic = render("anthropic", "anthropic", incoming)
-    assert anthropic.messages()[0]["content"][0]["feedback_item"]["signature"] == "signed"
-
-
-def test_gemini_signatures_on_ordinary_text_are_outside_the_supported_set():
-    incoming = [
-        {
-            "candidates": [
-                {
-                    "content": {
-                        "role": "model",
-                        "parts": [
-                            {"text": "first", "thought_signature": "c2lnMQ=="},
-                            {"text": "second", "thought_signature": "c2lnMg=="},
-                        ],
-                    }
-                }
-            ]
-        },
-        {"candidates": [{"finish_reason": "STOP"}]},
-    ]
-    _, state = render("gemini", "gemini", incoming)
-    message = MyCodec().decode(state.messages(), target_format="gemini")["messages"][0]
-    assert message["parts"] == [{"text": "first"}, {"text": "second"}]
-
-
 @pytest.mark.parametrize("source", PROTOCOLS)
 @pytest.mark.parametrize("target", PROTOCOLS)
 def test_standalone_converter_handles_complete_stream_batches(source, target):
     codec = MyCodec()
     incoming = stream_events(source, tool=True)
-    if source == "gemini" and target != "gemini":
-        with pytest.raises(SemanticLossError, match="signature"):
-            codec.convert(chunks=incoming, input_format=source, target_format=target)
-        return
     result = codec.convert(chunks=incoming, input_format=source, target_format=target)["chunks"]
     state = StreamState("demo")
     state.feed(codec.encode(chunks=result, input_format=target)["chunks"])
@@ -243,34 +192,6 @@ def test_buffered_tool_unknown_fields_do_not_survive_stream_conversion(target):
     assert calls[0]["function"]["name"] == "weather"
 
 
-def test_gemini_text_extension_cannot_change_the_translated_block_type():
-    incoming = [
-        {
-            "candidates": [
-                {
-                    "content": {
-                        "parts": [
-                            {
-                                "text": "Hello",
-                                "type": "tool_use",
-                                "id": "wrong",
-                                "name": "wrong",
-                                "input": {},
-                            },
-                        ]
-                    },
-                    "finish_reason": "STOP",
-                }
-            ]
-        }
-    ]
-    _, state = render("gemini", "openai_chat", incoming)
-    assert state.messages()[0]["content"][0]["type"] == "text"
-    chat = MyCodec().decode(state.messages(), target_format="openai_chat")["messages"]
-    assert "tool_calls" not in chat[0]
-    assert chat[0]["content"] == "Hello"
-
-
 @pytest.mark.parametrize("source", ["openai_chat", "anthropic"])
 def test_native_argument_named_extension_does_not_modify_stream_buffer(source):
     incoming = stream_events(source, tool=True)
@@ -293,3 +214,19 @@ def test_native_root_call_name_cannot_override_a_previously_translated_name():
     _, state = render("openai_chat", "openai_chat", incoming)
     call = next(block for block in state.messages()[0]["content"] if block["type"] == "tool_use")
     assert call["name"] == "weather"
+
+
+def test_anthropic_signature_survives_stream_collection():
+    incoming = stream_events("anthropic")
+    incoming[1]["content_block"] = {"type": "thinking", "thinking": "", "signature": ""}
+    incoming[2]["delta"] = {"type": "thinking_delta", "thinking": "Hello"}
+    incoming.insert(
+        3,
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "signature_delta", "signature": "signed"},
+        },
+    )
+    _, anthropic = render("anthropic", "anthropic", incoming)
+    assert anthropic.messages()[0]["content"][0]["feedback_item"]["signature"] == "signed"

@@ -81,7 +81,6 @@ def test_api_key_header_path_uses_the_official_sdk_header_option(monkeypatch, pr
         "openai_chat": "my_llm.codec.openai.chat.transport.AsyncOpenAI",
         "openai_responses": "my_llm.codec.openai.responses.transport.AsyncOpenAI",
         "anthropic": "my_llm.codec.anthropic.transport.AsyncAnthropic",
-        "gemini": "my_llm.codec.gemini.transport.genai.Client",
     }[protocol]
     monkeypatch.setattr(target, factory)
     llm = MyLLM(
@@ -94,10 +93,7 @@ def test_api_key_header_path_uses_the_official_sdk_header_option(monkeypatch, pr
     assert llm.codec.transport(protocol).create_client(llm.client_parameters) is client
     options = captured[0]
     assert "api_key" not in options
-    if protocol == "gemini":
-        headers = options["http_options"].headers
-    else:
-        headers = options["default_headers"]
+    headers = options["default_headers"]
     assert headers == {header: "local-header-key"}
 
 

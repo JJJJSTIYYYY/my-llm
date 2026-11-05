@@ -17,7 +17,6 @@ BUILTIN_CODECS = {
     "openai_chat": ("openai.chat.codec", "ChatCompletionsCodec", "openai", "openai"),
     "openai_responses": ("openai.responses.codec", "ResponsesCodec", "openai", "openai"),
     "anthropic": ("anthropic.codec", "AnthropicCodec", "anthropic", "anthropic"),
-    "gemini": ("gemini.codec", "GeminiCodec", "google.genai", "google-genai"),
 }
 
 _CODECS: dict[str, Callable[[], BaseCodec]] = {}
@@ -28,7 +27,7 @@ def sdk_available(protocol: str) -> bool:
     try:
         return find_spec(sdk) is not None
     except ModuleNotFoundError as exc:
-        if exc.name not in {sdk, sdk.partition(".")[0]}:
+        if exc.name != sdk:
             raise
         return False
 

@@ -5,7 +5,6 @@ from copy import deepcopy
 from functools import cache
 from pathlib import Path
 
-from google.genai import types
 from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[2] / "docs/reference/schema"
@@ -26,10 +25,6 @@ def validate_request(protocol: str, value: dict) -> None:
 
 
 def validate_event(protocol: str, value: dict) -> None:
-    if protocol == "gemini":
-        value = types.GenerateContentResponse.model_validate(value).model_dump(
-            mode="json", by_alias=True, exclude_none=True
-        )
     validator(protocol, "stream-event").validate(value)
 
 
@@ -43,7 +38,7 @@ def output_event_for_schema(protocol: str, value: dict) -> dict:
 
     def check(item):
         if isinstance(item, dict):
-            assert not ({"usage", "usage_metadata", "usageMetadata"} & item.keys())
+            assert not ({"usage"} & item.keys())
             for child in item.values():
                 check(child)
         elif isinstance(item, list):

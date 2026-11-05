@@ -47,43 +47,6 @@ def convert_usage(value, source, target):
                 "output_tokens": 7,
             },
         ),
-        (
-            "gemini",
-            {
-                "prompt_token_count": 5,
-                "tool_use_prompt_token_count": 2,
-                "candidates_token_count": 3,
-                "thoughts_token_count": 4,
-                "cached_content_token_count": 2,
-                "total_token_count": 14,
-            },
-            "openai_chat",
-            {
-                "prompt_tokens": 7,
-                "completion_tokens": 7,
-                "total_tokens": 14,
-                "prompt_tokens_details": {"cached_tokens": 2},
-                "completion_tokens_details": {"reasoning_tokens": 4},
-            },
-        ),
-        (
-            "openai_chat",
-            {
-                "prompt_tokens": 7,
-                "completion_tokens": 7,
-                "total_tokens": 14,
-                "prompt_tokens_details": {"cached_tokens": 2},
-                "completion_tokens_details": {"reasoning_tokens": 4},
-            },
-            "gemini",
-            {
-                "prompt_token_count": 7,
-                "candidates_token_count": 3,
-                "thoughts_token_count": 4,
-                "cached_content_token_count": 2,
-                "total_token_count": 14,
-            },
-        ),
     ],
 )
 def test_counters_follow_native_accounting(source, value, target, expected):
@@ -92,4 +55,4 @@ def test_counters_follow_native_accounting(source, value, target, expected):
 
 @pytest.mark.parametrize("target", ["openai_chat", "openai_responses"])
 def test_a_total_does_not_invent_missing_input_output_counts(target):
-    assert convert_usage({"total_token_count": 3}, "gemini", target) is None
+    assert convert_usage({"total_tokens": 3}, "openai_chat", target) is None

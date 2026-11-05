@@ -197,8 +197,7 @@ class ResponsesDecoder(BaseDecoder):
             for block in message["content"]:
                 if not input_content(block, profile, feedback=feedback):
                     continue
-                owner = block.get("protocol") if block.get("type") != "thinking" else None
-                if (context_owner if owner is None else owner) != constants.PROTOCOL:
+                if context_owner != constants.PROTOCOL:
                     block = foreign_block(block)
                 if block is not None:
                     content.append(block)

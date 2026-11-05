@@ -428,9 +428,6 @@ def collected_text(protocol, result):
         assert result[0]["role"] == "assistant"
         assert all(block["type"] == "output_text" for block in result[0]["content"])
         return "".join(block["text"] for block in result[0]["content"])
-    if protocol == "gemini":
-        assert result["role"] == "model"
-        return "".join(part["text"] for part in result["parts"])
     assert result["role"] == "assistant"
     if protocol == "anthropic":
         assert all(block["type"] == "text" for block in result["content"])
@@ -460,14 +457,6 @@ def streamed_text(protocol, chunks):
             chunk["delta"]["text"]
             for chunk in chunks
             if chunk["type"] == "content_block_delta" and chunk["delta"]["type"] == "text_delta"
-        )
-    if protocol == "gemini":
-        assert chunks[-1]["candidates"][0]["finish_reason"] == "STOP"
-        return "".join(
-            part["text"]
-            for chunk in chunks
-            for candidate in chunk["candidates"]
-            for part in candidate["content"]["parts"]
         )
     assert chunks[-1]["done"] is True
     return "".join(chunk["message"]["content"] for chunk in chunks)
@@ -551,9 +540,7 @@ async def test_builtin_upstreams_render_registered_protocol_without_shared_chang
         assert client.streams_closed == 1
         assert not client.closed
         request = client.requests[0]
-        if upstream == "gemini":
-            assert request["contents"] == [{"role": "user", "parts": [{"text": "hi"}]}]
-        elif upstream == "openai_responses":
+        if upstream == "openai_responses":
             assert request["input"] == [
                 {
                     "type": "message",

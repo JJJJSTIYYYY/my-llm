@@ -187,7 +187,6 @@ def test_unsupported_token_limit_removes_public_and_native_values(profile_factor
         ("openai_chat", "$.extra_body.temperature", {"temperature": 0.0}),
         ("openai_responses", "$.extra_body.temperature", {"temperature": 0.0}),
         ("anthropic", "$.temperature", {"temperature": 0.0}),
-        ("gemini", "$.config.temperature", {"temperature": 0.0}),
     ],
 )
 def test_custom_unsupported_parameter_cannot_be_restored_by_native_body(protocol, path, body):

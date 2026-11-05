@@ -74,7 +74,7 @@ assemble_request(messages, tools, profile, *, request: dict, **parameters) 只�
 BaseCodec.validate_profile 委托 Decoder；MyLLM 在构造时调用，并准备连接字典。
 MyCodec.request 是离线原生请求入口，共用 Decoder 请求流程；完整调用使用 MyCodec.prepare。
 中间消息的结构检查与工具关联收集共用一次遍历，关联错误在工具定义和控制项检查后报告。
-四种内置协议共用 BaseDecoder.filter_messages 的外层循环，不根据翻译标记跳过能力处理。
+三种内置协议共用 BaseDecoder.filter_messages 的外层循环，不根据翻译标记跳过能力处理。
 InputPolicy 在本次过滤开始时读取固定的模型能力和推理反馈配置，逐条检查仍保留损失来源与路径。
 message_transform、缓存和扩展 Decoder 产生的消息都经过该循环；返回后仍做最终 SDK Schema 校验，
 也会检查 filter_messages 自定义覆盖所作的修改。

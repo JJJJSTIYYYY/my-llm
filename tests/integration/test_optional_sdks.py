@@ -7,7 +7,7 @@ import textwrap
 import pytest
 
 
-@pytest.mark.parametrize("installed", [None, "openai", "anthropic", "google.genai"])
+@pytest.mark.parametrize("installed", [None, "openai", "anthropic"])
 def test_only_installed_sdks_are_required(installed):
     script = textwrap.dedent(
         """
@@ -15,8 +15,8 @@ def test_only_installed_sdks_are_required(installed):
         import sys
 
         installed = sys.argv[1]
-        sdks = {"openai", "anthropic", "google.genai"}
-        blocked = (sdks - {installed}) | {"ollama"}
+        sdks = {"openai", "anthropic"}
+        blocked = (sdks - {installed}) | {"ollama", "google.genai"}
 
         class MissingSDK(importlib.abc.MetaPathFinder):
             def find_spec(self, fullname, path=None, target=None):
@@ -32,15 +32,28 @@ def test_only_installed_sdks_are_required(installed):
         protocols = {
             "openai": ("openai_chat", "openai_responses"),
             "anthropic": ("anthropic",),
-            "google.genai": ("gemini",),
         }
         exports = {
             "openai": "ChatCompletionsCodec",
             "anthropic": "AnthropicCodec",
-            "google.genai": "GeminiCodec",
         }
         converter = my_llm.MyCodec()
         assert set(converter.codecs) == set(protocols.get(installed, ()))
+        assert "GeminiCodec" not in my_llm.codec.__all__
+        assert not hasattr(my_llm.codec, "GeminiCodec")
+        for action in (
+            lambda: converter.decoder("gemini"),
+            lambda: my_llm.resolve_profiles(
+                my_llm.ProviderProfile(protocol=my_llm.Config(default_value="gemini")),
+                my_llm.ModelProfile(model=my_llm.Attribute(default_value="demo")),
+            ),
+        ):
+            try:
+                action()
+            except my_llm.UnsupportedProviderError:
+                pass
+            else:
+                raise AssertionError("removed protocol was registered")
         assert "OllamaCodec" not in my_llm.codec.__all__
         assert not hasattr(my_llm.codec, "OllamaCodec")
         try:
@@ -59,11 +72,7 @@ def test_only_installed_sdks_are_required(installed):
                     assert profile.protocol == protocol
                     assert converter.decoder(protocol)
                     assert getattr(my_llm.codec, exports[sdk])
-                    message = (
-                        {"role": "user", "parts": [{"text": "hello"}]}
-                        if sdk == "google.genai" else
-                        {"role": "user", "content": "hello"}
-                    )
+                    message = {"role": "user", "content": "hello"}
                     if protocol == "openai_responses":
                         continue
                     result = converter.convert(
@@ -71,7 +80,7 @@ def test_only_installed_sdks_are_required(installed):
                     )
                     assert result["messages"]
                     continue
-                extra = "google-genai" if sdk == "google.genai" else sdk
+                extra = sdk
                 for action in (
                     lambda: converter.decoder(protocol),
                     lambda: my_llm.resolve_profiles(

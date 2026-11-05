@@ -35,7 +35,7 @@ def make_llm(*, stdio_protocol="openai_chat", **parameters):
 
 def assert_no_usage(value):
     if isinstance(value, dict):
-        assert not ({"usage", "usage_metadata", "usageMetadata"} & value.keys())
+        assert not ({"usage"} & value.keys())
         for child in value.values():
             assert_no_usage(child)
     elif isinstance(value, list):
@@ -62,7 +62,7 @@ def test_registry_and_llms_create_independent_components():
 def test_stdio_binding_cannot_be_reassigned():
     llm = make_llm()
     with pytest.raises(AttributeError):
-        llm.stdio_protocol = "gemini"
+        llm.stdio_protocol = "anthropic"
     with pytest.raises(AttributeError):
         llm.resolved_profile = make_llm().resolved_profile
     assert llm.stdio_protocol == "openai_chat"
@@ -112,7 +112,10 @@ def test_stream_materialization_keeps_source_location_for_response_losses():
     assert block.origin_value == source
     assert block["reasoning"] == "step"
     with pytest.raises(SemanticLossError) as caught:
-        with collect_losses(SemanticLossContext("gemini", "anthropic", "output")) as (losses, _):
+        with collect_losses(SemanticLossContext("openai_responses", "anthropic", "output")) as (
+            losses,
+            _,
+        ):
             report_loss(block, "signature cannot cross protocols")
             losses.complete([])
     assert caught.value.losses.items[0].origin_value is source
@@ -232,23 +235,14 @@ async def test_all_tool_calls_are_emitted_together_with_complete_arguments(monke
     async with make_llm(stdio_protocol=stdio) as llm:
         stream = await llm.generate(messages=[{"role": "user", "content": "hi"}], stream=True)
         emitted = [event async for event in stream]
-        if stdio == "openai_chat":
-            chunks = [
-                choice["delta"]["tool_calls"]
-                for event in emitted
-                for choice in event.get("choices", [])
-                if choice["delta"].get("tool_calls")
-            ]
-            assert len(chunks) == 1
-            assert [json.loads(call["function"]["arguments"]) for call in chunks[0]] == [
-                {"x": 1},
-                {"y": 2},
-            ]
-        else:
-            chunks = [
-                event["message"]["tool_calls"]
-                for event in emitted
-                if event["message"].get("tool_calls")
-            ]
-            assert len(chunks) == 1
-            assert [call["function"]["arguments"] for call in chunks[0]] == [{"x": 1}, {"y": 2}]
+        chunks = [
+            choice["delta"]["tool_calls"]
+            for event in emitted
+            for choice in event.get("choices", [])
+            if choice["delta"].get("tool_calls")
+        ]
+        assert len(chunks) == 1
+        assert [json.loads(call["function"]["arguments"]) for call in chunks[0]] == [
+            {"x": 1},
+            {"y": 2},
+        ]

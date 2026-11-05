@@ -54,18 +54,18 @@ async def test_relocated_images_survive_retry_and_incremental_requests(target, s
             )
             await generate(batch, streaming=stream)
             first = json.loads(sdk.requests[-1].content)
-            image_message = request_history(target, first)[-1]
+            image_message = request_history(first)[-1]
             assert image_message["role"] == "user"
             assert "aW1hZ2U=" in str(image_message)
             # Hook-draft ownership is independent from the cached repair.
-            key = "contents" if target == "gemini" else "messages"
+            key = "messages"
             drafts[-1][key][-1].clear()
             await generate(batch, streaming=stream)
             retry = json.loads(sdk.requests[-1].content)
-            assert request_history(target, retry) == request_history(target, first)
+            assert request_history(retry) == request_history(first)
             await generate([{"role": "user", "content": "next"}], streaming=stream)
             following = json.loads(sdk.requests[-1].content)
-            assert request_history(target, following)[:-1] == request_history(target, first)
+            assert request_history(following)[:-1] == request_history(first)
             assert "keep instructions" in str(following)
             # A new tool round with equal image bytes must add a new image message.
             next_batch = responses_history()
@@ -74,8 +74,8 @@ async def test_relocated_images_survive_retry_and_incremental_requests(target, s
                     item["call_id"] = "second-call"
             await generate(next_batch, streaming=stream)
             final = json.loads(sdk.requests[-1].content)
-            assert request_history(target, final)[-1] == image_message
-            assert str(request_history(target, final)).count("aW1hZ2U=") == 2
+            assert request_history(final)[-1] == image_message
+            assert str(request_history(final)).count("aW1hZ2U=") == 2
             assert batch == before
         for request in sdk.requests:
             body = json.loads(request.content)
@@ -102,6 +102,6 @@ async def test_unconsumed_stream_retry_does_not_duplicate_cached_images(target):
             await pending.aclose()
             await consume(await llm.generate(messages=responses_history(), stream=True))
             request = json.loads(sdk.requests[-1].content)
-            assert str(request_history(target, request)).count("aW1hZ2U=") == 1
+            assert str(request_history(request)).count("aW1hZ2U=") == 1
             if target == "openai_chat":
                 assert_chat_tool_sequence(request["messages"])

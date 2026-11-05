@@ -23,12 +23,10 @@ from tests.performance.workloads import profiles, user_message
 
 
 def request_history(protocol, request):
-    return request[{"openai_responses": "input", "gemini": "contents"}.get(protocol, "messages")]
+    return request[{"openai_responses": "input"}.get(protocol, "messages")]
 
 
 def request_limit(protocol, request):
-    if protocol == "gemini":
-        return request["generationConfig"]["maxOutputTokens"]
     return request[
         {
             "openai_chat": "max_completion_tokens",
@@ -39,9 +37,6 @@ def request_limit(protocol, request):
 
 
 def system_texts(protocol, request):
-    if protocol == "gemini":
-        value = request["systemInstruction"]
-        return [part["text"] for part in value["parts"]]
     value = request["system"]
     return [value] if isinstance(value, str) else [part["text"] for part in value]
 
@@ -143,7 +138,7 @@ async def test_cache_is_disabled_by_default(upstream):
         assert "first-input" not in json.dumps(histories[1])
 
 
-@pytest.mark.parametrize("upstream", ["anthropic", "gemini"])
+@pytest.mark.parametrize("upstream", ["anthropic"])
 async def test_system_only_deltas_accumulate_and_survive_later_user_batches(upstream):
     provider, model = profiles(upstream)
     with LocalSDK(upstream, wire_frames(upstream, stream_events(upstream), 61)) as sdk:
@@ -172,7 +167,7 @@ async def test_system_only_deltas_accumulate_and_survive_later_user_batches(upst
         assert len(request_history(upstream, requests[2])) == 2
 
 
-@pytest.mark.parametrize("upstream", ["anthropic", "gemini"])
+@pytest.mark.parametrize("upstream", ["anthropic"])
 async def test_system_only_deltas_remain_invalid_without_caching(upstream):
     provider, model = profiles(upstream)
     with LocalSDK(upstream, wire_frames(upstream, stream_events(upstream), 61)) as sdk:
@@ -259,13 +254,10 @@ async def test_loss_hook_edits_are_request_local_and_do_not_update_cached_transl
         assert [part["content"][0]["text"] for part in cached_at_hook[0]] == ["named"]
 
 
-@pytest.mark.parametrize("upstream", ["anthropic", "gemini"])
+@pytest.mark.parametrize("upstream", ["anthropic"])
 async def test_loss_hook_system_replacements_do_not_modify_cached_translation(upstream):
     def hook(draft, losses, context):
-        if upstream == "anthropic":
-            draft["system"] = "hook-instruction"
-        else:
-            draft["config"]["system_instruction"] = "hook-instruction"
+        draft["system"] = "hook-instruction"
 
     provider, model = profiles(upstream)
     with LocalSDK(upstream, wire_frames(upstream, stream_events(upstream), 61)) as sdk:
@@ -416,20 +408,8 @@ async def test_responses_generated_item_ids_remain_unique_across_assistant_delta
             assert json.loads(sdk.requests[-1].content)["input"][-1]["id"] == "msg_external"
 
 
-@pytest.mark.parametrize("source", ["gemini", "legacy_chat"])
-async def test_idless_tool_deltas_keep_distinct_paired_ids_without_old_validation(
-    monkeypatch, source
-):
+async def test_idless_tool_deltas_keep_distinct_paired_ids_without_old_validation(monkeypatch):
     def tool_round(value, *, explicit=False):
-        if source == "gemini":
-            call = {"name": "weather", "args": {}}
-            result = {"name": "weather", "response": {"result": value}}
-            if explicit:
-                call["id"] = result["id"] = "call_external"
-            return [
-                {"role": "model", "parts": [{"function_call": call}]},
-                {"role": "user", "parts": [{"function_response": result}]},
-            ]
         if explicit:
             return [
                 {
@@ -464,7 +444,7 @@ async def test_idless_tool_deltas_keep_distinct_paired_ids_without_old_validatio
         async with MyLLM(
             provider=provider,
             model=model,
-            stdio_protocol=protocol if source == "legacy_chat" else source,
+            stdio_protocol=protocol,
             enable_message_cache=True,
         ) as llm:
             first_input = tool_round("first-result")

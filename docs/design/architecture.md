@@ -151,7 +151,7 @@ Decoder.request 调用只读私有翻译钩子，将借入的中间叶交给最�
 MessageStream.result 返回本调用最终 draft 本身，保证 output hook 的原位对象身份；get_last_usage 返回独立副本。
 
 根 Schema 计划委派 message_path / tool_path 叶，由 filter_messages / filter_tools 过滤一次；
-四种内置协议的消息过滤共用基类外层循环，各协议在 _filter_message 中处理一条消息。
+三种内置协议的消息过滤共用基类外层循环，各协议在 _filter_message 中处理一条消息。
 结构校验与工具关联修复在同一次中间消息遍历中完成。HistoryNormalizer 去重调用、合并相同 ID 的结果、
 补空结果，并整条丢弃包含孤立结果的消息；丢弃时撤销本条已收集的关联与合并修改。
 独立 HistoryValidator 保留严格校验用途。原始输入不被修改。
@@ -181,7 +181,7 @@ MessageCache 按原始输入哈希判断是否追加当前消息翻译列表，
 返回包含四条消息的独立快照供 Decoder 组装本次请求。
 增量可以包含 system、user、assistant 或完整工具调用与结果批次；只修复当前批的工具关联，
 旧缓存中的对应关系不重复解析或修复。system 消息也保留在消息列表里，
-Decoder 组装请求时将其放入 Anthropic 的 system、Gemini 的 system_instruction 等原生位置。
+Decoder 组装请求时将其放入 Anthropic 的 system 等原生位置。
 缓存不读取、提取或回填这些请求字段，也不需要 Decoder 声明缓存路径。
 缓存只保存输入历史；模型输出需要调用方显式加入下一批增量，工具声明、生成控制和请求选项仍按次准备。
 消息列表先在缓存中暂存，完整请求校验失败时不发布；请求准备完成后、语义损失 adaptor 调用前发布。

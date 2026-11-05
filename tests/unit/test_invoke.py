@@ -207,10 +207,12 @@ async def test_provider_paths_apply_before_standard_output_decoding(monkeypatch)
             reasoning_content=omit,
         ),
         model=ModelProfile(model=Attribute(default_value="demo")),
-        stdio_protocol="gemini",
+        stdio_protocol="anthropic",
     )
-    result = await llm.generate(messages=[{"role": "user", "parts": [{"text": "hi"}]}])
-    assert result == {"role": "model", "parts": [{"text": "configured"}]}
+    result = await llm.generate(
+        messages=[{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
+    )
+    assert result == {"role": "assistant", "content": [{"type": "text", "text": "configured"}]}
 
 
 async def test_target_finish_failure_does_not_publish_a_completed_result(monkeypatch):

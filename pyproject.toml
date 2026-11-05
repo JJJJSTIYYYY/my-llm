@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "my-llm-py"
 dynamic = ["version"]
-description = "Profile-driven async LLM adapter for OpenAI, Anthropic and Gemini."
+description = "Profile-driven async LLM adapter for OpenAI and Anthropic."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
-keywords = ["adapter", "adaptor", "openai", "anthropic", "gemini", "llm"]
+keywords = ["adapter", "adaptor", "openai", "anthropic", "llm"]
 authors = [
     { name = "JJJJSTIYYYY", email = "wavejustiy@gmail.com" },
 ]
@@ -28,9 +28,8 @@ classifiers = [
 
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.76,<1"]
-google-genai = ["google-genai>=1.56,<2"]
 openai = ["openai>=2.0,<3"]
-all = ["my-llm-py[anthropic,google-genai,openai]"]
+all = ["my-llm-py[anthropic,openai]"]
 
 [project.urls]
 Repository = "https://github.com/JJJJSTIYYYY/my-llm"

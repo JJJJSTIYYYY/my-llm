@@ -24,7 +24,6 @@ def reasoning_history(protocol):
     def reasoning(text):
         item = {
             "anthropic": {"type": "thinking", "thinking": text, "signature": "c2lnbmVk"},
-            "gemini": {"text": text, "thought": True, "thought_signature": "c2lnbmVk"},
             "openai_responses": {
                 "type": "reasoning",
                 "id": "rs_" + text.split()[0],
@@ -202,8 +201,6 @@ def test_native_scalar_reasoning_feedback_matches_message_policy(
     if has_calls:
         message["tool_calls"] = [
             {"id": "c", "type": "function", "function": {"name": "f", "arguments": "{}"}}
-            if protocol == "openai_chat"
-            else {"function": {"name": "f", "arguments": {}}}
         ]
     request = {"messages": [message]}
     before = deepcopy(request)
@@ -260,8 +257,7 @@ def test_native_tool_messages_get_empty_reasoning_without_a_generation_reasoning
     profile_factory, protocol, field, explicit_none
 ):
     call = {"function": {"name": "f", "arguments": "{}"}}
-    if protocol == "openai_chat":
-        call.update(id="c", type="function")
+    call.update(id="c", type="function")
     request = {"messages": [{"role": "assistant", "tool_calls": [call], "content": ""}]}
     if explicit_none:
         request["messages"][0][field] = None
@@ -398,11 +394,6 @@ def native_block_history(protocol, has_calls):
         if has_calls:
             content.append({"type": "tool_use", "id": "c", "name": "f", "input": {}})
         return {"messages": [{"role": "assistant", "content": content}]}, content[0]
-    if protocol == "gemini":
-        parts = [{"text": "native reasoning", "thought": True}, {"text": "answer"}]
-        if has_calls:
-            parts.append({"function_call": {"name": "f", "args": {}}, "thought_signature": "c2ln"})
-        return {"contents": [{"role": "model", "parts": parts}]}, parts[0]
     items = [
         {
             "type": "reasoning",
@@ -416,7 +407,7 @@ def native_block_history(protocol, has_calls):
     return {"input": items}, items[0]
 
 
-@pytest.mark.parametrize("protocol", ["anthropic", "gemini", "openai_responses"])
+@pytest.mark.parametrize("protocol", ["anthropic", "openai_responses"])
 @pytest.mark.parametrize("mode", ["always", "when_tool_calls", "none"])
 @pytest.mark.parametrize("supports", [True, False])
 @pytest.mark.parametrize("has_calls", [True, False])
@@ -450,8 +441,6 @@ def test_native_block_reasoning_uses_capability_and_feedback_separately(
     assert "answer" in str(draft)
     if has_calls:
         assert "f" in str(draft)
-        if protocol == "gemini":
-            assert "thought_signature" in str(draft)
     assert request == before
 
 
@@ -560,9 +549,6 @@ def test_native_images_are_loss_when_vision_is_disabled(profile_factory, protoco
             "max_tokens": 128,
             "messages": [{"role": "user", "content": [image, {"type": "text", "text": "tail"}]}],
         }
-    elif protocol == "gemini":
-        image = {"inline_data": {"mime_type": "image/png", "data": "aW1hZ2U="}}
-        request = {"contents": [{"role": "user", "parts": [image, {"text": "tail"}]}]}
     before = deepcopy(request)
     with pytest.raises(SemanticLossError) as caught:
         MyCodec().decoder(protocol).native_request(
@@ -599,16 +585,6 @@ def test_native_history_tools_are_loss_when_function_calling_is_disabled(profile
                 {"role": "user", "content": [result]},
                 {"role": "user", "content": "tail"},
             ],
-        }
-    elif protocol == "gemini":
-        call = {"function_call": {"id": "c", "name": "f", "args": {}}}
-        result = {"function_response": {"id": "c", "name": "f", "response": {"result": "result"}}}
-        request = {
-            "contents": [
-                {"role": "model", "parts": [call]},
-                {"role": "user", "parts": [result]},
-                {"role": "user", "parts": [{"text": "tail"}]},
-            ]
         }
     else:
         call = {"type": "function_call", "call_id": "c", "name": "f", "arguments": "{}"}

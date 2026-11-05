@@ -60,7 +60,7 @@ def test_build_contains_runtime_modules_and_source_tests(tmp_path, version_overr
         assert "my_llm/basic/protocols.py" in names
         assert "my_llm/basic/semantic_loss.py" in names
         assert "my_llm/codec/openai/responses/decoding/__init__.py" in names
-        for protocol in ("anthropic", "gemini"):
+        for protocol in ("anthropic",):
             assert f"my_llm/codec/{protocol}/__init__.py" in names
         assert not any(name.startswith("my_llm/types/") for name in names)
         assert "my_llm/basic/exceptions.py" in names
@@ -80,7 +80,9 @@ def test_build_contains_runtime_modules_and_source_tests(tmp_path, version_overr
             assert f"my_llm/middleware/{module}.py" in names
         assert "my_llm/middleware.py" not in names
         assert "my_llm/codec/anthropic/content.py" in names
-        assert not any(name.startswith("my_llm/codec/ollama/") for name in names)
+        assert not any(
+            name.startswith(("my_llm/codec/ollama/", "my_llm/codec/gemini/")) for name in names
+        )
         for protocol in ("anthropic",):
             assert not any(name.startswith(f"my_llm/codec/{protocol}/utils/") for name in names)
         assert "my_llm/profile/configuration.py" in names
@@ -105,16 +107,12 @@ def test_build_contains_runtime_modules_and_source_tests(tmp_path, version_overr
         }
         assert metadata["Requires-Python"] == ">=3.12"
         assert metadata["Description-Content-Type"] == "text/markdown"
-        assert set(metadata.get_all("Provides-Extra")) == {
-            "all",
-            "anthropic",
-            "google-genai",
-            "openai",
-        }
+        assert set(metadata.get_all("Provides-Extra")) == {"all", "anthropic", "openai"}
         assert not any(
-            "ollama" in requirement.lower() for requirement in metadata.get_all("Requires-Dist")
+            any(package in requirement.lower() for package in ("ollama", "google-genai"))
+            for requirement in metadata.get_all("Requires-Dist")
         )
-        for package in ("openai", "anthropic", "google-genai"):
+        for package in ("openai", "anthropic"):
             assert any(
                 requirement.startswith(package) for requirement in metadata.get_all("Requires-Dist")
             )

@@ -8,9 +8,5 @@
 - Anthropic Python SDK：Copyright 2023 Anthropic, PBC.，MIT。
   原始许可见 [licenses/anthropic-sdk.txt](licenses/anthropic-sdk.txt)，
   [固定版本](https://github.com/anthropics/anthropic-sdk-python/tree/v1.15.0)。
-- Google Gemini：结构来源为 Google 提供的
-  [Generative Language API Discovery 文档](https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta)，
-  使用时结合 [Google 开发者站点政策](https://developers.google.com/terms/site-policies)
-  和 [Gemini API 文档](https://ai.google.dev/api/generate-content)。本目录没有给 Google 来源重新指定 MIT 许可。
 
 本目录的派生结构和示例不是供应商对本项目的认证，许可声明也不替代各 API 的服务条款。

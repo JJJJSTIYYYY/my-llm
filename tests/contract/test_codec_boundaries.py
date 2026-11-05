@@ -163,8 +163,6 @@ def test_generic_dispatch_check_rejects_protocol_branches(source):
     [
         "import openai as oa\nclient = oa.AsyncOpenAI()",
         "from anthropic import AsyncAnthropic as Client",
-        "from google import genai",
-        "import google.genai as sdk",
     ],
 )
 def test_sdk_boundary_rejects_import_aliases(source):

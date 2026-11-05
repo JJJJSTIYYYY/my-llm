@@ -4,7 +4,6 @@ from copy import deepcopy
 from dataclasses import fields, is_dataclass
 
 import pytest
-from google.genai import types
 from pydantic import BaseModel
 
 from my_llm import MyCodec
@@ -97,7 +96,7 @@ def test_public_decoder_captures_nested_input(source, target, kind):
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_repeated_public_requests_do_not_share_mutable_input(profile_factory, protocol):
     codec = MyCodec()
-    intermediate = codec.encode(history("gemini"), tools("gemini"), input_format="gemini")
+    intermediate = codec.encode(history("anthropic"), tools("anthropic"), input_format="anthropic")
     profile = profile_factory(
         protocol,
         max_tokens=parameter("max_tokens", 2048, protocol=protocol),
@@ -114,35 +113,30 @@ def test_repeated_public_requests_do_not_share_mutable_input(profile_factory, pr
 
 
 def test_expanded_binding_owns_native_sdk_option_model(profile_factory):
+    class OptionModel(BaseModel):
+        user_id: str
+
     profile = profile_factory(
-        "gemini",
-        extra_body=config({"thinking_config": types.ThinkingConfig(include_thoughts=True)}),
+        "anthropic",
+        extra_body=config({"metadata": OptionModel(user_id="original")}),
     )
     before = deepcopy(profile.values)
     options = resolve_options(profile, reasoning=True)
 
-    options.body["thinking_config"].include_thoughts = False
+    options.body["metadata"].user_id = "changed"
 
     assert profile.values == before
 
 
 def test_expanded_binding_owns_mutable_values_inside_tuple(profile_factory):
     profile = profile_factory(
-        "gemini",
-        extra_body=config(
-            {
-                "safety_settings": (
-                    types.SafetySetting(
-                        category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"
-                    ),
-                )
-            },
-        ),
+        "anthropic",
+        extra_body=config({"values": ({"nested": ["original"]},)}),
     )
     before = deepcopy(profile.values)
     options = resolve_options(profile, reasoning=True)
 
-    options.body["safety_settings"][0].threshold = "BLOCK_ONLY_HIGH"
+    options.body["values"][0]["nested"].append("changed")
 
     assert profile.values == before
 
@@ -168,8 +162,6 @@ def test_encoder_captures_open_tool_schema_once(protocol):
     values = tools(protocol)
     if protocol == "openai_chat":
         values[0]["function"]["parameters"] = schema
-    elif protocol == "gemini":
-        values[0]["function_declarations"][0]["parameters_json_schema"] = schema
     else:
         values[0]["input_schema" if protocol == "anthropic" else "parameters"] = schema
 
@@ -193,16 +185,11 @@ def test_decoder_captures_open_tool_schema_once(protocol):
     assert schema == {"type": "object", "properties": {"value": {"type": "string"}}}
 
 
-@pytest.mark.parametrize("protocol", ["anthropic", "gemini"])
+@pytest.mark.parametrize("protocol", ["anthropic"])
 def test_encoder_captures_native_argument_object_once(protocol):
     payload = TrackedJSON({"nested": ["original"]})
     values = history(protocol)
-    if protocol == "anthropic":
-        values[1]["content"][1]["input"] = payload
-    elif protocol == "gemini":
-        values[1]["parts"][1]["function_call"]["args"] = payload
-    else:
-        values[1]["tool_calls"][0]["function"]["arguments"] = payload
+    values[1]["content"][1]["input"] = payload
 
     converted = MyCodec().codecs[protocol].encoder.messages(values)
 
@@ -336,36 +323,14 @@ def test_anthropic_tool_cache_control_only_addresses_known_fields(direction):
     assert "vendor_unconfigured" not in result
 
 
-def test_gemini_schema_projection_only_addresses_recognized_keywords():
-    schema = AddressedFieldsOnly(
-        type="OBJECT",
-        properties={
-            "name": AddressedFieldsOnly(type="STRING", vendor_unconfigured=UnreadableExtension())
-        },
-        vendor_unconfigured=UnreadableExtension(),
-    )
-    values = [{"function_declarations": [{"name": "lookup", "parameters": schema}]}]
-
-    converted = MyCodec().codecs["gemini"].encoder.tools(values)
-
-    assert len(converted) == 1
-    assert converted[0].name == "lookup"
-    assert converted[0].parameters == {
-        "type": "object",
-        "properties": {"name": {"type": "string"}},
-    }
-
-
 def guarded_protocol(value, *, parent=None):
     # These recognized open dictionaries belong to the caller's application.
     if parent in {
         "parameters",
-        "parameters_json_schema",
         "input_schema",
         "args",
         "arguments",
         "input",
-        "part_metadata",
         "metadata",
     }:
         return value
@@ -439,9 +404,6 @@ def test_encoder_profile_routes_are_sdk_root_paths(protocol, profile_factory):
             "index": 0,
             "delta": {"type": "text_delta", "text": "native"},
         },
-        "gemini": {
-            "candidates": [{"content": {"parts": [{"text": "native"}]}}],
-        },
     }[protocol]
     event = {**text_event, "vendor": {"answer": "configured"}}
     profile = profile_factory(
@@ -459,26 +421,6 @@ def test_encoder_profile_routes_are_sdk_root_paths(protocol, profile_factory):
         and op["block"]["type"] == "text"
     ]
     assert text == ["configured"]
-
-
-def test_gemini_standard_path_keeps_native_multi_part_thought_semantics(profile_factory):
-    event = {
-        "candidates": [
-            {
-                "content": {
-                    "parts": [
-                        {"text": "thought 1", "thought": True},
-                        {"text": "answer 1"},
-                        {"text": "thought 2", "thought": True},
-                        {"text": "answer 2"},
-                    ]
-                }
-            }
-        ]
-    }
-    encoder = MyCodec().codecs["gemini"].encoder
-
-    assert encoder.chunks([event], profile_factory("gemini")) == encoder.chunks([event])
 
 
 @pytest.mark.parametrize("source", PROTOCOLS)
@@ -637,50 +579,6 @@ def stream_payload_cases():
             "anthropic",
             [{"type": "content_block_start", "index": 0, "content_block": tool}],
             [{"type": "tool", "index": 0, "block": tool}],
-            {},
-        ),
-        (
-            "gemini",
-            [
-                {
-                    "candidates": [
-                        {
-                            "content": {
-                                "parts": [
-                                    {
-                                        "function_call": {"name": "lookup", "args": payload},
-                                        "part_metadata": payload,
-                                    },
-                                    {"function_response": {"name": "lookup", "response": payload}},
-                                ]
-                            }
-                        }
-                    ]
-                }
-            ],
-            [
-                {"type": "tool", "index": 0, "block": {**tool, "part_metadata": payload}},
-                {
-                    "type": "block",
-                    "index": 1,
-                    "block": {
-                        "type": "tool_result",
-                        "name": "lookup",
-                        "tool_use_id": "call",
-                        "content": payload,
-                        "part_metadata": payload,
-                    },
-                },
-                {
-                    "type": "block_stop",
-                    "index": 2,
-                    "block": {
-                        "type": "text",
-                        "text": "hello",
-                        "part_metadata": payload,
-                    },
-                },
-            ],
             {},
         ),
         (

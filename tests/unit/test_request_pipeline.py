@@ -36,7 +36,7 @@ SMALL = Size(
 
 
 @pytest.mark.parametrize("upstream", PROTOCOLS)
-@pytest.mark.parametrize("stdio", ["openai_chat", "gemini"])
+@pytest.mark.parametrize("stdio", ["openai_chat"])
 async def test_complete_call_passes_through_codec_with_explicit_destinations(
     monkeypatch,
     upstream,
@@ -145,16 +145,14 @@ def test_request_projects_native_values_without_public_result_copies(monkeypatch
 
 
 def test_connection_preparation_does_not_reparse_the_snapshot(monkeypatch):
-    provider, model = profiles("gemini")
+    provider, model = profiles("anthropic")
     profile = resolve_profiles(provider, model)
 
     def reparsed(*args, **kwargs):
         pytest.fail("connection values were parsed after profile resolution")
 
     monkeypatch.setattr(resolution, "_connection_parameters", reparsed)
-    assert (
-        MyCodec().client_parameters(profile)["http_options"].base_url == "https://benchmark.invalid"
-    )
+    assert MyCodec().client_parameters(profile)["base_url"] == "https://benchmark.invalid"
 
 
 def test_anthropic_open_tool_schema_is_captured_once():

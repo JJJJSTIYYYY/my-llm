@@ -1,7 +1,5 @@
 """Independent native tool-result fixtures and expected text extraction."""
 
-import json
-
 
 def application_result_history(protocol, payload):
     call = {"id": "c", "type": "function", "function": {"name": "f", "arguments": "{}"}}
@@ -26,14 +24,6 @@ def application_result_history(protocol, payload):
                 "content": [{"type": "tool_result", "tool_use_id": "c", "content": payload}],
             },
         ]
-    if protocol == "gemini":
-        return [
-            {"role": "model", "parts": [{"function_call": {"id": "c", "name": "f", "args": {}}}]},
-            {
-                "role": "user",
-                "parts": [{"function_response": {"id": "c", "name": "f", "response": payload}}],
-            },
-        ]
     raise ValueError(f"unsupported protocol: {protocol!r}")
 
 
@@ -45,6 +35,5 @@ def native_result_text(protocol, request):
     elif protocol == "anthropic":
         content = request["messages"][-1]["content"][0]["content"]
     else:
-        content = request["contents"][-1]["parts"][0]["function_response"]["response"]
-        return content["result"] if set(content) == {"result"} else json.dumps(content)
+        raise ValueError(f"unsupported protocol: {protocol!r}")
     return content if isinstance(content, str) else "".join(part["text"] for part in content)

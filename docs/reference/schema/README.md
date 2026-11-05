@@ -1,12 +1,11 @@
-# 四种原生协议的请求与返回模板
+# 三种原生协议的请求与返回模板
 
-更新快照：**2026-10-17**。范围仅包含以下四种 HTTP 生成接口：
+更新快照：**2026-10-17**。范围仅包含以下三种 HTTP 生成接口：
 
 | 接口 | 目录 | 请求路径 |
 | --- | --- | --- |
 | OpenAI Responses | [openai_responses](openai_responses/README.md) | `POST /v1/responses` |
 | OpenAI Chat Completions | [openai_chat](openai_chat/README.md) | `POST /v1/chat/completions` |
-| Gemini GenerateContent | [gemini](gemini/README.md) | `POST /v1beta/models/{model}:generateContent` / `:streamGenerateContent?alt=sse` |
 | Anthropic Messages | [anthropic](anthropic/README.md) | `POST /v1/messages` |
 
 这里使用各家原生字段，不依赖本项目 Codec 的当前支持范围，
@@ -38,7 +37,6 @@
 | --- | --- |
 | [OpenAI 官方 OpenAPI](https://github.com/openai/openai-openapi) | 提交 `d156763a484eb247e116e0ea345e16344b0049ba`，2026-10-17 |
 | [Anthropic 官方 SDK 类型](https://github.com/anthropics/anthropic-sdk-python/releases/tag/v1.15.0) | 本次查询的最新 PyPI 发布版 `1.15.0`，另核对 Messages / Streaming 在线文档 |
-| [Gemini 官方 Discovery](https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta) | `v1beta`，revision `20261015` |
 
 固定 URL、提交日期、源文件 SHA-256、SDK wheel 哈希、编译与补充规则见
 [sources.json](sources.json)；机器可读目录见 [catalog.json](catalog.json)。
@@ -57,9 +55,6 @@
 2. **Anthropic 的 Schema 是派生结果。** 本次未找到公开可下载的官方 OpenAPI；
    从最新官方 SDK 导出结构，移除实际发送到 header 的参数，补入文档中的流控制事件。
    稳定与 beta 类型分别保存，不能省略对应 beta header 或模型限制。
-3. **Gemini Discovery 不是 JSON Schema。** 本地转换引用和基础类型，
-   将明确写为 `Required.` 的字段标为必需，并把 model 保留在 URL。
-   Part 数据互斥、模型限制和其他组合规则仍需按文档判断。
 
 来源文档和 SDK 的要求不能无条件等同于服务器全部校验。
 这里没有把这些派生 Schema 重新命名为“官方发布的 JSON Schema”，

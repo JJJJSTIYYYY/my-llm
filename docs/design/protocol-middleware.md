@@ -1,7 +1,7 @@
 # 中间协议与语义损失契约
 
 本文定义中间层的固定支持集合与转换边界。`strict` 按用户确认：
-Chat、Responses、Anthropic 保留，Gemini 静默丢弃。
+Chat、Responses、Anthropic 均保留。
 
 ## 支持集合
 
@@ -23,7 +23,7 @@ encoder 负责原生投影，decoder 负责目标表达，Transport 只执行 SD
 | `ImageContent` | `source`、`origin`、`type`、`item` | 通用图片，`type=image`；`item` 当前保留 Responses 项身份 |
 | `ImageSource` | `type`、`url`、`data`、`media_type` | 通用；`type=url` 使用 URL，`type=base64` 使用数据与媒体类型；不下载 URL |
 | `ReasoningContent` | `reasoning`、`feedback_item`、`item`、`origin`、`type` | `reasoning: str \| None` 保存可见思维；`feedback_item: Any \| None` 保存原生回传值；固定 `type=thinking`，来源协议由消息或流批次标识 |
-| `ToolCall` | `call_id`、`name`、`arguments`、`signature`、`opaque_protocol`、`origin`、`type`、`item` | 通用完整调用，`type=tool_use`、`arguments: JsonObject`；`signature/opaque_protocol` 用于 Gemini 回放；`item` 当前保留 Responses 项身份 |
+| `ToolCall` | `call_id`、`name`、`arguments`、`origin`、`type`、`item` | 通用完整调用，`type=tool_use`、`arguments: JsonObject`；`item` 当前保留 Responses 项身份 |
 | `ToolResult` | `call_id`、`content`、`name`、`origin`、`type`、`item` | 通用结果，`type=tool_result`；有序文本 / 图片；`item` 当前保留 Responses 结果项身份 |
 | `FunctionTool` | `name`、`description`、`parameters`、`strict`、`origin` | 通用函数声明；`parameters: JsonObject` 保留应用 Schema；`strict` 按上文协议集合处理 |
 | `StreamBatch` | `protocol`、`events` | encoder 到状态机的内部载体；`events: list[dict]` 是有序操作，不作为应用流事件使用 |
@@ -43,7 +43,7 @@ Responses decoder 按内容项边界分组，内容未提供身份时使用消�
 
 `ReasoningContent.reasoning` 统一保存接口返回的可见思维文本，包括完整思维或摘要，流式文本实时累积。
 `feedback_item` 保存下一轮接口需要的原始回传值：Responses 的完整 reasoning item、
-Anthropic 的完整 `thinking` / `redacted_thinking` 块、Gemini 的原生 thought part，
+Anthropic 的完整 `thinking` / `redacted_thinking` 块，
 或 Chat 的原始思维文本。完整回传值保留到块和响应终态，不产生公开字段增量。
 同协议按回传策略使用该值；跨协议由 decoder 丢弃并记录语义损失，可见文本单独处理。
 源协议编码时不产生损失记录。
@@ -57,7 +57,7 @@ Anthropic 的完整 `thinking` / `redacted_thinking` 块、Gemini 的原生 thou
 字段级往返测试覆盖全部模型字段；增加字段而未补充映射及用例时会失败。
 
 模型属性与少量 wire 键有明确映射：`ReasoningContent` 使用同名的 `reasoning` 和 `feedback_item`；
-`ToolCall.opaque_protocol → protocol`、`ToolCall.call_id → id`、`arguments → input`、
+`ToolCall.call_id → id`、`arguments → input`、
 `ToolResult.call_id → tool_use_id`；工具声明使用 `functions` 分组。
 这些键属于中间契约，不接受旧版字段别名。`JsonObject` 是 `dict[str, JsonValue]` 的类型别名，
 运行时仍使用普通字典。
@@ -95,7 +95,6 @@ codec 只依赖公开接口；需要先校验再做能力过滤时，使用 `mes
 
 encoder 只读取源协议，不接收目标协议。decoder 只实现自己的目标表达规则；
 `feedback_item` 的归属使用消息或流的来源协议，跨协议翻译时丢弃并记录损失。
-工具调用上的签名仍使用 `ToolCall.signature`；Gemini 原生 `thought_signature` 映射由其 codec 负责。
 
 decoder 把无法表达的支持值记为 `SemanticLossItem(origin_value, origin_path, reason)`，
 继续处理全部消息、工具或本批输出。完成原生 draft 后统一抛出
@@ -119,12 +118,12 @@ hook 可任意原地编辑 draft，进入 transport 或返回用户的对象身�
 `MessageStream.result` 返回该调用最终 draft 本身；重复读取不另做复制，也不与其他调用共享。
 hook 未传时为空函数，但不会改变默认的 `raise` 策略。
 
-Chat reasoning 进入 `reasoning_content`，Responses 进入 reasoning item。Anthropic / Gemini 对历史思维所需签名不能伪造。工具图片只有 Responses /
+Chat reasoning 进入 `reasoning_content`，Responses 进入 reasoning item。Anthropic 对历史思维所需签名不能伪造。工具图片只有 Responses /
 Anthropic 原生表达；其余目标报告损失。能力声明阻止已识别支持字段表达时，同样报告损失，
 包括不支持的生成控制和原生请求字段；仅 `supports_stream` 声明项目调用能力，禁用时直接拒绝生成。
 目标 Schema 无法保持工具参数约束时报告对应工具定义损失。
 
-消息 `name` 属于支持字段。Responses、Anthropic、Gemini 无法表达消息名称时报告
+消息 `name` 属于支持字段。Responses、Anthropic 无法表达消息名称时报告
 损失；Chat 保留名称，除非 Profile 禁用 `supports_message_name`，此时也报告损失。
 
 ## 生命周期与缓存
@@ -145,7 +144,7 @@ SDK 客户端仍由 `MyLLM` 实例持有并复用，到实例关闭时释放；�
 
 ## 验收与性能比较
 
-验收覆盖四协议请求 / 响应转换、三种损失策略、完整 draft 与原位 hook、签名回放、
+验收覆盖三协议请求 / 响应转换、三种损失策略、完整 draft 与原位 hook、签名回放、
 工具图片、未知字段删除、完整工具调用、usage、工厂隔离、并发与资源关闭。
 比较使用同一解释器、依赖、基准代码和双方均支持的负载；旧版源码单独快照。
 协议行为变化造成的事件数变化单独报告。时间测量不启用 tracemalloc；内存、缓存和

@@ -7,7 +7,7 @@ import pytest
 from my_llm import MyCodec
 
 
-@pytest.mark.parametrize("protocol", ["anthropic", "gemini"])
+@pytest.mark.parametrize("protocol", ["anthropic"])
 def test_stream_tool_arguments_are_owned_once_at_the_middleware_boundary(protocol):
     copies = []
 
@@ -17,27 +17,16 @@ def test_stream_tool_arguments_are_owned_once_at_the_middleware_boundary(protoco
             return deepcopy(dict(self), memo)
 
     arguments = TrackedArguments(items=[{"value": 1}])
-    if protocol == "anthropic":
-        event = {
-            "type": "content_block_start",
-            "index": 0,
-            "content_block": {
-                "type": "tool_use",
-                "id": "call_1",
-                "name": "lookup",
-                "input": arguments,
-            },
-        }
-    elif protocol == "gemini":
-        event = {
-            "candidates": [
-                {"content": {"parts": [{"function_call": {"name": "lookup", "args": arguments}}]}}
-            ]
-        }
-    else:
-        event = {
-            "message": {"tool_calls": [{"function": {"name": "lookup", "arguments": arguments}}]}
-        }
+    event = {
+        "type": "content_block_start",
+        "index": 0,
+        "content_block": {
+            "type": "tool_use",
+            "id": "call_1",
+            "name": "lookup",
+            "input": arguments,
+        },
+    }
 
     middleware = MyCodec().encode(chunks=[event], input_format=protocol)
     tool = middleware.stream[0].events[-1]["block"]
@@ -45,107 +34,24 @@ def test_stream_tool_arguments_are_owned_once_at_the_middleware_boundary(protoco
     assert tool["input"] == arguments
     arguments["items"][0]["value"] = 2
     assert tool["input"] == {"items": [{"value": 1}]}
-    original = (
-        event["content_block"]
-        if protocol == "anthropic"
-        else event["candidates"][0]["content"]["parts"][0]
-        if protocol == "gemini"
-        else event
-    )
+    original = event["content_block"]
     assert tool.origin_value is original
 
 
-@pytest.mark.parametrize("protocol", ["anthropic", "gemini"])
+@pytest.mark.parametrize("protocol", ["anthropic"])
 def test_native_stream_projection_discards_generated_media_before_middleware(protocol):
     from my_llm.codec.anthropic.encoding.encoder import AnthropicEncoder
-    from my_llm.codec.gemini.encoding.encoder import GeminiEncoder
 
-    if protocol == "anthropic":
-        encoder = AnthropicEncoder()
-        events = [
-            {
-                "type": "content_block_start",
-                "index": 0,
-                "content_block": {
-                    "type": "image",
-                    "source": {"type": "base64", "media_type": "image/png", "data": "aW1hZ2U="},
-                },
-            }
-        ]
-    else:
-        encoder = GeminiEncoder()
-        events = [
-            {
-                "candidates": [
-                    {
-                        "content": {
-                            "parts": [
-                                {"inline_data": {"mime_type": "image/png", "data": "aW1hZ2U="}}
-                            ]
-                        }
-                    }
-                ]
-            }
-        ]
-    projected = encoder._chunks(events)
-    assert all("block" not in operation for batch in projected for operation in batch["events"])
-
-
-@pytest.mark.parametrize("text", ['{"value": [1, 2]}', "ordinary text", "[1, 2]"])
-async def test_gemini_prepare_keeps_tool_result_text_without_guessing_json_types(
-    text, profile_factory
-):
-    from my_llm import Config, omit
-
-    codec = MyCodec()
-    profile = profile_factory("gemini", supports_function_calling=Config(default_value=True))
-    prepared = await codec.prepare(
+    encoder = AnthropicEncoder()
+    events = [
         {
-            "messages": [
-                {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "id": "call_1",
-                            "type": "function",
-                            "function": {"name": "lookup", "arguments": "{}"},
-                        }
-                    ],
-                },
-                {"role": "tool", "tool_call_id": "call_1", "content": text},
-            ],
-            "tools": omit,
-            "stream": False,
-        },
-        profile,
-        input_format="openai_chat",
-        client=codec.client_parameters(profile),
-    )
-    assert prepared["request"]["contents"][-1]["parts"][0]["function_response"]["response"] == {
-        "result": text
-    }
-
-
-def test_gemini_native_signature_spelling_stays_at_the_codec_boundary():
-    codec = MyCodec()
-    messages = [
-        {
-            "role": "model",
-            "parts": [
-                {"text": "reason", "thought": True, "thought_signature": "c2ln"},
-                {
-                    "function_call": {"id": "call_1", "name": "lookup", "args": {}},
-                    "thought_signature": "c2ln",
-                },
-            ],
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {
+                "type": "image",
+                "source": {"type": "base64", "media_type": "image/png", "data": "aW1hZ2U="},
+            },
         }
     ]
-    middleware = codec.encode(messages=messages, input_format="gemini")
-    blocks = middleware["messages"][0]["content"]
-    assert blocks[0]["feedback_item"]["thought_signature"] == "c2ln"
-    assert blocks[1]["signature"] == "c2ln"
-    assert all("thought_signature" not in block for block in blocks)
-    restored = codec.decode(messages=middleware.messages, target_format="gemini")["messages"]
-    assert all(part["thought_signature"] == "c2ln" for part in restored[0]["parts"])
-    assert all("signature" not in part for part in restored[0]["parts"])
+    projected = encoder._chunks(events)
+    assert all("block" not in operation for batch in projected for operation in batch["events"])

@@ -13,7 +13,6 @@ __all__ = [
     "MyCodec",
     "PreparedOptions",
     "AnthropicCodec",
-    "GeminiCodec",
     "ChatCompletionsCodec",
     "ResponsesCodec",
 ]

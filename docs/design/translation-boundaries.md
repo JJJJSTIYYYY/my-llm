@@ -52,7 +52,7 @@ Profile 提供明确的兼容入口：参数路径和缺失默认值、extra_bod
 
 ## 签名、密文与工具身份
 
-Anthropic thinking.signature、redacted_thinking、Gemini thought_signature、Responses
+Anthropic thinking.signature、redacted_thinking、Responses
 encrypted_content 和工具关联 ID 都属于有明确语义的标准字段，由对应协议实现处理。
 思维文本统一保存到 `ReasoningContent.reasoning`，原生回传项保存到 `feedback_item`。
 同协议回传完整原生值；跨协议由 Decoder 丢弃 `feedback_item` 并报告 SemanticLossError，

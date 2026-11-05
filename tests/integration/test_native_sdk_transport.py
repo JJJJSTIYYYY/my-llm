@@ -5,7 +5,6 @@ import json
 import httpx
 import pytest
 from anthropic import AsyncAnthropic
-from google import genai
 
 from my_llm import Attribute, Config, ModelProfile, MyLLM, ProviderProfile
 from tests.helpers.profiles import config, parameter
@@ -13,11 +12,9 @@ from tests.helpers.protocols import history, stream_events, tools
 from tests.helpers.schema import validate_request
 from tests.helpers.transport import sse
 
-GenAIClient = genai.Client
 
-
-@pytest.mark.parametrize("protocol", ["anthropic", "gemini"])
-@pytest.mark.parametrize("stdio", ["openai_chat", "openai_responses", "anthropic", "gemini"])
+@pytest.mark.parametrize("protocol", ["anthropic"])
+@pytest.mark.parametrize("stdio", ["openai_chat", "openai_responses", "anthropic"])
 @pytest.mark.parametrize("stream", [False, True])
 async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, stdio, stream):
     requests, http_clients = [], []
@@ -26,30 +23,6 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
         requests.append(request)
         validate_request(protocol, json.loads(request.content))
         events = stream_events(protocol, tool=True)
-        if protocol == "gemini":
-            # This success matrix uses the common supported subset. Native
-            # signed replay and default signature-loss rejection have dedicated tests.
-            for event in events:
-                for candidate in event.get("candidates", []):
-                    for part in candidate.get("content", {}).get("parts", []):
-                        part.pop("thought_signature", None)
-            aliases = {
-                "response_id": "responseId",
-                "function_call": "functionCall",
-                "thought_signature": "thoughtSignature",
-                "finish_reason": "finishReason",
-                "usage_metadata": "usageMetadata",
-                "total_token_count": "totalTokenCount",
-            }
-
-            def wire(value):
-                if isinstance(value, list):
-                    return [wire(v) for v in value]
-                if isinstance(value, dict):
-                    return {aliases.get(k, k): wire(v) for k, v in value.items()}
-                return value
-
-            events = wire(events)
         return httpx.Response(
             200,
             text=sse(events, anthropic=protocol == "anthropic").replace("data: [DONE]\n\n", ""),
@@ -57,27 +30,11 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
         )
 
     def factory(**kwargs):
-        if protocol == "anthropic":
-            http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-            http_clients.append(http)
-            return AsyncAnthropic(**kwargs, http_client=http)
-        options = kwargs.pop("http_options")
-        options = options.model_copy(
-            update={
-                "async_client_args": {
-                    **(options.async_client_args or {}),
-                    "transport": httpx.MockTransport(handler),
-                }
-            }
-        )
-        client = GenAIClient(**kwargs, http_options=options)
-        http_clients.append(client._api_client._async_httpx_client)
-        return client
+        http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        http_clients.append(http)
+        return AsyncAnthropic(**kwargs, http_client=http)
 
-    if protocol == "anthropic":
-        monkeypatch.setattr("my_llm.codec.anthropic.transport.AsyncAnthropic", factory)
-    else:
-        monkeypatch.setattr("my_llm.codec.gemini.transport.genai.Client", factory)
+    monkeypatch.setattr("my_llm.codec.anthropic.transport.AsyncAnthropic", factory)
     llm = MyLLM(
         provider=ProviderProfile(
             protocol=Config(default_value=protocol),
@@ -97,13 +54,7 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
         stdio_protocol=stdio,
     )
     options = {
-        "anthropic": {"tool_choice": {"type": "auto"}, "metadata": {"user_id": "local-test"}},
-        "gemini": {
-            "tool_config": {"function_calling_config": {"mode": "AUTO"}},
-            "safety_settings": [
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"}
-            ],
-        },
+        "anthropic": {"tool_choice": {"type": "auto"}, "metadata": {"user_id": "local-test"}}
     }[protocol]
     result = await llm.generate(
         messages=history(stdio), tools=tools(stdio), stream=stream, extra_body=options
@@ -117,28 +68,12 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
     body = json.loads(requests[0].content)
     assert "api_key" not in body and "default_headers" not in body
     assert "Sunny" in str(body)
-    if protocol == "anthropic":
-        assert requests[0].headers["x-api-key"] == "local-test"
-        assert body["max_tokens"] == 2048
-        assert body["tools"][0]["input_schema"]["type"] == "object"
-        assert body["tool_choice"] == options["tool_choice"]
-        assert body["metadata"] == options["metadata"]
-        assert requests[0].url.path == "/v1/messages"
-    elif protocol == "gemini":
-        assert requests[0].headers["x-goog-api-key"] == "local-test"
-        assert body["generationConfig"]["maxOutputTokens"] == 2048
-        assert "streamGenerateContent" in str(requests[0].url)
-        assert body["toolConfig"]["functionCallingConfig"]["mode"] == "AUTO"
-        assert body["safetySettings"] == options["safety_settings"]
-        calls = [
-            part
-            for message in body["contents"]
-            for part in message["parts"]
-            if "functionCall" in part
-        ]
-        assert calls
-        if stdio != "gemini":
-            assert "thoughtSignature" not in calls[0]
+    assert requests[0].headers["x-api-key"] == "local-test"
+    assert body["max_tokens"] == 2048
+    assert body["tools"][0]["input_schema"]["type"] == "object"
+    assert body["tool_choice"] == options["tool_choice"]
+    assert body["metadata"] == options["metadata"]
+    assert requests[0].url.path == "/v1/messages"
     assert all(not client.is_closed for client in http_clients)
     await llm.aclose()
     assert all(client.is_closed for client in http_clients)

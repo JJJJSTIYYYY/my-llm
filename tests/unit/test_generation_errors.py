@@ -1,11 +1,8 @@
 """Generation failures retain their meaning across rendering and SDK validation."""
 
-from copy import deepcopy
-
 import pytest
-from pydantic import ValidationError
 
-from my_llm import ConfigurationError, MyLLM, ResponseFailedError
+from my_llm import MyLLM, ResponseFailedError
 from tests.helpers.transport import FakeClient
 from tests.performance.workloads import profiles
 
@@ -81,24 +78,3 @@ async def test_partial_rendering_preserves_the_original_stream_error(
         if streaming:
             assert result.result is None
     assert client.closed
-
-
-@pytest.mark.parametrize("streaming", [False, True])
-@pytest.mark.parametrize(
-    "body", [{"temperature": "invalid"}, {"thinking_config": {"thinking_budget": "invalid"}}]
-)
-async def test_invalid_gemini_config_is_a_configuration_error_before_client_creation(
-    body, streaming
-):
-    original = deepcopy(body)
-    provider, model = profiles("gemini")
-    async with MyLLM(provider=provider, model=model, stdio_protocol="openai_chat") as llm:
-        with pytest.raises(ConfigurationError, match="invalid Gemini config") as caught:
-            await llm.generate(
-                messages=[{"role": "user", "content": "hello"}],
-                extra_body=body,
-                stream=streaming,
-            )
-        assert isinstance(caught.value.__cause__, ValidationError)
-        assert llm._client is None
-    assert body == original

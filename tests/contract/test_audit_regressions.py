@@ -4,14 +4,12 @@ import json
 from copy import deepcopy
 
 import pytest
-from google.genai import types
 
 from my_llm import (
     IncompleteStreamError,
     MyCodec,
     SemanticLossError,
 )
-from my_llm.codec.gemini.encoding.content import json_schema
 from my_llm.runtime.state import StreamState
 from tests.helpers.profiles import config
 from tests.helpers.protocols import PROTOCOLS, response_completed, stream_events
@@ -40,72 +38,6 @@ def native_events(protocol, events, *, source=False):
         (assert_native if source else assert_output_native)(
             projected, schema[event["type"]] if isinstance(schema, dict) else schema
         )
-
-
-@pytest.mark.parametrize("target", PROTOCOLS)
-def test_a01_gemini_native_schema_constraints_survive_explicit_normalization(
-    target, profile_factory
-):
-    incoming = types.Tool(
-        function_declarations=[
-            types.FunctionDeclaration(
-                name="f",
-                description="Function",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "items": types.Schema(
-                            type=types.Type.ARRAY,
-                            min_items=1,
-                            items=types.Schema(
-                                type=types.Type.STRING, nullable=True, enum=["a", "b"]
-                            ),
-                        )
-                    },
-                    required=["items"],
-                    property_ordering=["items"],
-                ),
-            )
-        ]
-    )
-    before = incoming.model_dump(mode="json", exclude_none=True)
-    codec = MyCodec()
-    encoded = codec.encode(tools=[incoming], input_format="gemini")
-    result = codec.decode(**encoded, target_format=target)["tools"]
-    assert_native(result[0], TOOL_TYPES[target])
-    normalized = codec.encode(tools=result, input_format=target)
-    schema = codec.decode(**normalized, target_format="openai_chat")["tools"][0]["function"][
-        "parameters"
-    ]
-    assert schema == {
-        "type": "object",
-        "properties": {
-            "items": {
-                "type": "array",
-                "minItems": 1,
-                "items": {"anyOf": [{"type": "string", "enum": ["a", "b"]}, {"type": "null"}]},
-            }
-        },
-        "required": ["items"],
-    }
-    assert incoming.model_dump(mode="json", exclude_none=True) == before
-
-
-def test_a01_schema_refs_counts_and_property_names_are_not_confused_with_keywords():
-    assert json_schema(
-        {
-            "type": "OBJECT",
-            "defs": {"OBJECT": {"type": "STRING"}},
-            "properties": {"type": {"ref": "#/defs/OBJECT"}},
-            "max_properties": "3",
-        }
-    ) == {
-        "type": "object",
-        "$defs": {"OBJECT": {"type": "string"}},
-        "properties": {"type": {"$ref": "#/$defs/OBJECT"}},
-        "maxProperties": 3,
-    }
-    assert json_schema({"unrepresentable_constraint": True}) == {}
 
 
 def refusal_events(source):
@@ -169,21 +101,6 @@ def test_a04_stop_sequence_is_preserved_natively_and_translates_to_chat_stop():
             )
 
 
-def test_a04_filtering_does_not_become_gemini_stop():
-    incoming = stream_events("openai_chat")
-    incoming[-2]["choices"][0]["finish_reason"] = "content_filter"
-    output, _ = render("openai_chat", "gemini", incoming)
-    native_events("gemini", output)
-    assert output[-1]["candidates"][0]["finish_reason"] == "SAFETY"
-
-
-def test_a05_source_control_fields_do_not_leak_into_chat():
-    codec = MyCodec()
-    text = [{"role": "model", "parts": [{"text": "Hello", "thought": False}]}]
-    result = codec.convert(text, input_format="gemini", target_format="openai_chat")["messages"]
-    assert result == [{"role": "assistant", "content": "Hello"}]
-
-
 def test_a07_citation_deltas_are_outside_the_supported_field_set():
     incoming = stream_events("anthropic")
     citation = {
@@ -212,18 +129,7 @@ def test_a07_citation_deltas_are_outside_the_supported_field_set():
 
 @pytest.mark.parametrize(
     "source,incoming",
-    [
-        (
-            "gemini",
-            [
-                {
-                    "role": "model",
-                    "parts": [{"text": "Thinking", "thought": True, "thought_signature": "c2ln"}],
-                }
-            ],
-        ),
-        ("openai_chat", [{"role": "assistant", "content": None, "reasoning_content": "Thinking"}]),
-    ],
+    [("openai_chat", [{"role": "assistant", "content": None, "reasoning_content": "Thinking"}])],
 )
 def test_a09_foreign_thinking_does_not_forge_an_anthropic_signature(source, incoming):
     with pytest.raises(SemanticLossError) as captured:
@@ -286,7 +192,6 @@ def test_a11_content_after_native_terminal_is_rejected(protocol):
             "index": 0,
             "delta": {"type": "text_delta", "text": "late"},
         },
-        "gemini": {"candidates": [{"content": {"role": "model", "parts": [{"text": "late"}]}}]},
     }[protocol]
     with pytest.raises(IncompleteStreamError, match="terminal"):
         render(protocol, protocol, [*incoming, late])
@@ -309,10 +214,6 @@ def test_foreign_thinking_streams_can_be_consumed_without_forged_signatures(sour
                 "delta": {"type": "signature_delta", "signature": "signed"},
             },
         )
-    elif source == "gemini":
-        native[0]["candidates"][0]["content"]["parts"] = [
-            {"text": "Thinking", "thought": True, "thought_signature": "c2ln"}
-        ]
     else:
         item = {
             "type": "reasoning",
@@ -350,7 +251,7 @@ def test_foreign_thinking_streams_can_be_consumed_without_forged_signatures(sour
     reconstructed.feed(MyCodec().encode(chunks=output, input_format=target)["chunks"])
     reconstructed.finish()
     assert "Thinking" in str(reconstructed.messages())
-    if source != target and target in ("anthropic", "gemini"):
+    if source != target and target in ("anthropic",):
         assert not any(event.get("delta", {}).get("type") == "signature_delta" for event in output)
 
 
@@ -471,17 +372,7 @@ def test_a07_deferred_citations_are_discarded_without_changing_text():
                 "choices": [],
                 "usage": {"prompt_tokens": 4, "completion_tokens": 5, "total_tokens": 9},
             },
-        ),
-        (
-            "gemini",
-            {
-                "usage_metadata": {
-                    "prompt_token_count": 4,
-                    "candidates_token_count": 5,
-                    "total_token_count": 9,
-                }
-            },
-        ),
+        )
     ],
 )
 def test_a11_documented_usage_tails_remain_legal(protocol, tail):
@@ -755,87 +646,26 @@ def test_response_stream_metadata_does_not_alias_request_state():
                 ],
             },
         ),
-        (
-            "gemini",
-            {
-                "role": "user",
-                "parts": [
-                    {"text": "before"},
-                    {"inline_data": {"mime_type": "image/png", "data": PNG}},
-                    {"text": "after"},
-                ],
-            },
-        ),
     ],
 )
 def test_source_image_roles_preserve_text_order_tool_images_and_origins(protocol, incoming, role):
     incoming = deepcopy(incoming)
     if role == "tool":
-        payload = {"result": "beforeafter"} if protocol == "gemini" else incoming["content"]
+        payload = incoming["content"]
         messages = application_result_history(protocol, payload)
-        if protocol == "gemini":
-            messages[-1]["parts"][0]["function_response"]["parts"] = [incoming["parts"][1]]
     else:
-        incoming["role"] = "model" if protocol == "gemini" and role == "assistant" else role
+        incoming["role"] = role
         messages = [incoming]
     original = deepcopy(messages)
     message = MyCodec().encode(messages, input_format=protocol).messages[-1]
     content = message.content[0].content if role == "tool" else message.content
-    assert "".join(part.text for part in content if part.type == "text") == (
-        '{"result": "beforeafter"}' if protocol == "gemini" and role == "tool" else "beforeafter"
-    )
+    assert "".join(part.text for part in content if part.type == "text") == ("beforeafter")
     images = [part for part in content if part.type == "image"]
     assert len(images) == (1 if role in ("user", "tool") else 0)
-    if role in ("user", "tool") and protocol != "gemini":
+    if role in ("user", "tool"):
         assert [part.type for part in content] == ["text", "image", "text"]
     if role != "tool":
-        field = "parts" if protocol == "gemini" else "content"
+        field = "content"
         assert content[-1].origin.path == f"$.messages[0].{field}[2]"
         assert content[-1].origin.value is incoming[field][2]
     assert messages == original
-
-
-def test_assistant_image_history_is_outside_the_supported_field_set(
-    profile_factory,
-):
-    from tests.helpers.schema import validate_request
-
-    codec = MyCodec()
-    incoming = [
-        {"role": "model", "parts": [{"inline_data": {"mime_type": "image/png", "data": PNG}}]},
-        {"role": "user", "parts": [{"text": "Describe it"}]},
-    ]
-    request = codec.request(
-        codec.encode(incoming, input_format="gemini"), profile_factory("openai_responses")
-    )
-    assert PNG not in str(request)
-    assert "input_image" not in str(request["input"])
-    assert request["input"][1]["content"] == [{"type": "input_text", "text": "Describe it"}]
-    validate_request("openai_responses", request)
-    assert_native(request["input"][0], MESSAGE_TYPES["openai_responses"])
-
-
-@pytest.mark.parametrize("target", ["openai_chat", "openai_responses"])
-def test_assistant_binary_media_is_discarded_without_semantic_loss(target):
-    incoming = [
-        {"role": "model", "parts": [{"inline_data": {"mime_type": "image/png", "data": PNG}}]}
-    ]
-    result = MyCodec().convert(incoming, input_format="gemini", target_format=target)
-    assert PNG not in str(result)
-    assert "image" not in str(result)
-
-
-def test_assistant_image_url_does_not_become_a_chat_text_reference():
-    incoming = [
-        {
-            "role": "model",
-            "parts": [
-                {"file_data": {"mime_type": "image/png", "file_uri": "https://example.com/a.png"}}
-            ],
-        }
-    ]
-    message = MyCodec().convert(incoming, input_format="gemini", target_format="openai_chat")[
-        "messages"
-    ][0]
-    assert message == {"role": "assistant", "content": None}
-    assert_native(message, MESSAGE_TYPES["openai_chat"])

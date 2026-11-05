@@ -297,11 +297,7 @@ async def test_all_native_protocol_pairs_repair_tools_before_sdk_validation(
     validate_request(target, request)
     if target == "openai_chat":
         assert_chat_tool_sequence(request["messages"])
-    native = (
-        request["input"]
-        if target == "openai_responses"
-        else (request["contents"] if target == "gemini" else request["messages"])
-    )
+    native = request["input"] if target == "openai_responses" else (request["messages"])
     restored = normalize(codec.encode(messages=native, input_format=target)["messages"])
     validate_history(restored)
     blocks = [b for m in restored for b in m["content"]]
@@ -378,10 +374,6 @@ async def test_native_idless_results_are_discarded_before_missing_results_are_pa
         messages[-1]["content"][0].pop("tool_use_id")
         messages[-1]["content"][0]["content"] = "discarded result"
         messages[-1]["content"].append({"type": "text", "text": "discarded sibling"})
-    elif source == "gemini":
-        messages[-1]["parts"][0]["function_response"].pop("id")
-        messages[-1]["parts"][0]["function_response"]["response"] = {"result": "discarded result"}
-        messages[-1]["parts"].append({"text": "discarded sibling"})
     else:
         messages[-1].pop("tool_call_id")
         messages[-1]["content"] = "discarded result"

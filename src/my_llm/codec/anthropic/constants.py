@@ -65,7 +65,6 @@ MIDDLEWARE_TEXT_IMAGE_TYPES = ("text", "image")
 THINKING_REDACTED_THINKING_TYPES = ("thinking", "redacted_thinking")
 MIDDLEWARE_TEXT_THINKING_TOOL_USE_TYPES = ("text", "thinking", "tool_use")
 ENABLED_ADAPTIVE_THINKING_MODES = ("enabled", "adaptive")
-MIDDLEWARE_TEXT_TOOL_USE_TYPES = ("text", "tool_use")
 MIDDLEWARE_TEXT_IMAGE_TOOL_USE_TYPES = ("text", "image", "tool_use")
 CONTENT_BLOCK_TYPE_TO_FIELDS = {
     "text": ("text",),

@@ -31,7 +31,6 @@ CASES = [
     ("openai_chat", "$.extra_body.temperature", {"temperature": None}),
     ("openai_responses", "$.extra_body.temperature", {"temperature": None}),
     ("anthropic", "$.temperature", {"temperature": None}),
-    ("gemini", "$.config.temperature", {"temperature": None}),
 ]
 
 

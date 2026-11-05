@@ -26,7 +26,6 @@ def test_native_usage_ignores_unparseable_values(protocol, value):
         ("openai_chat", {"prompt_tokens_details": "bad"}),
         ("openai_responses", {"input_tokens_details": []}),
         ("anthropic", {"input_tokens": 2, "cache_read_input_tokens": "bad"}),
-        ("gemini", {"prompt_token_count": True}),
     ],
 )
 def test_invalid_native_counter_or_nested_details_return_empty(protocol, usage):
@@ -87,10 +86,10 @@ async def test_malformed_native_usage_and_auxiliary_metadata_keep_the_response(
             *(event[k] for k in ("message", "response") if isinstance(event.get(k), dict)),
         ]
         for root in roots:
-            for name in ("usage", "usage_metadata"):
+            for name in ("usage",):
                 if name in root:
                     root[name] = {"malformed": True} if protocol == "anthropic" else "bad"
-            for name in ("id", "model", "model_version", "response_id", "created", "created_at"):
+            for name in ("id", "model", "created", "created_at"):
                 if name in root:
                     root[name] = ["invalid auxiliary value"]
     upstream = FakeStream(incoming)
@@ -107,11 +106,7 @@ async def test_malformed_native_usage_and_auxiliary_metadata_keep_the_response(
         monkeypatch.setattr(llm, "_get_client", lambda _: object())
         monkeypatch.setattr(type(llm.codec.transport(protocol)), "upstream", open_stream)
         result = await llm.generate(
-            messages=(
-                [{"role": "user", "parts": [{"text": "hello"}]}]
-                if protocol == "gemini"
-                else [{"role": "user", "content": "hello"}]
-            ),
+            messages=([{"role": "user", "content": "hello"}]),
             stream=streaming,
         )
         if streaming:

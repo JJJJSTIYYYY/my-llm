@@ -33,7 +33,9 @@ Middleware 另在每种上游验证三个策略场景：
 - `should_feedback_reasoning_item="none"` 时省略历史思维，不产生输入损失。
 - `should_feedback_reasoning_item="when_tool_calls"` 时省略没有工具调用的历史思维，不产生输入损失。
 
-一次全部成功共 45 个场景、57 次上游请求；失败和补跑会改变实际请求总数。
+原有测试共 45 个场景、57 次上游请求。新增的
+[输入修复与工具图片测试](input-e2e.md) 共 34 个场景、98 次请求，默认也会执行；
+完整成功运行合计 79 个场景、155 次请求。失败和补跑会改变实际请求总数。
 策略场景使用独立实例和 `hook` 策略；其他场景使用命令行指定的损失策略。
 汇总与流式模式都使用库的上游 SSE 执行路径，未独立验证供应商 HTTP 非流式响应。
 客户端和响应流通过异步上下文关闭，本例不独立测量连接资源泄漏。
@@ -52,6 +54,7 @@ Middleware 另在每种上游验证三个策略场景：
 | `--case capability_losses feedback_none feedback_when_tool_calls` | 仅测指定场景；策略场景只在 Middleware 格式运行 |
 | `--request-interval SECONDS` | 调整每次请求前的等待时间 |
 | `--semantic-loss-protocol raise` | 使用严格损失策略 |
+| `--validate` | 不读取密钥、不联网，检查新增输入用例的请求准备结果 |
 | `--retry-failed --report /tmp/sensenova-results.json` | 仅补跑本机报告中的未通过项；成功项保持不变，历史失败保留在 `previous_attempts` |
 
 Middleware 场景直接构造 `UserMessage` 与 `FunctionTool`，不通过原生转换生成输入。
@@ -122,6 +125,6 @@ Anthropic 上游的 11 个场景。加入请求间隔后补跑均不再限流；
 脚本现已在此类错误中包含最多 160 字符的正文片段，持久化前仍执行密钥脱敏。
 完整原生响应、思维正文和签名值未保留，不能从汇总还原这些内容。
 
-本例只验证不支持图片时的过滤，不验证上游视觉识别；也不覆盖结构化输出、并行工具、
+新增图片用例验证图文工具结果的搬移、占位及真实 API 接受情况，不验证视觉识别准确率；也不覆盖结构化输出、并行工具、
 开启思维的力度映射、服务端状态、取消或故障注入。
 Responses 工具定义显式带 `strict=False`；正文匹配不代表服务端完全关闭思维或协议转换无损。

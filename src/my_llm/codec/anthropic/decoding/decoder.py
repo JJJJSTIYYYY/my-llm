@@ -212,6 +212,8 @@ class AnthropicDecoder(BaseDecoder):
     ) -> list[dict]:
         """Render middleware history as Anthropic content-block messages.
 
+        Group and merge consecutive assistant items sourced from Responses into
+        one Anthropic message, sharing the group's reasoning-feedback decision.
         Apply capabilities and reasoning-feedback policy, replay native signatures
         only where representable, and record foreign reasoning/name losses.
         Tool calls and results stay as tool_use/tool_result content blocks; request

@@ -213,6 +213,8 @@ class ChatCompletionsDecoder(BaseDecoder):
     ) -> list[dict]:
         """Render middleware history as Chat messages with separate tool results.
 
+        Group and merge consecutive assistant items sourced from Responses into
+        one Chat message, sharing the group's reasoning-feedback decision.
         Apply capability and reasoning-feedback policies, collect assistant calls
         under tool_calls and group their role=tool results directly after them,
         preserving result arrival order and ordinary-message order. Convert

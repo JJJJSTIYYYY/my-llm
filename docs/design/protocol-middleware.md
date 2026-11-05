@@ -13,7 +13,7 @@ encoder 负责原生投影，decoder 负责目标表达，Transport 只执行 SD
 | 模型 | 完整字段 | 语义与归属 |
 | --- | --- | --- |
 | `ProtocolMiddleWare` | `messages`、`tools`、`stream`、`usage` | 通用转换容器；未提供为 `None`，显式空集合保留；`stream` 字典投影键为 `chunks` |
-| `Message` | `role`、`content`、`name`、`protocol`、`item`、`coalesce`、`origin` | `role/content` 通用；`name` 由 Chat 表达；`protocol` 标识来源；`item` 为可选源项身份；`coalesce` 用于 Responses 项合并；`origin` 属运行时定位 |
+| `Message` | `role`、`content`、`name`、`protocol`、`item`、`origin` | `role/content` 通用；`name` 由 Chat 表达；`protocol` 标识来源；`item` 为可选源项身份；`origin` 属运行时定位 |
 | `UserMessage` | 继承 `Message` 全部字段，无新增字段 | `role=user`；有序文本和图片 |
 | `InstructionMessage` | 继承 `Message` 全部字段，无新增字段 | `role=system / developer`；有序文本 |
 | `AssistantMessage` | 继承 `Message` 全部字段，无新增字段 | `role=assistant`；有序文本、思维和工具调用 |
@@ -35,6 +35,9 @@ encoder 负责原生投影，decoder 负责目标表达，Transport 只执行 SD
 `call_id` 关联调用和结果，`source_ref=(scope, index, part)` 定位流中的块，
 元数据中的 `response_id` 标识整个响应。它们具有不同作用域。
 Responses decoder 按内容项边界分组，内容未提供身份时使用消息身份；空消息仍可保留消息身份。
+共享分组函数内部识别连续的 Responses 来源 assistant 项，无需 decoder 传入分组协议。
+Chat、Anthropic 合并组内内容；Responses 保留独立项与身份，但按组判断工具调用所需的推理回传；其他来源消息逐条处理。
+公共消息模型不携带合并指令；角色或来源协议变化即结束分组。
 
 图片仅支持用户消息和工具结果。工具结果中的对象 / 数组可以序列化为文本；图片不能
 序列化成工具文本。audio、file、refusal、citations、用户 metadata、cache_control 等

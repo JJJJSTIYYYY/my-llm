@@ -7,6 +7,8 @@ from my_llm.codec.shared.capabilities import content_capability, supports_conten
 from my_llm.codec.shared.conversion import select
 from my_llm.profile.resolution import ResolvedProfile
 
+_RESPONSES_ASSISTANT_ITEM_PROTOCOL = "openai_responses"
+
 
 def without_feedback(block: dict) -> dict:
     """Discard an untranslatable native reasoning item at the decoder boundary."""
@@ -76,14 +78,17 @@ def feedback_reasoning(profile: ResolvedProfile | None, *, has_tool_calls: bool)
 
 
 def _message_groups(messages: Iterable[dict]) -> Iterator[list[tuple[int, dict]]]:
-    """Buffer only consecutive fragments belonging to one assistant turn."""
+    """Group consecutive assistant items originating from Responses.
+
+    Other messages form individual groups and end the current assistant group.
+    """
     pending = []
     for index, message in enumerate(messages):
         if pending and not (
-            pending[-1][1].get("coalesce")
-            and message.get("coalesce")
-            and pending[-1][1]["role"] == message["role"] == "assistant"
-            and pending[-1][1].get("protocol") == message.get("protocol")
+            pending[-1][1]["role"] == message["role"] == "assistant"
+            and pending[-1][1].get("protocol")
+            == message.get("protocol")
+            == _RESPONSES_ASSISTANT_ITEM_PROTOCOL
         ):
             yield pending
             pending = []
@@ -93,11 +98,18 @@ def _message_groups(messages: Iterable[dict]) -> Iterator[list[tuple[int, dict]]
 
 
 def message_feedback(
-    messages: Iterable[dict], profile: ResolvedProfile | None, *, coalesce: bool = True
+    messages: Iterable[dict],
+    profile: ResolvedProfile | None,
+    *,
+    merge: bool = True,
 ) -> Iterator[tuple[int, dict, bool]]:
-    """Group history once for feedback and optional native message coalescing.
+    """Group history once for reasoning feedback and optional message merging.
 
-    Set coalesce=False when the target preserves separate native items and IDs.
+    Consecutive assistant items originating from Responses share a group; other
+    messages are handled individually. A tool call in the group enables reasoning
+    feedback for all its items under when_tool_calls.
+    merge combines each group's content in order. With merge=False, grouping
+    only controls feedback, preserving separate messages and native item IDs.
     Original messages and their content remain borrowed until native rendering.
     """
     tool_feedback = (
@@ -105,7 +117,7 @@ def message_feedback(
         and supports_content("thinking", profile)
         and profile.get("should_feedback_reasoning_item") == "when_tool_calls"
     )
-    if not coalesce and not tool_feedback:
+    if not merge and not tool_feedback:
         feedback = feedback_reasoning(profile, has_tool_calls=False)
         for index, message in enumerate(messages):
             yield index, message, feedback
@@ -115,12 +127,12 @@ def message_feedback(
             block["type"] == "tool_use" for _, message in group for block in message["content"]
         )
         feedback = feedback_reasoning(profile, has_tool_calls=has_calls)
-        if coalesce and len(group) > 1:
+        if merge and len(group) > 1:
             index, first = group[0]
             yield (
                 index,
                 {
-                    **select(first, "protocol", "coalesce", "role", "name", "item"),
+                    **select(first, "protocol", "role", "name", "item"),
                     "content": [block for _, message in group for block in message["content"]],
                 },
                 feedback,

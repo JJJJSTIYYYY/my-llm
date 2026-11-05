@@ -254,7 +254,7 @@ async def print_stream(llm, prompt):
 
 | 类型 | 公开契约 |
 | --- | --- |
-| `Message`、`UserMessage`、`AssistantMessage`、`InstructionMessage` | `role` 与有序 `content`；可选 `name`、来源 `protocol`、`item`、`coalesce`、`origin`；具体类型不增加字段 |
+| `Message`、`UserMessage`、`AssistantMessage`、`InstructionMessage` | `role` 与有序 `content`；可选 `name`、来源 `protocol`、`item`、`origin`；具体类型不增加字段 |
 | `TextContent` | `text`；固定 `type="text"`，可选 `item`、`origin` |
 | `ImageContent`、`ImageSource` | 图片内容的 `source`、固定 `type="image"`、可选 `item/origin`；来源的 `type="url" / "base64"` 及 `url/data/media_type`；用户消息和工具结果可使用 |
 | `ReasoningContent` | 可选 `reasoning: str \| None`、`feedback_item: Any \| None`、`item`、`origin`；固定 `type="thinking"`。可见文本实时输出，回传值保留原生对象，跨协议丢弃并记录损失 |

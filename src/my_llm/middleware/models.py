@@ -230,7 +230,6 @@ class Message(ProtocolValue):
     name: str | None = None
     protocol: str | None = None
     item: ItemIdentity | None = None
-    coalesce: bool = False
     origin: Origin | None = dataclass_field(default=None, repr=False)
 
     def to_wire(self) -> dict:
@@ -239,8 +238,6 @@ class Message(ProtocolValue):
         for key in ("name", "protocol"):
             if (value := getattr(self, key)) is not None:
                 result[key] = value
-        if self.coalesce:
-            result["coalesce"] = True
         return _located(_with_item(result, self.item), self.origin)
 
 
@@ -283,8 +280,6 @@ class ToolMessage(Message):
         }
         if self.protocol is not None:
             result["protocol"] = self.protocol
-        if self.coalesce:
-            result["coalesce"] = True
         return _located(result, self.origin)
 
 
@@ -324,7 +319,6 @@ def messages_from_validated_wire(values: list) -> list[Message]:
                     raw.get("name"),
                     protocol,
                     _item(raw),
-                    bool(raw.get("coalesce")),
                     origin,
                 )
             )
@@ -345,7 +339,6 @@ def messages_from_validated_wire(values: list) -> list[Message]:
                     block.get("name"),
                     protocol,
                     _item(block),
-                    bool(raw.get("coalesce")),
                     block_origin,
                     call_id=block["tool_use_id"],
                 )

@@ -84,8 +84,9 @@ async def test_feedback_selects_history_without_semantic_loss(
 
 
 @pytest.mark.parametrize("target", ["openai_chat", "openai_responses"])
+@pytest.mark.parametrize("input_format", ["openai_responses", "middleware"])
 async def test_tool_feedback_keeps_split_responses_reasoning_and_native_item_ids(
-    profile_factory, target
+    profile_factory, target, input_format
 ):
     messages = [
         {
@@ -117,6 +118,34 @@ async def test_tool_feedback_keeps_split_responses_reasoning_and_native_item_ids
         },
         {"type": "function_call_output", "call_id": "c", "output": "tool result"},
     ]
+    if input_format == "middleware":
+        from my_llm import ItemIdentity
+
+        messages = [
+            AssistantMessage(
+                "assistant",
+                [ReasoningContent("plain reasoning", feedback_item=messages[0])],
+                protocol="openai_responses",
+            ),
+            UserMessage("user", [TextContent("next question")]),
+            AssistantMessage(
+                "assistant",
+                [ReasoningContent("tool reasoning", feedback_item=messages[2])],
+                protocol="openai_responses",
+            ),
+            AssistantMessage(
+                "assistant",
+                [TextContent("checking")],
+                protocol="openai_responses",
+                item=ItemIdentity(id="message-id", status="completed"),
+            ),
+            AssistantMessage(
+                "assistant",
+                [ToolCall("c", "f", {}, item=ItemIdentity(id="function-id"))],
+                protocol="openai_responses",
+            ),
+            ToolMessage("user", [TextContent("tool result")], call_id="c"),
+        ]
     before = deepcopy(messages)
     codec = MyCodec("ignore") if target != "openai_responses" else MyCodec()
     draft = (
@@ -127,7 +156,7 @@ async def test_tool_feedback_keeps_split_responses_reasoning_and_native_item_ids
                 should_feedback_reasoning_item=config("when_tool_calls"),
                 supports_function_calling=config(True),
             ),
-            input_format="openai_responses",
+            input_format=input_format,
             client={},
         )
     )["request"]

@@ -73,6 +73,7 @@ async def test_offline_request_pipeline_example():
 async def test_sensenova_example_scenarios_with_local_sdk(monkeypatch, stdio, case):
     import runpy
 
+    monkeypatch.syspath_prepend(str(ROOT / "examples"))
     example = runpy.run_path(str(ROOT / "examples/sensenova_e2e.py"))
     clients, requests = [], []
 
@@ -140,6 +141,7 @@ async def test_sensenova_retry_preserves_passed_rows_and_failure_history(
     import runpy
     from types import SimpleNamespace
 
+    monkeypatch.syspath_prepend(str(ROOT / "examples"))
     example = runpy.run_path(str(ROOT / "examples/sensenova_e2e.py"))
     completed = {
         "upstream": "openai_chat",

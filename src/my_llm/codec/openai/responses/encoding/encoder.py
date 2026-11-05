@@ -208,7 +208,6 @@ class ResponsesEncoder(BaseEncoder):
             result.append(
                 {
                     "protocol": constants.PROTOCOL,
-                    "coalesce": True,
                     "role": role,
                     "content": content,
                     **(item_identity if kind == "message" else {}),

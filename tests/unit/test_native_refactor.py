@@ -372,7 +372,7 @@ def test_responses_message_item_identity_survives_empty_and_multiple_parts(conte
     assert [part["text"] for part in restored[0]["content"]] == [part["text"] for part in content]
 
 
-def test_responses_nested_identity_keeps_coalesced_message_boundaries():
+def test_responses_nested_identity_keeps_merged_message_boundaries():
     from my_llm import AssistantMessage
 
     codec = MyCodec()
@@ -397,6 +397,38 @@ def test_responses_nested_identity_keeps_coalesced_message_boundaries():
     restored = codec.decode([combined], target_format="openai_responses")["messages"]
     assert [item["id"] for item in restored] == ["first", "second"]
     assert [[part["text"] for part in item["content"]] for item in restored] == [["a", "b"], ["c"]]
+
+
+@pytest.mark.parametrize("source", [None, *PROTOCOLS])
+@pytest.mark.parametrize("target", PROTOCOLS)
+def test_decoder_groups_assistant_items_by_source_protocol_without_crossing_boundaries(
+    source, target
+):
+    from my_llm import AssistantMessage, TextContent, UserMessage
+
+    messages = [
+        AssistantMessage("assistant", [TextContent("a")], protocol=source),
+        AssistantMessage("assistant", [TextContent("b")], protocol=source),
+        UserMessage("user", [TextContent("break")]),
+        AssistantMessage("assistant", [TextContent("c")], protocol=source),
+        AssistantMessage("assistant", [TextContent("d")], protocol="other"),
+        AssistantMessage("assistant", [TextContent("e")], protocol=source),
+    ]
+    before = deepcopy(messages)
+    restored = MyCodec().decode(messages, target_format=target)["messages"]
+    texts = [
+        message["content"]
+        if isinstance(message["content"], str)
+        else "".join(part["text"] for part in message["content"])
+        for message in restored
+    ]
+    expected = (
+        ["ab", "break", "c", "d", "e"]
+        if source == "openai_responses" and target != "openai_responses"
+        else ["a", "b", "break", "c", "d", "e"]
+    )
+    assert texts == expected
+    assert messages == before
 
 
 def test_responses_user_image_has_the_same_item_identity_as_text():

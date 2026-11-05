@@ -181,7 +181,6 @@ def test_all_message_fields_survive_roundtrip(model, role, content):
         "name": "named-message",
         "protocol": "example",
         "item": identity(),
-        "coalesce": True,
     }
     if model is ToolMessage:
         supplied["call_id"] = "call-3"

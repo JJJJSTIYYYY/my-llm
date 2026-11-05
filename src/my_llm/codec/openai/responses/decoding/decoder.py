@@ -163,6 +163,8 @@ class ResponsesDecoder(BaseDecoder):
     ) -> list[dict]:
         """Render history as Responses message, reasoning and function items.
 
+        Group consecutive assistant items sourced from Responses only to decide
+        reasoning feedback; merge=False keeps those items separate in the output.
         Preserve native item identity and ordering rather than coalescing assistant
         fragments. Foreign blocks pass through Responses compatibility handling.
         Generate fallback item identities independently for cached incremental
@@ -173,7 +175,7 @@ class ResponsesDecoder(BaseDecoder):
         # Each incremental batch needs distinct generated identities; explicit
         # native item IDs below continue to take precedence over these fallbacks.
         id_prefix = f"{uuid4().hex}_" if parameters.get("enable_message_cache", False) else ""
-        for index, message, feedback in message_feedback(messages, profile, coalesce=False):
+        for index, message, feedback in message_feedback(messages, profile, merge=False):
             if message.get("name") is not None:
                 content_capability(
                     message["name"],

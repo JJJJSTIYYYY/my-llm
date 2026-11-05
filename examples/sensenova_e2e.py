@@ -2,6 +2,7 @@
 
 Run: uv run python examples/sensenova_e2e.py --report /tmp/sensenova-results.json
 Reads SENSENOVA_API_KEY or prompts without echo. Never persists credentials.
+Official reference: https://platform.sensenova.cn/docs
 """
 
 import argparse
@@ -14,6 +15,8 @@ import time
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
+
+from e2e_inputs import IMAGE_CASES, INPUT_CASES, REASONING_CASES, eligible, input_scenario
 
 from my_llm import (
     AssistantMessage,
@@ -52,16 +55,15 @@ def config(value):
     return Config(default_value=value)
 
 
-def provider(protocol, key):
+def provider(protocol, key, *, reasoning=False):
     """Use existing public configuration for the compatible upstream APIs."""
     body = {
-        "openai_chat": {"reasoning_effort": "none"},
-        "openai_responses": {"reasoning": {"effort": "none"}},
-        "anthropic": {"thinking": {"type": "disabled"}},
+        "openai_chat": {"reasoning_effort": "low" if reasoning else "none"},
+        "openai_responses": {"reasoning": {"effort": "low" if reasoning else "none"}},
+        "anthropic": {"thinking": {"type": "enabled" if reasoning else "disabled"}},
     }[protocol]
     overrides = {}
     if protocol == "openai_chat":
-        overrides["max_tokens"] = InputParameter(path="$.max_tokens", default_value=512)
         overrides["reasoning_effort"] = InputParameter(path="$.reasoning_effort")
         # SenseNova's Chat stream uses reasoning rather than reasoning_content.
         overrides["reasoning_content"] = OutputParameter(
@@ -77,9 +79,22 @@ def provider(protocol, key):
             default_value=f"Bearer {key}" if protocol == "anthropic" else key,
         ),
         extra_body=config(body),
+        max_tokens=InputParameter(
+            path="$.max_output_tokens" if protocol == "openai_responses" else "$.max_tokens",
+            default_value=1024,
+        ),
         timeout=config(60.0),
         max_retries=config(0),
         **overrides,
+    )
+
+
+def model_profile(model_id, case=None):
+    return ModelProfile(
+        model=Attribute(default_value=model_id),
+        supports_function_calling=config(True),
+        supports_vision=config(case == "tool_result_images"),
+        should_feedback_reasoning_item=config("when_tool_calls"),
     )
 
 
@@ -169,7 +184,7 @@ def tool_turn(protocol, result):
 async def consume(llm, *, stream, request_interval=0.0, **kwargs):
     if request_interval:
         await asyncio.sleep(request_interval)
-    result = await llm.generate(stream=stream, max_tokens=512, **kwargs)
+    result = await llm.generate(stream=stream, **kwargs)
     if not stream:
         return result, []
     events = []
@@ -339,35 +354,49 @@ async def policy_scenario(upstream, model_id, key, case, *, request_interval=0.0
     }
 
 
-async def run(args, key):
+async def run(
+    args,
+    key,
+    *,
+    provider_factory=provider,
+    model_factory=model_profile,
+    endpoint="https://token.sensenova.cn",
+):
     report = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "model": args.model,
-        "endpoint": "https://token.sensenova.cn",
+        "endpoint": endpoint,
+        "mode": "offline" if getattr(args, "validate", False) else "live",
         "results": [],
     }
     if args.retry_failed:
-        report = json.loads(args.report.read_text())
-        if report["model"] != args.model:
+        previous_report = json.loads(args.report.read_text())
+        if previous_report["model"] != args.model:
             raise ValueError("retry model must match the existing report")
+        for field in ("mode", "endpoint"):
+            if field in previous_report and previous_report[field] != report[field]:
+                raise ValueError(f"retry {field} must match the existing report")
+        report = previous_report
         report["retry_timestamp"] = datetime.now(timezone.utc).isoformat()
     report["semantic_loss_protocol"] = args.semantic_loss_protocol
     positions = {
         (row["upstream"], row["stdio"], row["case"]): index
         for index, row in enumerate(report["results"])
     }
-    model = ModelProfile(
-        model=Attribute(default_value=args.model), supports_function_calling=config(True)
-    )
+    model = model_factory(args.model)
     for upstream in args.upstream or PROTOCOLS:
         for stdio in args.stdio or STDIO_PROTOCOLS:
             async with MyLLM(
-                provider=provider(upstream, key),
+                provider=provider_factory(upstream, key),
                 model=model,
                 stdio_protocol=stdio,
                 semantic_loss_protocol=args.semantic_loss_protocol,
             ) as llm:
-                cases = (*BASE_CASES, *POLICY_CASES) if stdio == "middleware" else BASE_CASES
+                cases = (
+                    *BASE_CASES,
+                    *(POLICY_CASES if stdio == "middleware" else ()),
+                    *(case for case in INPUT_CASES if eligible(upstream, stdio, case)),
+                )
                 for case in cases:
                     if args.case and case not in args.case:
                         continue
@@ -376,7 +405,9 @@ async def run(args, key):
                         "stdio": stdio,
                         "case": case,
                         "semantic_loss_protocol": (
-                            "hook" if case in POLICY_CASES else args.semantic_loss_protocol
+                            "hook"
+                            if case in (*POLICY_CASES, *IMAGE_CASES)
+                            else args.semantic_loss_protocol
                         ),
                     }
                     position = positions.get((upstream, stdio, case))
@@ -393,19 +424,32 @@ async def run(args, key):
                             },
                         ]
                     started = time.monotonic()
+                    evidence = {}
                     try:
-                        operation = (
-                            policy_scenario(
+                        if case in INPUT_CASES:
+                            operation = input_scenario(
+                                provider_factory(upstream, key, reasoning=case in REASONING_CASES),
+                                model_factory(args.model, case),
+                                stdio,
+                                case,
+                                request_interval=args.request_interval,
+                                offline=getattr(args, "validate", False),
+                                semantic_loss_protocol=args.semantic_loss_protocol,
+                                evidence=evidence,
+                            )
+                        elif case in POLICY_CASES:
+                            operation = policy_scenario(
                                 upstream,
                                 args.model,
                                 key,
                                 case,
                                 request_interval=args.request_interval,
                             )
-                            if case in POLICY_CASES
-                            else scenario(llm, stdio, case, request_interval=args.request_interval)
-                        )
-                        row.update(await asyncio.wait_for(operation, 150))
+                        else:
+                            operation = scenario(
+                                llm, stdio, case, request_interval=args.request_interval
+                            )
+                        row.update(await asyncio.wait_for(operation, 300))
                         row["status"] = "passed"
                     except Exception as exc:
                         # Never persist SDK request headers, profiles or tracebacks.
@@ -415,6 +459,7 @@ async def run(args, key):
                             error_type=type(exc).__name__,
                             error=re.sub(r"sk-[A-Za-z0-9_-]+", "[REDACTED]", error)[:1500],
                         )
+                    row.update(evidence)
                     row["seconds"] = round(time.monotonic() - started, 3)
                     if position is None:
                         report["results"].append(row)
@@ -424,6 +469,8 @@ async def run(args, key):
                     if args.report:
                         args.report.parent.mkdir(parents=True, exist_ok=True)
                         args.report.write_text(json.dumps(report, indent=2) + "\n")
+    if not report["results"]:
+        raise ValueError("no cases match the selected upstream protocols and input formats")
     failed = sum(row["status"] != "passed" for row in report["results"])
     print(f"{len(report['results']) - failed} passed, {failed} failed", flush=True)
     return bool(failed)
@@ -434,17 +481,28 @@ def main():
     parser.add_argument("--model", default=MODEL)
     parser.add_argument("--upstream", nargs="+", choices=PROTOCOLS)
     parser.add_argument("--stdio", nargs="+", choices=STDIO_PROTOCOLS)
-    parser.add_argument("--case", nargs="+", choices=(*BASE_CASES, *POLICY_CASES))
+    parser.add_argument("--case", nargs="+", choices=(*BASE_CASES, *POLICY_CASES, *INPUT_CASES))
+    parser.add_argument(
+        "--validate", action="store_true", help="prepare input cases without network"
+    )
     parser.add_argument("--report", type=Path)
     parser.add_argument("--request-interval", type=float, default=3.0, metavar="SECONDS")
     parser.add_argument("--retry-failed", action="store_true")
     parser.add_argument("--semantic-loss-protocol", choices=("raise", "ignore"), default="ignore")
     args = parser.parse_args()
+    if args.validate:
+        if args.case and any(case not in INPUT_CASES for case in args.case):
+            parser.error("--validate supports input cases only")
+        args.case = args.case or INPUT_CASES
     if args.request_interval < 0:
         parser.error("--request-interval must be nonnegative")
     if args.retry_failed and (args.report is None or not args.report.is_file()):
         parser.error("--retry-failed requires an existing --report file")
-    key = os.environ.get("SENSENOVA_API_KEY") or getpass.getpass("SenseNova API key: ")
+    key = (
+        "offline-validation-only"
+        if args.validate
+        else os.environ.get("SENSENOVA_API_KEY") or getpass.getpass("SenseNova API key: ")
+    )
     if not key.strip():
         parser.error("SENSENOVA_API_KEY is required")
     raise SystemExit(asyncio.run(run(args, key)))

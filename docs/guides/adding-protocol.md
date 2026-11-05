@@ -30,7 +30,8 @@ Decoder 的消息循环通过 `codec.shared.input.message_feedback(messages, pro
 `(index, message, feedback)`，在原有内容循环内调用 `input_content(block, profile, feedback=feedback)`，
 返回 False 时跳过该块。工具结果中的图片也在翻译子内容时调用 `input_content`。
 `codec.shared.capabilities` 统一判断内容能力并记录不支持的原因；原生值可传入内容种类与来源路径复用检查。
-`message_feedback` 在一次分组中完成消息合并与回传判断；需要保留原生 item 身份时传 `coalesce=False`。
+`message_feedback` 内部固定对连续的 Responses 来源 assistant 项分组，完成消息合并与回传判断；其他消息逐条处理。
+Chat、Anthropic 默认合并组内内容；Responses 传 `merge=False`，仅按组判断回传，保留原生 item 身份。调用方无需指定来源分组协议。
 回传策略排除的思考不记录损失；能力损失与协议原生限制一同交给完整 draft 的 adaptor 处理。
 公开 messages / tools 捕获独立结果；内部 Decoder.request 直接调用私有钩子，
 由最终 native_request 捕获 SDK 需要的可变内容，避免先复制公开转换结果再复制请求。
@@ -190,7 +191,7 @@ MyCodec / MyLLM 实例保留创建时的注册快照；注册新协议后需创�
 公开中间态是具体 ProtocolMiddleWare 及类型化模型；临时字典仅服务原生解析和组装。应用历史仍使用原生协议值。
 
 - 中间态只包含已识别字段；未声明的非标准字段直接跳过，不读取、不校验，也不逐项扫描检查未知键。
-- protocol 字符串记录必要的来源语义，Responses 的 coalesce 标志控制已识别内容的合并；不保存原始对象或事件。
+- protocol 字符串记录必要的来源语义；共享函数据此识别 Responses 项分组，各 decoder 选择是否合并，不在公共模型保存合并指令或原始对象、事件。
 - functions 表示规范化工具声明，参数、结果及工具 JSON Schema 的开放键值完整保留。
 - conversion.encode_functions / decode_functions 管理工具声明；stream 管理原生事件操作与用量计数。
 - 流控制数据只保留中间协议明确声明的 id、模型、终止与回放分组身份；不能通过 metadata 钩子扩展用户 metadata 支持。

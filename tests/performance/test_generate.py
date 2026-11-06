@@ -9,6 +9,7 @@ import pytest
 from my_llm import MyLLM
 from tests.helpers.protocols import PROTOCOLS
 from tests.performance import gc_diagnostic, middleware
+from tests.performance.preparation import measure as measure_preparation
 from tests.performance.request_chain import probe
 from tests.performance.runner import benchmark, measure
 from tests.performance.transport import LocalSDK, wire_frames
@@ -29,6 +30,19 @@ CASES = [
     *[(protocol, protocol, True) for protocol in PROTOCOLS],
     *[(upstream, stdio, False) for upstream in PROTOCOLS for stdio in PROTOCOLS],
 ]
+
+
+@pytest.mark.parametrize("protocol", PROTOCOLS)
+@pytest.mark.parametrize("mode", ["uncached", "incremental", "repeat"])
+async def test_preparation_benchmark_keeps_history_stable_without_sdk_clients(protocol, mode):
+    workload = build(protocol, protocol, SMALL, native=True)
+    original = deepcopy((workload.messages, workload.tools))
+    report = await measure_preparation(workload, mode, iterations=2, warmup=1)
+    assert report["input_messages"] == len(workload.messages)
+    assert report["delta_messages"] == 1
+    assert report["median_ms"] > 0
+    assert len(report["samples"]) == 2
+    assert (workload.messages, workload.tools) == original
 
 
 @pytest.mark.parametrize("upstream,stdio,native", CASES)

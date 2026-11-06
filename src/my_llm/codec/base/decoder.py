@@ -318,7 +318,8 @@ class BaseDecoder(ABC):
     def filter_messages(self, messages: list, profile: ResolvedProfile, **parameters: Any) -> list:
         """Filter native messages through one shared per-message pipeline.
 
-        Protocol hooks supply any grouping context and adapt one message at a time.
+        Input messages are borrowed and must not be mutated. Protocol hooks supply
+        any grouping context and adapt one message at a time.
         Capability filtering and SDK field projection run in the same outer loop
         for all protocols, including translated and cached history. Returned values
         own mutable payloads; native_request validates their final SDK shapes after

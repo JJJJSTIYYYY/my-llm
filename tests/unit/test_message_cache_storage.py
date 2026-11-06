@@ -7,6 +7,7 @@ import pytest
 
 from my_llm import ConfigurationError
 from my_llm.cache import MessageCache
+from my_llm.codec.openai.chat.decoding.decoder import ChatCompletionsDecoder
 
 
 def test_cache_owns_batches_and_independent_message_snapshots():
@@ -86,16 +87,20 @@ def test_retry_fingerprint_is_last_batch_only_and_released_with_history():
         assert cache.get("session") == messages
 
 
-def test_staged_translation_is_published_independently_of_request_and_hook_edits():
+def test_staged_translation_is_published_independently_of_filtered_request(profile_factory):
     cache = MessageCache()
-    cache.update("session", [{"content": "first"}])
+    cache.update("session", [{"role": "user", "content": "first"}])
     batch = cache.batch("session")
-    request_messages = batch.append([{"content": "second"}])
-    assert cache.get("session") == [{"content": "first"}]
-    request_messages[1]["content"] = "request edit"
+    staged = batch.append([{"role": "user", "content": [{"type": "text", "text": "second"}]}])
+    assert cache.get("session") == [{"role": "user", "content": "first"}]
+    request_messages = ChatCompletionsDecoder().filter_messages(staged, profile_factory())
+    request_messages[1]["content"][0]["text"] = "request edit"
     batch.commit()
     request_messages.append({"content": "hook edit"})
-    assert cache.get("session") == [{"content": "first"}, {"content": "second"}]
+    assert cache.get("session") == [
+        {"role": "user", "content": "first"},
+        {"role": "user", "content": [{"type": "text", "text": "second"}]},
+    ]
 
 
 def test_unpublished_batch_does_not_change_history_or_retry_identity():

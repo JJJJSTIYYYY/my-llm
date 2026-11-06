@@ -12,6 +12,54 @@ from tests.performance.request_chain import caches
 from tests.performance.workloads import controls, profiles, user_message
 
 
+async def test_cached_nested_arguments_are_captured_only_for_storage_and_final_request():
+    copies = []
+
+    class Arguments(dict):
+        def __deepcopy__(self, memo):
+            copies.append(1)
+            result = type(self)()
+            memo[id(self)] = result
+            result.update(deepcopy(dict(self), memo))
+            return result
+
+    arguments = Arguments(records=[{"value": "original"}])
+    messages = [
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "call", "name": "f", "input": arguments}],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "call", "content": "ok"}],
+        },
+    ]
+    provider, model = profiles("anthropic")
+    async with MyLLM(
+        provider=provider, model=model, stdio_protocol="anthropic", enable_message_cache=True
+    ) as llm:
+
+        async def prepare():
+            return await llm.codec.prepare(
+                {"messages": messages, "tools": None, "stream": True},
+                llm.resolved_profile,
+                input_format="anthropic",
+                client=llm.client_parameters,
+                enable_message_cache=True,
+                message_cache_key=llm._message_cache_key,
+            )
+
+        first = await prepare()
+        assert len(copies) == 2
+        first["request"]["messages"][0]["content"][0]["input"]["records"][0]["value"] = "edited"
+        second = await prepare()
+        assert len(copies) == 3
+        assert second["request"]["messages"][0]["content"][0]["input"]["records"] == [
+            {"value": "original"}
+        ]
+        assert arguments == {"records": [{"value": "original"}]}
+
+
 @pytest.mark.parametrize("upstream", PROTOCOLS)
 @pytest.mark.parametrize("stdio", (*PROTOCOLS, "middleware"))
 async def test_warm_incremental_prepare_skips_old_translation_and_type_compilation(

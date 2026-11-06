@@ -123,15 +123,16 @@ class MessageCacheBatch:
         self._history: _History | None = None
 
     def append(self, messages: list) -> list:
-        """Stage this translated batch with prior history and return an owned snapshot.
+        """Stage owned translated input and lend the complete history for assembly.
 
         Called after association validation of the current middleware batch. Prior
         native history is reused without retranslation or association validation.
         A matching last-input fingerprint reuses history for a retry. Publication
-        waits for commit; mutating the returned request cannot alter staged history.
+        waits for commit. The returned history is borrowed and must not be mutated;
+        the decoder's final filtering creates the independent request payload.
         """
         self._history = self._cache._extend(self._key, messages, self._fingerprint)
-        return capture(self._history.messages)
+        return self._history.messages
 
     def commit(self) -> None:
         """Publish the staged translation without retaining adaptor/hook edits."""

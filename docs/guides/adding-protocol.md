@@ -79,6 +79,8 @@ MyCodec.request 是离线原生请求入口，共用 Decoder 请求流程；完�
 InputPolicy 在本次过滤开始时读取固定的模型能力和推理反馈配置，逐条检查仍保留损失来源与路径。
 message_transform、缓存和扩展 Decoder 产生的消息都经过该循环；返回后仍做最终 SDK Schema 校验，
 也会检查 filter_messages 自定义覆盖所作的修改。
+缓存历史直接只读借给组装和过滤流程，不预先复制完整历史；过滤结果才是本次请求独立拥有的数据。
+扩展 `assemble_request`、`filter_messages` 和 `_filter_message` 时均不可原地修改借入的消息或嵌套内容。
 usage_mode 是开放字符串，接受的具体值由 Decoder.usage_modes 声明。
 不支持的非空模式不在构造期拒绝，而在准备请求时记录语义损失；空字符串或错误类型仍是配置错误。
 

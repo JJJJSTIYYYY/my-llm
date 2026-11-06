@@ -57,10 +57,27 @@ jobs:
         run: |
           uv venv "$RUNNER_TEMP/my-llm-py-wheel" --python 3.12
           wheels=(dist/*.whl)
+
           uv pip install --python "$RUNNER_TEMP/my-llm-py-wheel/bin/python" "${wheels[0]}"
-          "$RUNNER_TEMP/my-llm-py-wheel/bin/python" -I -c 'from my_llm import MyCodec; assert not MyCodec().codecs'
+          "$RUNNER_TEMP/my-llm-py-wheel/bin/python" -I -c '
+          from my_llm import MyCodec
+
+          assert not MyCodec().codecs
+          '
+
           uv pip install --python "$RUNNER_TEMP/my-llm-py-wheel/bin/python" "${wheels[0]}[all]"
-          "$RUNNER_TEMP/my-llm-py-wheel/bin/python" -I -c 'import my_llm; from importlib.metadata import version; assert my_llm.__version__ == version("my-llm-py"); assert callable(my_llm.generate); assert len(my_llm.MyCodec().codecs) == 4'
+          "$RUNNER_TEMP/my-llm-py-wheel/bin/python" -I -c '
+          import my_llm
+          from importlib.metadata import version
+
+          assert my_llm.__version__ == version("my-llm-py")
+          assert callable(my_llm.generate)
+          assert set(my_llm.MyCodec().codecs) == {
+              "openai_chat",
+              "openai_responses",
+              "anthropic",
+          }
+          '
       - uses: actions/upload-artifact@v7
         with:
           name: python-distributions

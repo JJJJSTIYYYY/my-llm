@@ -32,16 +32,16 @@ def normalize(messages, **options):
 
 def test_orphan_results_are_discarded_and_valid_duplicates_merge_without_mutating_input():
     messages = [
-        ToolMessage("user", [TextContent("discarded")], call_id="c"),
+        ToolMessage("tool", [TextContent("discarded")], call_id="c"),
         AssistantMessage("assistant", [ToolCall("c", "weather", {"city": "Shanghai"})]),
-        ToolMessage("user", [TextContent("first")], call_id="c"),
-        ToolMessage("user", [TextContent("first"), TextContent("second")], call_id="c"),
+        ToolMessage("tool", [TextContent("first")], call_id="c"),
+        ToolMessage("tool", [TextContent("first"), TextContent("second")], call_id="c"),
         UserMessage("user", [TextContent("tail")]),
     ]
     before = deepcopy(messages)
     result = normalize(messages)
     validate_history(result)
-    assert [m["role"] for m in result] == ["assistant", "user", "user"]
+    assert [m["role"] for m in result] == ["assistant", "tool", "user"]
     assert result[0]["content"][0]["name"] == "weather"
     assert result[0]["content"][0]["input"] == {"city": "Shanghai"}
     assert [p["text"] for p in result[1]["content"][0]["content"]] == [
@@ -66,7 +66,7 @@ def test_missing_results_follow_their_call_message_and_duplicate_calls_keep_surr
     )
     validate_history(result)
     assert result[0]["content"][0]["input"] == {"x": 1}
-    assert result[1]["role"] == "user"
+    assert result[1]["role"] == "tool"
     assert [result[i]["content"][0]["tool_use_id"] for i in (1, 2)] == ["a", "b"]
     assert all(result[i]["content"][0]["content"] == [] for i in (1, 2))
     assert result[3]["content"] == [{"type": "text", "text": "explanation"}]
@@ -127,7 +127,7 @@ def test_discarded_message_cannot_modify_a_previously_merged_tool_result():
     result = normalize(
         [
             AssistantMessage("assistant", [ToolCall("c", "f")]),
-            ToolMessage("user", [TextContent("original")], call_id="c"),
+            ToolMessage("tool", [TextContent("original")], call_id="c"),
             {
                 "role": "user",
                 "content": [
@@ -151,8 +151,8 @@ def test_missing_call_ids_are_distinct_but_never_assigned_to_idless_results():
     result = normalize(
         [
             AssistantMessage("assistant", [ToolCall(None, "f"), ToolCall(None, "f")]),
-            ToolMessage("user", [TextContent("first")], call_id=None, name="f"),
-            ToolMessage("user", [TextContent("second")], call_id=None, name="f"),
+            ToolMessage("tool", [TextContent("first")], call_id=None, name="f"),
+            ToolMessage("tool", [TextContent("second")], call_id=None, name="f"),
         ]
     )
     validate_history(result)
@@ -165,13 +165,13 @@ def test_missing_call_ids_are_distinct_but_never_assigned_to_idless_results():
 def test_external_result_references_stay_external_and_merge_repeated_content():
     result = normalize(
         [
-            ToolMessage("user", [TextContent("first")], call_id="server"),
-            ToolMessage("user", [TextContent("first")], call_id="server"),
+            ToolMessage("tool", [TextContent("first")], call_id="server"),
+            ToolMessage("tool", [TextContent("first")], call_id="server"),
         ],
         allow_external_calls=True,
     )
     assert len(result) == 1
-    assert result[0]["role"] == "user"
+    assert result[0]["role"] == "tool"
     assert [part["text"] for part in result[0]["content"][0]["content"]] == ["first", "first"]
     validate_history(result, allow_external_calls=True)
 
@@ -179,13 +179,13 @@ def test_external_result_references_stay_external_and_merge_repeated_content():
 def test_local_call_reusing_an_external_completed_id_is_discarded():
     result = normalize(
         [
-            ToolMessage("user", [TextContent("first")], call_id="server"),
+            ToolMessage("tool", [TextContent("first")], call_id="server"),
             AssistantMessage("assistant", [ToolCall("server", "f", {"x": 1})]),
         ],
         allow_external_calls=True,
     )
     validate_history(result, allow_external_calls=True)
-    assert [m["role"] for m in result] == ["user"]
+    assert [m["role"] for m in result] == ["tool"]
 
 
 def test_repairs_share_the_structural_message_and_content_scan():
@@ -340,7 +340,7 @@ async def test_all_orphan_results_fail_without_inventing_a_user_prompt(profile_f
         (
             await codec.prepare(
                 {
-                    "messages": [ToolMessage("user", [TextContent("result")], call_id="c")],
+                    "messages": [ToolMessage("tool", [TextContent("result")], call_id="c")],
                     "tools": omit,
                     "stream": False,
                     "max_tokens": 2048,
@@ -357,7 +357,7 @@ async def test_orphan_message_is_removed_with_all_its_text_in_every_target(profi
     messages = [
         UserMessage("user", [TextContent("keep first")]),
         ToolMessage(
-            "user",
+            "tool",
             [
                 TextContent("discarded before"),
                 TextContent("discarded result"),
@@ -505,7 +505,7 @@ def test_idless_result_is_discarded_even_with_a_unique_matching_tool_name():
     result = normalize(
         [
             AssistantMessage("assistant", [ToolCall("weather", "weather")]),
-            ToolMessage("user", [TextContent("discarded")], call_id=None, name="weather"),
+            ToolMessage("tool", [TextContent("discarded")], call_id=None, name="weather"),
         ]
     )
     validate_history(result)
@@ -519,9 +519,9 @@ def test_chat_request_groups_results_without_a_semantic_loss_hook(profile_factor
     messages = [
         AssistantMessage("assistant", [ToolCall("a", "f"), ToolCall("b", "g")]),
         {"role": role, "content": [{"type": "text", "text": "first ordinary message"}]},
-        ToolMessage("user", [TextContent("second result")], call_id="b"),
+        ToolMessage("tool", [TextContent("second result")], call_id="b"),
         UserMessage("user", [TextContent("second ordinary message")]),
-        ToolMessage("user", [TextContent("first result")], call_id="a"),
+        ToolMessage("tool", [TextContent("first result")], call_id="a"),
     ]
     before = deepcopy(messages)
     request = (
@@ -540,7 +540,7 @@ def test_chat_request_groups_results_without_a_semantic_loss_hook(profile_factor
 
 def test_offline_chat_conversion_keeps_standalone_tool_results():
     converted = MyCodec().decode(
-        [ToolMessage("user", [TextContent("result")], call_id="external")],
+        [ToolMessage("tool", [TextContent("result")], call_id="external")],
         target_format="openai_chat",
     )
     assert converted["messages"] == [

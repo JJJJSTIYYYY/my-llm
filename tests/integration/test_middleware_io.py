@@ -15,6 +15,7 @@ from my_llm import (
     ImageContent,
     ImageSource,
     IncompleteStreamError,
+    Message,
     MessageEvent,
     MessageValidationError,
     MyCodec,
@@ -124,6 +125,7 @@ async def test_typed_input_never_infers_or_uses_a_native_stdio(stdio):
         ([], omit),
         ([{"role": "user", "content": "hi"}], omit),
         ([UserMessage("tool", [TextContent("hi")])], omit),
+        ([Message("tool", [TextContent("hi")])], omit),
         ([UserMessage("user", [ToolCall("a", "f")])], omit),
         ([UserMessage("user", [TextContent(42)])], omit),
         ([UserMessage("user", [ImageContent(ImageSource("url"))])], omit),
@@ -135,11 +137,12 @@ async def test_typed_input_never_infers_or_uses_a_native_stdio(stdio):
             ],
             omit,
         ),
-        ([ToolMessage("user", [TextContent(42)], call_id="a")], omit),
+        ([ToolMessage("tool", [TextContent(42)], call_id="a")], omit),
+        ([ToolMessage("user", [TextContent("result")], call_id="a")], omit),
         ([ToolMessage("assistant", [TextContent("result")], call_id="a")], omit),
-        ([ToolMessage("user", [ReasoningContent("private")], call_id="a")], omit),
-        ([ToolMessage("user", [ToolCall("b", "f")], call_id="a")], omit),
-        ([ToolMessage("user", [[TextContent("nested")]], call_id="a")], omit),
+        ([ToolMessage("tool", [ReasoningContent("private")], call_id="a")], omit),
+        ([ToolMessage("tool", [ToolCall("b", "f")], call_id="a")], omit),
+        ([ToolMessage("tool", [[TextContent("nested")]], call_id="a")], omit),
         ([AssistantMessage("assistant", [ReasoningContent(reasoning=123)])], omit),
         ([UserMessage("user", [TextContent("hi")])], [{"name": "f"}]),
         ([UserMessage("user", [TextContent("hi")])], [FunctionTool("f", strict="yes")]),
@@ -170,7 +173,7 @@ async def test_direct_input_losses_keep_actual_objects_and_complete_request(poli
     image = ImageContent(ImageSource("url", url="https://example.com/a.png"))
     history = [
         AssistantMessage("assistant", [ToolCall("a", "f")]),
-        ToolMessage("user", [TextContent("ok"), image], call_id="a"),
+        ToolMessage("tool", [TextContent("ok"), image], call_id="a"),
         UserMessage("user", [TextContent("tail")]),
     ]
     observations = []
@@ -386,7 +389,7 @@ async def test_decoder_repairs_history_and_retains_generation_validation():
         await stream.aclose()
         with pytest.raises(MessageValidationError, match="no usable history"):
             await llm.generate(
-                messages=[ToolMessage("user", [TextContent("x")], call_id="a")], stream=True
+                messages=[ToolMessage("tool", [TextContent("x")], call_id="a")], stream=True
             )
         with pytest.raises(ConfigurationError):
             await llm.generate(messages=[UserMessage("user", [TextContent("x")])], max_tokens=-1)

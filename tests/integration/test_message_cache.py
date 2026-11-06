@@ -14,6 +14,8 @@ from my_llm import (
     ReasoningContent,
     SemanticLossError,
     TextContent,
+    ToolCall,
+    ToolMessage,
     UserMessage,
 )
 from my_llm.codec.base import decoder as decoder_module
@@ -124,6 +126,57 @@ async def test_incremental_middleware_histories_keep_typed_public_io(upstream):
         assert histories[1][:1] == histories[0]
         assert json.dumps(histories[1]).count("Hello") == 1
         assert first.content[0].text == "first-input"
+
+
+@pytest.mark.parametrize("upstream", PROTOCOLS)
+@pytest.mark.parametrize("cached", [False, True])
+async def test_typed_tool_rounds_and_retries_keep_wire_roles_and_call_ids(upstream, cached):
+    provider, model = profiles(upstream)
+    initial = [UserMessage("user", [TextContent("first-input")])]
+    batches = [
+        [
+            AssistantMessage("assistant", [ToolCall(call_id, "weather", {})]),
+            ToolMessage("tool", [TextContent(f"result-{call_id}")], call_id=call_id),
+        ]
+        for call_id in ("first", "second")
+    ]
+    before = deepcopy((initial, batches))
+    with LocalSDK(upstream, wire_frames(upstream, stream_events(upstream), 61)) as sdk:
+        async with MyLLM(
+            provider=provider,
+            model=model,
+            stdio_protocol="middleware",
+            enable_message_cache=cached,
+        ) as llm:
+            await llm.generate(messages=initial)
+            history = [*initial, *batches[0]]
+            incoming = batches[0] if cached else history
+            await llm.generate(messages=incoming)
+            await llm.generate(messages=incoming)
+            stream = await llm.generate(
+                messages=batches[1] if cached else [*history, *batches[1]], stream=True
+            )
+            await consume(stream)
+        requests = [json.loads(item.content) for item in sdk.requests]
+        assert requests[1] == requests[2]
+        native = request_history(upstream, requests[-1])
+        if upstream == "openai_chat":
+            ids = [item["tool_call_id"] for item in native if item["role"] == "tool"]
+        elif upstream == "openai_responses":
+            ids = [item["call_id"] for item in native if item["type"] == "function_call_output"]
+        else:
+            results = [
+                (message["role"], block["tool_use_id"])
+                for message in native
+                for block in message["content"]
+                if block["type"] == "tool_result"
+            ]
+            assert results == [("user", "first"), ("user", "second")]
+            ids = [call_id for _, call_id in results]
+        assert ids == ["first", "second"]
+        assert len(sdk.requests) == 4
+        assert all(body.closed for body in sdk.bodies)
+        assert (initial, batches) == before
 
 
 @pytest.mark.parametrize("upstream", PROTOCOLS)

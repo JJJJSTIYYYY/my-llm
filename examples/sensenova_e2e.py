@@ -161,7 +161,7 @@ def tool_turn(protocol, result):
         name, args = call.name, call.arguments
         history = [
             result,
-            ToolMessage("user", [TextContent("42")], call_id=call.call_id, name=name),
+            ToolMessage("tool", [TextContent("42")], call_id=call.call_id, name=name),
         ]
     elif protocol == "openai_chat":
         calls = result.get("tool_calls", [])

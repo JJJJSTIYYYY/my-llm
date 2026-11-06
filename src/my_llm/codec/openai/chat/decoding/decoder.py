@@ -264,7 +264,7 @@ class ChatCompletionsDecoder(BaseDecoder):
                         value = scalar_reasoning(block, feedback=profile is not None)
                         if value is not None:
                             reasoning.append(value)
-            if content or not tool_results:
+            if (content or not tool_results) and message["role"] != "tool":
                 value = {
                     **select(message, *constants.MESSAGE_IDENTITY_FIELDS),
                     "content": render_content(content, role=message["role"]),

@@ -90,7 +90,7 @@ def middleware_history():
     return [
         AssistantMessage("assistant", [ToolCall("c", "look", {})]),
         ToolMessage(
-            "user",
+            "tool",
             [
                 TextContent("before"),
                 ImageContent(ImageSource(type="url", url=URL)),

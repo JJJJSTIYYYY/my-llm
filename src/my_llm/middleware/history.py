@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from my_llm.basic.exceptions import MessageValidationError
 
-MESSAGE_ROLES = ("system", "developer", "user", "assistant")
+MESSAGE_ROLES = ("system", "developer", "user", "assistant", "tool")
 
 
 @dataclass(slots=True)
@@ -184,7 +184,7 @@ class HistoryNormalizer:
             owner.value["content"].append(value)
             tool.padding = _Message(
                 {
-                    "role": "user",
+                    "role": "tool",
                     "content": [
                         {
                             "type": "tool_result",

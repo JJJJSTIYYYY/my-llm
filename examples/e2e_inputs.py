@@ -194,7 +194,7 @@ def _replay_turn(stdio, result, value):
     if stdio == "middleware":
         calls = [part for part in result.content if isinstance(part, ToolCall)]
         assert len(calls) == 1 and calls[0].name == "audit_value" and calls[0].arguments == {}
-        return [result, ToolMessage("user", [TextContent(value)], call_id=calls[0].call_id)]
+        return [result, ToolMessage("tool", [TextContent(value)], call_id=calls[0].call_id)]
     if stdio == "openai_chat":
         calls = result.get("tool_calls", [])
         assert len(calls) == 1 and calls[0]["function"]["name"] == "audit_value"
@@ -313,7 +313,7 @@ def history(protocol, case, call_id):
     orphan = case == "orphan_tool_result"
     image = case in IMAGE_CASES
     if protocol == "middleware":
-        result = ToolMessage("user", [TextContent(RESULT_TEXT)], call_id=call_id)
+        result = ToolMessage("tool", [TextContent(RESULT_TEXT)], call_id=call_id)
         messages = [
             UserMessage("user", [TextContent(PROMPT)]),
             AssistantMessage("assistant", [ToolCall(call_id, "audit_value", {})]),
@@ -321,7 +321,7 @@ def history(protocol, case, call_id):
         if not missing:
             messages.append(result)
         if orphan:
-            messages.append(ToolMessage("user", [TextContent(ORPHAN_TEXT)], call_id=orphan_id))
+            messages.append(ToolMessage("tool", [TextContent(ORPHAN_TEXT)], call_id=orphan_id))
     elif protocol == "openai_chat":
         assistant = {
             "role": "assistant",

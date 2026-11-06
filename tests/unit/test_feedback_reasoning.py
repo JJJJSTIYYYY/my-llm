@@ -44,7 +44,7 @@ def reasoning_history(protocol):
             [reasoning("tool reasoning"), ToolCall("c", "f")],
             protocol=protocol,
         ),
-        ToolMessage("user", [TextContent("tool result")], call_id="c"),
+        ToolMessage("tool", [TextContent("tool result")], call_id="c"),
         UserMessage("user", [TextContent("complete tail")]),
     ]
 
@@ -144,7 +144,7 @@ async def test_tool_feedback_keeps_split_responses_reasoning_and_native_item_ids
                 [ToolCall("c", "f", {}, item=ItemIdentity(id="function-id"))],
                 protocol="openai_responses",
             ),
-            ToolMessage("user", [TextContent("tool result")], call_id="c"),
+            ToolMessage("tool", [TextContent("tool result")], call_id="c"),
         ]
     before = deepcopy(messages)
     codec = MyCodec("ignore") if target != "openai_responses" else MyCodec()
@@ -257,7 +257,7 @@ async def test_empty_reasoning_feedback_depends_on_history_policy_not_generation
     messages = [message]
     if has_calls:
         message.content.append(ToolCall("c", "f"))
-        messages.append(ToolMessage("user", [TextContent("ok")], call_id="c"))
+        messages.append(ToolMessage("tool", [TextContent("ok")], call_id="c"))
     before = deepcopy(messages)
     codec = MyCodec()
     profile = profile_factory(
@@ -517,7 +517,7 @@ async def test_history_tool_calls_and_results_are_losses_without_tool_definition
 ):
     messages = [
         AssistantMessage("assistant", [ToolCall("c", "f")]),
-        ToolMessage("user", [TextContent("result")], call_id="c"),
+        ToolMessage("tool", [TextContent("result")], call_id="c"),
         UserMessage("user", [TextContent("tail")]),
     ]
     before = deepcopy(messages)

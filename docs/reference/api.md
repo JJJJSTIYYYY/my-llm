@@ -259,7 +259,7 @@ async def print_stream(llm, prompt):
 | `ImageContent`、`ImageSource` | 图片内容的 `source`、固定 `type="image"`、可选 `item/origin`；来源的 `type="url" / "base64"` 及 `url/data/media_type`；用户消息和工具结果可使用 |
 | `ReasoningContent` | 可选 `reasoning: str \| None`、`feedback_item: Any \| None`、`item`、`origin`；固定 `type="thinking"`。可见文本实时输出，回传值保留原生对象，跨协议丢弃并记录损失 |
 | `ToolCall` | `call_id`、`name`、完整 `arguments: JsonObject`；可选 `item`、`origin`；固定 `type="tool_use"` |
-| `ToolMessage` | 继承消息字段，仅新增必填的 `call_id: str`（仅关键字参数）并重写 `to_wire()`；`content` 直接保存文本和图片，`name` 和 `item` 属于工具结果 |
+| `ToolMessage` | 继承消息字段，`role` 必须为 `"tool"`，新增必填的 `call_id: str`（仅关键字参数）并重写 `to_wire()`；`content` 直接保存文本和图片，`name` 和 `item` 属于工具结果 |
 | `FunctionTool` | `name` 及可选 `description`、`parameters: JsonObject`、`strict`、`origin` |
 | `ItemIdentity` | 可选 `id`、`status`；保存源输出项身份，与工具的 `call_id` 和流块的 `source_ref` 分开 |
 | `Origin` | `path`、`value`；仅供错误定位，不作为 payload 字段输出 |

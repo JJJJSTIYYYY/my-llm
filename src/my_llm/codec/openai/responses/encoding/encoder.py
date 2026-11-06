@@ -153,7 +153,7 @@ class ResponsesEncoder(BaseEncoder):
                     }
                 ]
             elif kind == "function_call_output":
-                role = "user"
+                role = "tool"
                 output = tool_result_content(
                     item.get("output"), native_types=constants.TOOL_RESULT_NATIVE_PART_TYPES
                 )

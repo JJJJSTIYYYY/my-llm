@@ -66,9 +66,10 @@ reply = await llm.generate(messages=middle.messages, tools=middle.tools)
 | 源项身份 | `ItemIdentity` |
 | 用量和来源 | `Usage`、`Origin` |
 
-历史角色为 `user`、`assistant`、`system`、`developer`。每个工具调用的结果使用一条
-`ToolMessage`，由消息的 `call_id` 关联调用，`content` 直接保存有序文本和图片列表。
-不要将原生 Chat 的 `role="tool"` 搬到中间消息中。
+历史角色为 `user`、`assistant`、`system`、`developer`、`tool`。每个工具调用的结果使用一条
+`ToolMessage(role="tool", ...)`，由消息的 `call_id` 关联调用，`content` 直接保存有序文本和图片列表。
+`tool` 角色只用于 `ToolMessage`，不接受使用 `user` 角色的工具结果。转换到 Anthropic 时，
+decoder 将工具结果映射为其原生 `user` 消息中的 `tool_result` 块。
 
 ```python
 from my_llm import AssistantMessage, FunctionTool, TextContent, ToolCall, ToolMessage, UserMessage
@@ -86,7 +87,7 @@ tools = [
 ]
 history = [
     AssistantMessage("assistant", [ToolCall("call_1", "lookup", {"name": "示例"})]),
-    ToolMessage("user", [TextContent("查询结果")], call_id="call_1"),
+    ToolMessage("tool", [TextContent("查询结果")], call_id="call_1"),
     UserMessage("user", [TextContent("请继续")]),
 ]
 ```

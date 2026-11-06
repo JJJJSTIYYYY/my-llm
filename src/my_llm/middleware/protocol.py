@@ -97,7 +97,7 @@ def _valid_content(part: MessageContent, role: str) -> bool:
     if isinstance(part, ImageContent):
         source = part.source
         return (
-            role == "user"
+            role in ("user", "tool")
             and isinstance(source, ImageSource)
             and (
                 source.type == "url"
@@ -158,8 +158,8 @@ def generation_input(messages, tools) -> ProtocolMiddleWare:
             )
         if not _valid_item(message.item) or not isinstance(message.content, list):
             raise MessageValidationError("invalid middleware content or content role")
-        if isinstance(message, ToolMessage) and message.role != "user":
-            raise MessageValidationError("tool messages require the user role")
+        if isinstance(message, ToolMessage) != (message.role == "tool"):
+            raise MessageValidationError("the tool role requires ToolMessage and vice versa")
         path = f"$.messages[{index}]"
         parts = []
         changed = message.origin is None

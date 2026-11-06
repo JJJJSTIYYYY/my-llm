@@ -127,7 +127,7 @@ class ChatCompletionsEncoder(BaseEncoder):
         """Normalize Chat messages and legacy function rounds into middleware history.
 
         Parse function arguments as JSON objects, turn role=tool/function messages
-        into user-role tool_result blocks and attach source provenance. Unsupported
+        into tool-role tool_result blocks and attach source provenance. Unsupported
         source fields/content are omitted. Legacy call IDs are unique per batch
         when caching is enabled; association validation happens in the decoder.
         """
@@ -198,7 +198,7 @@ class ChatCompletionsEncoder(BaseEncoder):
                         **select(message, "name"),
                     }
                 ]
-                role = "user"
+                role = "tool"
             value = {
                 "protocol": constants.PROTOCOL,
                 "role": role,

@@ -259,11 +259,12 @@ class InstructionMessage(Message):
     __slots__ = ()
 
 
-@dataclass(slots=True, kw_only=True)
+@dataclass(slots=True)
 class ToolMessage(Message):
     """One call's ordered text/image results, with identity owned by the message."""
 
-    call_id: str
+    role: Literal["tool"]
+    call_id: str = dataclass_field(kw_only=True)
 
     def to_wire(self) -> dict:
         """Wrap flat public result parts in the internal tool-result envelope."""
@@ -334,7 +335,7 @@ def messages_from_validated_wire(values: list) -> list[Message]:
             block_origin = Origin.from_value(block, path)
             result.append(
                 ToolMessage(
-                    role,
+                    "tool",
                     _result_content(block["content"], f"{block_origin.path}.content"),
                     block.get("name"),
                     protocol,

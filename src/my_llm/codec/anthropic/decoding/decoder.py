@@ -241,7 +241,9 @@ class AnthropicDecoder(BaseDecoder):
                 value = decode_block(block, profile=profile)
                 if value is not None:
                     content.append(value)
-            result.append({"role": message["role"], "content": content})
+            role = "user" if message["role"] == "tool" else message["role"]
+            if content or message["role"] != "tool":
+                result.append({"role": role, "content": content})
         return result
 
     def _tools(

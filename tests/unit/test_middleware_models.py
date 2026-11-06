@@ -166,7 +166,7 @@ def test_all_image_source_fields_survive_roundtrip(kind):
         (InstructionMessage, "developer", [TextContent("instruction")]),
         (
             ToolMessage,
-            "user",
+            "tool",
             [
                 TextContent("42"),
                 ImageContent(ImageSource("url", url="https://example.com/result.png")),
@@ -196,10 +196,12 @@ def test_all_message_fields_survive_roundtrip(model, role, content):
 
 @pytest.mark.parametrize("content", [[], [TextContent("first"), TextContent("second")]])
 def test_tool_message_owns_mutable_call_id_with_flat_result_content(content):
-    message = ToolMessage("user", content, call_id="original")
+    message = ToolMessage("tool", content, call_id="original")
     message.call_id = "updated"
     restored = messages_from_wire([message.to_wire()])[0]
     assert isinstance(restored, ToolMessage)
+    assert message.role == restored.role == "tool"
+    assert restored.to_wire()["role"] == "tool"
     assert restored.call_id == "updated"
     assert [part.text for part in restored.content] == [part.text for part in content]
     assert restored.to_wire()["content"][0]["tool_use_id"] == "updated"
@@ -238,6 +240,7 @@ def test_mixed_wire_message_splits_results_without_losing_order_identity_or_orig
         ToolMessage,
         UserMessage,
     ]
+    assert [message.role for message in messages] == ["user", "tool", "user", "tool", "user"]
     assert [messages[index].content[0].text for index in (0, 2, 4)] == [
         "before",
         "between",

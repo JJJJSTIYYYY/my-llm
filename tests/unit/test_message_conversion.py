@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from my_llm import MyCodec
+from my_llm import MyCodec, ToolMessage
 from my_llm.codec.shared.conversion import validate_history
 from tests.helpers.protocols import CHAT_HISTORY, PROTOCOLS, history, tools
 
@@ -17,6 +17,7 @@ def test_every_message_conversion_preserves_text_and_tool_associations(source, t
     before = deepcopy(incoming)
     converted = codec.convert(incoming, input_format=source, target_format=target)["messages"]
     intermediate = codec.encode(converted, input_format=target)["messages"]
+    assert [m["role"] for m in intermediate].count("tool") == 1
     validate_history(intermediate)
     chat = codec.decode(intermediate, target_format="openai_chat")["messages"]
     assert chat[0]["content"] == "Weather?"
@@ -26,6 +27,17 @@ def test_every_message_conversion_preserves_text_and_tool_associations(source, t
     assert assistant["tool_calls"][0]["function"]["name"] == "weather"
     assert "Sunny" in str(result["content"])
     assert incoming == before
+
+
+@pytest.mark.parametrize("source", PROTOCOLS)
+def test_native_tool_results_have_the_tool_role_in_models_and_wire(source):
+    middle = MyCodec().encode(history(source), input_format=source)
+    results = [message for message in middle.messages if message.role == "tool"]
+    assert len(results) == 1
+    assert isinstance(results[0], ToolMessage)
+    assert results[0].call_id == "call_1"
+    assert results[0].content[0].text == "Sunny"
+    assert results[0].to_wire()["role"] == "tool"
 
 
 @pytest.mark.parametrize("source", PROTOCOLS)

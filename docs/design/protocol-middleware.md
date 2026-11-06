@@ -17,7 +17,7 @@ encoder 负责原生投影，decoder 负责目标表达，Transport 只执行 SD
 | `UserMessage` | 继承 `Message` 全部字段，无新增字段 | `role=user`；有序文本和图片 |
 | `InstructionMessage` | 继承 `Message` 全部字段，无新增字段 | `role=system / developer`；有序文本 |
 | `AssistantMessage` | 继承 `Message` 全部字段，无新增字段 | `role=assistant`；有序文本、思维和工具调用 |
-| `ToolMessage` | 继承 `Message` 字段，仅新增必填的 `call_id: str`，并重写 `to_wire()` | `role=user`；一条消息对应一次调用，内容直接为有序文本 / 图片；`name` 和 `item` 保存结果名称及源结果项身份 |
+| `ToolMessage` | 继承 `Message` 字段，`role: Literal["tool"]`，新增必填的 `call_id: str`，并重写 `to_wire()` | `role=tool`；一条消息对应一次调用，内容直接为有序文本 / 图片；`name` 和 `item` 保存结果名称及源结果项身份 |
 | `ItemIdentity` | `id`、`status` | 通用的可选源项身份，当前用于 Responses 回放；两个字段均为可选字符串 |
 | `TextContent` | `text`、`origin`、`type`、`item` | 通用文本，`type=text`；`item` 当前保留 Responses 项身份 |
 | `ImageContent` | `source`、`origin`、`type`、`item` | 通用图片，`type=image`；`item` 当前保留 Responses 项身份 |

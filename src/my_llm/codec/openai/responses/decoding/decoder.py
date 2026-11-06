@@ -289,7 +289,7 @@ class ResponsesDecoder(BaseDecoder):
                                 }
                             )
             flush()
-            if len(result) == group_start:
+            if len(result) == group_start and message["role"] != "tool":
                 result.append(
                     {
                         "type": "message",

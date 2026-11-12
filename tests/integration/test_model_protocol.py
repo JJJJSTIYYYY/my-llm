@@ -62,7 +62,7 @@ async def test_model_protocol_changes_can_be_compared_and_reused():
         assert result[0].protocol == "openai_responses"
         assert result[1] != original.profile_hash
         async with MyLLM(
-            provider=provider, model=changed_model, resolve_profile_with_hash=result
+            provider=provider, model=changed_model, resolved_profile=result[0]
         ) as replacement:
             assert (
                 replacement.resolved_profile.parameter("max_tokens").path == "$.max_output_tokens"

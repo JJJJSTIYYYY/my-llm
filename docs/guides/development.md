@@ -18,7 +18,7 @@ codec 布局与接口以本页目录说明、[架构文档](../design/architectu
   semantic_loss.py 管理损失收集与策略，protocols.py 合并协议注册、工厂快照和可选 SDK 发现。
 - codec/shared 保存不选择厂商的公共机制；conversion.py 负责消息、媒体、工具转换与历史关联验证，
   cache/compiled_cache.py 集中保存类型分析、编译计划、过滤与验证；响应关闭辅助随执行契约放在 codec/base/transport.py；
-  options.py 负责配置路径、选项准备与校验。Decoder 每次解析一次 PreparedOptions，并输出 client / request / local 字典；连接参数在构造时准备。
+  options.py 负责配置路径、选项准备与校验。Decoder 每次解析一次 PreparedOptions，并输出 client / request / local 字典；连接默认值在构造时准备，调用级 api_key 在 Decoder 中覆盖。
 - profile/configuration.py 保存配置类型、覆盖字段与字典合并；resolution.py 负责解析、快照及校验。
   协议默认值保存在各 Codec.defaults；profile/defaults.py 只从 basic/protocols.py 复制已注册声明。
 - 包根目录的 my_llm.py 负责生成编排与 SDK 客户端复用，runtime/message_stream.py 和 state.py 保存响应流生命周期与请求状态。

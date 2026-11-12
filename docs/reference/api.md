@@ -36,7 +36,7 @@ async def session():
 | --- | --- | --- |
 | `provider` | `ProviderProfile` | 必填，连接配置和默认上游协议 |
 | `model` | `ModelProfile` | 必填，模型 ID 和模型配置 |
-| `resolve_profile_with_hash` | `tuple[ResolvedProfile, int] \| None` | 默认 `None`；传入同一配置的预解析结果，跳过解析和哈希，复制快照后仍检查协议约束 |
+| `resolved_profile` | `ResolvedProfile \| None` | 默认 `None`；传入同一配置的预解析快照，跳过解析，复制快照后重新计算哈希并检查协议约束 |
 | `stdio_protocol` | `Protocol \| None` | 输入消息、工具和输出共用的协议；默认尝试唯一推断 |
 | `enable_message_cache` | `bool` | 默认 `False`；开启后缓存已翻译的增量输入，同一实例必须串行使用 |
 
@@ -61,7 +61,7 @@ Model 的 `protocol=None` 继承 Provider；Model 明确配置时，Provider 可
 ### `MyLLM.compare(provider, model)`
 
 返回 `True` 表示解析后的配置哈希与构造时一致；不一致时返回
-`tuple[ResolvedProfile, int]`，供创建新实例复用。比较不更新当前实例配置或客户端，
+`tuple[ResolvedProfile, int]`，其中快照可用于创建新实例。比较不更新当前实例配置或客户端，
 每次使用当前实例的协议默认值重新解析、计算哈希；无效配置仍抛出解析异常。
 元组也是真值，判断结果时应使用 `result is True` 或 `result is not True`。
 
@@ -72,16 +72,16 @@ async def replace_if_changed(llm, provider, model):
         replacement = MyLLM(
             provider=provider,
             model=model,
-            resolve_profile_with_hash=result,
+            resolved_profile=result[0],
         )
         await llm.aclose()
         return replacement
     return llm
 ```
 
-复用结果时必须传入对应的 provider/model，并保留原快照与哈希的配对。
-构造函数信任该配对，不再次计算哈希或核对原始配置；为隔离实例而复制快照，仍进行协议校验。
-快照按只读数据使用，同一结果可用于创建多个实例。
+复用快照时必须传入对应的 provider/model。
+构造函数不重新解析或核对原始配置；为隔离实例而复制快照，并根据复制后的内容计算哈希、进行协议校验。
+compare 返回的哈希不传入构造函数。快照按只读数据使用，同一快照可用于创建多个实例。
 比较范围仅为解析后的 provider/model 配置，不包含 stdio_protocol、语义损失策略或消息缓存开关。
 
 ### `await MyLLM.generate(...)`
@@ -93,6 +93,7 @@ async def replace_if_changed(llm, provider, model):
 | `messages` | 必填 | 非空、同协议的历史序列；元素可为字典或支持的官方 SDK 模型；middleware stdio 使用具体 `Message` 模型 |
 | `stream` | `False` | `False` 等待完整结果；`True` 返回 `MessageStream` |
 | `tools` | `omit` | 同协议工具声明；`None` / `omit` 不发送，`[]` 发送空列表 |
+| `api_key` | `None` | 本次调用的非空认证字符串，按 Profile 的 api_key 路径路由；None 继承，omit 省略本次连接的对应参数，不修改配置 |
 | `max_tokens` | 继承配置 | 正整数输出上限；显式 `None` 保留为空值，`omit` 删除本次请求的目标参数；目标 API 仍可要求有效数值 |
 | `reasoning` | `None` | `True` 且 effort 为 `none` 时使用 `medium`；`False` 与非 `none` effort 冲突 |
 | `reasoning_effort` | `"none"` | `none` / `low` / `medium` / `high` / `xhigh` / `max`，受模型支持状态和配置映射约束 |
@@ -100,8 +101,9 @@ async def replace_if_changed(llm, provider, model):
 | `extra_body` | `None` | 协议原生生成参数字典，按键覆盖配置默认值；不能覆盖模型、消息、工具等受管理字段 |
 | `previous_response_id` | `None` | 非空服务端历史 ID，用于 `openai_responses` 上游；其他协议记录不支持的语义损失并省略；`None` / `omit` 不发送 |
 
-实例的生成方法不接收 provider、model 或连接选项。输入历史和可变选项在协程被 `await` 时隔离，
+实例的生成方法不接收 provider、model 或 api_key 以外的连接选项。输入历史和可变选项在协程被 `await` 时隔离，
 调用不会自动更新业务历史。工具由调用者执行。
+相同有效密钥复用客户端，不同密钥分别创建客户端，实例关闭时统一释放。请求中的显式认证头仍可覆盖客户端默认头。
 
 ### 增量消息缓存
 
@@ -558,7 +560,7 @@ assert converted["messages"] == [{"role": "user", "content": [{"type": "text", "
 | `upstream(client, request, profile)` | 返回异步上下文管理器，迭代原生事件；退出时关闭响应，由调用者管理 client |
 
 `prepare` 的 `client` 参数来自 `client_parameters`。返回值中 `client` 是 SDK 构造参数，
-`request` 是 SDK 调用参数，`local` 包含 `stream`。
+`request` 是 SDK 调用参数，`local` 包含 `stream` 和用于客户端复用的 `client_key`。
 参数准备接口不创建模型客户端或发出上游模型请求；显式注册的异步请求 hook 可以执行图片下载等 I/O。
 新增注册仅对后续创建的实例可见；实现要求和完整接入示例见[协议接入指南](../guides/adding-protocol.md)。
 

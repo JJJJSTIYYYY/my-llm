@@ -1,6 +1,6 @@
 # 项目架构与职责边界
 
-2026-10-29 更新。一次 `generate(messages=..., stream=True, max_tokens=1024)` 将完整调用参数
+2026-11-13 更新。一次 `generate(messages=..., stream=True, max_tokens=1024)` 将完整调用参数
 打包为字典，连同已解析 Profile 进入 Codec。Encoder 先投影支持字段、验证输入协议并生成类型化中间协议；
 Decoder 应用参数路径、默认值、覆盖规则及目标 SDK Schema，输出三个明确的目的地：
 
@@ -8,12 +8,13 @@ Decoder 应用参数路径、默认值、覆盖规则及目标 SDK Schema，输�
 {
     "client": {"api_key": "...", "base_url": "..."},
     "request": {"model": "...", "messages": [...], "stream": True},
-    "local": {"stream": True},
+    "local": {"stream": True, "client_key": "..."},
 }
 ```
 
 `local.stream` 决定返回 MessageStream 还是消费完整结果；上游仍统一使用流式 API。
-客户端参数由 MyLLM 实例准备、按只读方式使用；请求字典和流状态属于本次调用。
+连接默认值由 MyLLM 实例准备、按只读方式使用；Decoder 应用调用级 api_key，
+MyLLM 按 local.client_key 复用对应客户端。请求字典和流状态属于本次调用。
 Transport 只把最终字典交给官方 SDK，并管理客户端和本次响应的资源。
 
 ## 目录与组件

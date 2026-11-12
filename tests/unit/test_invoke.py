@@ -148,7 +148,7 @@ async def test_configuration_errors_happen_before_sdk_creation(monkeypatch):
     )
     with pytest.raises(ConfigurationError):
         await llm.generate(messages=[{"role": "user", "content": "x"}], stream="yes")
-    for option in ("provider", "model", "client", "api_key", "timeout", "protocol"):
+    for option in ("provider", "model", "client", "timeout", "protocol"):
         with pytest.raises(TypeError):
             await llm.generate(messages=[{"role": "user", "content": "x"}], **{option: object()})
     assert captured == []

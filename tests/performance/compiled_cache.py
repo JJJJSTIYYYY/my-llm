@@ -62,7 +62,7 @@ async def benchmark(protocol, iterations, warmup):
                     samples[name].append(sample)
             assert results["cached"] == results["uncached"]
             assert (workload.messages, workload.tools) == original
-        assert llm._client is None
+        assert not llm._clients
         after = caches()
         for name, info in after.items():
             assert info["misses"] == before[name]["misses"], name

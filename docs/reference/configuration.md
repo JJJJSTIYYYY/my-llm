@@ -5,7 +5,7 @@ MyLLM 构造时按 `Codec.defaults → provider → model` 解析为独立的 `R
 先按 `Model.protocol > Provider.protocol` 选择上游协议，再使用该协议的 Codec 默认值。
 Model 的 `protocol=None` 继承 Provider；Model 明确配置协议时，Provider 可以不设置 `protocol`。
 协议默认值由各协议的 `ProtocolDefaults` 声明；新协议先注册，再创建 MyLLM。
-generate 不接受动态 provider/model 或连接参数。
+generate 可通过 api_key 覆盖本次调用的密钥，不接受动态 provider/model 或其他连接参数。
 
 ```python
 from my_llm import Attribute, Config, ModelProfile, MyLLM, InputParameter, ProviderProfile
@@ -133,8 +133,8 @@ Profiles 是可变 dataclass，可直接重新赋值字段，也可使用 `datac
 MyLLM 构造时隔离配置的嵌套可变数据；请求只在需要独立所有权的边界复制数据。
 
 `llm.compare(provider, model)` 比较解析后配置的哈希：相同返回 `True`，不同返回
-`(ResolvedProfile, int)`。可将后者传给新实例的 `resolve_profile_with_hash`，
-避免再次解析和计算哈希；复用时保持快照、哈希和对应输入配置一致。
+`(ResolvedProfile, int)`。可将结果中的快照 `result[0]` 传给新实例的 `resolved_profile`，
+避免再次解析；新实例复制快照并重新计算哈希，不复用 compare 返回的哈希。快照应与传入的配置对应。
 比较不修改当前实例。字典和参数绑定的顺序参与哈希，结果元组也是真值，需用 `result is True` 判断。
 接口细节见 [MyLLM.compare](api.md#myllmcompareprovider-model)。
 
@@ -252,6 +252,10 @@ Provider 的 `add_models(ModelProfile | list[ModelProfile])` 按 ID 更新并保
 `api_key` 在创建 SDK 客户端时应用，其路径指向连接参数组：`$.api_key` 使用 SDK 密钥参数，
 `$.extra_headers.<头名>` 使用指定认证头。Decoder 将请求头映射到 SDK 的 default_headers；
 密钥不会作为生成参数写入请求体。
+`generate(api_key="call-key")` 使用同一声明的路径覆盖本次调用的认证值；未传或 `None` 继承 Profile，
+`omit` 删除本次连接参数中的对应值，不修改 Profile。声明被禁用或不支持时，不能传入显式密钥。
+SDK 仍可从环境变量读取密钥。实例按有效密钥延迟创建、复用客户端，并在关闭时统一释放；
+不同密钥的并发调用使用独立客户端，流关闭只释放该响应。
 配置值是完整字符串，Authorization 的 Bearer 前缀也由配置显式提供：
 
 ```python

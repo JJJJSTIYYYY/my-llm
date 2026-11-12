@@ -496,7 +496,7 @@ class BaseDecoder(ABC):
         """Return client, request and local dictionaries for a complete encoded call.
 
         intermediate is the dictionary from BaseEncoder.request; client contains
-        prepared connection arguments. local contains the stream flag.
+        prepared connection arguments. local contains the stream flag and client key.
         This method creates no SDK clients and sends no network request.
 
         Validate generation controls once and pass the typed middleware plus any
@@ -509,6 +509,11 @@ class BaseDecoder(ABC):
             for key, value in intermediate.items()
             if key not in ("profile", "middleware", "message_transform")
         }
+        api_key = parameters.pop("api_key", None)
+        client_key = profile.get("api_key")
+        if api_key is not None:
+            client = self._prepare_client(profile, client, api_key)
+            client_key = None if isinstance(api_key, Omit) else api_key
         options = self.validate_parameters(profile, **parameters)
         return {
             "client": client,
@@ -520,8 +525,30 @@ class BaseDecoder(ABC):
                 message_transform=intermediate.get("message_transform"),
                 **parameters,
             ),
-            "local": {"stream": parameters["stream"]},
+            "local": {"stream": parameters["stream"], "client_key": client_key},
         }
+
+    def _prepare_client(self, profile: ResolvedProfile, client: dict, api_key: str | Omit) -> dict:
+        """Override one call's authentication without changing prepared defaults."""
+        if not isinstance(api_key, Omit) and (not isinstance(api_key, str) or not api_key.strip()):
+            raise ConfigurationError("api_key must be a non-empty string, None or omit")
+        parameter = profile.parameter("api_key", "input")
+        if parameter is None:
+            if isinstance(api_key, Omit):
+                return client
+            raise ConfigurationError("api_key requires a supported Profile declaration")
+        keys = path_keys(parameter.path)
+        result = dict(client)
+        if keys == ("api_key",):
+            target, key = result, "api_key"
+        else:
+            target = result["default_headers"] = dict(result.get("default_headers", {}))
+            key = keys[1]
+        if isinstance(api_key, Omit):
+            target.pop(key, None)
+        else:
+            target[key] = api_key
+        return result
 
     def client_parameters(self, profile: ResolvedProfile) -> dict:
         """Prepare connection arguments once per MyLLM, independently of calls."""

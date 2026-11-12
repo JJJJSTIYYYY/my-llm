@@ -116,7 +116,7 @@ async def test_typed_input_never_infers_or_uses_a_native_stdio(stdio):
         with pytest.raises(MessageValidationError, match="stdio_protocol"):
             await llm.generate(messages=[UserMessage("user", [TextContent("hi")])])
         assert llm.stdio_protocol == stdio
-        assert llm._client is None
+        assert not llm._clients
 
 
 @pytest.mark.parametrize(
@@ -153,7 +153,7 @@ async def test_invalid_public_models_fail_before_sdk_creation(messages, tools):
     async with MyLLM(provider=provider, model=model, stdio_protocol="middleware") as llm:
         with pytest.raises(MessageValidationError):
             await llm.generate(messages=messages, tools=tools)
-        assert llm._client is None
+        assert not llm._clients
 
 
 @pytest.mark.parametrize("tools,expected", [(omit, None), (None, None), ([], [])])
@@ -393,7 +393,7 @@ async def test_decoder_repairs_history_and_retains_generation_validation():
             )
         with pytest.raises(ConfigurationError):
             await llm.generate(messages=[UserMessage("user", [TextContent("x")])], max_tokens=-1)
-        assert llm._client is None
+        assert not llm._clients
 
 
 def test_middleware_is_reserved_for_stdio_and_never_registers_components():

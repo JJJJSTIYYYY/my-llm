@@ -229,11 +229,16 @@ def resolve_profiles_with_hash(
     Treat the returned snapshot as read-only when reusing it with MyLLM.
     """
     resolved = resolve_profiles(provider, model, defaults_for=defaults_for)
+    return resolved, hash_resolved_profile(resolved)
+
+
+def hash_resolved_profile(resolved: ResolvedProfile) -> int:
+    """Fingerprint a resolved snapshot, retaining dictionary and binding order."""
     try:
         encoded = json.dumps(_profile_hash_data(resolved), separators=(",", ":"))
     except (TypeError, ValueError, RecursionError) as exc:
         raise ConfigurationError("resolved profile contains an unhashable payload") from exc
-    return resolved, int.from_bytes(sha256(encoded.encode("utf-8")).digest(), "big")
+    return int.from_bytes(sha256(encoded.encode("utf-8")).digest(), "big")
 
 
 def _profile_hash_data(value: Any) -> Any:

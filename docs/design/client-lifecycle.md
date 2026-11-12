@@ -1,7 +1,9 @@
 # SDK 客户端生命周期
 
 MyLLM 实例拥有官方 SDK 客户端；请求只拥有响应流与累积状态。
-同一实例的流式及收集式生成复用客户端，不在每次请求结束时重建连接池。
+同一实例使用相同有效密钥的流式及收集式生成复用客户端，不在每次请求结束时重建连接池。
+`generate(api_key=...)` 按 Profile 的认证路径覆盖本次调用，密钥不同则分别创建客户端；
+省略或 `None` 继承配置，`omit` 删除本次连接的对应认证参数，SDK 仍可读取环境变量。
 关闭消息缓存时支持同实例并发；启用 `enable_message_cache=True` 后，调用方必须串行使用，
 先完成或关闭前一条流再发起下一次调用。不同实例可以并发使用。
 此管理停留在官方 SDK 层，不自行创建或配置 HTTPX 连接池。
@@ -33,8 +35,9 @@ SDK 客户端按实例及其事件循环使用，不跨事件循环共享。
 ## 协议边界
 
 MyLLM 在构造时完成 Profile 解析、Decoder.validate_profile 和 Decoder.client_parameters，
-只保存已准备的连接字典，不创建客户端。每次调用的 Decoder.prepare 输出 client / request / local。
-MyLLM 复用实例级客户端，Transport.create_client(client参数字典) 只负责 SDK 构造。
+只保存已准备的连接字典，不创建客户端。每次调用的 Decoder.prepare 应用 api_key 覆盖，
+输出 client / request / local，其中 local.client_key 标识有效密钥。
+MyLLM 按该键复用实例级客户端，Transport.create_client(client参数字典) 只负责 SDK 构造。
 Transport.upstream(client, request) 执行最终请求；close_client 默认 await client.close()。
 Encoder 验证输入，Decoder 负责请求参数、Schema 过滤和原生验证；Transport 不接收 Profile 或原始控制项。
 Encoder / Decoder / Transport 不保存调用数据；已翻译历史由启用后的 MessageCache 保存。
@@ -47,6 +50,7 @@ Encoder / Decoder / Transport 不保存调用数据；已翻译历史由启用�
 | Anthropic | AsyncAnthropic | await client.close() | SDK stream.close() |
 
 各协议将动态请求头放在请求参数中，不因生成参数或请求头变化重建客户端。
+所有已创建的密钥对应客户端均保留至实例关闭，再统一释放。
 
 ## 验证与依据
 

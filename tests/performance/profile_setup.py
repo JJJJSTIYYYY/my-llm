@@ -47,8 +47,8 @@ def run(options):
     cases = []
     for protocol in PROTOCOLS:
         provider, model = profiles(protocol)
-        precomputed = resolve_profiles_with_hash(provider, model)
-        llm = MyLLM(provider=provider, model=model, resolve_profile_with_hash=precomputed)
+        precomputed = resolve_profiles(provider, model)
+        llm = MyLLM(provider=provider, model=model, resolved_profile=precomputed)
         cases.append(
             {
                 "protocol": protocol,
@@ -72,9 +72,7 @@ def run(options):
                     options.iterations,
                 ),
                 "instance_setup_reused": measure(
-                    lambda: MyLLM(
-                        provider=provider, model=model, resolve_profile_with_hash=precomputed
-                    ),
+                    lambda: MyLLM(provider=provider, model=model, resolved_profile=precomputed),
                     options.batches,
                     options.iterations,
                 ),

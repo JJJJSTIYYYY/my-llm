@@ -176,7 +176,7 @@ def test_compare_detects_connection_and_protocol_changes(changes):
     assert isinstance(llm.compare(replace(provider, **changes), model), tuple)
 
 
-def test_changed_result_can_be_reused_without_resolving_or_hashing_again(monkeypatch):
+def test_changed_snapshot_can_be_reused_without_resolving_again(monkeypatch):
     provider = ProviderProfile(protocol=Config(default_value="openai_chat"))
     model = ModelProfile(model=Attribute(default_value="demo"))
     llm = MyLLM(provider=provider, model=model)
@@ -185,14 +185,13 @@ def test_changed_result_can_be_reused_without_resolving_or_hashing_again(monkeyp
     assert isinstance(result, tuple)
 
     def unexpected(*args, **kwargs):
-        raise AssertionError("precomputed profiles must skip resolution and hashing")
+        raise AssertionError("precomputed profiles must skip resolution")
 
     with monkeypatch.context() as patch:
         patch.setattr("my_llm.my_llm.resolve_profiles_with_hash", unexpected)
         patch.setattr("my_llm.profile.resolution.resolve_profiles", unexpected)
-        patch.setattr("my_llm.profile.resolution._profile_hash_data", unexpected)
-        first = MyLLM(provider=changed, model=model, resolve_profile_with_hash=result)
-        second = MyLLM(provider=changed, model=model, resolve_profile_with_hash=result)
+        first = MyLLM(provider=changed, model=model, resolved_profile=result[0])
+        second = MyLLM(provider=changed, model=model, resolved_profile=result[0])
 
     assert first.profile_hash == second.profile_hash == result[1]
     assert first.resolved_profile == second.resolved_profile == result[0]
@@ -204,6 +203,24 @@ def test_changed_result_can_be_reused_without_resolving_or_hashing_again(monkeyp
     assert second.resolved_profile.get("extra_body") == {"nested": [1]}
     assert changed.extra_body.default_value == {"nested": [1]}
     assert llm.resolved_profile.get("extra_body") == {}
+
+
+def test_snapshot_initialization_recomputes_hash_from_current_content():
+    provider = ProviderProfile(
+        protocol=Config(default_value="openai_chat"),
+        extra_body=Config(default_value={"temperature": 0.2}),
+    )
+    model = ModelProfile(model=Attribute(default_value="demo"))
+    resolved, old_hash = resolve_profiles_with_hash(provider, model)
+    resolved.values["extra_body"]["temperature"] = 0.8
+    changed = replace(provider, extra_body=Config(default_value={"temperature": 0.8}))
+    expected, expected_hash = resolve_profiles_with_hash(changed, model)
+
+    llm = MyLLM(provider=changed, model=model, resolved_profile=resolved)
+
+    assert llm.resolved_profile == expected
+    assert llm.profile_hash == expected_hash != old_hash
+    assert llm.compare(changed, model) is True
 
 
 def test_compare_resolves_once_using_the_instance_defaults(monkeypatch):
@@ -241,7 +258,7 @@ async def test_generation_uses_the_reused_changed_configuration(monkeypatch):
         async with MyLLM(
             provider=changed,
             model=changed_model,
-            resolve_profile_with_hash=result,
+            resolved_profile=result[0],
             stdio_protocol="openai_chat",
         ) as replacement:
             message = await replacement.generate(messages=[{"role": "user", "content": "hi"}])
@@ -261,16 +278,16 @@ def test_precomputed_snapshot_still_undergoes_protocol_validation():
     result = resolve_profiles_with_hash(provider, model)
 
     with pytest.raises(ConfigurationError, match="max_tokens"):
-        MyLLM(provider=provider, model=model, resolve_profile_with_hash=result)
+        MyLLM(provider=provider, model=model, resolved_profile=result[0])
 
 
-@pytest.mark.parametrize("value", [(), (None, 1), (None, True), [None, 1], (None, 1, 2)])
-def test_precomputed_input_requires_a_snapshot_and_integer_hash(value):
-    with pytest.raises(ConfigurationError, match="resolve_profile_with_hash"):
+@pytest.mark.parametrize("value", [(), (None, 1), [None, 1], {}, True, object()])
+def test_precomputed_input_requires_a_resolved_profile(value):
+    with pytest.raises(ConfigurationError, match="resolved_profile"):
         MyLLM(
             provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
             model=ModelProfile(model=Attribute(default_value="demo")),
-            resolve_profile_with_hash=value,
+            resolved_profile=value,
         )
 
 

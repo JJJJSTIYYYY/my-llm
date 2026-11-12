@@ -94,7 +94,7 @@ async def measure(workload, mode, *, iterations, warmup):
                         - collections,
                     }
                 )
-        assert llm._client is None
+        assert not llm._clients
     values = sorted(sample["ms"] for sample in samples)
     return {
         "upstream": workload.protocol,

@@ -43,7 +43,7 @@ Decoder.result 默认返回首条消息；Responses 等协议可覆盖为列表�
 ## Decoder 的固定请求流程
 
 Decoder.prepare(intermediate, client) 返回 {client, request, local} 三部分字典：
-client 是 SDK 构造参数，request 是 SDK 调用参数，local 包含 stream。
+client 是 SDK 构造参数，request 是 SDK 调用参数，local 包含 stream 和用于客户端复用的 client_key。
 完整准备路径每次只调用一次 validate_parameters 返回 PreparedOptions，再交给 request。
 离线 Decoder.request 可自行准备一次 options；已提供 options 时直接复用。
 

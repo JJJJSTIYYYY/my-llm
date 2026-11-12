@@ -18,8 +18,12 @@ from my_llm.middleware.stream import MessageEvent, Usage
 from my_llm.profile.configuration import Protocol, ReasoningEffort
 from my_llm.profile.model_profile import ModelProfile
 from my_llm.profile.provider_profile import ProviderProfile
-from my_llm.profile.resolution import ResolvedProfile, resolve_profiles_with_hash
-from my_llm.profile.types import Attribute, omit
+from my_llm.profile.resolution import (
+    ResolvedProfile,
+    hash_resolved_profile,
+    resolve_profiles_with_hash,
+)
+from my_llm.profile.types import Attribute, Omit, omit
 from my_llm.runtime.message_stream import MessageStream
 from my_llm.runtime.state import StreamState
 
@@ -30,10 +34,8 @@ class MyLLM:
     Args:
         provider: Connection settings and default upstream protocol.
         model: Model identity and overrides, including the upstream protocol.
-        resolve_profile_with_hash: Precomputed (ResolvedProfile, int) for the same
-            provider/model, from compare or resolve_profiles_with_hash. Skip
-            resolution and hashing; copy the snapshot and validate the protocol.
-            The caller must supply an unmodified snapshot and its matching hash.
+        resolved_profile: Precomputed snapshot for the same provider/model. Skip
+            resolution; copy the snapshot, compute its hash and validate the protocol.
         stdio_protocol: Protocol used by both messages and tools, and by results.
             If None, the first generation must uniquely identify a protocol.
             Set "middleware" explicitly for typed Message/FunctionTool input and
@@ -78,7 +80,7 @@ class MyLLM:
         *,
         provider: ProviderProfile,
         model: ModelProfile,
-        resolve_profile_with_hash: tuple[ResolvedProfile, int] | None = None,
+        resolved_profile: ResolvedProfile | None = None,
         stdio_protocol: Protocol | None = None,
         semantic_loss_protocol: LossPolicy = "raise",
         input_semantic_loss_hook: SemanticLossHook | None = None,
@@ -101,29 +103,24 @@ class MyLLM:
             and stdio_protocol not in self.codec.codecs
         ):
             raise ConfigurationError(f"unsupported stdio_protocol: {stdio_protocol!r}")
-        if resolve_profile_with_hash is None:
+        if resolved_profile is None:
             self._resolved_profile, self._profile_hash = resolve_profiles_with_hash(
                 provider, model, defaults_for=self.codec.defaults
             )
         else:
             if not isinstance(provider, ProviderProfile) or not isinstance(model, ModelProfile):
                 raise ConfigurationError("provider and model must be profile instances")
-            if (
-                not isinstance(resolve_profile_with_hash, tuple)
-                or len(resolve_profile_with_hash) != 2
-                or not isinstance(resolve_profile_with_hash[0], ResolvedProfile)
-                or type(resolve_profile_with_hash[1]) is not int
-            ):
-                raise ConfigurationError("resolve_profile_with_hash must be (ResolvedProfile, int)")
-            resolved, self._profile_hash = resolve_profile_with_hash
-            self._resolved_profile = deepcopy(resolved)
+            if not isinstance(resolved_profile, ResolvedProfile):
+                raise ConfigurationError("resolved_profile must be a ResolvedProfile")
+            self._resolved_profile = deepcopy(resolved_profile)
+            self._profile_hash = hash_resolved_profile(self.resolved_profile)
         self.codec.validate_profile(self.resolved_profile)
         self.client_parameters = self.codec.client_parameters(self.resolved_profile)
         self.provider = deepcopy(provider)
         self.model = deepcopy(model)
         self._stdio_protocol = stdio_protocol
         self._last_usage: Usage | None = None
-        self._client: Any = None
+        self._clients: dict[str | None, Any] = {}
         self._client_resources = AsyncExitStack()
         self._closed = False
 
@@ -143,9 +140,10 @@ class MyLLM:
         """Return True for a matching hash, otherwise a reusable snapshot and hash.
 
         Resolve using this instance's protocol defaults without updating its
-        configuration or clients. Pass a changed result to a new MyLLM through
-        resolve_profile_with_hash, with the same provider/model, to avoid resolving
-        and hashing again. Invalid profiles raise the usual resolution errors.
+        configuration or clients. Pass the changed snapshot (result[0]) to a new
+        MyLLM through resolved_profile, with the same provider/model, to skip
+        resolution. The new instance computes its own hash. Invalid profiles raise
+        the usual resolution errors.
         """
         result = resolve_profiles_with_hash(provider, model, defaults_for=self.codec.defaults)
         return True if result[1] == self.profile_hash else result
@@ -192,13 +190,14 @@ class MyLLM:
         self._check_open()
         profile = self.resolved_profile
         transport = self.codec.transport(profile.protocol)
-        if self._client is None:
+        key = prepared["local"]["client_key"]
+        if key not in self._clients:
             # SDK construction is synchronous: no task can interleave between
             # lookup and registration, including concurrent first requests.
             client = transport.create_client(prepared["client"])
             self._client_resources.push_async_callback(transport.close_client, client)
-            self._client = client
-        return self._client
+            self._clients[key] = client
+        return self._clients[key]
 
     async def aclose(self) -> None:
         """Close this instance and release its clients; repeated calls are harmless.
@@ -208,7 +207,7 @@ class MyLLM:
         """
         if not self._closed:
             self._closed = True
-            self._client = None
+            self._clients.clear()
             self.codec.expire_message_cache(self._message_cache_key)
             await self._client_resources.aclose()
 
@@ -247,6 +246,7 @@ class MyLLM:
         messages: Sequence[Any],
         stream: bool = False,
         tools: Any = omit,
+        api_key: str | Omit | None = None,
         max_tokens: Any = _MISSING,
         reasoning: bool | None = None,
         reasoning_effort: ReasoningEffort = "none",
@@ -266,6 +266,9 @@ class MyLLM:
             tools: Tool declarations in the same protocol. None or omit leaves them
                 out; an empty list sends an empty tool list. Tools are not executed.
                 Middleware I/O accepts FunctionTool models.
+            api_key: Per-call authentication value routed through the profile's
+                api_key path. None inherits; omit removes the configured connection
+                value. Clients are reused by effective key and closed with the instance.
             max_tokens: Positive output limit. If absent, inherit the profile default;
                 None is an explicit value and omit removes the configured target key.
             reasoning: Enable reasoning with medium effort when no effort is given.
@@ -330,6 +333,7 @@ class MyLLM:
             messages=messages,
             stream=stream,
             tools=tools,
+            api_key=api_key,
             max_tokens=max_tokens,
             reasoning=reasoning,
             reasoning_effort=reasoning_effort,
@@ -458,7 +462,7 @@ async def generate(
         input_semantic_loss_hook: Optional sync/async request hook for the "hook" policy.
         output_semantic_loss_hook: Optional response draft hook for the "hook" policy.
         **parameters: Generation options accepted by MyLLM.generate, including
-            stream, tools, max_tokens, reasoning and extra_body.
+            stream, tools, api_key, max_tokens, reasoning and extra_body.
 
     Returns:
         A completed native message/items, or a MessageStream when stream=True.

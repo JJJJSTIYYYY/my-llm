@@ -21,7 +21,9 @@ MyLLM 从 BaseCodec 统一组合的 Transport 获取 create_client，保存客�
 关闭本次响应；SDK 的重试和后续请求继续使用相同实例。
 启用消息缓存时，输入在翻译完成后即保留；未消费或失败后的相同批次重试按原始消息哈希去重，
 不会再次追加历史。放弃的流仍须显式关闭，再开始重试，见[增量消息缓存](../reference/api.md#增量消息缓存)。
-不检测用户直接修改 MyLLM 内部属性引起的配置失效。
+实例复用与跨会话缓存隔离由应用层负责；新会话开始前可调用 `clear_cache()` 清空翻译历史和批次去重状态。
+`compare(new_provider, new_model, new_stdio_protocol)` 只比较三个标识字符串，不检查配置等价性。
+清理前应完成或关闭活动响应流。不检测用户直接修改 MyLLM 内部属性引起的配置失效。
 
 使用 `async with MyLLM(...) as llm` 或 `await llm.aclose()` 关闭实例。
 关闭前先完成或关闭所有响应流；关闭操作幂等，关闭后拒绝新请求和未启动的流。

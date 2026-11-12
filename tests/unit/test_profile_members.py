@@ -54,7 +54,7 @@ def test_enumeration_uses_declarations_for_inherited_unset_and_omitted_members()
     configs = provider.get_configs()
     parameters = provider.get_parameters()
 
-    assert attributes == {"models": None, "label": None}
+    assert attributes == {"provider": provider.provider, "models": None, "label": None}
     assert configs["protocol"] is provider.protocol
     assert configs["feature"] is omit
     assert configs["timeout"] is None

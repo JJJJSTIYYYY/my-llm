@@ -36,7 +36,7 @@ async def session():
 | --- | --- | --- |
 | `provider` | `ProviderProfile` | 必填，连接配置和默认上游协议 |
 | `model` | `ModelProfile` | 必填，模型 ID 和模型配置 |
-| `resolved_profile` | `ResolvedProfile \| None` | 默认 `None`；传入同一配置的预解析快照，跳过解析，复制快照后重新计算哈希并检查协议约束 |
+| `resolved_profile` | `ResolvedProfile \| None` | 默认 `None`；传入同一配置的预解析快照，跳过解析，复制快照后检查协议约束 |
 | `stdio_protocol` | `Protocol \| None` | 输入消息、工具和输出共用的协议；默认尝试唯一推断 |
 | `enable_message_cache` | `bool` | 默认 `False`；开启后缓存已翻译的增量输入，同一实例必须串行使用 |
 
@@ -53,36 +53,31 @@ Model 的 `protocol=None` 继承 Provider；Model 明确配置时，Provider 可
 | --- | --- |
 | `provider` / `model` | 构造时传入配置的副本 |
 | `resolved_profile` | 已解析的 `ResolvedProfile` |
-| `profile_hash` | 构造时配置快照的整数哈希，只读 |
 | `stdio_protocol` | 绑定的输入输出协议，推断前可为 `None` |
 | `codec` | 当前实例的 `MyCodec` |
 | `client_parameters` | 已准备的连接参数，供高级集成使用 |
 
-### `MyLLM.compare(provider, model)`
+### `MyLLM.resolve_profile(provider, model)`
 
-返回 `True` 表示解析后的配置哈希与构造时一致；不一致时返回
-`tuple[ResolvedProfile, int]`，其中快照可用于创建新实例。比较不更新当前实例配置或客户端，
-每次使用当前实例的协议默认值重新解析、计算哈希；无效配置仍抛出解析异常。
-元组也是真值，判断结果时应使用 `result is True` 或 `result is not True`。
+类方法返回独立的 `ResolvedProfile`，可传入构造函数的 `resolved_profile` 跳过重复解析。
+构造函数复制传入的快照并检查协议约束；不计算配置哈希。
 
 ```python
-async def replace_if_changed(llm, provider, model):
-    result = llm.compare(provider, model)
-    if result is not True:
-        replacement = MyLLM(
-            provider=provider,
-            model=model,
-            resolved_profile=result[0],
-        )
-        await llm.aclose()
-        return replacement
-    return llm
+resolved = MyLLM.resolve_profile(provider, model)
+llm = MyLLM(provider=provider, model=model, resolved_profile=resolved)
 ```
 
-复用快照时必须传入对应的 provider/model。
-构造函数不重新解析或核对原始配置；为隔离实例而复制快照，并根据复制后的内容计算哈希、进行协议校验。
-compare 返回的哈希不传入构造函数。快照按只读数据使用，同一快照可用于创建多个实例。
-比较范围仅为解析后的 provider/model 配置，不包含 stdio_protocol、语义损失策略或消息缓存开关。
+### `MyLLM.compare(new_provider, new_model, new_stdio_protocol) -> bool`
+
+三个参数均为字符串，分别与此实例的 `provider.provider.default_value`、模型 ID 和已绑定的
+`stdio_protocol` 精确比较，全部相同返回 `True`。协议尚未推断时，不匹配任何输入协议字符串。
+不解析配置、不检查配置等价性，也不修改配置、客户端或缓存。实例的选择和复用由应用层管理。
+Provider 标识默认采用 Provider 协议名；只有 Model 指定协议时，实例采用最终协议名。
+
+### `MyLLM.clear_cache() -> None`
+
+清除此实例的消息翻译历史和最后批次去重状态，重复调用无副作用，不关闭 SDK 客户端。
+清理前应完成或关闭活动响应流。跨会话的缓存隔离由应用层负责；开始新会话时可主动调用本接口。
 
 ### `await MyLLM.generate(...)`
 
@@ -400,13 +395,6 @@ Provider 与 Model 共享以下覆盖项，均默认 `None`，表示继承：
 直接集成时再调用 `MyCodec.validate_profile(resolved)` 检查协议约束；MyLLM 自动完成这些检查。
 `defaults_for(protocol)` 可提供已有实例的 ProtocolDefaults；MyLLM 使用自身 MyCodec.defaults，
 与后续验证和请求共用同一个协议组件实例。省略时独立创建所选注册 codec 读取默认声明。
-
-`resolve_profiles_with_hash(provider, model, *, defaults_for=None) -> tuple[ResolvedProfile, int]`
-先调用上述解析函数，再对完整快照计算 SHA-256 并转为整数。包含连接配置和 Parameter 的所有字段；
-不额外包含已被覆盖的原始值或未进入快照的 Attribute。字典键、绑定元组和列表的顺序均保留，
-顺序改变可能使哈希改变，即使两个字典用 `==` 比较相等。
-快照值支持 JSON 标量、字典、列表、元组、bytes、集合、Enum 和 dataclass 实例；
-不支持的对象或循环引用抛出 `ConfigurationError`。哈希仅用于配置指纹，不作为配置版本或认证凭据。
 
 | 属性 / 方法 | 含义 |
 | --- | --- |

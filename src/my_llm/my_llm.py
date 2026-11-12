@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator, Sequence
 from contextlib import AsyncExitStack, aclosing
 from copy import deepcopy
 from dataclasses import replace
-from typing import Any, Literal
+from typing import Any
 from uuid import uuid4
 
 from my_llm.basic.data import _MISSING
@@ -18,11 +18,7 @@ from my_llm.middleware.stream import MessageEvent, Usage
 from my_llm.profile.configuration import Protocol, ReasoningEffort
 from my_llm.profile.model_profile import ModelProfile
 from my_llm.profile.provider_profile import ProviderProfile
-from my_llm.profile.resolution import (
-    ResolvedProfile,
-    hash_resolved_profile,
-    resolve_profiles_with_hash,
-)
+from my_llm.profile.resolution import ResolvedProfile, resolve_profiles
 from my_llm.profile.types import Attribute, Omit, omit
 from my_llm.runtime.message_stream import MessageStream
 from my_llm.runtime.state import StreamState
@@ -35,7 +31,7 @@ class MyLLM:
         provider: Connection settings and default upstream protocol.
         model: Model identity and overrides, including the upstream protocol.
         resolved_profile: Precomputed snapshot for the same provider/model. Skip
-            resolution; copy the snapshot, compute its hash and validate the protocol.
+            resolution; copy the snapshot and validate the protocol.
         stdio_protocol: Protocol used by both messages and tools, and by results.
             If None, the first generation must uniquely identify a protocol.
             Set "middleware" explicitly for typed Message/FunctionTool input and
@@ -57,7 +53,6 @@ class MyLLM:
         provider: Copy of the supplied provider profile.
         model: Copy of the supplied model profile.
         resolved_profile: Read-only configuration snapshot for this instance.
-        profile_hash: Read-only fingerprint of the construction-time snapshot.
         stdio_protocol: Read-only input/output protocol, or None before inference.
         codec: Converter available for the registered protocols.
         client_parameters: Prepared connection settings; treat as read-only.
@@ -72,7 +67,8 @@ class MyLLM:
     within one event loop. Concurrent generation calls are supported with message
     caching disabled. With caching enabled, finish or close each stream before the
     next call; use separate instances for concurrent conversations. Create a new
-    instance to change its configuration.
+    instance to change its configuration. Applications own instance reuse and
+    session isolation; clear_cache() starts a new translated history.
     """
 
     def __init__(
@@ -104,7 +100,7 @@ class MyLLM:
         ):
             raise ConfigurationError(f"unsupported stdio_protocol: {stdio_protocol!r}")
         if resolved_profile is None:
-            self._resolved_profile, self._profile_hash = resolve_profiles_with_hash(
+            self._resolved_profile = resolve_profiles(
                 provider, model, defaults_for=self.codec.defaults
             )
         else:
@@ -113,10 +109,11 @@ class MyLLM:
             if not isinstance(resolved_profile, ResolvedProfile):
                 raise ConfigurationError("resolved_profile must be a ResolvedProfile")
             self._resolved_profile = deepcopy(resolved_profile)
-            self._profile_hash = hash_resolved_profile(self.resolved_profile)
         self.codec.validate_profile(self.resolved_profile)
         self.client_parameters = self.codec.client_parameters(self.resolved_profile)
         self.provider = deepcopy(provider)
+        if self.provider.provider is None:
+            self.provider.provider = Attribute(default_value=self.resolved_profile.protocol)
         self.model = deepcopy(model)
         self._stdio_protocol = stdio_protocol
         self._last_usage: Usage | None = None
@@ -124,29 +121,31 @@ class MyLLM:
         self._client_resources = AsyncExitStack()
         self._closed = False
 
+    @classmethod
+    def resolve_profile(cls, provider: ProviderProfile, model: ModelProfile) -> ResolvedProfile:
+        """Resolve provider/model settings into an independent configuration snapshot."""
+        return resolve_profiles(provider, model)
+
+    def clear_cache(self) -> None:
+        """Clear this instance's translated history and last-input deduplication.
+
+        Finish or close active streams before clearing. Applications own session
+        isolation and decide when a reused instance starts a new conversation.
+        """
+        self.codec.expire_message_cache(self._message_cache_key)
+
+    def compare(self, new_provider: str, new_model: str, new_stdio_protocol: str) -> bool:
+        """Compare reuse identifiers; applications own configuration/session isolation."""
+        return (
+            new_provider == self.provider.provider.default_value
+            and new_model == self.model.model.default_value
+            and new_stdio_protocol == self.stdio_protocol
+        )
+
     @property
     def resolved_profile(self) -> ResolvedProfile:
         """Read-only snapshot binding this instance's upstream protocol and model."""
         return self._resolved_profile
-
-    @property
-    def profile_hash(self) -> int:
-        """Fingerprint of the read-only construction-time configuration."""
-        return self._profile_hash
-
-    def compare(
-        self, provider: ProviderProfile, model: ModelProfile
-    ) -> Literal[True] | tuple[ResolvedProfile, int]:
-        """Return True for a matching hash, otherwise a reusable snapshot and hash.
-
-        Resolve using this instance's protocol defaults without updating its
-        configuration or clients. Pass the changed snapshot (result[0]) to a new
-        MyLLM through resolved_profile, with the same provider/model, to skip
-        resolution. The new instance computes its own hash. Invalid profiles raise
-        the usual resolution errors.
-        """
-        result = resolve_profiles_with_hash(provider, model, defaults_for=self.codec.defaults)
-        return True if result[1] == self.profile_hash else result
 
     @property
     def stdio_protocol(self) -> Protocol | None:
@@ -208,7 +207,7 @@ class MyLLM:
         if not self._closed:
             self._closed = True
             self._clients.clear()
-            self.codec.expire_message_cache(self._message_cache_key)
+            self.clear_cache()
             await self._client_resources.aclose()
 
     async def __aenter__(self) -> MyLLM:

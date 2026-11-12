@@ -32,7 +32,6 @@ def test_public_contract_uses_standard_messages_and_one_protocol_field():
         "MyLLM",
         "MessageStream",
         "ResolvedProfile",
-        "resolve_profiles_with_hash",
         "OverridableProfile",
         "Profile",
         "ProtocolDefaults",

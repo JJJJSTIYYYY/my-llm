@@ -13,7 +13,6 @@ from my_llm.profile.resolution import (
     ResolvedProfile,
     merge_profiles,
     resolve_profiles,
-    resolve_profiles_with_hash,
 )
 from my_llm.profile.types import (
     Attribute,
@@ -37,7 +36,6 @@ __all__ = [
     "ResolvedProfile",
     "merge_profiles",
     "resolve_profiles",
-    "resolve_profiles_with_hash",
     "Parameter",
     "InputParameter",
     "OutputParameter",

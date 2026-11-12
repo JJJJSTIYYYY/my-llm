@@ -48,6 +48,8 @@ class MessageCache:
     Hooks own their changes and any explicit cache maintenance those changes need.
     Cached history is never parsed, translated or association-validated again.
     Only the last appended input fingerprint is retained, so A/B/A stays intact.
+    Applications own the mapping between sessions and instances and must clear
+    an instance's history when reusing it for another session.
     """
 
     def __init__(self) -> None:

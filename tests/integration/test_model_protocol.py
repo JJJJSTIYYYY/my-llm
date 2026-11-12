@@ -57,21 +57,16 @@ async def test_model_protocol_changes_can_be_compared_and_reused():
     changed_model = replace(model, protocol=Config(default_value="openai_responses"))
 
     async with MyLLM(provider=provider, model=model) as original:
-        result = original.compare(provider, changed_model)
-        assert isinstance(result, tuple)
-        assert result[0].protocol == "openai_responses"
-        assert result[1] != original.profile_hash
+        assert original.compare("openai_chat", "demo", "openai_chat") is False
+        resolved = MyLLM.resolve_profile(provider, changed_model)
         async with MyLLM(
-            provider=provider, model=changed_model, resolved_profile=result[0]
+            provider=provider,
+            model=changed_model,
+            resolved_profile=resolved,
+            stdio_protocol="openai_chat",
         ) as replacement:
             assert (
                 replacement.resolved_profile.parameter("max_tokens").path == "$.max_output_tokens"
             )
-            assert replacement.compare(provider, changed_model) is True
-            assert (
-                replacement.compare(
-                    replace(provider, protocol=Config(default_value="anthropic")), changed_model
-                )
-                is True
-            )
+            assert replacement.compare("openai_chat", "demo", "openai_chat") is True
         assert original.resolved_profile.protocol == "openai_chat"

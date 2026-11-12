@@ -68,7 +68,6 @@ from my_llm.profile import (
     merge_profiles,
     omit,
     resolve_profiles,
-    resolve_profiles_with_hash,
 )
 from my_llm.runtime import MessageStream, MyLLM, generate
 
@@ -115,7 +114,6 @@ __all__ = [
     "ResolvedProfile",
     "merge_profiles",
     "resolve_profiles",
-    "resolve_profiles_with_hash",
     "Protocol",
     "ProtocolDefaults",
     "PreparedOptions",

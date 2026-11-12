@@ -518,3 +518,24 @@ async def test_idless_tool_deltas_keep_distinct_paired_ids_without_old_validatio
             assert explicit[-2]["tool_calls"][0]["id"] == "call_external"
             assert explicit[-1]["tool_call_id"] == "call_external"
         assert validated_lengths == [2, 2, 2]
+
+
+@pytest.mark.parametrize("upstream", PROTOCOLS)
+async def test_clear_cache_starts_new_history_and_keeps_sdk_client(upstream):
+    provider, model = profiles(upstream)
+    with LocalSDK(upstream, wire_frames(upstream, stream_events(upstream), 53)) as sdk:
+        async with MyLLM(
+            provider=provider, model=model, stdio_protocol=upstream, enable_message_cache=True
+        ) as llm:
+            first = [user_message(upstream, "first-session", media=False)]
+            second = [user_message(upstream, "second-session", media=False)]
+            await llm.generate(messages=first, max_tokens=33)
+            await llm.generate(messages=second, max_tokens=33)
+            assert len(request_history(upstream, json.loads(sdk.requests[-1].content))) == 2
+            llm.clear_cache()
+            await llm.generate(messages=second, max_tokens=33)
+            latest = request_history(upstream, json.loads(sdk.requests[-1].content))
+            assert len(latest) == 1
+            assert "second-session" in str(latest)
+            assert "first-session" not in str(latest)
+            assert sdk.created_clients == 1

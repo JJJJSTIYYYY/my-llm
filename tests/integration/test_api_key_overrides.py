@@ -55,7 +55,6 @@ async def test_api_key_overrides_reach_sdk_headers_and_reuse_clients(
         model=ModelProfile(model=Attribute(default_value="demo")),
         stdio_protocol="openai_chat",
     ) as llm:
-        profile_hash = llm.profile_hash
         for options in (
             {},
             {"api_key": "call-key"},
@@ -78,7 +77,6 @@ async def test_api_key_overrides_reach_sdk_headers_and_reuse_clients(
         assert len(clients) == 2
         assert all(not client.is_closed() for client in clients)
         assert llm.resolved_profile.get("api_key") == "profile-key"
-        assert llm.profile_hash == profile_hash
         assert provider.api_key.default_value == "profile-key"
         assert llm.client_parameters == constructors[0]
     assert all(client.is_closed() for client in clients)

@@ -15,6 +15,8 @@ class ProviderProfile(OverridableProfile):
     """Provider connection, upstream protocol and optional model catalogue.
 
     Args:
+        provider: Optional Attribute containing an application-facing provider ID.
+            Defaults to protocol; MyLLM uses the final protocol when only the model sets it.
         protocol: Config containing a default upstream protocol name. A model
             may override it or supply it when the provider leaves it unset.
         base_url: Config containing the service URL; None inherits SDK defaults.
@@ -33,6 +35,7 @@ class ProviderProfile(OverridableProfile):
     Additional keyword fields are inherited from OverridableProfile.
     """
 
+    provider: Attribute[str] | None = None
     base_url: Config[str] | Omit | None = None
     api_key: InputParameter[str] | Omit | None = field(
         default=None, repr=False, metadata={"scope": "client"}
@@ -45,6 +48,14 @@ class ProviderProfile(OverridableProfile):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if self.provider is None and isinstance(self.protocol, Config):
+            self.provider = Attribute(default_value=self.protocol.default_value)
+        if self.provider is not None and (
+            not isinstance(self.provider, Attribute)
+            or not isinstance(self.provider.default_value, str)
+            or not self.provider.default_value.strip()
+        ):
+            raise ConfigurationError("provider must be a non-empty string Attribute")
         if self.models is not None:
             if not isinstance(self.models, Attribute):
                 raise ConfigurationError("models must use Attribute[list[ModelProfile]]")

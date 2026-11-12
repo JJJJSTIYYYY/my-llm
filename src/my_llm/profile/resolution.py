@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from copy import copy, deepcopy
-from dataclasses import dataclass, field, fields, is_dataclass
-from enum import Enum
-from hashlib import sha256
+from dataclasses import dataclass, field
 from types import UnionType
 from typing import Any, Literal, TypeAliasType, Union, get_args, get_origin
 
@@ -210,75 +207,6 @@ def resolve_profiles(
     )
     resolved.connection.update(_connection_parameters(resolved, connection_bindings))
     return resolved
-
-
-def resolve_profiles_with_hash(
-    provider: ProviderProfile,
-    model: ModelProfile,
-    *,
-    defaults_for: Callable[[str], ProtocolDefaults] | None = None,
-) -> tuple[ResolvedProfile, int]:
-    """Resolve profiles normally and fingerprint the complete snapshot.
-
-    Dictionary and binding order is retained. The integer is a SHA-256 digest,
-    including connection settings and all Parameter fields. Attributes excluded
-    by resolve_profiles remain excluded. Payloads may contain JSON scalars,
-    dictionaries, lists, tuples, bytes, sets, enums and dataclass instances.
-    Unsupported or circular payloads raise ConfigurationError.
-
-    Treat the returned snapshot as read-only when reusing it with MyLLM.
-    """
-    resolved = resolve_profiles(provider, model, defaults_for=defaults_for)
-    return resolved, hash_resolved_profile(resolved)
-
-
-def hash_resolved_profile(resolved: ResolvedProfile) -> int:
-    """Fingerprint a resolved snapshot, retaining dictionary and binding order."""
-    try:
-        encoded = json.dumps(_profile_hash_data(resolved), separators=(",", ":"))
-    except (TypeError, ValueError, RecursionError) as exc:
-        raise ConfigurationError("resolved profile contains an unhashable payload") from exc
-    return int.from_bytes(sha256(encoded.encode("utf-8")).digest(), "big")
-
-
-def _profile_hash_data(value: Any) -> Any:
-    """Encode values by content and type, without copying or sorting dictionaries."""
-    if isinstance(value, Omit):
-        return ("omit",)
-    if isinstance(value, Enum):
-        return (
-            "enum",
-            type(value).__module__,
-            type(value).__qualname__,
-            _profile_hash_data(value.value),
-        )
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, dict):
-        return (
-            "dict",
-            [(_profile_hash_data(key), _profile_hash_data(item)) for key, item in value.items()],
-        )
-    if isinstance(value, (list, tuple)):
-        return (
-            "list" if isinstance(value, list) else "tuple",
-            [_profile_hash_data(item) for item in value],
-        )
-    if isinstance(value, bytes):
-        return ("bytes", value.hex())
-    if isinstance(value, (set, frozenset)):
-        return (
-            "set" if isinstance(value, set) else "frozenset",
-            sorted((_profile_hash_data(item) for item in value), key=json.dumps),
-        )
-    if is_dataclass(value) and not isinstance(value, type):
-        return (
-            "dataclass",
-            type(value).__module__,
-            type(value).__qualname__,
-            [(item.name, _profile_hash_data(getattr(value, item.name))) for item in fields(value)],
-        )
-    raise TypeError(f"unsupported profile hash payload type: {type(value).__qualname__}")
 
 
 def _matches(value: Any, annotation: Any) -> bool:

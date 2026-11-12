@@ -15,7 +15,6 @@ from my_llm import (
     Parameter,
     ProviderProfile,
     resolve_profiles,
-    resolve_profiles_with_hash,
 )
 from my_llm.basic.protocols import codec_for
 from my_llm.runtime.state import StreamState
@@ -125,14 +124,14 @@ def test_custom_feedback_event_routes_private_value(protocol, profile_factory):
     ]
 
 
-def test_event_type_overrides_and_hashes_as_part_of_whole_output_declaration():
+def test_event_type_overrides_as_part_of_whole_output_declaration():
     provider = ProviderProfile(
         protocol=Config(default_value="openai_responses"),
         reasoning_content=OutputParameter(path="$.reasoning", event_type="vendor.reasoning"),
     )
     model = ModelProfile(model=Attribute(default_value="demo"))
-    inherited, inherited_hash = resolve_profiles_with_hash(provider, model)
-    override, override_hash = resolve_profiles_with_hash(
+    inherited = resolve_profiles(provider, model)
+    override = resolve_profiles(
         provider,
         replace(
             model,
@@ -143,7 +142,6 @@ def test_event_type_overrides_and_hashes_as_part_of_whole_output_declaration():
     )
     assert inherited.parameter("reasoning_content").event_type == "vendor.reasoning"
     assert override.parameter("reasoning_content").event_type == "response.reasoning_text.delta"
-    assert override_hash != inherited_hash
     inherited.parameter("reasoning_content").event_type = "changed"
     assert provider.reasoning_content.event_type == "vendor.reasoning"
 

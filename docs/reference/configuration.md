@@ -132,11 +132,11 @@ Profiles 是可变 dataclass，可直接重新赋值字段，也可使用 `datac
 重新赋值 Config 或 Parameter 后，调用 `__post_init__()` 绑定声明身份，再创建 MyLLM。
 MyLLM 构造时隔离配置的嵌套可变数据；请求只在需要独立所有权的边界复制数据。
 
-`llm.compare(provider, model)` 比较解析后配置的哈希：相同返回 `True`，不同返回
-`(ResolvedProfile, int)`。可将结果中的快照 `result[0]` 传给新实例的 `resolved_profile`，
-避免再次解析；新实例复制快照并重新计算哈希，不复用 compare 返回的哈希。快照应与传入的配置对应。
-比较不修改当前实例。字典和参数绑定的顺序参与哈希，结果元组也是真值，需用 `result is True` 判断。
-接口细节见 [MyLLM.compare](api.md#myllmcompareprovider-model)。
+`MyLLM.resolve_profile(provider, model)` 返回可传入构造函数的独立配置快照；初始化不计算配置哈希。
+`llm.compare(new_provider, new_model, new_stdio_protocol)` 仅精确比较 Provider 标识、模型 ID 和输入输出协议字符串，
+返回 bool，不判断完整配置等价性。Provider 的 `provider: Attribute[str]` 默认采用协议名，可显式指定应用层标识。
+实例复用和不同会话的缓存隔离由应用层负责；`llm.clear_cache()` 清空当前实例的消息翻译历史和批次去重状态。
+接口细节见 [MyLLM API](api.md)。
 
 ```python
 from my_llm import (
@@ -228,6 +228,7 @@ Chat 的 reasoning_content 是兼容服务扩展；Responses 仍按标准事件�
 
 | 字段 | 归属 / 说明 |
 | --- | --- |
+| `provider` | Provider Attribute[str]；应用层标识，默认采用协议名；不进入 SDK 请求 |
 | `protocol` | Provider / Model Config[Protocol]；默认 None，Model 优先；最终协议决定选用哪一份 Codec 默认值 |
 | `base_url` | Provider Config；默认继承 SDK 配置 |
 | `api_key` | InputParameter；配置连接密钥的传递位置，default_value 默认为 omit，不出现在 repr |

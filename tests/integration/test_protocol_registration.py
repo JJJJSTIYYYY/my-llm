@@ -178,13 +178,21 @@ class Decoder(BaseDecoder):
 
 
 class Client:
+    created = []
+
     def __init__(self):
+        self.created.append(self)
         self.requests = []
         self.streams_closed = 0
         self.closed = False
 
     async def close(self):
         self.closed = True
+
+
+@pytest.fixture(autouse=True)
+def reset_created_clients():
+    Client.created = []
 
 
 class Transport(BaseTransport):
@@ -276,25 +284,27 @@ async def test_new_protocol_reuses_caches_with_unhashable_annotations(registered
 
     monkeypatch.setattr(Codec, "decoder_type", AnnotatedDecoder)
     provider, _ = profiles()
-    async with MyLLM(
+    llm = MyLLM(
         provider=provider,
         model=ExtendedModel(model=Attribute(default_value="independent")),
         stdio_protocol=PROTOCOL,
-    ) as llm:
-        for body in ("first request", "second request"):
-            result = await llm.generate(
-                messages=[{"speaker": "user", "body": body}], reasoning=True
-            )
-            assert result == {"speaker": "assistant", "body": "hello extension"}
-        client = next(iter(llm._clients.values()))
-        assert [request["dialog"][0]["body"] for request in client.requests] == [
-            "first request",
-            "second request",
-        ]
-        assert all(
-            request["hint"] == {"level": 1, "vendor": "extra"} for request in client.requests
-        )
-        assert client.streams_closed == 2
+    )
+    for body in ("first request", "second request"):
+        result = await llm.generate(messages=[{"speaker": "user", "body": body}], reasoning=True)
+        assert result == {"speaker": "assistant", "body": "hello extension"}
+    client = Client.created[-1]
+    assert [
+        request["dialog"][0]["body"] for instance in Client.created for request in instance.requests
+    ] == [
+        "first request",
+        "second request",
+    ]
+    assert all(
+        request["hint"] == {"level": 1, "vendor": "extra"}
+        for instance in Client.created
+        for request in instance.requests
+    )
+    assert sum(instance.streams_closed for instance in Client.created) == 2
     assert client.closed
 
 
@@ -475,25 +485,25 @@ async def test_independent_protocol_joins_conversion_and_request_lifecycle(
             messages=messages, tools=tools, input_format=PROTOCOL, target_format=stdio
         )
         messages, tools = converted["messages"], converted["tools"]
-    async with MyLLM(provider=provider, model=model, stdio_protocol=stdio) as llm:
-        result = await llm.generate(messages=messages, tools=tools, stream=streaming, max_tokens=23)
-        if streaming:
-            chunks = [chunk async for chunk in result]
-            assert streamed_text(stdio, chunks) == "hello extension"
-            result = result.result
-        assert llm.stdio_protocol == (stdio or PROTOCOL)
-        assert collected_text(stdio, result) == "hello extension"
-        client = next(iter(llm._clients.values()))
-        assert client.requests == [
-            {
-                "model": "independent",
-                "limit": 23,
-                "dialog": [{"speaker": "user", "body": "hi"}],
-                "functions": [{"fn": "weather", "schema": {"type": "object"}}],
-            }
-        ]
-        assert client.streams_closed == 1
-        assert not client.closed
+    llm = MyLLM(provider=provider, model=model, stdio_protocol=stdio)
+    result = await llm.generate(messages=messages, tools=tools, stream=streaming, max_tokens=23)
+    if streaming:
+        chunks = [chunk async for chunk in result]
+        assert streamed_text(stdio, chunks) == "hello extension"
+        result = result.result
+    assert llm.stdio_protocol == (stdio or PROTOCOL)
+    assert collected_text(stdio, result) == "hello extension"
+    client = Client.created[-1]
+    assert client.requests == [
+        {
+            "model": "independent",
+            "limit": 23,
+            "dialog": [{"speaker": "user", "body": "hi"}],
+            "functions": [{"fn": "weather", "schema": {"type": "object"}}],
+        }
+    ]
+    assert client.streams_closed == 1
+    assert client.closed
     assert client.closed
 
 
@@ -527,33 +537,33 @@ async def test_builtin_upstreams_render_registered_protocol_without_shared_chang
     monkeypatch.setattr(type(transport), "close_client", close_client)
     provider = ProviderProfile(protocol=Config(default_value=upstream))
     model = ModelProfile(model=Attribute(default_value="builtin"))
-    async with MyLLM(provider=provider, model=model, stdio_protocol=PROTOCOL) as llm:
-        result = await llm.generate(
-            messages=[{"speaker": "user", "body": "hi"}], stream=streaming, max_tokens=23
-        )
-        if streaming:
-            chunks = [chunk async for chunk in result]
-            assert streamed_text(None, chunks) == "Hello"
-            result = result.result
-        assert collected_text(None, result) == "Hello"
-        client = next(iter(llm._clients.values()))
-        assert client.streams_closed == 1
-        assert not client.closed
-        request = client.requests[0]
-        if upstream == "openai_responses":
-            assert request["input"] == [
-                {
-                    "type": "message",
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": "hi"}],
-                }
-            ]
-        elif upstream == "anthropic":
-            assert request["messages"] == [
-                {"role": "user", "content": [{"type": "text", "text": "hi"}]}
-            ]
-        else:
-            assert request["messages"] == [{"role": "user", "content": "hi"}]
+    llm = MyLLM(provider=provider, model=model, stdio_protocol=PROTOCOL)
+    result = await llm.generate(
+        messages=[{"speaker": "user", "body": "hi"}], stream=streaming, max_tokens=23
+    )
+    if streaming:
+        chunks = [chunk async for chunk in result]
+        assert streamed_text(None, chunks) == "Hello"
+        result = result.result
+    assert collected_text(None, result) == "Hello"
+    client = Client.created[-1]
+    assert client.streams_closed == 1
+    assert client.closed
+    request = client.requests[0]
+    if upstream == "openai_responses":
+        assert request["input"] == [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hi"}],
+            }
+        ]
+    elif upstream == "anthropic":
+        assert request["messages"] == [
+            {"role": "user", "content": [{"type": "text", "text": "hi"}]}
+        ]
+    else:
+        assert request["messages"] == [{"role": "user", "content": "hi"}]
     assert client.closed
 
 
@@ -562,17 +572,17 @@ async def test_protocol_default_bindings_are_isolated_between_profiles_and_reque
     resolved = resolve_profiles(provider, model)
     resolved.get("reasoning_enable")["level"] = 99
     assert resolve_profiles(provider, model).get("reasoning_enable") == {"level": 1}
-    async with MyLLM(provider=provider, model=model, stdio_protocol=PROTOCOL) as llm:
-        messages = [{"speaker": "user", "body": "hi"}]
-        await llm.generate(messages=messages, reasoning=True)
-        client = next(iter(llm._clients.values()))
-        assert client.requests[0]["hint"] == {"level": 1}
-        client.requests[0]["hint"]["level"] = 99
-        await llm.generate(messages=messages, reasoning=True)
-        assert client.requests[1]["hint"] == {"level": 1}
-        assert llm.resolved_profile.get("reasoning_enable") == {"level": 1}
+    llm = MyLLM(provider=provider, model=model, stdio_protocol=PROTOCOL)
+    messages = [{"speaker": "user", "body": "hi"}]
+    await llm.generate(messages=messages, reasoning=True)
+    client = Client.created[-1]
+    assert client.requests[0]["hint"] == {"level": 1}
+    client.requests[0]["hint"]["level"] = 99
+    await llm.generate(messages=messages, reasoning=True)
+    assert Client.created[-1].requests[0]["hint"] == {"level": 1}
+    assert llm.resolved_profile.get("reasoning_enable") == {"level": 1}
     assert Codec._DEFAULTS.reasoning_enable.default_value == {"level": 1}
-    assert client.streams_closed == 2
+    assert sum(instance.streams_closed for instance in Client.created) == 2
     assert client.closed
 
 

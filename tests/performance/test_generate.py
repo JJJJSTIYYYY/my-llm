@@ -105,9 +105,9 @@ async def test_stream_only_renders_batches_with_published_events(monkeypatch, up
         workload = middleware.direct_workload(workload)
     provider, model = profiles(upstream)
     with LocalSDK(upstream, wire_frames(upstream, workload.events, 37)) as sdk:
-        async with MyLLM(provider=provider, model=model, stdio_protocol=workload.stdio) as llm:
-            _, result = await measure(llm, workload, stream=True, parameters=controls(upstream))
-            validate_exchange(workload, workload.stdio, result, sdk)
+        llm = MyLLM(provider=provider, model=model, stdio_protocol=workload.stdio)
+        _, result = await measure(llm, workload, stream=True, parameters=controls(upstream))
+        validate_exchange(workload, workload.stdio, result, sdk)
 
 
 @pytest.mark.parametrize("stdio", ["native", "middleware"])

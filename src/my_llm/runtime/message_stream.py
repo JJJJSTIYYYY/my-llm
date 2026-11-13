@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
-from contextlib import AsyncExitStack
+from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any
 
 from my_llm.middleware.stream import MessageEvent
@@ -32,17 +31,6 @@ class MessageStream(AsyncIterator[dict[str, Any] | MessageEvent]):
         self._iterator = iterator
         self._state = state
         self._closed = False
-        self._close_callbacks = AsyncExitStack()
-
-    def add_close_callback(self, callback: Callable[[], Awaitable[None]]) -> None:
-        """Register an asynchronous no-argument cleanup callback.
-
-        Callbacks run once in reverse registration order when the stream closes,
-        even if iteration never starts. Registering after close raises RuntimeError.
-        """
-        if self._closed:
-            raise RuntimeError("MessageStream is closed")
-        self._close_callbacks.push_async_callback(callback)
 
     @property
     def result(self) -> Any:
@@ -69,17 +57,14 @@ class MessageStream(AsyncIterator[dict[str, Any] | MessageEvent]):
             raise
 
     async def aclose(self) -> None:
-        """Close the response and run registered cleanup callbacks once.
+        """Close the response and its SDK client once.
 
         Safe before iteration and on repeated calls. Closing early does not produce a
         completed result. A reusable MyLLM instance remains available for other calls.
         """
         if not self._closed:
             self._closed = True
-            try:
-                await self._iterator.aclose()
-            finally:
-                await self._close_callbacks.aclose()
+            await self._iterator.aclose()
 
     async def __aenter__(self) -> MessageStream:
         """Return this stream for managed asynchronous consumption."""

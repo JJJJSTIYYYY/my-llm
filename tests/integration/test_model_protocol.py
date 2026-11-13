@@ -25,16 +25,14 @@ async def test_models_sharing_a_provider_use_their_selected_protocols(monkeypatc
         protocol=Config(default_value="openai_responses"),
     )
 
-    async with (
-        MyLLM(provider=provider, model=inherited_model, stdio_protocol="openai_chat") as chat,
-        MyLLM(provider=provider, model=overridden_model, stdio_protocol="openai_chat") as responses,
-    ):
-        for llm in (chat, responses):
-            result = await llm.generate(messages=[{"role": "user", "content": "hi"}], max_tokens=32)
-            assert result["role"] == "assistant"
-            assert result["content"] == "Hello"
-        assert chat.resolved_profile.protocol == "openai_chat"
-        assert responses.resolved_profile.protocol == "openai_responses"
+    chat = MyLLM(provider=provider, model=inherited_model, stdio_protocol="openai_chat")
+    responses = MyLLM(provider=provider, model=overridden_model, stdio_protocol="openai_chat")
+    for llm in (chat, responses):
+        result = await llm.generate(messages=[{"role": "user", "content": "hi"}], max_tokens=32)
+        assert result["role"] == "assistant"
+        assert result["content"] == "Hello"
+    assert chat.resolved_profile.protocol == "openai_chat"
+    assert responses.resolved_profile.protocol == "openai_responses"
 
     chat_request = chat_client.requests[0]
     responses_request = responses_client.requests[0]
@@ -56,17 +54,15 @@ async def test_model_protocol_changes_can_be_compared_and_reused():
     model = ModelProfile(model=Attribute(default_value="demo"))
     changed_model = replace(model, protocol=Config(default_value="openai_responses"))
 
-    async with MyLLM(provider=provider, model=model) as original:
-        assert original.compare("openai_chat", "demo", "openai_chat") is False
-        resolved = MyLLM.resolve_profile(provider, changed_model)
-        async with MyLLM(
-            provider=provider,
-            model=changed_model,
-            resolved_profile=resolved,
-            stdio_protocol="openai_chat",
-        ) as replacement:
-            assert (
-                replacement.resolved_profile.parameter("max_tokens").path == "$.max_output_tokens"
-            )
-            assert replacement.compare("openai_chat", "demo", "openai_chat") is True
-        assert original.resolved_profile.protocol == "openai_chat"
+    original = MyLLM(provider=provider, model=model)
+    assert original.compare("openai_chat", "demo", "openai_chat") is False
+    resolved = MyLLM.resolve_profile(provider, changed_model)
+    replacement = MyLLM(
+        provider=provider,
+        model=changed_model,
+        resolved_profile=resolved,
+        stdio_protocol="openai_chat",
+    )
+    assert replacement.resolved_profile.parameter("max_tokens").path == "$.max_output_tokens"
+    assert replacement.compare("openai_chat", "demo", "openai_chat") is True
+    assert original.resolved_profile.protocol == "openai_chat"

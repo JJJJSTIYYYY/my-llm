@@ -76,7 +76,7 @@ async def run(options):
         "size": asdict(size),
         "warmup": options.warmup,
         "wire_chunk_bytes": options.wire_chunk_bytes,
-        "timing": "generate entry through complete consumption, response close and result copy; MyLLM construction, fixtures, assertions and instance close excluded; no network/server waits; real SDK parsing included; GC enabled",
+        "timing": "generate entry through complete consumption, response close and result copy; MyLLM construction, fixtures and assertions excluded; no network/server waits; real SDK parsing included; GC enabled",
         "cold_definition": "first generate on a new instance after unmeasured preflight; includes lazy SDK client creation, excludes process/import/schema cold start",
         "cases": [],
     }

@@ -35,29 +35,29 @@ async def test_cached_nested_arguments_are_captured_only_for_storage_and_final_r
         },
     ]
     provider, model = profiles("anthropic")
-    async with MyLLM(
+    llm = MyLLM(
         provider=provider, model=model, stdio_protocol="anthropic", enable_message_cache=True
-    ) as llm:
+    )
 
-        async def prepare():
-            return await llm.codec.prepare(
-                {"messages": messages, "tools": None, "stream": True},
-                llm.resolved_profile,
-                input_format="anthropic",
-                client=llm.client_parameters,
-                enable_message_cache=True,
-                message_cache_key=llm._message_cache_key,
-            )
+    async def prepare():
+        return await llm.codec.prepare(
+            {"messages": messages, "tools": None, "stream": True},
+            llm.resolved_profile,
+            input_format="anthropic",
+            client=llm.client_parameters,
+            enable_message_cache=True,
+            message_cache_key=llm._message_cache_key,
+        )
 
-        first = await prepare()
-        assert len(copies) == 2
-        first["request"]["messages"][0]["content"][0]["input"]["records"][0]["value"] = "edited"
-        second = await prepare()
-        assert len(copies) == 3
-        assert second["request"]["messages"][0]["content"][0]["input"]["records"] == [
-            {"value": "original"}
-        ]
-        assert arguments == {"records": [{"value": "original"}]}
+    first = await prepare()
+    assert len(copies) == 2
+    first["request"]["messages"][0]["content"][0]["input"]["records"][0]["value"] = "edited"
+    second = await prepare()
+    assert len(copies) == 3
+    assert second["request"]["messages"][0]["content"][0]["input"]["records"] == [
+        {"value": "original"}
+    ]
+    assert arguments == {"records": [{"value": "original"}]}
 
 
 @pytest.mark.parametrize("upstream", PROTOCOLS)
@@ -66,73 +66,70 @@ async def test_warm_incremental_prepare_skips_old_translation_and_type_compilati
     monkeypatch, upstream, stdio
 ):
     provider, model = profiles(upstream)
-    async with MyLLM(provider=provider, model=model, stdio_protocol=stdio) as llm:
-        declared = tools(stdio) if stdio != "middleware" else []
-        first = (
-            history(stdio)
-            if stdio != "middleware"
-            else [UserMessage("user", [TextContent("initial")])]
+    llm = MyLLM(provider=provider, model=model, stdio_protocol=stdio)
+    declared = tools(stdio) if stdio != "middleware" else []
+    first = (
+        history(stdio) if stdio != "middleware" else [UserMessage("user", [TextContent("initial")])]
+    )
+    delta = [
+        user_message(stdio, "increment", media=False)
+        if stdio != "middleware"
+        else UserMessage("user", [TextContent("increment")])
+    ]
+    original = deepcopy((first, delta, declared))
+
+    async def prepare(messages):
+        return await llm.codec.prepare(
+            {"messages": messages, "tools": declared, "stream": True, **controls(upstream)},
+            llm.resolved_profile,
+            input_format=stdio,
+            client=llm.client_parameters,
+            enable_message_cache=True,
+            message_cache_key=llm._message_cache_key,
         )
-        delta = [
-            user_message(stdio, "increment", media=False)
-            if stdio != "middleware"
-            else UserMessage("user", [TextContent("increment")])
-        ]
-        original = deepcopy((first, delta, declared))
 
-        async def prepare(messages):
-            return await llm.codec.prepare(
-                {"messages": messages, "tools": declared, "stream": True, **controls(upstream)},
-                llm.resolved_profile,
-                input_format=stdio,
-                client=llm.client_parameters,
-                enable_message_cache=True,
-                message_cache_key=llm._message_cache_key,
-            )
+    (await prepare(first))
+    cache = llm.codec._message_cache
+    initial_size = len(cache.get(llm._message_cache_key))
+    before = caches()
+    translations, associations, native_filters = [], [], []
 
-        (await prepare(first))
-        cache = llm.codec._message_cache
-        initial_size = len(cache.get(llm._message_cache_key))
-        before = caches()
-        translations, associations, native_filters = [], [], []
+    def track(owner, name, counts):
+        method = getattr(owner, name)
 
-        def track(owner, name, counts):
-            method = getattr(owner, name)
+        def call(self, messages, *args, **kwargs):
+            counts.append(len(messages))
+            return method(messages, *args, **kwargs)
 
-            def call(self, messages, *args, **kwargs):
-                counts.append(len(messages))
-                return method(messages, *args, **kwargs)
+        monkeypatch.setattr(type(owner), name, call)
 
-            monkeypatch.setattr(type(owner), name, call)
+    target = llm.codec.decoder(upstream)
+    track(target, "_messages", translations)
+    track(target, "filter_messages", native_filters)
+    validate = decoder_module.validate_messages
 
-        target = llm.codec.decoder(upstream)
-        track(target, "_messages", translations)
-        track(target, "filter_messages", native_filters)
-        validate = decoder_module.validate_messages
+    def validate_messages(messages, **kwargs):
+        associations.append(len(messages))
+        return validate(messages, **kwargs)
 
-        def validate_messages(messages, **kwargs):
-            associations.append(len(messages))
-            return validate(messages, **kwargs)
+    monkeypatch.setattr(decoder_module, "validate_messages", validate_messages)
+    encoded = []
+    if stdio != "middleware":
+        track(llm.codec.codecs[stdio].encoder, "_messages", encoded)
 
-        monkeypatch.setattr(decoder_module, "validate_messages", validate_messages)
-        encoded = []
-        if stdio != "middleware":
-            track(llm.codec.codecs[stdio].encoder, "_messages", encoded)
+    def unexpected(*args, **kwargs):
+        pytest.fail("a warm request must not rebuild SDK types or validators")
 
-        def unexpected(*args, **kwargs):
-            pytest.fail("a warm request must not rebuild SDK types or validators")
-
-        monkeypatch.setattr(compiled_cache, "get_type_hints", unexpected)
-        monkeypatch.setattr(compiled_cache, "TypeAdapter", unexpected)
-        second = await prepare(delta)
-        retried = await prepare(delta)
-        assert second == retried
-        assert translations == associations == [1, 1]
-        assert encoded == ([1, 1] if stdio != "middleware" else [])
-        assert native_filters == [initial_size + 1, initial_size + 1]
-        assert len(cache.get(llm._message_cache_key)) == initial_size + 1
-        assert (first, delta, declared) == original
-        assert not llm._clients
-        for name, after in caches().items():
-            assert after["misses"] == before[name]["misses"], name
-            assert after["currsize"] == before[name]["currsize"], name
+    monkeypatch.setattr(compiled_cache, "get_type_hints", unexpected)
+    monkeypatch.setattr(compiled_cache, "TypeAdapter", unexpected)
+    second = await prepare(delta)
+    retried = await prepare(delta)
+    assert second == retried
+    assert translations == associations == [1, 1]
+    assert encoded == ([1, 1] if stdio != "middleware" else [])
+    assert native_filters == [initial_size + 1, initial_size + 1]
+    assert len(cache.get(llm._message_cache_key)) == initial_size + 1
+    assert (first, delta, declared) == original
+    for name, after in caches().items():
+        assert after["misses"] == before[name]["misses"], name
+        assert after["currsize"] == before[name]["currsize"], name

@@ -51,50 +51,46 @@ async def measure(workload, mode, *, iterations, warmup):
     samples = []
     request_hash = None
     history, delta = workload.messages[:-1], workload.messages[-1:]
-    async with MyLLM(
-        provider=provider,
-        model=model,
-        stdio_protocol=workload.stdio,
-        enable_message_cache=cached,
-    ) as llm:
+    llm = MyLLM(
+        provider=provider, model=model, stdio_protocol=workload.stdio, enable_message_cache=cached
+    )
 
-        async def prepare(messages):
-            return await llm.codec.prepare(
-                {"messages": messages, "tools": workload.tools, "stream": True, **parameters},
-                llm.resolved_profile,
-                input_format=workload.stdio,
-                client=llm.client_parameters,
-                enable_message_cache=cached,
-                message_cache_key=llm._message_cache_key,
-            )
+    async def prepare(messages):
+        return await llm.codec.prepare(
+            {"messages": messages, "tools": workload.tools, "stream": True, **parameters},
+            llm.resolved_profile,
+            input_format=workload.stdio,
+            client=llm.client_parameters,
+            enable_message_cache=cached,
+            message_cache_key=llm._message_cache_key,
+        )
 
-        if mode == "repeat":
+    if mode == "repeat":
+        await prepare(history)
+        await prepare(delta)
+    for index in range(warmup + iterations):
+        if mode == "incremental":
+            llm.codec.expire_message_cache(llm._message_cache_key)
             await prepare(history)
-            await prepare(delta)
-        for index in range(warmup + iterations):
-            if mode == "incremental":
-                llm.codec.expire_message_cache(llm._message_cache_key)
-                await prepare(history)
-            collections = sum(item["collections"] for item in gc.get_stats())
-            cpu_start = process_time_ns()
-            start = perf_counter_ns()
-            prepared = await prepare(delta if cached else workload.messages)
-            elapsed = perf_counter_ns() - start
-            cpu_elapsed = process_time_ns() - cpu_start
-            observed = fingerprint(prepared["request"])
-            if request_hash is None:
-                request_hash = observed
-            assert request_hash == observed
-            if index >= warmup:
-                samples.append(
-                    {
-                        "ms": elapsed / 1_000_000,
-                        "cpu_ms": cpu_elapsed / 1_000_000,
-                        "gc_collections": sum(item["collections"] for item in gc.get_stats())
-                        - collections,
-                    }
-                )
-        assert not llm._clients
+        collections = sum(item["collections"] for item in gc.get_stats())
+        cpu_start = process_time_ns()
+        start = perf_counter_ns()
+        prepared = await prepare(delta if cached else workload.messages)
+        elapsed = perf_counter_ns() - start
+        cpu_elapsed = process_time_ns() - cpu_start
+        observed = fingerprint(prepared["request"])
+        if request_hash is None:
+            request_hash = observed
+        assert request_hash == observed
+        if index >= warmup:
+            samples.append(
+                {
+                    "ms": elapsed / 1_000_000,
+                    "cpu_ms": cpu_elapsed / 1_000_000,
+                    "gc_collections": sum(item["collections"] for item in gc.get_stats())
+                    - collections,
+                }
+            )
     values = sorted(sample["ms"] for sample in samples)
     return {
         "upstream": workload.protocol,

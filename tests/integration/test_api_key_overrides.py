@@ -16,7 +16,7 @@ from tests.helpers.transport import sse
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 @pytest.mark.parametrize("path", ["$.api_key", "$.extra_headers.Authorization"])
 @pytest.mark.parametrize("stream", [False, True])
-async def test_api_key_overrides_reach_sdk_headers_and_reuse_clients(
+async def test_api_key_overrides_reach_sdk_headers_and_close_clients(
     monkeypatch, protocol, path, stream
 ):
     requests, clients, constructors = [], [], []
@@ -50,35 +50,35 @@ async def test_api_key_overrides_reach_sdk_headers_and_reuse_clients(
         api_key=InputParameter(path=path, default_value="profile-key"),
         base_url=Config(default_value="https://local.test"),
     )
-    async with MyLLM(
+    llm = MyLLM(
         provider=provider,
         model=ModelProfile(model=Attribute(default_value="demo")),
         stdio_protocol="openai_chat",
-    ) as llm:
-        for options in (
-            {},
-            {"api_key": "call-key"},
-            {"api_key": None},
-            {"api_key": "call-key"},
-            {"api_key": "profile-key"},
-        ):
-            result = await llm.generate(
-                messages=[{"role": "user", "content": "hi"}],
-                max_tokens=2048,
-                stream=stream,
-                **options,
-            )
-            if stream:
-                async with result:
-                    async for _ in result:
-                        pass
-                result = result.result
-            assert result["role"] == "assistant"
-        assert len(clients) == 2
-        assert all(not client.is_closed() for client in clients)
-        assert llm.resolved_profile.get("api_key") == "profile-key"
-        assert provider.api_key.default_value == "profile-key"
-        assert llm.client_parameters == constructors[0]
+    )
+    for options in (
+        {},
+        {"api_key": "call-key"},
+        {"api_key": None},
+        {"api_key": "call-key"},
+        {"api_key": "profile-key"},
+    ):
+        result = await llm.generate(
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=2048,
+            stream=stream,
+            **options,
+        )
+        if stream:
+            async with result:
+                async for _ in result:
+                    pass
+            result = result.result
+        assert result["role"] == "assistant"
+    assert len(clients) == len(requests)
+    assert all(client.is_closed() for client in clients)
+    assert llm.resolved_profile.get("api_key") == "profile-key"
+    assert provider.api_key.default_value == "profile-key"
+    assert llm.client_parameters == constructors[0]
     assert all(client.is_closed() for client in clients)
     keys = ["profile-key", "call-key", "profile-key", "call-key", "profile-key"]
     header = "x-api-key" if protocol == "anthropic" and path == "$.api_key" else "Authorization"
@@ -120,32 +120,30 @@ async def test_concurrent_prepared_streams_keep_their_own_key(monkeypatch):
         return client
 
     monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
-    async with MyLLM(
+    llm = MyLLM(
         provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
         model=ModelProfile(model=Attribute(default_value="demo")),
         stdio_protocol="openai_chat",
-    ) as llm:
-        streams = [
-            await llm.generate(
-                messages=[{"role": "user", "content": key}], api_key=key, stream=True
-            )
-            for key in ("first-key", "second-key", "first-key")
-        ]
-        assert not clients
+    )
+    streams = [
+        await llm.generate(messages=[{"role": "user", "content": key}], api_key=key, stream=True)
+        for key in ("first-key", "second-key", "first-key")
+    ]
+    assert not clients
 
-        async def consume(stream):
-            async with stream:
-                async for _ in stream:
-                    pass
-            assert stream.result["role"] == "assistant"
+    async def consume(stream):
+        async with stream:
+            async for _ in stream:
+                pass
+        assert stream.result["role"] == "assistant"
 
-        async with asyncio.timeout(5):
-            await asyncio.gather(*(consume(stream) for stream in reversed(streams)))
-        assert len(clients) == 2
-        assert sorted(observed) == [
-            ("first-key", "Bearer first-key"),
-            ("first-key", "Bearer first-key"),
-            ("second-key", "Bearer second-key"),
-        ]
-        assert all(not client.is_closed() for client in clients)
+    async with asyncio.timeout(5):
+        await asyncio.gather(*(consume(stream) for stream in reversed(streams)))
+    assert len(clients) == 3
+    assert sorted(observed) == [
+        ("first-key", "Bearer first-key"),
+        ("first-key", "Bearer first-key"),
+        ("second-key", "Bearer second-key"),
+    ]
+    assert all(client.is_closed() for client in clients)
     assert all(client.is_closed() for client in clients)

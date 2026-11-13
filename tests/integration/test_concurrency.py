@@ -148,9 +148,9 @@ class ConcurrentTransport:
         ]
         assert not self.active
 
-    def assert_clients_open(self, count):
+    def assert_clients_closed(self, count):
         assert len(self.clients) == count
-        assert all(not client.is_closed for client in self.clients)
+        assert all(client.is_closed for client in self.clients)
 
 
 def make_llm(protocol, stdio):
@@ -256,7 +256,7 @@ async def test_one_instance_concurrent_stream_and_collected_requests(monkeypatch
         assert usage.input == index + 1 and usage.output == index + 2
     assert transport.peak == count
     transport.assert_responses_closed(count)
-    transport.assert_clients_open(1)
+    transport.assert_clients_closed(count)
     assert llm.stdio_protocol == stdio
     assert shared_tools == before_tools and histories == before_histories
     for index, body in transport.requests.items():
@@ -267,7 +267,6 @@ async def test_one_instance_concurrent_stream_and_collected_requests(monkeypatch
             "anthropic": body.get("max_tokens"),
         }[protocol]
         assert maximum == 101 + index
-    await llm.aclose()
     assert all(client.is_closed for client in transport.clients)
 
 
@@ -313,7 +312,13 @@ async def test_failure_cancellation_and_early_exit_do_not_affect_other_requests(
         assert all(not tasks[index].done() for index in (3, 4))
         assert all(not transport.bodies[index].closed for index in (3, 4))
         assert all(transport.bodies[index].closed for index in (0, 1, 2))
-        transport.assert_clients_open(1)
+        assert [client.is_closed for client in transport.clients] == [
+            True,
+            True,
+            True,
+            False,
+            False,
+        ]
         assert all(streams[index].result is None for index in (0, 1, 2))
         for index in (3, 4):
             transport.bodies[index].resume.set()
@@ -328,74 +333,69 @@ async def test_failure_cancellation_and_early_exit_do_not_affect_other_requests(
         )
     assert_reply(result, "openai_chat", count)
     transport.assert_responses_closed(count + 1)
-    transport.assert_clients_open(1)
-    await llm.aclose()
+    transport.assert_clients_closed(count + 1)
     assert all(client.is_closed for client in transport.clients)
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
-async def test_same_client_is_reused_across_concurrent_first_requests_and_later_calls(
-    monkeypatch, protocol
-):
+async def test_each_concurrent_and_later_request_owns_a_client(monkeypatch, protocol):
     count = 6
     transport = ConcurrentTransport(monkeypatch, count)
-    async with make_llm(protocol, "openai_chat") as llm:
+    llm = make_llm(protocol, "openai_chat")
 
-        async def run(index):
-            result = await llm.generate(
-                messages=[{"role": "user", "content": f"request-{index}"}],
-                stream=index % 2 == 0,
-            )
-            if index % 2 == 0:
-                async with result:
-                    async for _ in result:
-                        pass
-                result = result.result
-            assert_reply(result, "openai_chat", index)
+    async def run(index):
+        result = await llm.generate(
+            messages=[{"role": "user", "content": f"request-{index}"}],
+            stream=index % 2 == 0,
+        )
+        if index % 2 == 0:
+            async with result:
+                async for _ in result:
+                    pass
+            result = result.result
+        assert_reply(result, "openai_chat", index)
 
-        async with asyncio.timeout(15), asyncio.TaskGroup() as group:
-            for index in range(count):
-                group.create_task(run(index))
-        transport.assert_clients_open(1)
-        transport.assert_responses_closed(count)
-        assert transport.peak == count
-        transport.barrier = asyncio.Barrier(1)
-        await run(count)
-        transport.assert_clients_open(1)
-        transport.assert_responses_closed(count + 1)
+    async with asyncio.timeout(15), asyncio.TaskGroup() as group:
+        for index in range(count):
+            group.create_task(run(index))
+    transport.assert_clients_closed(count)
+    transport.assert_responses_closed(count)
+    assert transport.peak == count
+    transport.barrier = asyncio.Barrier(1)
+    await run(count)
+    transport.assert_clients_closed(count + 1)
+    transport.assert_responses_closed(count + 1)
     assert transport.clients[0].is_closed
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
-async def test_request_can_be_closed_from_another_task_without_closing_shared_client(
+async def test_request_can_be_closed_from_another_task_without_closing_other_client(
     monkeypatch, protocol
 ):
     transport = ConcurrentTransport(monkeypatch, 2, paused=True, every_frame=False)
-    async with make_llm(protocol, "openai_chat") as llm:
-        streams = [
-            await llm.generate(
-                messages=[{"role": "user", "content": f"request-{index}"}], stream=True
-            )
-            for index in range(2)
-        ]
+    llm = make_llm(protocol, "openai_chat")
+    streams = [
+        await llm.generate(messages=[{"role": "user", "content": f"request-{index}"}], stream=True)
+        for index in range(2)
+    ]
 
-        async def read_text(stream):
-            async for event in stream:
-                if any(choice["delta"].get("content") for choice in event.get("choices", [])):
-                    return
+    async def read_text(stream):
+        async for event in stream:
+            if any(choice["delta"].get("content") for choice in event.get("choices", [])):
+                return
 
-        async with asyncio.timeout(15), asyncio.TaskGroup() as group:
-            for stream in streams:
-                group.create_task(read_text(stream))
-        # The tasks that read the SDK streams have exited. Their owner now
-        # closes one response from a different task and continues the other.
-        await streams[0].aclose()
-        assert transport.bodies[0].closed and not transport.bodies[1].closed
-        transport.assert_clients_open(1)
-        transport.bodies[1].resume.set()
-        async with streams[1]:
-            async for _ in streams[1]:
-                pass
-        assert_reply(streams[1].result, "openai_chat", 1)
-        transport.assert_responses_closed(2)
+    async with asyncio.timeout(15), asyncio.TaskGroup() as group:
+        for stream in streams:
+            group.create_task(read_text(stream))
+    # The tasks that read the SDK streams have exited. Their owner now
+    # closes one response from a different task and continues the other.
+    await streams[0].aclose()
+    assert transport.bodies[0].closed and not transport.bodies[1].closed
+    assert [client.is_closed for client in transport.clients] == [True, False]
+    transport.bodies[1].resume.set()
+    async with streams[1]:
+        async for _ in streams[1]:
+            pass
+    assert_reply(streams[1].result, "openai_chat", 1)
+    transport.assert_responses_closed(2)
     assert transport.clients[0].is_closed

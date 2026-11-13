@@ -17,15 +17,15 @@ async def ask(llm, prompt):
 
 
 async def session():
-    async with MyLLM(
+    llm = MyLLM(
         provider=ProviderProfile(protocol=Config(default_value="openai_responses")),
         model=ModelProfile(
             model=Attribute(default_value="your-model"),
             max_tokens=InputParameter(path="$.max_output_tokens", default_value=2048),
         ),
         stdio_protocol="openai_chat",
-    ) as llm:
-        return await ask(llm, "Hello")
+    )
+    return await ask(llm, "Hello")
 ```
 
 认证通过 Provider 配置或相应 SDK 支持的环境变量提供，见[配置指南](configuration.md#provider-与-model-字段)。
@@ -98,7 +98,7 @@ Provider 标识默认采用 Provider 协议名；只有 Model 指定协议时，
 
 实例的生成方法不接收 provider、model 或 api_key 以外的连接选项。输入历史和可变选项在协程被 `await` 时隔离，
 调用不会自动更新业务历史。工具由调用者执行。
-相同有效密钥复用客户端，不同密钥分别创建客户端，实例关闭时统一释放。请求中的显式认证头仍可覆盖客户端默认头。
+每次调用独立创建 SDK 客户端，在响应结束或关闭时释放。请求中的显式认证头仍可覆盖客户端默认头。
 
 ### 增量消息缓存
 
@@ -106,14 +106,11 @@ Provider 标识默认采用 Provider 协议名；只有 Model 指定协议时，
 
 ```python
 async def cached_conversation(provider, model):
-    async with MyLLM(
-        provider=provider,
-        model=model,
-        stdio_protocol="openai_chat",
-        enable_message_cache=True,
-    ) as llm:
-        reply = await llm.generate(messages=[{"role": "user", "content": "Hello"}])
-        return await llm.generate(messages=[reply, {"role": "user", "content": "Please continue"}])
+    llm = MyLLM(
+        provider=provider, model=model, stdio_protocol="openai_chat", enable_message_cache=True
+    )
+    reply = await llm.generate(messages=[{"role": "user", "content": "Hello"}])
+    return await llm.generate(messages=[reply, {"role": "user", "content": "Please continue"}])
 ```
 
 第二次实际发送首批 user 消息、`reply` 和新增 user 消息。返回的 assistant 回复由调用者放入
@@ -202,16 +199,14 @@ async def ask_once(provider, model_id):
 
 非流式调用结束后自动释放资源。返回流时，必须消费或显式关闭该流，以释放本次调用的资源。
 
-### 协议推断与关闭
+### 协议推断
 
 | 方法 | 返回值及约束 |
 | --- | --- |
 | `llm.guess_stdio_protocol(messages_or_tools)` | 返回已绑定协议；未绑定时从整个列表推断并绑定，非唯一匹配抛出 `MessageValidationError` |
-| `await llm.aclose()` | 关闭实例；返回 `None`，可重复调用 |
-| `async with MyLLM(...) as llm` | 退出上下文时自动关闭实例 |
 
-先完成或关闭所有响应流，再关闭实例。关闭后调用 `generate` 或开始消费先前未启动的流会抛出
-`RuntimeError`。同一实例须在一个异步事件循环内使用；关闭消息缓存时支持并发，启用时必须串行调用。
+MyLLM 无需关闭或使用上下文管理器。消息翻译缓存由 `clear_cache()` 主动清理，或随实例释放。
+同一实例须在一个异步事件循环内使用；关闭消息缓存时支持并发，启用时必须串行调用。
 
 ## `MessageStream`
 
@@ -235,8 +230,7 @@ async def print_stream(llm, prompt):
 | --- | --- |
 | `async for event in stream` | 按所选协议产生原生事件字典或中间 `MessageEvent`；流只能消费一次，同一流不能并发消费 |
 | `stream.result` | 成功完整消费后的标准消息、items 或中间 `AssistantMessage`；此前、提前关闭或失败时为 `None`；重复读取返回本次最终 draft 本身，与其他调用隔离 |
-| `await stream.aclose()` | 关闭响应并执行清理回调，返回 `None`；可在开始消费前调用，也可重复调用 |
-| `stream.add_close_callback(callback)` | 登记无参数异步清理函数，关闭时按登记逆序各执行一次；关闭后登记抛出 `RuntimeError` |
+| `await stream.aclose()` | 关闭响应及本次 SDK 客户端，返回 `None`；可在开始消费前调用，也可重复调用 |
 | `async with stream` | 离开上下文时关闭流，适用于提前退出、异常和取消 |
 
 文本和可见思考逐步输出；工具调用以完整参数提供，成功完成后才发布。
@@ -421,40 +415,40 @@ import json
 async def add_round_trip(provider, model_id):
     from my_llm import Attribute, Config, ModelProfile, MyLLM
 
-    async with MyLLM(
+    llm = MyLLM(
         provider=provider,
         model=ModelProfile(
             model=Attribute(default_value=model_id),
             supports_function_calling=Config(default_value=True),
         ),
         stdio_protocol="openai_chat",
-    ) as llm:
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "add",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "a": {"type": "integer"},
-                            "b": {"type": "integer"},
-                        },
-                        "required": ["a", "b"],
+    )
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "add",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "a": {"type": "integer"},
+                        "b": {"type": "integer"},
                     },
+                    "required": ["a", "b"],
                 },
-            }
-        ]
-        history = [{"role": "user", "content": "What is 2 + 3?"}]
-        response = await llm.generate(messages=history, tools=tools)
-        history.append(response)
-        for call in response.get("tool_calls", []):
-            if call["function"]["name"] != "add":
-                raise ValueError("Unknown local tool")
-            arguments = json.loads(call["function"]["arguments"])
-            output = arguments["a"] + arguments["b"]
-            history.append({"role": "tool", "tool_call_id": call["id"], "content": str(output)})
-        return await llm.generate(messages=history, tools=tools)
+            },
+        }
+    ]
+    history = [{"role": "user", "content": "What is 2 + 3?"}]
+    response = await llm.generate(messages=history, tools=tools)
+    history.append(response)
+    for call in response.get("tool_calls", []):
+        if call["function"]["name"] != "add":
+            raise ValueError("Unknown local tool")
+        arguments = json.loads(call["function"]["arguments"])
+        output = arguments["a"] + arguments["b"]
+        history.append({"role": "tool", "tool_call_id": call["id"], "content": str(output)})
+    return await llm.generate(messages=history, tools=tools)
 ```
 
 重复调用 ID 去重，相同 ID 的结果按内容出现顺序合并并保留重复内容，缺少结果补空；
@@ -548,7 +542,7 @@ assert converted["messages"] == [{"role": "user", "content": [{"type": "text", "
 | `upstream(client, request, profile)` | 返回异步上下文管理器，迭代原生事件；退出时关闭响应，由调用者管理 client |
 
 `prepare` 的 `client` 参数来自 `client_parameters`。返回值中 `client` 是 SDK 构造参数，
-`request` 是 SDK 调用参数，`local` 包含 `stream` 和用于客户端复用的 `client_key`。
+`request` 是 SDK 调用参数，`local` 包含 `stream`。
 参数准备接口不创建模型客户端或发出上游模型请求；显式注册的异步请求 hook 可以执行图片下载等 I/O。
 新增注册仅对后续创建的实例可见；实现要求和完整接入示例见[协议接入指南](../guides/adding-protocol.md)。
 

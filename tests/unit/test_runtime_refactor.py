@@ -136,31 +136,32 @@ async def test_stream_records_complete_usage_without_exposing_counters(monkeypat
     events.append({**chat_event(usage=usage), "choices": []})
     client = FakeClient(events)
     monkeypatch.setattr(
-        "my_llm.codec.openai.chat.transport.AsyncOpenAI", lambda **parameters: client
+        "my_llm.codec.openai.chat.transport.AsyncOpenAI",
+        lambda **parameters: client,
     )
     messages = MyCodec().convert(
         messages=[{"role": "user", "content": "hi"}],
         input_format="openai_chat",
         target_format=stdio,
     )["messages"]
-    async with make_llm(stdio_protocol=stdio) as llm:
-        assert llm.get_last_usage() is None
-        stream = await llm.generate(messages=messages, stream=True)
-        async with stream:
-            async for event in stream:
-                assert_no_usage(event)
-                assert llm.get_last_usage() is None
-        assert llm.get_last_usage() == Usage(input=11, output=7, total=18, cached=3, reasoning=2)
-        record = llm.get_last_usage()
-        assert record is not llm.get_last_usage()
-        completed = stream.result if isinstance(stream.result, list) else [stream.result]
-        assert (
-            MyCodec().convert(messages=completed, input_format=stdio, target_format="openai_chat")[
-                "messages"
-            ][0]["content"]
-            == "ok"
-        )
-        assert_no_usage(stream.result)
+    llm = make_llm(stdio_protocol=stdio)
+    assert llm.get_last_usage() is None
+    stream = await llm.generate(messages=messages, stream=True)
+    async with stream:
+        async for event in stream:
+            assert_no_usage(event)
+            assert llm.get_last_usage() is None
+    assert llm.get_last_usage() == Usage(input=11, output=7, total=18, cached=3, reasoning=2)
+    record = llm.get_last_usage()
+    assert record is not llm.get_last_usage()
+    completed = stream.result if isinstance(stream.result, list) else [stream.result]
+    assert (
+        MyCodec().convert(messages=completed, input_format=stdio, target_format="openai_chat")[
+            "messages"
+        ][0]["content"]
+        == "ok"
+    )
+    assert_no_usage(stream.result)
 
 
 async def test_missing_usage_fields_stay_empty_and_nonstream_calls_expose_no_usage(monkeypatch):
@@ -168,17 +169,18 @@ async def test_missing_usage_fields_stay_empty_and_nonstream_calls_expose_no_usa
         [chat_event(content="ok"), chat_event(finish="stop", usage={"total_tokens": 5})]
     )
     monkeypatch.setattr(
-        "my_llm.codec.openai.chat.transport.AsyncOpenAI", lambda **parameters: client
+        "my_llm.codec.openai.chat.transport.AsyncOpenAI",
+        lambda **parameters: client if not client.closed else client.fork(),
     )
-    async with make_llm() as llm:
-        stream = await llm.generate(messages=[{"role": "user", "content": "hi"}], stream=True)
-        async with stream:
-            async for _ in stream:
-                pass
-        assert llm.get_last_usage() == Usage(total=5)
-        result = await llm.generate(messages=[{"role": "user", "content": "hi"}])
-        assert_no_usage(result)
-        assert llm.get_last_usage() is None
+    llm = make_llm()
+    stream = await llm.generate(messages=[{"role": "user", "content": "hi"}], stream=True)
+    async with stream:
+        async for _ in stream:
+            pass
+    assert llm.get_last_usage() == Usage(total=5)
+    result = await llm.generate(messages=[{"role": "user", "content": "hi"}])
+    assert_no_usage(result)
+    assert llm.get_last_usage() is None
 
 
 async def test_early_close_preserves_last_completed_usage(monkeypatch):
@@ -186,18 +188,19 @@ async def test_early_close_preserves_last_completed_usage(monkeypatch):
         [chat_event(content="ok"), chat_event(finish="stop", usage={"total_tokens": 5})]
     )
     monkeypatch.setattr(
-        "my_llm.codec.openai.chat.transport.AsyncOpenAI", lambda **parameters: client
+        "my_llm.codec.openai.chat.transport.AsyncOpenAI",
+        lambda **parameters: client if not client.closed else client.fork(),
     )
-    async with make_llm() as llm:
-        first = await llm.generate(messages=[{"role": "user", "content": "hi"}], stream=True)
-        async with first:
-            async for _ in first:
-                pass
-        second = await llm.generate(messages=[{"role": "user", "content": "hi"}], stream=True)
-        await anext(second)
-        await second.aclose()
-        assert second.result is None
-        assert llm.get_last_usage() == Usage(total=5)
+    llm = make_llm()
+    first = await llm.generate(messages=[{"role": "user", "content": "hi"}], stream=True)
+    async with first:
+        async for _ in first:
+            pass
+    second = await llm.generate(messages=[{"role": "user", "content": "hi"}], stream=True)
+    await anext(second)
+    await second.aclose()
+    assert second.result is None
+    assert llm.get_last_usage() == Usage(total=5)
 
 
 @pytest.mark.parametrize("stdio", ["openai_chat"])
@@ -230,19 +233,20 @@ async def test_all_tool_calls_are_emitted_together_with_complete_arguments(monke
         ]
     )
     monkeypatch.setattr(
-        "my_llm.codec.openai.chat.transport.AsyncOpenAI", lambda **parameters: client
+        "my_llm.codec.openai.chat.transport.AsyncOpenAI",
+        lambda **parameters: client,
     )
-    async with make_llm(stdio_protocol=stdio) as llm:
-        stream = await llm.generate(messages=[{"role": "user", "content": "hi"}], stream=True)
-        emitted = [event async for event in stream]
-        chunks = [
-            choice["delta"]["tool_calls"]
-            for event in emitted
-            for choice in event.get("choices", [])
-            if choice["delta"].get("tool_calls")
-        ]
-        assert len(chunks) == 1
-        assert [json.loads(call["function"]["arguments"]) for call in chunks[0]] == [
-            {"x": 1},
-            {"y": 2},
-        ]
+    llm = make_llm(stdio_protocol=stdio)
+    stream = await llm.generate(messages=[{"role": "user", "content": "hi"}], stream=True)
+    emitted = [event async for event in stream]
+    chunks = [
+        choice["delta"]["tool_calls"]
+        for event in emitted
+        for choice in event.get("choices", [])
+        if choice["delta"].get("tool_calls")
+    ]
+    assert len(chunks) == 1
+    assert [json.loads(call["function"]["arguments"]) for call in chunks[0]] == [
+        {"x": 1},
+        {"y": 2},
+    ]

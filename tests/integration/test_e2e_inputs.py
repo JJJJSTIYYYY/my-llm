@@ -373,14 +373,14 @@ async def test_raw_control_does_not_treat_operational_errors_as_history_rejectio
         )
 
     monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
-    async with MyLLM(
+    llm = MyLLM(
         provider=example.provider("openai_chat", "local-example-key"),
         model=example.model_profile("local-example"),
         stdio_protocol="openai_chat",
-    ) as llm:
-        with pytest.raises(Exception) as caught:
-            await inputs.raw_control(llm, "missing_tool_result", request_interval=0)
-        assert caught.value.status_code == status
+    )
+    with pytest.raises(Exception) as caught:
+        await inputs.raw_control(llm, "missing_tool_result", request_interval=0)
+    assert caught.value.status_code == status
 
 
 async def test_live_report_keeps_control_evidence_and_redacts_failed_requests(

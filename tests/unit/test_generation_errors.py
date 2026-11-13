@@ -46,35 +46,35 @@ async def test_partial_rendering_preserves_the_original_stream_error(
         raise LookupError("partial hook failed")
 
     provider, model = profiles("anthropic")
-    async with MyLLM(
+    llm = MyLLM(
         provider=provider,
         model=model,
         stdio_protocol="openai_chat",
         semantic_loss_protocol="hook" if render_failure == "hook" else "raise",
         output_semantic_loss_hook=fail_hook if render_failure == "hook" else None,
-    ) as llm:
-        with pytest.raises(ResponseFailedError) as caught:
-            result = await llm.generate(
-                messages=[{"role": "user", "content": "hello"}], stream=streaming
-            )
-            if streaming:
-                async with result:
-                    async for _ in result:
-                        pass
-        assert caught.value is error
-        assert error.details == {"code": "offline"}
-        if render_failure is None:
-            assert error.partial_message == {"role": "assistant", "content": "partial answer"}
-        else:
-            assert error.partial_message is None
-            expected = (
-                "LookupError('partial hook failed')"
-                if render_failure == "hook"
-                else "SemanticLossError("
-            )
-            assert any(expected in note for note in error.__notes__)
-        assert client.upstream.closed and not client.closed
-        assert llm.get_last_usage() is None
+    )
+    with pytest.raises(ResponseFailedError) as caught:
+        result = await llm.generate(
+            messages=[{"role": "user", "content": "hello"}], stream=streaming
+        )
         if streaming:
-            assert result.result is None
+            async with result:
+                async for _ in result:
+                    pass
+    assert caught.value is error
+    assert error.details == {"code": "offline"}
+    if render_failure is None:
+        assert error.partial_message == {"role": "assistant", "content": "partial answer"}
+    else:
+        assert error.partial_message is None
+        expected = (
+            "LookupError('partial hook failed')"
+            if render_failure == "hook"
+            else "SemanticLossError("
+        )
+        assert any(expected in note for note in error.__notes__)
+    assert client.upstream.closed and client.closed
+    assert llm.get_last_usage() is None
+    if streaming:
+        assert result.result is None
     assert client.closed

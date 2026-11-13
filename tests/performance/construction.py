@@ -25,9 +25,8 @@ async def benchmark(protocol, iterations):
     with LocalSDK(protocol, ()) as sdk:
         for index in range(iterations + 10):
             start = perf_counter_ns()
-            llm = MyLLM(provider=provider, model=model, stdio_protocol=protocol)
+            MyLLM(provider=provider, model=model, stdio_protocol=protocol)
             elapsed = (perf_counter_ns() - start) / 1_000_000
-            await llm.aclose()
             if index >= 10:
                 samples.append(elapsed)
         assert sdk.created_clients == 0
@@ -40,8 +39,7 @@ async def benchmark(protocol, iterations):
             current, peak = tracemalloc.get_traced_memory()
         finally:
             tracemalloc.stop()
-        for llm in retained:
-            await llm.aclose()
+        assert len(retained) == 100
         assert sdk.created_clients == 0
     return {
         "protocol": protocol,
@@ -57,7 +55,7 @@ async def run(options):
         "source_sha256": source(),
         "python": sys.version,
         "platform": platform.platform(),
-        "definition": "MyLLM constructor only; profile fixtures and instance close excluded; 10 warmup instances; no SDK clients constructed; default GC; separate tracemalloc probe retains 100 instances after gc.collect",
+        "definition": "MyLLM constructor only; profile fixtures excluded; 10 warmup instances; no SDK clients constructed; default GC; separate tracemalloc probe retains 100 instances after gc.collect",
         "cases": [await benchmark(protocol, options.iterations) for protocol in PROTOCOLS],
     }
     options.json.write_text(json.dumps(report, indent=2) + "\n")

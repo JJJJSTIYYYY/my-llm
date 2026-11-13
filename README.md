@@ -78,25 +78,19 @@ from my_llm import Attribute, Config, ModelProfile, MyLLM, InputParameter, Provi
 
 
 async def main():
-    async with MyLLM(
+    llm = MyLLM(
         provider=ProviderProfile(
-            protocol=Config(default_value="anthropic"),  # 实际请求的 API 协议
-            api_key=InputParameter(
-                path="$.api_key",
-                default_value=os.environ["ANTHROPIC_API_KEY"],
-            ),
+            protocol=Config(default_value="anthropic"),
+            api_key=InputParameter(path="$.api_key", default_value=os.environ["ANTHROPIC_API_KEY"]),
         ),
         model=ModelProfile(
             model=Attribute(default_value=os.environ["LLM_MODEL"]),
-            max_tokens=InputParameter(
-                path="$.max_tokens",
-                default_value=4096,
-            ),
+            max_tokens=InputParameter(path="$.max_tokens", default_value=4096),
         ),
-        stdio_protocol="openai_chat",  # 输入和输出均使用 Chat 协议
-    ) as llm:
-        message = await llm.generate(messages=[{"role": "user", "content": "你好"}])
-        print(message["content"])
+        stdio_protocol="openai_chat",
+    )
+    message = await llm.generate(messages=[{"role": "user", "content": "你好"}])
+    print(message["content"])
 
 
 asyncio.run(main())
@@ -108,7 +102,7 @@ asyncio.run(main())
 
 ### 流式调用
 
-在上例的 `async with MyLLM(stdio_protocol="openai_chat", ...)` 内调用下面的函数，流事件也按 Chat (openai_chat) 协议返回：
+将上例的 MyLLM 实例设为 `stdio_protocol="openai_chat"` 后调用下面的函数，流事件也按 Chat 协议返回：
 
 ```python
 async def print_answer(llm):

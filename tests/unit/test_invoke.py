@@ -69,8 +69,7 @@ async def test_unstarted_and_early_closed_streams_release_resources(monkeypatch)
         async for event in stream:
             if event["choices"][0]["delta"].get("content"):
                 break
-    assert not client.closed and client.upstream.closed
-    await llm.aclose()
+    assert client.closed and client.upstream.closed
     assert client.closed
     await stream.aclose()
     with pytest.raises(StopAsyncIteration):
@@ -237,8 +236,7 @@ async def test_target_finish_failure_does_not_publish_a_completed_result(monkeyp
             async for _ in stream:
                 pass
     assert stream.result is None
-    assert not client.closed and client.upstream.closed
-    await llm.aclose()
+    assert client.closed and client.upstream.closed
     assert client.closed and client.upstream.closed
 
 
@@ -261,6 +259,5 @@ async def test_early_exit_during_final_tool_frames_has_no_completed_result(monke
             ):
                 break
     assert stream.result is None
-    assert not client.closed and client.upstream.closed
-    await llm.aclose()
+    assert client.closed and client.upstream.closed
     assert client.closed and client.upstream.closed

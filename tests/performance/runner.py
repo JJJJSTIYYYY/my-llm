@@ -91,26 +91,26 @@ async def benchmark(
     with LocalSDK(workload.protocol, frames) as sdk:
         # Validate a full exchange before measuring. Cold below means a new
         # instance's lazy SDK client, not a fresh Python process/schema cache.
-        async with MyLLM(provider=provider, model=model, stdio_protocol=stdio) as llm:
-            _, result = await measure(llm, workload, stream=stream, parameters=parameters)
-            validate_exchange(workload, stdio, result, sdk)
-            request_bytes = len(sdk.requests[-1].content)
-            request_sha256 = hashlib.sha256(sdk.requests[-1].content).hexdigest()
+        llm = MyLLM(provider=provider, model=model, stdio_protocol=stdio)
+        _, result = await measure(llm, workload, stream=stream, parameters=parameters)
+        validate_exchange(workload, stdio, result, sdk)
+        request_bytes = len(sdk.requests[-1].content)
+        request_sha256 = hashlib.sha256(sdk.requests[-1].content).hexdigest()
         sdk.release_samples()
-        async with MyLLM(provider=provider, model=model, stdio_protocol=stdio) as llm:
-            cold, result = await measure(llm, workload, stream=stream, parameters=parameters)
+        llm = MyLLM(provider=provider, model=model, stdio_protocol=stdio)
+        cold, result = await measure(llm, workload, stream=stream, parameters=parameters)
+        validate_result(workload, stdio, result)
+        for _ in range(warmup):
+            _, result = await measure(llm, workload, stream=stream, parameters=parameters)
             validate_result(workload, stdio, result)
-            for _ in range(warmup):
-                _, result = await measure(llm, workload, stream=stream, parameters=parameters)
-                validate_result(workload, stdio, result)
-                sdk.release_samples()
-            samples = []
-            for _ in range(iterations):
-                sdk.release_samples()
-                sample, result = await measure(llm, workload, stream=stream, parameters=parameters)
-                samples.append(sample)
-                validate_exchange(workload, stdio, result, sdk)
-        assert sdk.created_clients == 2, "requests must reuse their instance's SDK client"
+            sdk.release_samples()
+        samples = []
+        for _ in range(iterations):
+            sdk.release_samples()
+            sample, result = await measure(llm, workload, stream=stream, parameters=parameters)
+            samples.append(sample)
+            validate_exchange(workload, stdio, result, sdk)
+        assert sdk.created_clients == 2 + warmup + iterations
         assert all(client.is_closed for client in sdk.http_clients)
     return {
         "suite": "native" if workload.native else "cross",

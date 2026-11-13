@@ -496,7 +496,7 @@ class BaseDecoder(ABC):
         """Return client, request and local dictionaries for a complete encoded call.
 
         intermediate is the dictionary from BaseEncoder.request; client contains
-        prepared connection arguments. local contains the stream flag and client key.
+        prepared connection arguments. local contains the stream flag.
         This method creates no SDK clients and sends no network request.
 
         Validate generation controls once and pass the typed middleware plus any
@@ -510,10 +510,8 @@ class BaseDecoder(ABC):
             if key not in ("profile", "middleware", "message_transform")
         }
         api_key = parameters.pop("api_key", None)
-        client_key = profile.get("api_key")
         if api_key is not None:
             client = self._prepare_client(profile, client, api_key)
-            client_key = None if isinstance(api_key, Omit) else api_key
         options = self.validate_parameters(profile, **parameters)
         return {
             "client": client,
@@ -525,7 +523,7 @@ class BaseDecoder(ABC):
                 message_transform=intermediate.get("message_transform"),
                 **parameters,
             ),
-            "local": {"stream": parameters["stream"], "client_key": client_key},
+            "local": {"stream": parameters["stream"]},
         }
 
     def _prepare_client(self, profile: ResolvedProfile, client: dict, api_key: str | Omit) -> dict:

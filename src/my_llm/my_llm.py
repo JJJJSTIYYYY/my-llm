@@ -1,4 +1,4 @@
-"""Instance-owned SDK clients and optional translated history, with per-call streams."""
+"""Request-owned SDK clients and streams, with optional instance translated history."""
 
 from __future__ import annotations
 
@@ -62,9 +62,8 @@ class MyLLM:
         UnsupportedProviderError: The upstream protocol cannot be used.
         ModuleNotFoundError: The upstream protocol's optional SDK is not installed.
 
-    Use ``async with MyLLM(...)`` or ``await llm.aclose()`` to release resources.
-    Finish or close response streams before closing the instance. Use an instance
-    within one event loop. Concurrent generation calls are supported with message
+    Each call owns its SDK client and response; close response streams explicitly.
+    Use an instance within one event loop. Concurrent generation calls are supported with message
     caching disabled. With caching enabled, finish or close each stream before the
     next call; use separate instances for concurrent conversations. Create a new
     instance to change its configuration. Applications own instance reuse and
@@ -117,9 +116,6 @@ class MyLLM:
         self.model = deepcopy(model)
         self._stdio_protocol = stdio_protocol
         self._last_usage: Usage | None = None
-        self._clients: dict[str | None, Any] = {}
-        self._client_resources = AsyncExitStack()
-        self._closed = False
 
     @classmethod
     def resolve_profile(cls, provider: ProviderProfile, model: ModelProfile) -> ResolvedProfile:
@@ -174,51 +170,6 @@ class MyLLM:
         """
         return replace(self._last_usage) if self._last_usage is not None else None
 
-    def _check_open(self) -> None:
-        """Reject operations after this instance has released its resources."""
-        if self._closed:
-            raise RuntimeError("MyLLM is closed")
-
-    def _get_client(self, prepared: dict) -> Any:
-        """Reuse or create the SDK client selected by the prepared request.
-
-        Clients belong to this MyLLM instance and are registered for asynchronous
-        cleanup immediately after construction. Called only when response iteration
-        starts, after request preparation and input validation have succeeded.
-        """
-        self._check_open()
-        profile = self.resolved_profile
-        transport = self.codec.transport(profile.protocol)
-        key = prepared["local"]["client_key"]
-        if key not in self._clients:
-            # SDK construction is synchronous: no task can interleave between
-            # lookup and registration, including concurrent first requests.
-            client = transport.create_client(prepared["client"])
-            self._client_resources.push_async_callback(transport.close_client, client)
-            self._clients[key] = client
-        return self._clients[key]
-
-    async def aclose(self) -> None:
-        """Close this instance and release its clients; repeated calls are harmless.
-
-        Finish or close all response streams first. Further generation and consumption
-        of streams that have not started raise RuntimeError.
-        """
-        if not self._closed:
-            self._closed = True
-            self._clients.clear()
-            self.clear_cache()
-            await self._client_resources.aclose()
-
-    async def __aenter__(self) -> MyLLM:
-        """Return this instance, raising RuntimeError if it is already closed."""
-        self._check_open()
-        return self
-
-    async def __aexit__(self, *exc: Any) -> None:
-        """Close this instance on leaving the asynchronous context."""
-        await self.aclose()
-
     def guess_stdio_protocol(self, messages_or_tools: list[Any]) -> Protocol:
         """Return the bound protocol, or infer and bind it from a whole input list.
 
@@ -267,7 +218,7 @@ class MyLLM:
                 Middleware I/O accepts FunctionTool models.
             api_key: Per-call authentication value routed through the profile's
                 api_key path. None inherits; omit removes the configured connection
-                value. Clients are reused by effective key and closed with the instance.
+                value. Each call owns and closes its SDK client.
             max_tokens: Positive output limit. If absent, inherit the profile default;
                 None is an explicit value and omit removes the configured target key.
             reasoning: Enable reasoning with medium effort when no effort is given.
@@ -289,7 +240,6 @@ class MyLLM:
             models and stores the completed AssistantMessage in stream.result.
 
         Raises:
-            RuntimeError: This instance is closed.
             MessageValidationError: Input structure or roles are invalid,
                 or the input/output protocol cannot be inferred uniquely.
             ConfigurationError: A generation option is invalid or conflicts.
@@ -317,7 +267,6 @@ class MyLLM:
         preparation; client creation and network I/O start on iteration. Non-streaming
         consumes and closes that same stream here before returning its final result.
         """
-        self._check_open()
 
         if (
             previous_response_id is not None
@@ -382,7 +331,7 @@ class MyLLM:
     ) -> AsyncGenerator[dict | MessageEvent, None]:
         """Execute one prepared request and accumulate its response in shared state.
 
-        Borrow an instance-owned SDK client and keep the response inside the
+        Create a request-owned SDK client and keep the response inside the
         transport's cleanup context. Native events become validated middleware
         operations, then StreamState emits text incrementally and holds tool calls
         until successful finalization. Render those events only for streaming calls;
@@ -391,13 +340,18 @@ class MyLLM:
         Publish result and usage after upstream cleanup succeeds. StreamError gains
         a rendered partial message when possible; rendering failures become notes
         on the original error. Transport/SDK failures retain their types. Closing
-        this generator exits the response context without closing the reusable client.
+        this generator exits the response context and closes its SDK client.
         """
         profile = self.resolved_profile
         streaming = prepared["local"]["stream"]
         try:
-            client = self._get_client(prepared)
-            async with self.codec.upstream(client, prepared["request"], profile) as upstream:
+            transport = self.codec.transport(profile.protocol)
+            async with AsyncExitStack() as resources:
+                client = transport.create_client(prepared["client"])
+                resources.push_async_callback(transport.close_client, client)
+                upstream = await resources.enter_async_context(
+                    self.codec.upstream(client, prepared["request"], profile)
+                )
                 chunk_offset = 0
                 async for event in upstream:
                     encoded = self.codec.encode(
@@ -448,7 +402,7 @@ async def generate(
     output_semantic_loss_hook: SemanticLossHook | None = None,
     **parameters: Any,
 ) -> MessageStream | dict | list | Message:
-    """Generate once with an automatically managed temporary MyLLM instance.
+    """Generate once with a temporary MyLLM instance.
 
     Args:
         provider: Provider connection settings and default upstream protocol.
@@ -466,7 +420,7 @@ async def generate(
     Returns:
         A completed native message/items, or a MessageStream when stream=True.
         Close a returned stream with ``async with`` or ``await stream.aclose()``
-        to release its temporary instance, even if iteration never starts.
+        to release request resources on early exit.
 
     Raises:
         ConfigurationError: The profiles or options are invalid.
@@ -478,18 +432,12 @@ async def generate(
     selected = (
         ModelProfile(model=Attribute(default_value=model)) if isinstance(model, str) else model
     )
-    async with AsyncExitStack() as resources:
-        llm = await resources.enter_async_context(
-            MyLLM(
-                provider=provider,
-                model=selected,
-                stdio_protocol=stdio_protocol,
-                semantic_loss_protocol=semantic_loss_protocol,
-                input_semantic_loss_hook=input_semantic_loss_hook,
-                output_semantic_loss_hook=output_semantic_loss_hook,
-            )
-        )
-        result = await llm.generate(messages=messages, **parameters)
-        if isinstance(result, MessageStream):
-            result.add_close_callback(resources.pop_all().aclose)
-        return result
+    llm = MyLLM(
+        provider=provider,
+        model=selected,
+        stdio_protocol=stdio_protocol,
+        semantic_loss_protocol=semantic_loss_protocol,
+        input_semantic_loss_hook=input_semantic_loss_hook,
+        output_semantic_loss_hook=output_semantic_loss_hook,
+    )
+    return await llm.generate(messages=messages, **parameters)

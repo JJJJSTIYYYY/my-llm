@@ -110,28 +110,30 @@ async def test_sensenova_example_scenarios_with_local_sdk(monkeypatch, stdio, ca
         return client
 
     monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
-    async with MyLLM(
+    llm = MyLLM(
         provider=example["provider"]("openai_chat", "local-example-key"),
         model=ModelProfile(
             model=Attribute(default_value="local-example"),
             supports_function_calling=Config(default_value=True),
         ),
         stdio_protocol=stdio,
-    ) as llm:
-        if case in example["POLICY_CASES"]:
-            result = await example["policy_scenario"](
-                "openai_chat", "local-example", "local-example-key", case
-            )
-            assert all("POLICY_" not in json.dumps(request) for request in requests)
-            if case == "capability_losses":
-                assert result["input_losses"] >= 4
-            else:
-                assert result["input_losses"] == 0
+    )
+    if case in example["POLICY_CASES"]:
+        result = await example["policy_scenario"](
+            "openai_chat", "local-example", "local-example-key", case
+        )
+        assert all("POLICY_" not in json.dumps(request) for request in requests)
+        if case == "capability_losses":
+            assert result["input_losses"] >= 4
         else:
-            result = await example["scenario"](llm, stdio, case)
+            assert result["input_losses"] == 0
+    else:
+        result = await example["scenario"](llm, stdio, case)
     assert result["requests"] == len(requests) == (2 if case == "tool_roundtrip" else 1)
     assert result["text"] == ("42" if case == "tool_roundtrip" else "SENSENOVA_OK")
-    assert len(clients) == 1 and clients[0].is_closed()
+    assert len(clients) == (2 if case == "tool_roundtrip" else 1) and all(
+        client.is_closed() for client in clients
+    )
 
 
 @pytest.mark.parametrize("succeeds", [False, True])
@@ -247,9 +249,8 @@ async def test_guide_text_stream_and_tool_round_trip(monkeypatch):
     )
     for name in ("ask", "print_stream"):
         assert (await api_example(name)(llm, "Hello"))["content"] == "Hello"
-    assert len(clients) == 1 and not clients[0].is_closed()
-    await llm.aclose()
+    assert len(clients) == 2 and all(client.is_closed() for client in clients)
     assert (await api_example("add_round_trip")(provider, "demo"))["content"] == "5"
     assert requests[-1]["messages"][-1]["role"] == "tool"
-    assert len(clients) == 2
+    assert len(clients) == 4
     assert all(c.is_closed() for c in clients)

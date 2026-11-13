@@ -57,50 +57,47 @@ async def test_incremental_native_histories_cross_all_protocol_paths(upstream, s
     initial = history(stdio)
     before = deepcopy(initial)
     with LocalSDK(upstream, wire_frames(upstream, stream_events(upstream), 53)) as sdk:
-        async with MyLLM(
-            provider=provider,
-            model=model,
-            stdio_protocol=stdio,
-            enable_message_cache=True,
-        ) as llm:
-            key = llm._message_cache_key
-            assert UUID(key).version == 4
-            result = await llm.generate(
-                messages=initial,
-                tools=tools(stdio),
-                max_tokens=33,
-                extra_headers={"x-cache": "first"},
-            )
-            initial_request = json.loads(sdk.requests[-1].content)
-            previous = result if isinstance(result, list) else [result]
-            delta = [*previous, user_message(stdio, "next-input", media=False)]
-            delta_before = deepcopy(delta)
-            stream = await llm.generate(
-                messages=delta,
-                stream=True,
-                max_tokens=66,
-                extra_headers={"x-cache": "second"},
-            )
-            await consume(stream)
-            latest = json.loads(sdk.requests[-1].content)
-            first_history = request_history(upstream, initial_request)
-            latest_history = request_history(upstream, latest)
-            assert latest_history[: len(first_history)] == first_history
-            assert "next-input" in json.dumps(latest_history[len(first_history) :])
-            # The caller supplied the assistant response exactly once.
-            assert json.dumps(latest_history).count("Hello") == 1
-            assert initial_request.get("tools") and not latest.get("tools")
-            assert request_limit(upstream, initial_request) == 33
-            assert request_limit(upstream, latest) == 66
-            assert sdk.requests[0].headers["x-cache"] == "first"
-            assert sdk.requests[1].headers["x-cache"] == "second"
-            assert all(
-                field not in latest
-                for field in ("enable_message_cache", "message_cache_key", "message_transform")
-            )
-            assert initial == before and delta == delta_before
-            assert sdk.created_clients == 1
-            assert key in llm.codec._message_cache
+        llm = MyLLM(provider=provider, model=model, stdio_protocol=stdio, enable_message_cache=True)
+        key = llm._message_cache_key
+        assert UUID(key).version == 4
+        result = await llm.generate(
+            messages=initial,
+            tools=tools(stdio),
+            max_tokens=33,
+            extra_headers={"x-cache": "first"},
+        )
+        initial_request = json.loads(sdk.requests[-1].content)
+        previous = result if isinstance(result, list) else [result]
+        delta = [*previous, user_message(stdio, "next-input", media=False)]
+        delta_before = deepcopy(delta)
+        stream = await llm.generate(
+            messages=delta,
+            stream=True,
+            max_tokens=66,
+            extra_headers={"x-cache": "second"},
+        )
+        await consume(stream)
+        latest = json.loads(sdk.requests[-1].content)
+        first_history = request_history(upstream, initial_request)
+        latest_history = request_history(upstream, latest)
+        assert latest_history[: len(first_history)] == first_history
+        assert "next-input" in json.dumps(latest_history[len(first_history) :])
+        # The caller supplied the assistant response exactly once.
+        assert json.dumps(latest_history).count("Hello") == 1
+        assert initial_request.get("tools") and not latest.get("tools")
+        assert request_limit(upstream, initial_request) == 33
+        assert request_limit(upstream, latest) == 66
+        assert sdk.requests[0].headers["x-cache"] == "first"
+        assert sdk.requests[1].headers["x-cache"] == "second"
+        assert all(
+            field not in latest
+            for field in ("enable_message_cache", "message_cache_key", "message_transform")
+        )
+        assert initial == before and delta == delta_before
+        assert sdk.created_clients == 2
+        assert key in llm.codec._message_cache
+        assert key in llm.codec._message_cache
+        llm.clear_cache()
         assert key not in llm.codec._message_cache
     assert all(body.closed for body in sdk.bodies)
 
@@ -110,17 +107,12 @@ async def test_incremental_middleware_histories_keep_typed_public_io(upstream):
     provider, model = profiles(upstream)
     first = UserMessage("user", [TextContent("first-input")])
     with LocalSDK(upstream, wire_frames(upstream, stream_events(upstream), 61)) as sdk:
-        async with MyLLM(
-            provider=provider,
-            model=model,
-            stdio_protocol="middleware",
-            enable_message_cache=True,
-        ) as llm:
-            response = await llm.generate(messages=[first])
-            assert isinstance(response, AssistantMessage)
-            await llm.generate(
-                messages=[response, UserMessage("user", [TextContent("next-input")])]
-            )
+        llm = MyLLM(
+            provider=provider, model=model, stdio_protocol="middleware", enable_message_cache=True
+        )
+        response = await llm.generate(messages=[first])
+        assert isinstance(response, AssistantMessage)
+        await llm.generate(messages=[response, UserMessage("user", [TextContent("next-input")])])
         histories = [request_history(upstream, json.loads(item.content)) for item in sdk.requests]
         assert len(histories[0]) == 1 and len(histories[1]) == 3
         assert histories[1][:1] == histories[0]
@@ -142,21 +134,18 @@ async def test_typed_tool_rounds_and_retries_keep_wire_roles_and_call_ids(upstre
     ]
     before = deepcopy((initial, batches))
     with LocalSDK(upstream, wire_frames(upstream, stream_events(upstream), 61)) as sdk:
-        async with MyLLM(
-            provider=provider,
-            model=model,
-            stdio_protocol="middleware",
-            enable_message_cache=cached,
-        ) as llm:
-            await llm.generate(messages=initial)
-            history = [*initial, *batches[0]]
-            incoming = batches[0] if cached else history
-            await llm.generate(messages=incoming)
-            await llm.generate(messages=incoming)
-            stream = await llm.generate(
-                messages=batches[1] if cached else [*history, *batches[1]], stream=True
-            )
-            await consume(stream)
+        llm = MyLLM(
+            provider=provider, model=model, stdio_protocol="middleware", enable_message_cache=cached
+        )
+        await llm.generate(messages=initial)
+        history = [*initial, *batches[0]]
+        incoming = batches[0] if cached else history
+        await llm.generate(messages=incoming)
+        await llm.generate(messages=incoming)
+        stream = await llm.generate(
+            messages=batches[1] if cached else [*history, *batches[1]], stream=True
+        )
+        await consume(stream)
         requests = [json.loads(item.content) for item in sdk.requests]
         assert requests[1] == requests[2]
         native = request_history(upstream, requests[-1])
@@ -183,9 +172,9 @@ async def test_typed_tool_rounds_and_retries_keep_wire_roles_and_call_ids(upstre
 async def test_cache_is_disabled_by_default(upstream):
     provider, model = profiles(upstream)
     with LocalSDK(upstream, wire_frames(upstream, stream_events(upstream), 61)) as sdk:
-        async with MyLLM(provider=provider, model=model, stdio_protocol="openai_chat") as llm:
-            await llm.generate(messages=[{"role": "user", "content": "first-input"}])
-            await llm.generate(messages=[{"role": "user", "content": "second-input"}])
+        llm = MyLLM(provider=provider, model=model, stdio_protocol="openai_chat")
+        await llm.generate(messages=[{"role": "user", "content": "first-input"}])
+        await llm.generate(messages=[{"role": "user", "content": "second-input"}])
         histories = [request_history(upstream, json.loads(item.content)) for item in sdk.requests]
         assert len(histories[0]) == len(histories[1]) == 1
         assert "first-input" not in json.dumps(histories[1])
@@ -195,23 +184,20 @@ async def test_cache_is_disabled_by_default(upstream):
 async def test_system_only_deltas_accumulate_and_survive_later_user_batches(upstream):
     provider, model = profiles(upstream)
     with LocalSDK(upstream, wire_frames(upstream, stream_events(upstream), 61)) as sdk:
-        async with MyLLM(
-            provider=provider,
-            model=model,
-            stdio_protocol="openai_chat",
-            enable_message_cache=True,
-        ) as llm:
-            with pytest.raises(ConfigurationError, match="non-system"):
-                await llm.generate(messages=[{"role": "system", "content": "discarded"}])
-            assert not sdk.requests
-            await llm.generate(
-                messages=[
-                    {"role": "system", "content": "initial-instruction"},
-                    {"role": "user", "content": "first-input"},
-                ]
-            )
-            await llm.generate(messages=[{"role": "system", "content": "next-instruction"}])
-            await llm.generate(messages=[{"role": "user", "content": "next-input"}])
+        llm = MyLLM(
+            provider=provider, model=model, stdio_protocol="openai_chat", enable_message_cache=True
+        )
+        with pytest.raises(ConfigurationError, match="non-system"):
+            await llm.generate(messages=[{"role": "system", "content": "discarded"}])
+        assert not sdk.requests
+        await llm.generate(
+            messages=[
+                {"role": "system", "content": "initial-instruction"},
+                {"role": "user", "content": "first-input"},
+            ]
+        )
+        await llm.generate(messages=[{"role": "system", "content": "next-instruction"}])
+        await llm.generate(messages=[{"role": "user", "content": "next-input"}])
         requests = [json.loads(item.content) for item in sdk.requests]
         assert system_texts(upstream, requests[0]) == ["initial-instruction"]
         assert system_texts(upstream, requests[1]) == ["initial-instruction", "next-instruction"]
@@ -224,10 +210,10 @@ async def test_system_only_deltas_accumulate_and_survive_later_user_batches(upst
 async def test_system_only_deltas_remain_invalid_without_caching(upstream):
     provider, model = profiles(upstream)
     with LocalSDK(upstream, wire_frames(upstream, stream_events(upstream), 61)) as sdk:
-        async with MyLLM(provider=provider, model=model, stdio_protocol="openai_chat") as llm:
-            await llm.generate(messages=[{"role": "user", "content": "first-input"}])
-            with pytest.raises(ConfigurationError, match="non-system"):
-                await llm.generate(messages=[{"role": "system", "content": "next-instruction"}])
+        llm = MyLLM(provider=provider, model=model, stdio_protocol="openai_chat")
+        await llm.generate(messages=[{"role": "user", "content": "first-input"}])
+        with pytest.raises(ConfigurationError, match="non-system"):
+            await llm.generate(messages=[{"role": "system", "content": "next-instruction"}])
         assert len(sdk.requests) == 1
 
 
@@ -245,21 +231,16 @@ async def test_tool_associations_only_scan_current_batches_and_repair_invalid_de
     with LocalSDK(
         "openai_chat", wire_frames("openai_chat", stream_events("openai_chat"), 61)
     ) as sdk:
-        async with MyLLM(
-            provider=provider,
-            model=model,
-            stdio_protocol="openai_chat",
-            enable_message_cache=True,
-        ) as llm:
-            await llm.generate(messages=history("openai_chat"))
-            delta = history("openai_chat")[1:]
-            delta[0]["tool_calls"][0]["id"] = "call_2"
-            delta[1]["tool_call_id"] = "call_2"
-            await llm.generate(messages=delta)
-            await llm.generate(
-                messages=[{"role": "tool", "tool_call_id": "missing", "content": "bad"}]
-            )
-            await llm.generate(messages=[{"role": "user", "content": "next-input"}])
+        llm = MyLLM(
+            provider=provider, model=model, stdio_protocol="openai_chat", enable_message_cache=True
+        )
+        await llm.generate(messages=history("openai_chat"))
+        delta = history("openai_chat")[1:]
+        delta[0]["tool_calls"][0]["id"] = "call_2"
+        delta[1]["tool_call_id"] = "call_2"
+        await llm.generate(messages=delta)
+        await llm.generate(messages=[{"role": "tool", "tool_call_id": "missing", "content": "bad"}])
+        await llm.generate(messages=[{"role": "user", "content": "next-input"}])
         assert [len(batch) for batch in calls] == [3, 2, 1, 1]
         assert len(sdk.requests) == 4
         latest = json.loads(sdk.requests[-1].content)["messages"]
@@ -282,17 +263,17 @@ async def test_loss_hook_edits_are_request_local_and_do_not_update_cached_transl
 
     provider, model = profiles("anthropic")
     with LocalSDK("anthropic", wire_frames("anthropic", stream_events("anthropic"), 61)) as sdk:
-        async with MyLLM(
+        llm = MyLLM(
             provider=provider,
             model=model,
             stdio_protocol="openai_chat",
             semantic_loss_protocol="hook",
             input_semantic_loss_hook=hook,
             enable_message_cache=True,
-        ) as llm:
-            await llm.generate(messages=[{"role": "user", "content": "named", "name": "n"}])
-            drafts[0]["messages"][0]["content"][0]["text"] = "changed-after-caching"
-            await llm.generate(messages=[{"role": "user", "content": "next-input"}], max_tokens=22)
+        )
+        await llm.generate(messages=[{"role": "user", "content": "named", "name": "n"}])
+        drafts[0]["messages"][0]["content"][0]["text"] = "changed-after-caching"
+        await llm.generate(messages=[{"role": "user", "content": "next-input"}], max_tokens=22)
         first, second = [json.loads(item.content) for item in sdk.requests]
         assert [part["content"][0]["text"] for part in first["messages"]] == [
             "named",
@@ -314,21 +295,21 @@ async def test_loss_hook_system_replacements_do_not_modify_cached_translation(up
 
     provider, model = profiles(upstream)
     with LocalSDK(upstream, wire_frames(upstream, stream_events(upstream), 61)) as sdk:
-        async with MyLLM(
+        llm = MyLLM(
             provider=provider,
             model=model,
             stdio_protocol="openai_chat",
             semantic_loss_protocol="hook",
             input_semantic_loss_hook=hook,
             enable_message_cache=True,
-        ) as llm:
-            await llm.generate(
-                messages=[
-                    {"role": "system", "content": "initial-instruction", "name": "n"},
-                    {"role": "user", "content": "first-input"},
-                ]
-            )
-            await llm.generate(messages=[{"role": "user", "content": "next-input"}])
+        )
+        await llm.generate(
+            messages=[
+                {"role": "system", "content": "initial-instruction", "name": "n"},
+                {"role": "user", "content": "first-input"},
+            ]
+        )
+        await llm.generate(messages=[{"role": "user", "content": "next-input"}])
         first, second = [json.loads(item.content) for item in sdk.requests]
         assert system_texts(upstream, first) == ["hook-instruction"]
         assert system_texts(upstream, second) == ["initial-instruction"]
@@ -342,21 +323,19 @@ async def test_translation_is_cached_before_raising_adaptor_or_hook(policy):
 
     provider, model = profiles("anthropic")
     with LocalSDK("anthropic", wire_frames("anthropic", stream_events("anthropic"), 61)) as sdk:
-        async with MyLLM(
+        llm = MyLLM(
             provider=provider,
             model=model,
             stdio_protocol="openai_chat",
             semantic_loss_protocol=policy,
             input_semantic_loss_hook=hook,
             enable_message_cache=True,
-        ) as llm:
-            await llm.generate(messages=[{"role": "user", "content": "first-input"}])
-            error = SemanticLossError if policy == "raise" else RuntimeError
-            with pytest.raises(error):
-                await llm.generate(
-                    messages=[{"role": "user", "content": "translated", "name": "n"}]
-                )
-            await llm.generate(messages=[{"role": "user", "content": "next-input"}])
+        )
+        await llm.generate(messages=[{"role": "user", "content": "first-input"}])
+        error = SemanticLossError if policy == "raise" else RuntimeError
+        with pytest.raises(error):
+            await llm.generate(messages=[{"role": "user", "content": "translated", "name": "n"}])
+        await llm.generate(messages=[{"role": "user", "content": "next-input"}])
         assert len(sdk.requests) == 2
         latest = json.loads(sdk.requests[-1].content)["messages"]
         assert [part["content"][0]["text"] for part in latest] == [
@@ -372,21 +351,18 @@ async def test_prepared_stream_owns_snapshot_after_caller_mutation():
     with LocalSDK(
         "openai_chat", wire_frames("openai_chat", stream_events("openai_chat"), 61)
     ) as sdk:
-        async with MyLLM(
-            provider=provider,
-            model=model,
-            stdio_protocol="openai_chat",
-            enable_message_cache=True,
-        ) as llm:
-            first_input = [{"role": "user", "content": "first-input"}]
-            first = await llm.generate(messages=first_input, stream=True)
-            first_input[0]["content"] = "edited-by-caller"
-            assert not sdk.requests
-            await consume(first)
-            second = await llm.generate(
-                messages=[{"role": "user", "content": "next-input"}], stream=True
-            )
-            await consume(second)
+        llm = MyLLM(
+            provider=provider, model=model, stdio_protocol="openai_chat", enable_message_cache=True
+        )
+        first_input = [{"role": "user", "content": "first-input"}]
+        first = await llm.generate(messages=first_input, stream=True)
+        first_input[0]["content"] = "edited-by-caller"
+        assert not sdk.requests
+        await consume(first)
+        second = await llm.generate(
+            messages=[{"role": "user", "content": "next-input"}], stream=True
+        )
+        await consume(second)
         assert [
             [message["content"] for message in json.loads(item.content)["messages"]]
             for item in sdk.requests
@@ -398,24 +374,16 @@ async def test_instances_keep_distinct_cache_keys_and_histories():
     with LocalSDK(
         "openai_chat", wire_frames("openai_chat", stream_events("openai_chat"), 61)
     ) as sdk:
-        async with (
-            MyLLM(
-                provider=provider,
-                model=model,
-                stdio_protocol="openai_chat",
-                enable_message_cache=True,
-            ) as first,
-            MyLLM(
-                provider=provider,
-                model=model,
-                stdio_protocol="openai_chat",
-                enable_message_cache=True,
-            ) as second,
-        ):
-            assert first._message_cache_key != second._message_cache_key
-            await first.generate(messages=[{"role": "user", "content": "first-instance"}])
-            await second.generate(messages=[{"role": "user", "content": "second-instance"}])
-            await first.generate(messages=[{"role": "user", "content": "first-again"}])
+        first = MyLLM(
+            provider=provider, model=model, stdio_protocol="openai_chat", enable_message_cache=True
+        )
+        second = MyLLM(
+            provider=provider, model=model, stdio_protocol="openai_chat", enable_message_cache=True
+        )
+        assert first._message_cache_key != second._message_cache_key
+        await first.generate(messages=[{"role": "user", "content": "first-instance"}])
+        await second.generate(messages=[{"role": "user", "content": "second-instance"}])
+        await first.generate(messages=[{"role": "user", "content": "first-again"}])
         histories = [json.loads(item.content)["messages"] for item in sdk.requests]
         assert [[message["content"] for message in values] for values in histories] == [
             ["first-instance"],
@@ -437,28 +405,25 @@ async def test_responses_generated_item_ids_remain_unique_across_assistant_delta
     protocol = "openai_responses"
     provider, model = profiles(protocol)
     with LocalSDK(protocol, wire_frames(protocol, stream_events(protocol), 61)) as sdk:
-        async with MyLLM(
-            provider=provider,
-            model=model,
-            stdio_protocol="middleware",
-            enable_message_cache=True,
-        ) as llm:
-            await llm.generate(messages=[assistant("first-assistant")])
-            initial = json.loads(sdk.requests[-1].content)["input"]
-            await llm.generate(messages=[assistant("second-assistant")])
-            latest = json.loads(sdk.requests[-1].content)["input"]
-            assert latest[: len(initial)] == initial
-            item_ids = [item["id"] for item in latest]
-            assert len(set(item_ids)) == len(item_ids)
-            await llm.generate(
-                messages=[
-                    AssistantMessage(
-                        "assistant",
-                        [TextContent("explicit", item=ItemIdentity(id="msg_external"))],
-                    )
-                ]
-            )
-            assert json.loads(sdk.requests[-1].content)["input"][-1]["id"] == "msg_external"
+        llm = MyLLM(
+            provider=provider, model=model, stdio_protocol="middleware", enable_message_cache=True
+        )
+        await llm.generate(messages=[assistant("first-assistant")])
+        initial = json.loads(sdk.requests[-1].content)["input"]
+        await llm.generate(messages=[assistant("second-assistant")])
+        latest = json.loads(sdk.requests[-1].content)["input"]
+        assert latest[: len(initial)] == initial
+        item_ids = [item["id"] for item in latest]
+        assert len(set(item_ids)) == len(item_ids)
+        await llm.generate(
+            messages=[
+                AssistantMessage(
+                    "assistant",
+                    [TextContent("explicit", item=ItemIdentity(id="msg_external"))],
+                )
+            ]
+        )
+        assert json.loads(sdk.requests[-1].content)["input"][-1]["id"] == "msg_external"
 
 
 async def test_idless_tool_deltas_keep_distinct_paired_ids_without_old_validation(monkeypatch):
@@ -494,48 +459,45 @@ async def test_idless_tool_deltas_keep_distinct_paired_ids_without_old_validatio
     protocol = "openai_chat"
     provider, model = profiles(protocol)
     with LocalSDK(protocol, wire_frames(protocol, stream_events(protocol), 61)) as sdk:
-        async with MyLLM(
-            provider=provider,
-            model=model,
-            stdio_protocol=protocol,
-            enable_message_cache=True,
-        ) as llm:
-            first_input = tool_round("first-result")
-            before = deepcopy(first_input)
-            await llm.generate(messages=first_input)
-            initial = json.loads(sdk.requests[-1].content)["messages"]
-            await llm.generate(messages=tool_round("second-result"))
-            latest = json.loads(sdk.requests[-1].content)["messages"]
-            calls = [call["id"] for message in latest for call in message.get("tool_calls", [])]
-            results = [message["tool_call_id"] for message in latest if message["role"] == "tool"]
-            assert len(calls) == len(set(calls)) == 2
-            assert results == calls
-            assert latest[: len(initial)] == initial
-            assert first_input == before
-            await llm.generate(messages=tool_round("explicit-result", explicit=True))
-            explicit = json.loads(sdk.requests[-1].content)["messages"]
-            assert explicit[:-2] == latest
-            assert explicit[-2]["tool_calls"][0]["id"] == "call_external"
-            assert explicit[-1]["tool_call_id"] == "call_external"
+        llm = MyLLM(
+            provider=provider, model=model, stdio_protocol=protocol, enable_message_cache=True
+        )
+        first_input = tool_round("first-result")
+        before = deepcopy(first_input)
+        await llm.generate(messages=first_input)
+        initial = json.loads(sdk.requests[-1].content)["messages"]
+        await llm.generate(messages=tool_round("second-result"))
+        latest = json.loads(sdk.requests[-1].content)["messages"]
+        calls = [call["id"] for message in latest for call in message.get("tool_calls", [])]
+        results = [message["tool_call_id"] for message in latest if message["role"] == "tool"]
+        assert len(calls) == len(set(calls)) == 2
+        assert results == calls
+        assert latest[: len(initial)] == initial
+        assert first_input == before
+        await llm.generate(messages=tool_round("explicit-result", explicit=True))
+        explicit = json.loads(sdk.requests[-1].content)["messages"]
+        assert explicit[:-2] == latest
+        assert explicit[-2]["tool_calls"][0]["id"] == "call_external"
+        assert explicit[-1]["tool_call_id"] == "call_external"
         assert validated_lengths == [2, 2, 2]
 
 
 @pytest.mark.parametrize("upstream", PROTOCOLS)
-async def test_clear_cache_starts_new_history_and_keeps_sdk_client(upstream):
+async def test_clear_cache_starts_new_history_and_creates_request_clients(upstream):
     provider, model = profiles(upstream)
     with LocalSDK(upstream, wire_frames(upstream, stream_events(upstream), 53)) as sdk:
-        async with MyLLM(
+        llm = MyLLM(
             provider=provider, model=model, stdio_protocol=upstream, enable_message_cache=True
-        ) as llm:
-            first = [user_message(upstream, "first-session", media=False)]
-            second = [user_message(upstream, "second-session", media=False)]
-            await llm.generate(messages=first, max_tokens=33)
-            await llm.generate(messages=second, max_tokens=33)
-            assert len(request_history(upstream, json.loads(sdk.requests[-1].content))) == 2
-            llm.clear_cache()
-            await llm.generate(messages=second, max_tokens=33)
-            latest = request_history(upstream, json.loads(sdk.requests[-1].content))
-            assert len(latest) == 1
-            assert "second-session" in str(latest)
-            assert "first-session" not in str(latest)
-            assert sdk.created_clients == 1
+        )
+        first = [user_message(upstream, "first-session", media=False)]
+        second = [user_message(upstream, "second-session", media=False)]
+        await llm.generate(messages=first, max_tokens=33)
+        await llm.generate(messages=second, max_tokens=33)
+        assert len(request_history(upstream, json.loads(sdk.requests[-1].content))) == 2
+        llm.clear_cache()
+        await llm.generate(messages=second, max_tokens=33)
+        latest = request_history(upstream, json.loads(sdk.requests[-1].content))
+        assert len(latest) == 1
+        assert "second-session" in str(latest)
+        assert "first-session" not in str(latest)
+        assert sdk.created_clients == 3

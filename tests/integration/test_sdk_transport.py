@@ -42,36 +42,36 @@ async def test_empty_chat_reasoning_survives_official_sdk_with_strict_policy(
         )
 
     monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
-    async with MyLLM(
+    llm = MyLLM(
         provider=ProviderProfile(
             protocol=config("openai_chat"), api_key=parameter("api_key", "local-test")
         ),
         model=ModelProfile(model=Attribute(default_value="demo")),
         stdio_protocol=stdio,
         semantic_loss_protocol="raise",
-    ) as llm:
-        messages = (
-            [UserMessage("user", [TextContent("hi")])]
-            if stdio == "middleware"
-            else [{"role": "user", "content": "hi"}]
+    )
+    messages = (
+        [UserMessage("user", [TextContent("hi")])]
+        if stdio == "middleware"
+        else [{"role": "user", "content": "hi"}]
+    )
+    result = await llm.generate(messages=messages, stream=stream)
+    if stream:
+        async with result:
+            events = [event async for event in result]
+        assert events
+        result = result.result
+    if stdio == "middleware":
+        reasoning = [part for part in result.content if isinstance(part, ReasoningContent)]
+        assert len(reasoning) == 1
+        assert reasoning[0].reasoning == reasoning[0].feedback_item == "".join(fragments)
+        assert (
+            "".join(part.text for part in result.content if isinstance(part, TextContent))
+            == "answer"
         )
-        result = await llm.generate(messages=messages, stream=stream)
-        if stream:
-            async with result:
-                events = [event async for event in result]
-            assert events
-            result = result.result
-        if stdio == "middleware":
-            reasoning = [part for part in result.content if isinstance(part, ReasoningContent)]
-            assert len(reasoning) == 1
-            assert reasoning[0].reasoning == reasoning[0].feedback_item == "".join(fragments)
-            assert (
-                "".join(part.text for part in result.content if isinstance(part, TextContent))
-                == "answer"
-            )
-        else:
-            assert result["content"] == "answer"
-            assert (result.get("reasoning_content") or "") == "".join(fragments)
+    else:
+        assert result["content"] == "answer"
+        assert (result.get("reasoning_content") or "") == "".join(fragments)
 
 
 @pytest.mark.parametrize("protocol", ["openai_chat", "openai_responses"])
@@ -124,8 +124,7 @@ async def test_official_openai_transport_all_stdio_formats(monkeypatch, protocol
         "/responses" if protocol == "openai_responses" else "/chat/completions"
     )
     assert requests[0].headers["Authorization"] == "Bearer local-test"
-    assert not clients[0].is_closed()
-    await llm.aclose()
+    assert clients[0].is_closed()
     assert clients[0].is_closed()
 
 
@@ -156,7 +155,7 @@ async def test_chat_generated_usage_overrides_sdk_body_overlay(
         )
 
     monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
-    async with MyLLM(
+    llm = MyLLM(
         provider=ProviderProfile(
             protocol=Config(default_value="openai_chat"),
             api_key=parameter("api_key", "local-test"),
@@ -165,11 +164,11 @@ async def test_chat_generated_usage_overrides_sdk_body_overlay(
         ),
         model=ModelProfile(model=Attribute(default_value="demo")),
         stdio_protocol="openai_chat",
-    ) as llm:
-        await llm.generate(
-            messages=[{"role": "user", "content": "hi"}],
-            **({"extra_body": extra_body} if body_source == "call" else {}),
-        )
+    )
+    await llm.generate(
+        messages=[{"role": "user", "content": "hi"}],
+        **({"extra_body": extra_body} if body_source == "call" else {}),
+    )
 
     expected = (
         {**(stream_options or {}), "include_usage": True}
@@ -212,7 +211,7 @@ async def test_custom_token_path_is_serialized_by_official_sdk(
 
     monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
     monkeypatch.setattr("my_llm.codec.openai.responses.transport.AsyncOpenAI", factory)
-    async with MyLLM(
+    llm = MyLLM(
         provider=ProviderProfile(
             protocol=Config(default_value=protocol),
             api_key=parameter("api_key", "local-test"),
@@ -220,8 +219,8 @@ async def test_custom_token_path_is_serialized_by_official_sdk(
         ),
         model=ModelProfile(model=Attribute(default_value="demo")),
         stdio_protocol="openai_chat",
-    ) as llm:
-        await llm.generate(messages=[{"role": "user", "content": "hi"}], max_tokens=50)
+    )
+    await llm.generate(messages=[{"role": "user", "content": "hi"}], max_tokens=50)
     assert bodies[0][token_key] == 50
     assert {key for key in bodies[0] if key.startswith("max_")} == {token_key}
     assert "extra_body" not in bodies[0]
@@ -257,8 +256,7 @@ async def test_sdk_http_errors_retain_their_type_and_preserve_client(monkeypatch
     )
     with pytest.raises(BadRequestError):
         await llm.generate(messages=[{"role": "user", "content": "hi"}])
-    assert not clients[0].is_closed()
-    await llm.aclose()
+    assert clients[0].is_closed()
     assert clients[0].is_closed()
 
 
@@ -292,7 +290,7 @@ async def test_inherited_parameter_defaults_and_vendor_effort_reach_official_sdk
 
     monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", factory)
     monkeypatch.setattr("my_llm.codec.openai.responses.transport.AsyncOpenAI", factory)
-    async with MyLLM(
+    llm = MyLLM(
         provider=ProviderProfile(
             protocol=Config(default_value=protocol), api_key=parameter("api_key", "local-test")
         ),
@@ -302,8 +300,8 @@ async def test_inherited_parameter_defaults_and_vendor_effort_reach_official_sdk
             reasoning_effort_mapping=config({"low": "vendor_effort"}),
         ),
         stdio_protocol="openai_chat",
-    ) as llm:
-        await llm.generate(messages=[{"role": "user", "content": "hello"}], reasoning_effort="low")
+    )
+    await llm.generate(messages=[{"role": "user", "content": "hello"}], reasoning_effort="low")
 
     assert "vendor_limit" in bodies[0] and bodies[0]["vendor_limit"] is None
     effort = (
@@ -367,34 +365,32 @@ async def test_output_event_type_through_official_sdk_sse(monkeypatch, protocol,
 
     module = "chat" if protocol == "openai_chat" else "responses"
     monkeypatch.setattr(f"my_llm.codec.openai.{module}.transport.AsyncOpenAI", factory)
-    async with MyLLM(
+    llm = MyLLM(
         provider=ProviderProfile(
             protocol=Config(default_value=protocol),
             api_key=InputParameter(path="$.api_key", default_value="local-test"),
         ),
         model=ModelProfile(
             model=Attribute(default_value="demo"),
-            **{
-                name: OutputParameter(path="$.vendor.value", event_type=selected_type),
-            },
+            **{name: OutputParameter(path="$.vendor.value", event_type=selected_type)},
         ),
         stdio_protocol="middleware",
-    ) as llm:
-        result = await llm.generate(messages=[Message("user", [TextContent("hi")])], stream=stream)
-        if stream:
-            async with result:
-                public = [event async for event in result]
-            assert [event.value for event in public if event.type == "delta"] == [
-                "custom ",
-                "value",
-            ]
-            result = result.result
-        block = next(
-            block
-            for block in result.content
-            if isinstance(
-                block,
-                TextContent if name == "content" else ReasoningContent,
-            )
+    )
+    result = await llm.generate(messages=[Message("user", [TextContent("hi")])], stream=stream)
+    if stream:
+        async with result:
+            public = [event async for event in result]
+        assert [event.value for event in public if event.type == "delta"] == [
+            "custom ",
+            "value",
+        ]
+        result = result.result
+    block = next(
+        block
+        for block in result.content
+        if isinstance(
+            block,
+            TextContent if name == "content" else ReasoningContent,
         )
-        assert (block.text if name == "content" else block.reasoning) == "custom value"
+    )
+    assert (block.text if name == "content" else block.reasoning) == "custom value"

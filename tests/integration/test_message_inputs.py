@@ -55,7 +55,6 @@ async def test_previous_response_id_allows_external_tool_results(monkeypatch):
         }
     ]
     assert client.requests[0]["previous_response_id"] == "resp_previous"
-    await llm.aclose()
 
 
 async def test_stdio_protocol_matches_tools_before_ambiguous_messages(monkeypatch):

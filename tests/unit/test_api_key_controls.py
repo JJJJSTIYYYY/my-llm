@@ -40,45 +40,45 @@ def make_llm(api_key=None):
 
 @pytest.mark.parametrize("value", ["", "  ", 0, False, [], {}, object()])
 async def test_invalid_api_key_fails_before_client_creation(clients, value):
-    async with make_llm() as llm:
-        with pytest.raises(ConfigurationError, match="api_key must be a non-empty string"):
-            await llm.generate(messages=[{"role": "user", "content": "hi"}], api_key=value)
+    llm = make_llm()
+    with pytest.raises(ConfigurationError, match="api_key must be a non-empty string"):
+        await llm.generate(messages=[{"role": "user", "content": "hi"}], api_key=value)
     assert not clients
 
 
 @pytest.mark.parametrize("declaration", [omit, InputParameter(path="$.api_key", supports=False)])
 async def test_explicit_api_key_requires_an_enabled_declaration(clients, declaration):
-    async with make_llm(declaration) as llm:
-        with pytest.raises(ConfigurationError, match="supported Profile declaration"):
-            await llm.generate(messages=[{"role": "user", "content": "hi"}], api_key="call-key")
-        await llm.generate(messages=[{"role": "user", "content": "hi"}], api_key=omit)
+    llm = make_llm(declaration)
+    with pytest.raises(ConfigurationError, match="supported Profile declaration"):
+        await llm.generate(messages=[{"role": "user", "content": "hi"}], api_key="call-key")
+    await llm.generate(messages=[{"role": "user", "content": "hi"}], api_key=omit)
     assert clients[0][0] == {}
     assert clients[0][1].close_count == 1
 
 
 @pytest.mark.parametrize("path", ["$.api_key", "$.extra_headers.Authorization"])
 async def test_omit_removes_only_this_calls_configured_authentication(clients, path):
-    async with make_llm(InputParameter(path=path, default_value="profile-key")) as llm:
-        original = dict(llm.client_parameters)
-        for options in ({"api_key": omit}, {}, {"api_key": omit}, {"api_key": None}):
-            await llm.generate(messages=[{"role": "user", "content": "hi"}], **options)
-        assert llm.client_parameters == original
-        assert llm.resolved_profile.get("api_key") == "profile-key"
-        assert len(clients) == 2
-        omitted, inherited = clients[0][0], clients[1][0]
-        assert "api_key" not in omitted
-        assert "Authorization" not in omitted.get("default_headers", {})
-        assert inherited == original
-        assert all(not client.closed for _, client in clients)
+    llm = make_llm(InputParameter(path=path, default_value="profile-key"))
+    original = dict(llm.client_parameters)
+    for options in ({"api_key": omit}, {}, {"api_key": omit}, {"api_key": None}):
+        await llm.generate(messages=[{"role": "user", "content": "hi"}], **options)
+    assert llm.client_parameters == original
+    assert llm.resolved_profile.get("api_key") == "profile-key"
+    assert len(clients) == 4
+    omitted, inherited = clients[0][0], clients[1][0]
+    assert "api_key" not in omitted
+    assert "Authorization" not in omitted.get("default_headers", {})
+    assert inherited == original
+    assert all(client.closed for _, client in clients)
     assert all(client.close_count == 1 for _, client in clients)
 
 
 async def test_unconsumed_override_stream_creates_no_client(clients):
-    async with make_llm() as llm:
-        stream = await llm.generate(
-            messages=[{"role": "user", "content": "hi"}], api_key="call-key", stream=True
-        )
-        await stream.aclose()
+    llm = make_llm()
+    stream = await llm.generate(
+        messages=[{"role": "user", "content": "hi"}], api_key="call-key", stream=True
+    )
+    await stream.aclose()
     assert not clients
 
 

@@ -21,8 +21,8 @@ codec 布局与接口以本页目录说明、[架构文档](../design/architectu
   options.py 负责配置路径、选项准备与校验。Decoder 每次解析一次 PreparedOptions，并输出 client / request / local 字典；连接默认值在构造时准备，调用级 api_key 在 Decoder 中覆盖。
 - profile/configuration.py 保存配置类型、覆盖字段与字典合并；resolution.py 负责解析、快照及校验。
   协议默认值保存在各 Codec.defaults；profile/defaults.py 只从 basic/protocols.py 复制已注册声明。
-- 包根目录的 my_llm.py 负责生成编排与 SDK 客户端复用，runtime/message_stream.py 和 state.py 保存响应流生命周期与请求状态。
-  实例通过异步上下文或 aclose 关闭客户端；响应流按请求清理，见[生命周期设计](../design/client-lifecycle.md)。
+- 包根目录的 my_llm.py 负责生成编排与 请求级 SDK 客户端生命周期，runtime/message_stream.py 和 state.py 保存响应流生命周期与请求状态。
+  每次请求独立创建并关闭 SDK 客户端和响应流；实例 clear_cache 清理消息缓存，无需关闭实例，见[生命周期设计](../design/client-lifecycle.md)。
 - __init__.py 只保留说明、导入与 __all__，不放业务代码。
 
 新增模块应以职责命名；同协议双向共用辅助放在协议根目录。只有职责确实形成多个模块时才增加目录，不为短小辅助函数单独建包。

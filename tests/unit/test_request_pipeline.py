@@ -80,16 +80,16 @@ async def test_complete_call_passes_through_codec_with_explicit_destinations(
         resolution, "_connection_parameters", wraps=resolution._connection_parameters
     ) as connections:
         with LocalSDK(upstream, wire_frames(upstream, workload.events, 37)) as sdk:
-            async with MyLLM(provider=provider, model=model, stdio_protocol=stdio) as llm:
-                for stream in (False, True):
-                    _, result = await measure(
-                        llm, workload, stream=stream, parameters=controls(upstream)
-                    )
-                    validate_exchange(workload, stdio, result, sdk)
-                assert sdk.created_clients == 1
-                assert all(value["profile"] is llm.resolved_profile for value in intermediates)
-                assert client_preparations == [llm.resolved_profile]
-                assert option_preparations == [llm.resolved_profile, llm.resolved_profile]
+            llm = MyLLM(provider=provider, model=model, stdio_protocol=stdio)
+            for stream in (False, True):
+                _, result = await measure(
+                    llm, workload, stream=stream, parameters=controls(upstream)
+                )
+                validate_exchange(workload, stdio, result, sdk)
+            assert sdk.created_clients == 2
+            assert all(value["profile"] is llm.resolved_profile for value in intermediates)
+            assert client_preparations == [llm.resolved_profile]
+            assert option_preparations == [llm.resolved_profile, llm.resolved_profile]
             assert all(body.closed for body in sdk.bodies)
         connections.assert_called_once()
     fields = set(inspect.signature(MyLLM.generate).parameters) - {"self"}
@@ -99,7 +99,7 @@ async def test_complete_call_passes_through_codec_with_explicit_destinations(
         assert intermediate["middleware"].messages[0]["protocol"] == stdio
         assert set(output) == {"client", "request", "local"}
         assert "profile" not in output["request"]
-        assert set(output["local"]) == {"stream", "client_key"}
+        assert set(output["local"]) == {"stream"}
         assert "reasoning_effort" not in output["client"]
         assert "extra_body" not in output["local"]
         assert "api_key" not in output["request"]

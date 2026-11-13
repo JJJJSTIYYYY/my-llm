@@ -127,13 +127,13 @@ def test_snapshot_requires_resolved_profile(value):
 
 async def test_clear_cache_removes_only_instance_history_and_deduplication():
     provider, model = profiles()
-    async with MyLLM(provider=provider, model=model, enable_message_cache=True) as llm:
-        cache = llm.codec._message_cache
-        cache.update(llm._message_cache_key, [{"text": "old"}], fingerprint=b"same")
-        cache.update("other", [{"text": "keep"}])
-        llm.clear_cache()
-        llm.clear_cache()
-        assert llm._message_cache_key not in cache
-        assert cache.get("other") == [{"text": "keep"}]
-        cache.update(llm._message_cache_key, [{"text": "new"}], fingerprint=b"same")
-        assert cache.get(llm._message_cache_key) == [{"text": "new"}]
+    llm = MyLLM(provider=provider, model=model, enable_message_cache=True)
+    cache = llm.codec._message_cache
+    cache.update(llm._message_cache_key, [{"text": "old"}], fingerprint=b"same")
+    cache.update("other", [{"text": "keep"}])
+    llm.clear_cache()
+    llm.clear_cache()
+    assert llm._message_cache_key not in cache
+    assert cache.get("other") == [{"text": "keep"}]
+    cache.update(llm._message_cache_key, [{"text": "new"}], fingerprint=b"same")
+    assert cache.get(llm._message_cache_key) == [{"text": "new"}]

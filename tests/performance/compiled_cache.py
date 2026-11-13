@@ -29,44 +29,43 @@ async def benchmark(protocol, iterations, warmup):
     original = deepcopy((workload.messages, workload.tools))
     provider, model = profiles(protocol)
     samples = {"cached": [], "uncached": []}
-    async with MyLLM(provider=provider, model=model, stdio_protocol=protocol) as llm:
-        inputs = {
-            "messages": workload.messages,
-            "tools": workload.tools,
-            "stream": True,
-            **controls(protocol),
-        }
+    llm = MyLLM(provider=provider, model=model, stdio_protocol=protocol)
+    inputs = {
+        "messages": workload.messages,
+        "tools": workload.tools,
+        "stream": True,
+        **controls(protocol),
+    }
 
-        async def prepare():
-            return await llm.codec.prepare(
-                inputs, llm.resolved_profile, input_format=protocol, client=llm.client_parameters
-            )
+    async def prepare():
+        return await llm.codec.prepare(
+            inputs, llm.resolved_profile, input_format=protocol, client=llm.client_parameters
+        )
 
-        (await prepare())
-        before = caches()
-        for index in range(warmup + iterations):
-            order = ("cached", "uncached") if index % 2 == 0 else ("uncached", "cached")
-            results = {}
-            for name in order:
-                with ExitStack() as patches:
-                    if name == "uncached":
-                        # Keep every compiler's behavior, bypass only its LRU.
-                        # This affects existing imports of the same wrapper too.
-                        for compiler_name in before:
-                            compiler = getattr(compiled_cache, compiler_name)
-                            patches.enter_context(
-                                patch.object(compiler, "_compiled", compiler.__wrapped__)
-                            )
-                    results[name], sample = await measure(prepare)
-                if index >= warmup:
-                    samples[name].append(sample)
-            assert results["cached"] == results["uncached"]
-            assert (workload.messages, workload.tools) == original
-        assert not llm._clients
-        after = caches()
-        for name, info in after.items():
-            assert info["misses"] == before[name]["misses"], name
-            assert info["currsize"] == before[name]["currsize"], name
+    (await prepare())
+    before = caches()
+    for index in range(warmup + iterations):
+        order = ("cached", "uncached") if index % 2 == 0 else ("uncached", "cached")
+        results = {}
+        for name in order:
+            with ExitStack() as patches:
+                if name == "uncached":
+                    # Keep every compiler's behavior, bypass only its LRU.
+                    # This affects existing imports of the same wrapper too.
+                    for compiler_name in before:
+                        compiler = getattr(compiled_cache, compiler_name)
+                        patches.enter_context(
+                            patch.object(compiler, "_compiled", compiler.__wrapped__)
+                        )
+                results[name], sample = await measure(prepare)
+            if index >= warmup:
+                samples[name].append(sample)
+        assert results["cached"] == results["uncached"]
+        assert (workload.messages, workload.tools) == original
+    after = caches()
+    for name, info in after.items():
+        assert info["misses"] == before[name]["misses"], name
+        assert info["currsize"] == before[name]["currsize"], name
     cached, uncached = (summary(samples[name]) for name in ("cached", "uncached"))
     return {
         "protocol": protocol,

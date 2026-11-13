@@ -116,34 +116,31 @@ async def test_combined_repairs_preserve_reasoning_images_and_cache_on_actual_wi
     with LocalSDK(
         "openai_chat", wire_frames("openai_chat", stream_events("openai_chat"), 37)
     ) as sdk:
-        async with configured_llm(
-            "openai_chat",
-            source,
-            cached,
-            should_feedback_reasoning_item=Config(default_value=mode),
-        ) as llm:
+        llm = configured_llm(
+            "openai_chat", source, cached, should_feedback_reasoning_item=Config(default_value=mode)
+        )
+        if cached:
+            await llm.generate(messages=[user_message(source, "cached prefix")])
+        requests = []
+        for _ in range(2):
+            result = await llm.generate(messages=deepcopy(batch), stream=stream)
+            if stream:
+                await consume(result)
+            body = json.loads(sdk.requests[-1].content)
+            validate_request("openai_chat", body)
+            messages = body["messages"]
+            assert_repairs(messages, mode)
+            requests.append(messages)
             if cached:
-                await llm.generate(messages=[user_message(source, "cached prefix")])
-            requests = []
-            for _ in range(2):
-                result = await llm.generate(messages=deepcopy(batch), stream=stream)
-                if stream:
-                    await consume(result)
-                body = json.loads(sdk.requests[-1].content)
-                validate_request("openai_chat", body)
-                messages = body["messages"]
-                assert_repairs(messages, mode)
-                requests.append(messages)
-                if cached:
-                    assert llm.codec._message_cache.get(llm._message_cache_key) == messages
-                    assert messages[0]["content"] == "cached prefix"
-            assert without_image_ids(requests[0]) == without_image_ids(requests[1])
-            if cached:
-                assert requests[0] == requests[1]
-                await llm.generate(messages=[user_message(source, "next")])
-                following = json.loads(sdk.requests[-1].content)["messages"]
-                assert following[:-1] == requests[0]
-            assert batch == before
+                assert llm.codec._message_cache.get(llm._message_cache_key) == messages
+                assert messages[0]["content"] == "cached prefix"
+        assert without_image_ids(requests[0]) == without_image_ids(requests[1])
+        if cached:
+            assert requests[0] == requests[1]
+            await llm.generate(messages=[user_message(source, "next")])
+            following = json.loads(sdk.requests[-1].content)["messages"]
+            assert following[:-1] == requests[0]
+        assert batch == before
 
 
 @pytest.mark.parametrize("source", ["anthropic", "openai_responses", "middleware"])

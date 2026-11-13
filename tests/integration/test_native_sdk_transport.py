@@ -74,8 +74,7 @@ async def test_native_sdk_transport_all_stdio_formats(monkeypatch, protocol, std
     assert body["tool_choice"] == options["tool_choice"]
     assert body["metadata"] == options["metadata"]
     assert requests[0].url.path == "/v1/messages"
-    assert all(not client.is_closed for client in http_clients)
-    await llm.aclose()
+    assert all(client.is_closed for client in http_clients)
     assert all(client.is_closed for client in http_clients)
 
 
@@ -104,7 +103,7 @@ async def test_header_authentication_without_sdk_api_key(
         return AsyncAnthropic(**kwargs, http_client=httpx.AsyncClient(transport=transport))
 
     monkeypatch.setattr("my_llm.codec.anthropic.transport.AsyncAnthropic", factory)
-    async with MyLLM(
+    llm = MyLLM(
         provider=ProviderProfile(
             protocol=Config(default_value=protocol),
             base_url=config("https://local.test"),
@@ -118,13 +117,13 @@ async def test_header_authentication_without_sdk_api_key(
             max_tokens=parameter("max_tokens", 2048, protocol=protocol),
         ),
         stdio_protocol="openai_chat",
-    ) as llm:
-        result = await llm.generate(messages=[{"role": "user", "content": "hello"}])
-        await llm.generate(
-            messages=[{"role": "user", "content": "hello"}],
-            extra_headers={header: "request-override"},
-        )
-        await llm.generate(messages=[{"role": "user", "content": "hello"}])
+    )
+    result = await llm.generate(messages=[{"role": "user", "content": "hello"}])
+    await llm.generate(
+        messages=[{"role": "user", "content": "hello"}],
+        extra_headers={header: "request-override"},
+    )
+    await llm.generate(messages=[{"role": "user", "content": "hello"}])
 
     assert result["role"] == "assistant"
     assert all("api_key" not in options for options in client_options)
@@ -134,7 +133,7 @@ async def test_header_authentication_without_sdk_api_key(
         "request-override",
         expected,
     ]
-    assert len(client_options) == 1
+    assert len(client_options) == 3
     assert all("local-header-test" not in request.content.decode() for request in requests)
     if header == "Authorization":
         assert all("x-api-key" not in request.headers for request in requests)

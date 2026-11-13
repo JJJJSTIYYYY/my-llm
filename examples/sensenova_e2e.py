@@ -335,21 +335,21 @@ async def policy_scenario(upstream, model_id, key, case, *, request_interval=0.0
         assert context.origin_source == "output"
         output_losses.extend(losses)
 
-    async with MyLLM(
+    llm = MyLLM(
         provider=provider(upstream, key),
         model=ModelProfile(model=Attribute(default_value=model_id), **settings),
         stdio_protocol="middleware",
         semantic_loss_protocol="hook",
         input_semantic_loss_hook=input_hook,
         output_semantic_loss_hook=output_hook,
-    ) as llm:
-        result, events = await consume(
-            llm,
-            stream=True,
-            request_interval=request_interval,
-            messages=messages,
-            tools=declared,
-        )
+    )
+    result, events = await consume(
+        llm,
+        stream=True,
+        request_interval=request_interval,
+        messages=messages,
+        tools=declared,
+    )
     assert (messages, declared) == before, "translation changed caller input"
     if unsupported:
         assert len(drafts) == 1, "request losses were not collected together"
@@ -400,99 +400,99 @@ async def run(
     model = model_factory(args.model)
     for upstream in args.upstream or PROTOCOLS:
         for stdio in args.stdio or STDIO_PROTOCOLS:
-            async with MyLLM(
+            llm = MyLLM(
                 provider=provider_factory(upstream, key),
                 model=model,
                 stdio_protocol=stdio,
                 semantic_loss_protocol=args.semantic_loss_protocol,
-            ) as llm:
-                cases = (
-                    *BASE_CASES,
-                    *(POLICY_CASES if stdio == "middleware" else ()),
-                    *(case for case in LIVE_CASES if eligible(upstream, stdio, case)),
-                )
-                for case in cases:
-                    if args.case and case not in args.case:
+            )
+            cases = (
+                *BASE_CASES,
+                *(POLICY_CASES if stdio == "middleware" else ()),
+                *(case for case in LIVE_CASES if eligible(upstream, stdio, case)),
+            )
+            for case in cases:
+                if args.case and case not in args.case:
+                    continue
+                row = {
+                    "upstream": upstream,
+                    "stdio": stdio,
+                    "case": case,
+                    "semantic_loss_protocol": (
+                        "hook"
+                        if case in (*POLICY_CASES, *IMAGE_CASES)
+                        else "raise"
+                        if case in REPLAY_CASES
+                        else args.semantic_loss_protocol
+                    ),
+                }
+                position = positions.get((upstream, stdio, case))
+                if args.retry_failed:
+                    if position is None or report["results"][position]["status"] == "passed":
                         continue
-                    row = {
-                        "upstream": upstream,
-                        "stdio": stdio,
-                        "case": case,
-                        "semantic_loss_protocol": (
-                            "hook"
-                            if case in (*POLICY_CASES, *IMAGE_CASES)
-                            else "raise"
-                            if case in REPLAY_CASES
-                            else args.semantic_loss_protocol
-                        ),
-                    }
-                    position = positions.get((upstream, stdio, case))
-                    if args.retry_failed:
-                        if position is None or report["results"][position]["status"] == "passed":
-                            continue
-                        previous = report["results"][position]
-                        row["previous_attempts"] = [
-                            *previous.get("previous_attempts", []),
-                            {
-                                key: value
-                                for key, value in previous.items()
-                                if key != "previous_attempts"
-                            },
-                        ]
-                    started = time.monotonic()
-                    evidence = {}
-                    try:
-                        if case in REPLAY_CASES:
-                            operation = replay_scenario(
-                                provider_factory(upstream, key, reasoning=True),
-                                model_factory(args.model, case),
-                                stdio,
-                                request_interval=args.request_interval,
-                                evidence=evidence,
-                            )
-                        elif case in INPUT_CASES:
-                            operation = input_scenario(
-                                provider_factory(upstream, key, reasoning=case in REASONING_CASES),
-                                model_factory(args.model, case),
-                                stdio,
-                                case,
-                                request_interval=args.request_interval,
-                                offline=getattr(args, "validate", False),
-                                semantic_loss_protocol=args.semantic_loss_protocol,
-                                evidence=evidence,
-                            )
-                        elif case in POLICY_CASES:
-                            operation = policy_scenario(
-                                upstream,
-                                args.model,
-                                key,
-                                case,
-                                request_interval=args.request_interval,
-                            )
-                        else:
-                            operation = scenario(
-                                llm, stdio, case, request_interval=args.request_interval
-                            )
-                        row.update(await asyncio.wait_for(operation, 300))
-                        row["status"] = "passed"
-                    except Exception as exc:
-                        # Never persist SDK request headers, profiles or tracebacks.
-                        error = str(exc).replace(key, "[REDACTED]")
-                        row.update(
-                            status="failed",
-                            error_type=type(exc).__name__,
-                            error=re.sub(r"sk-[A-Za-z0-9_-]+", "[REDACTED]", error)[:1500],
+                    previous = report["results"][position]
+                    row["previous_attempts"] = [
+                        *previous.get("previous_attempts", []),
+                        {
+                            key: value
+                            for key, value in previous.items()
+                            if key != "previous_attempts"
+                        },
+                    ]
+                started = time.monotonic()
+                evidence = {}
+                try:
+                    if case in REPLAY_CASES:
+                        operation = replay_scenario(
+                            provider_factory(upstream, key, reasoning=True),
+                            model_factory(args.model, case),
+                            stdio,
+                            request_interval=args.request_interval,
+                            evidence=evidence,
                         )
-                    row.update(evidence)
-                    row["seconds"] = round(time.monotonic() - started, 3)
-                    if position is None:
-                        report["results"].append(row)
+                    elif case in INPUT_CASES:
+                        operation = input_scenario(
+                            provider_factory(upstream, key, reasoning=case in REASONING_CASES),
+                            model_factory(args.model, case),
+                            stdio,
+                            case,
+                            request_interval=args.request_interval,
+                            offline=getattr(args, "validate", False),
+                            semantic_loss_protocol=args.semantic_loss_protocol,
+                            evidence=evidence,
+                        )
+                    elif case in POLICY_CASES:
+                        operation = policy_scenario(
+                            upstream,
+                            args.model,
+                            key,
+                            case,
+                            request_interval=args.request_interval,
+                        )
                     else:
-                        report["results"][position] = row
-                    print(json.dumps(row, ensure_ascii=False), flush=True)
-                    if args.report:
-                        args.report.parent.mkdir(parents=True, exist_ok=True)
-                        args.report.write_text(json.dumps(report, indent=2) + "\n")
+                        operation = scenario(
+                            llm, stdio, case, request_interval=args.request_interval
+                        )
+                    row.update(await asyncio.wait_for(operation, 300))
+                    row["status"] = "passed"
+                except Exception as exc:
+                    # Never persist SDK request headers, profiles or tracebacks.
+                    error = str(exc).replace(key, "[REDACTED]")
+                    row.update(
+                        status="failed",
+                        error_type=type(exc).__name__,
+                        error=re.sub(r"sk-[A-Za-z0-9_-]+", "[REDACTED]", error)[:1500],
+                    )
+                row.update(evidence)
+                row["seconds"] = round(time.monotonic() - started, 3)
+                if position is None:
+                    report["results"].append(row)
+                else:
+                    report["results"][position] = row
+                print(json.dumps(row, ensure_ascii=False), flush=True)
+                if args.report:
+                    args.report.parent.mkdir(parents=True, exist_ok=True)
+                    args.report.write_text(json.dumps(report, indent=2) + "\n")
     if not report["results"]:
         raise ValueError("no cases match the selected upstream protocols and input formats")
     failed = sum(row["status"] != "passed" for row in report["results"])

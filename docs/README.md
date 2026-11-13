@@ -21,7 +21,7 @@
 - [流状态设计](design/stream-state.md)：块身份、累积操作和终态约束。
 - [Schema 过滤计划缓存](design/schema-filter-cache.md)：缓存的实际对象、类型计划图、两次请求的执行过程与可运行示例。
 - [翻译字段边界](design/translation-boundaries.md)：已识别字段、开放字典与 Profile 兼容配置的范围。
-- [SDK 客户端生命周期](design/client-lifecycle.md)：实例复用、请求资源隔离和显式关闭。
+- [SDK 客户端生命周期](design/client-lifecycle.md)：逐请求客户端创建、资源隔离和显式关闭。
 
 reference 保存接口、配置与协议模板；guides 保存操作及验证步骤；design 保存实现约束。
 常规测试与性能结果保存在本机输出目录，专项报告见对应条目；复测方法见[开发指南](guides/development.md#验证)和

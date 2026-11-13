@@ -463,7 +463,7 @@ async def test_llm_delivers_the_exact_result_draft_modified_by_output_hook(monke
             final_drafts.append(draft)
             draft["content"] += " resolved"
 
-    async with MyLLM(
+    llm = MyLLM(
         provider=ProviderProfile(
             protocol=Config(default_value="openai_chat"), reasoning_content=omit
         ),
@@ -471,18 +471,18 @@ async def test_llm_delivers_the_exact_result_draft_modified_by_output_hook(monke
         stdio_protocol="openai_chat",
         semantic_loss_protocol="hook",
         output_semantic_loss_hook=hook,
-    ) as llm:
-        result = await llm.generate(
-            messages=[{"role": "user", "content": "question"}], stream=streaming
-        )
-        if streaming:
-            async with result:
-                async for _ in result:
-                    pass
-            result = result.result
-        assert final_drafts == [result]
-        assert result is final_drafts[0]
-        assert result["content"] == "answer resolved"
+    )
+    result = await llm.generate(
+        messages=[{"role": "user", "content": "question"}], stream=streaming
+    )
+    if streaming:
+        async with result:
+            async for _ in result:
+                pass
+        result = result.result
+    assert final_drafts == [result]
+    assert result is final_drafts[0]
+    assert result["content"] == "answer resolved"
     assert client.closed and client.upstream.closed
 
 

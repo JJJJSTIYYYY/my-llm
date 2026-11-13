@@ -102,21 +102,25 @@ async def test_malformed_native_usage_and_auxiliary_metadata_keep_the_response(
             await upstream.aclose()
 
     provider, model = profiles(protocol)
-    async with MyLLM(provider=provider, model=model, stdio_protocol=protocol) as llm:
-        monkeypatch.setattr(llm, "_get_client", lambda _: object())
-        monkeypatch.setattr(type(llm.codec.transport(protocol)), "upstream", open_stream)
-        result = await llm.generate(
-            messages=([{"role": "user", "content": "hello"}]),
-            stream=streaming,
-        )
-        if streaming:
-            async with result:
-                async for _ in result:
-                    pass
-            result = result.result
-        assert "Hello" in str(result)
-        assert llm.get_last_usage() is None
-        assert upstream.closed
+    llm = MyLLM(provider=provider, model=model, stdio_protocol=protocol)
+    from tests.helpers.transport import FakeClient
+
+    monkeypatch.setattr(
+        type(llm.codec.transport(protocol)), "create_client", lambda *_: FakeClient([])
+    )
+    monkeypatch.setattr(type(llm.codec.transport(protocol)), "upstream", open_stream)
+    result = await llm.generate(
+        messages=([{"role": "user", "content": "hello"}]),
+        stream=streaming,
+    )
+    if streaming:
+        async with result:
+            async for _ in result:
+                pass
+        result = result.result
+    assert "Hello" in str(result)
+    assert llm.get_last_usage() is None
+    assert upstream.closed
 
 
 @pytest.mark.parametrize("streaming", [False, True])
@@ -145,21 +149,19 @@ async def test_auxiliary_fallback_covers_the_encoder_validation_entry(
     client = FakeClient([chat_event(content="valid answer"), chat_event(finish="stop")])
     monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", lambda **kw: client)
     provider, model = profiles("openai_chat")
-    async with MyLLM(provider=provider, model=model, stdio_protocol="openai_chat") as llm:
-        codec = ChatCompletionsCodec()
-        codec.encoder = CustomEncoder()
-        llm.codec.codecs["openai_chat"] = codec
-        result = await llm.generate(
-            messages=[{"role": "user", "content": "hello"}], stream=streaming
-        )
-        if streaming:
-            async with result:
-                async for _ in result:
-                    pass
-            result = result.result
-        assert result["content"] == "valid answer"
-        assert llm.get_last_usage() is None
-        assert client.upstream.closed
+    llm = MyLLM(provider=provider, model=model, stdio_protocol="openai_chat")
+    codec = ChatCompletionsCodec()
+    codec.encoder = CustomEncoder()
+    llm.codec.codecs["openai_chat"] = codec
+    result = await llm.generate(messages=[{"role": "user", "content": "hello"}], stream=streaming)
+    if streaming:
+        async with result:
+            async for _ in result:
+                pass
+        result = result.result
+    assert result["content"] == "valid answer"
+    assert llm.get_last_usage() is None
+    assert client.upstream.closed
 
 
 def test_explicit_validator_stays_strict_and_unknown_operations_are_not_swallowed():

@@ -106,7 +106,7 @@ uv run --no-sync python -m tests.performance --json /tmp/my-llm-performance.json
 | prepare_ms | 仅流式：调用 generate 前，到 await generate 返回 MessageStream。此时 SDK 请求尚未执行。 |
 | first_event_ms | 仅流式：调用 generate 前，到收到第一个公开输出事件，包含准备阶段；不表示网络侧首 token。 |
 | cold | 在新 MyLLM 实例上的首次调用，包含 generate 内部的 SDK 客户端延迟创建。 |
-| warm | 完成 cold 和额外预热后，在同一实例上复用客户端的测量样本。 |
+| warm | 完成 cold 和额外预热后，在同一实例上复用类型规则缓存的测量样本；仍包含每次客户端创建和关闭。 |
 
 MyLLM 构造、实例最终关闭、负载 / 响应字节准备及验证断言均位于计时之外。
 计时前先完成一轮独立实例的协议预检，所以 cold 表示首次 SDK 客户端调用，
@@ -187,10 +187,10 @@ python -m tests.performance.request_chain --iterations 9 --concurrency 4 --json 
 每个场景包含串行 cold、2 次预热和 9 次采样，以及四路并发的 2 批预热和 9 批采样。
 每份响应体在首个字节前经过 asyncio.Barrier，断言 peak_active=4，证明请求实际重叠。
 四路请求携带不同 x-request 头，并验证无串扰、结果完整及每个响应体关闭。
-每个实例复用一个客户端，逐请求 headers 通过请求参数传递。
+每次请求独立创建并关闭客户端，逐请求 headers 通过请求参数传递。
 
 tracemalloc 只在独立的串行与并发内存探针启用，启用前 gc.collect，不与计时采样混合。
-内存指标包含生成结果和测试收集的 HTTP 观察值，排除预制负载与已创建客户端；它是 Python 分配峰值，
+内存指标包含每次 SDK 客户端构造和关闭、生成结果及测试收集的 HTTP 观察值，排除预制负载；它是 Python 分配峰值，
 不是进程 RSS 或连接池大小。两版使用完全相同的探针。
 缓存快照记录五类 LRU 的 hits、misses、maxsize、currsize，可检查暖请求是否只命中规则而不随请求增长。
 与串行 cold 一样，内存和并发测量前已预热；不把它们解释为冷进程启动或网络吞吐。

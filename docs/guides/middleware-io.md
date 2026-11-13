@@ -22,18 +22,14 @@ async def ask():
     provider = ProviderProfile(protocol=Config(default_value="openai_chat"))
     model = ModelProfile(model=Attribute(default_value="your-model"))
     history = [UserMessage(role="user", content=[TextContent("你好")])]
-    async with MyLLM(
-        provider=provider,
-        model=model,
-        stdio_protocol="middleware",
-    ) as llm:
-        reply = await llm.generate(messages=history)
-        # reply 是 AssistantMessage，仍使用有序的具体内容块。
-        for part in reply.content:
-            if isinstance(part, TextContent):
-                print(part.text)
-        history.append(reply)
-        return history
+    llm = MyLLM(provider=provider, model=model, stdio_protocol="middleware")
+    reply = await llm.generate(messages=history)
+    # reply 是 AssistantMessage，仍使用有序的具体内容块。
+    for part in reply.content:
+        if isinstance(part, TextContent):
+            print(part.text)
+    history.append(reply)
+    return history
 ```
 
 `generate()` 的 `messages` 接受非空的模型列表或元组，`tools` 接受 `FunctionTool` 列表或元组。
@@ -50,7 +46,7 @@ reply = await llm.generate(messages=middle.messages, tools=middle.tools)
 
 传入 `ProtocolMiddleWare.messages` 和 `.tools` 属性，保留具体模型；字典索引提供的是供底层转换查看的投影。
 `ProtocolMiddleWare` 容器本身不是 `messages` 参数。顶层一次性 `generate()` 同样支持此入口，
-并继续管理临时实例和返回流的关闭。
+返回流仍由调用方负责消费或关闭，临时实例无需关闭。
 
 ## 模型与工具回合
 

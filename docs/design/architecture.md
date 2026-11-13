@@ -8,13 +8,13 @@ Decoder 应用参数路径、默认值、覆盖规则及目标 SDK Schema，输�
 {
     "client": {"api_key": "...", "base_url": "..."},
     "request": {"model": "...", "messages": [...], "stream": True},
-    "local": {"stream": True, "client_key": "..."},
+    "local": {"stream": True},
 }
 ```
 
 `local.stream` 决定返回 MessageStream 还是消费完整结果；上游仍统一使用流式 API。
 连接默认值由 MyLLM 实例准备、按只读方式使用；Decoder 应用调用级 api_key，
-MyLLM 按 local.client_key 复用对应客户端。请求字典和流状态属于本次调用。
+MyLLM 按请求创建并关闭独立的 SDK 客户端。请求字典和流状态属于本次调用。
 Transport 只把最终字典交给官方 SDK，并管理客户端和本次响应的资源。
 
 ## 目录与组件
@@ -24,7 +24,7 @@ src/my_llm/
 ├── __init__.py                 # 统一公开导出
 ├── _version.py                 # 构建与发行版本
 ├── py.typed                    # 类型标记
-├── my_llm.py                   # MyLLM / generate、客户端缓存、流编排
+├── my_llm.py                   # MyLLM / generate、请求客户端生命周期、流编排
 ├── cache/                      # 缓存实现与所有权隔离
 │   ├── __init__.py             # 缓存接口导出
 │   ├── compiled_cache.py       # CompiledCache、SDK 类型计划编译、过滤与验证
@@ -66,8 +66,8 @@ src/my_llm/
 | MyCodec | 注册快照、输入协议绑定、prepare 路由；持有实例独立的 MessageCache。 |
 | CompiledCache / MessageCache | 分别保存进程级类型规则和按实例键隔离的已翻译输入历史，集中管理缓存操作与快照。 |
 | Profile / resolve_profiles | 分层合并、声明分类、通用字段验证、连接参数解析及独立配置快照。 |
-| MyLLM | 固定实例配置、uuid4 消息缓存键、已准备连接字典、延迟客户端缓存、生成和输出编排。 |
-| StreamState / MessageStream | 每次请求独立的响应状态、事件、最终结果 draft 和清理回调。 |
+| MyLLM | 固定实例配置、uuid4 消息缓存键、已准备连接字典、延迟请求客户端生命周期、生成和输出编排。 |
+| StreamState / MessageStream | 每次请求独立的响应状态、事件、最终结果 draft 和请求资源释放。 |
 
 注册表保存工厂，codec 及其组件按实例按需创建；允许实例状态，不跨实例共享组件。
 MyLLM 的 Profile 解析从本实例 MyCodec 获取协议默认声明，后续验证和请求复用同一个 codec。
@@ -103,7 +103,7 @@ Encoder / Decoder 的完整调用流程仍集中在所属类中。初始化文�
           → native_request → Schema 过滤、能力及原生结构验证
           → {client, request, local}
       → BaseCodec.prepare 发布消息翻译缓存，再等待语义损失 adaptor / 请求 hook
-      → MyLLM 延迟取得／复用客户端 → Transport.upstream → SDK(**request)
+      → MyLLM 延迟创建本次客户端 → Transport.upstream → SDK(**request)
 
 返回：SDK 事件 → 上游 Encoder → 本次 StreamState
       → stdio Decoder → 原生事件／完成消息 → 本次响应关闭
@@ -142,7 +142,7 @@ headers/body 按现有分层规则合并；嵌套 omit 删除目标值，生成 
 
 协议的 assemble_request 只把原生消息和工具写入已有参数字典；
 _request_parameters 追加协议独有控制，不重新解析生成选项。
-逐请求 headers 放在 request 中，同一实例复用一个 SDK 客户端。
+逐请求 headers 放在 request 中，每次调用拥有独立 SDK 客户端。
 
 ## 数据所有权与缓存
 
@@ -193,19 +193,19 @@ hook 修改本次请求不会自动更新缓存，相关维护由使用者负责
 重发时仍翻译并处理语义损失；当前原始消息哈希与最后一次成功追加的批次相同，则复用原有原生历史，
 不重复追加。哈希按消息内容稳定计算，SDK / middleware 输入均可使用，字典键顺序不影响比较；
 工具声明、stream、headers 和生成选项不参与比较。只比较最后一批，因此 `A → B → A` 会追加最后的 A。
-`aclose()` 同时释放本实例历史和批次哈希。
+`clear_cache()` 同时释放本实例历史和批次哈希。
 
 消息缓存使同一实例具有会话状态。`enable_message_cache=True` 时不支持同实例并发生成，
 调用方必须先完成或关闭前一条流，再开始下一次调用；不能交错消费多个流。
 此约束由调用方遵守，不通过内部排队串行化请求。关闭消息缓存时保留原有并发支持，
 不同 MyLLM 实例可以并发使用。
 
-客户端缓存属于 MyLLM；块物化与终态复用属于请求独立的 StreamState。
+客户端按请求创建和关闭；块物化与终态复用属于请求独立的 StreamState。
 生命周期见[客户端生命周期](client-lifecycle.md)，流式顺序见[流状态设计](stream-state.md)。
 
 ## 验证
 
-- [完整输入与准备生命周期](../../tests/unit/test_request_pipeline.py)：完整字段、三个目的地、连接仅解析一次、客户端复用及无重复结果复制。
+- [完整输入与准备生命周期](../../tests/unit/test_request_pipeline.py)：完整字段、三个目的地、连接仅解析一次、逐请求客户端释放及无重复结果复制。
 - [组件契约](../../tests/unit/test_native_codecs.py)、[依赖边界](../../tests/contract/test_codec_boundaries.py)与[独立扩展协议](../../tests/integration/test_protocol_registration.py)。
 - [Schema 计划](../../tests/unit/test_schema_filter_plans.py)、[原生请求边界](../../tests/unit/test_native_request_boundary.py)及[数据所有权](../../tests/unit/test_copy_ownership.py)。
 - [真实 SDK 并发与资源隔离](../../tests/integration/test_concurrency.py)及[客户端生命周期](../../tests/unit/test_client_lifecycle.py)。

@@ -1,75 +1,40 @@
 # SDK 客户端生命周期
 
-MyLLM 实例拥有官方 SDK 客户端；请求只拥有响应流与累积状态。
-同一实例使用相同有效密钥的流式及收集式生成复用客户端，不在每次请求结束时重建连接池。
-`generate(api_key=...)` 按 Profile 的认证路径覆盖本次调用，密钥不同则分别创建客户端；
-省略或 `None` 继承配置，`omit` 删除本次连接的对应认证参数，SDK 仍可读取环境变量。
-关闭消息缓存时支持同实例并发；启用 `enable_message_cache=True` 后，调用方必须串行使用，
-先完成或关闭前一条流再发起下一次调用。不同实例可以并发使用。
-此管理停留在官方 SDK 层，不自行创建或配置 HTTPX 连接池。
+每次 `generate` 独立拥有 SDK 客户端、响应流和累积状态。MyLLM 实例保存配置及可选的消息翻译缓存，不缓存客户端。
+流式与收集式调用使用同一条执行路径；同实例的不同请求也分别创建客户端。
 
-## 创建、复用与关闭
+## 创建与关闭
 
-构造 MyLLM 时解析、校验并复制 provider / model 配置，不创建 SDK 客户端。首次真正消费响应流时，
-MyLLM 从 BaseCodec 统一组合的 Transport 获取 create_client，保存客户端到实例缓存，
-并登记 Transport.close_client 到实例的 AsyncExitStack。
-客户端创建和缓存登记均为同步操作，关闭消息缓存后的首次并发请求之间没有 await 切换点，
-因此不需要用异步锁包住请求或 SDK 流。
+构造 MyLLM 时解析、校验并复制 provider / model 配置，准备连接参数，不创建客户端。
+调用级 api_key 由 Decoder 应用到本次调用的连接参数，不修改实例配置。
+流式调用在真正开始消费响应时创建客户端；未消费就关闭的流不创建客户端。
+收集式调用在返回完整结果前消费并关闭同一条上游流。
 
-生成参数错误在创建客户端前报错；未开始消费的流不会创建客户端。
-客户端构造失败时不登记该客户端，后续可以重试。请求创建或读取失败时保留客户端，
-关闭本次响应；SDK 的重试和后续请求继续使用相同实例。
-启用消息缓存时，输入在翻译完成后即保留；未消费或失败后的相同批次重试按原始消息哈希去重，
-不会再次追加历史。放弃的流仍须显式关闭，再开始重试，见[增量消息缓存](../reference/api.md#增量消息缓存)。
-实例复用与跨会话缓存隔离由应用层负责；新会话开始前可调用 `clear_cache()` 清空翻译历史和批次去重状态。
-`compare(new_provider, new_model, new_stdio_protocol)` 只比较三个标识字符串，不检查配置等价性。
-清理前应完成或关闭活动响应流。不检测用户直接修改 MyLLM 内部属性引起的配置失效。
+每次执行使用独立的 AsyncExitStack，创建客户端后立即登记 Transport.close_client，
+再进入上游响应上下文。完整消费、提前关闭、异常和取消时，先关闭响应，再关闭客户端。
+客户端构造失败时没有已创建的客户端需要关闭；后续调用仍可创建新客户端。
+请求失败只影响本次响应和客户端。
 
-使用 `async with MyLLM(...) as llm` 或 `await llm.aclose()` 关闭实例。
-关闭前先完成或关闭所有响应流；关闭操作幂等，关闭后拒绝新请求和未启动的流。
-SDK 客户端按实例及其事件循环使用，不跨事件循环共享。
-实例退出时通过资源栈关闭客户端。
+同实例并发调用拥有独立客户端和流状态。关闭消息缓存时支持同实例并发；
+启用 `enable_message_cache=True` 后，应先完成或关闭前一条流再调用下一次生成。
+实例复用和跨会话缓存隔离由应用层负责；开始新会话前可调用 `clear_cache()`。
+`compare(new_provider, new_model, new_stdio_protocol)` 只比较标识字符串，不检查配置等价性。
 
-独立函数 generate 创建临时 MyLLM。收集式调用在返回或异常时关闭临时实例；
-流式调用将清理回调交给 MessageStream，完整消费、提前关闭、取消或异常都会释放临时实例。
-关闭未启动的独立流同样不会创建 SDK 客户端。
+MyLLM 实例没有关闭状态，也不需要上下文管理器。消息缓存通过 `clear_cache()` 主动清理，或随实例释放。
+独立函数 generate 的流式返回值同样应通过 `async with` 或 `aclose()` 管理。
 
 ## 协议边界
 
-MyLLM 在构造时完成 Profile 解析、Decoder.validate_profile 和 Decoder.client_parameters，
-只保存已准备的连接字典，不创建客户端。每次调用的 Decoder.prepare 应用 api_key 覆盖，
-输出 client / request / local，其中 local.client_key 标识有效密钥。
-MyLLM 按该键复用实例级客户端，Transport.create_client(client参数字典) 只负责 SDK 构造。
-Transport.upstream(client, request) 执行最终请求；close_client 默认 await client.close()。
-Encoder 验证输入，Decoder 负责请求参数、Schema 过滤和原生验证；Transport 不接收 Profile 或原始控制项。
-Encoder / Decoder / Transport 不保存调用数据；已翻译历史由启用后的 MessageCache 保存。
-协议默认声明、损失策略引用等实例状态只属于该 MyLLM 的 codec，
-不跨实例共享。配置与客户端属于 MyLLM，消息仍经过 Encoder → 中间态 → Decoder。
+Encoder 验证输入，Decoder 准备 client / request / local 字典并负责请求参数、过滤和验证。
+MyLLM 调用 Transport.create_client(client) 创建本次 SDK 客户端，
+Transport.upstream(client, request) 提供响应上下文，Transport.close_client(client) 关闭客户端。
+Transport 不接收 Profile 或原始生成控制项，不自行维护客户端池。
 
-| 协议 | SDK 客户端 | 实例关闭 | 单次请求关闭 |
+| 协议 | SDK 客户端 | 客户端关闭 | 响应关闭 |
 | --- | --- | --- | --- |
 | OpenAI Chat / Responses | AsyncOpenAI | await client.close() | SDK stream.close() |
 | Anthropic | AsyncAnthropic | await client.close() | SDK stream.close() |
 
-各协议将动态请求头放在请求参数中，不因生成参数或请求头变化重建客户端。
-所有已创建的密钥对应客户端均保留至实例关闭，再统一释放。
-
-## 验证与依据
-
-[客户端生命周期测试](../../tests/unit/test_client_lifecycle.py)覆盖延迟创建、重复使用、实例隔离、
-幂等关闭、构造失败重试、请求失败后复用、关闭后拒绝请求，以及独立流的资源所有权。
-[组件契约测试](../../tests/unit/test_native_codecs.py)检查 BaseCodec 必须组合 Transport、
-Decoder 仅准备 SDK 参数而不创建客户端，以及配置校验的统一协调；
-[依赖边界测试](../../tests/contract/test_codec_boundaries.py)防止转换实现与 Transport 相互导入。
-[并发测试](../../tests/integration/test_concurrency.py)在关闭消息缓存时，用真实 SDK 和本地 HTTP transport 验证：
-
-- 三协议各有六路首次并发混合调用，响应在同步屏障汇合；SDK 客户端只创建一次，后续调用仍复用。
-- 9 种上游 / I/O 组合继续检查内容、用量、生成选项和请求头隔离。
-- 一路提前退出、一路取消、一路失败时，其他响应和共享客户端保持打开，后续仍可生成。
-- 请求在不同任务间读取与关闭时，只清理对应响应，直到 MyLLM 退出才关闭客户端。
-
-本地测试验证客户端创建次数和资源隔离，不将模拟传输耗时当作真实网络性能基准。
-2026-10-18 同时检查了安装的官方 SDK 实现及以下官方资料：
-
-- [OpenAI 官方示例](https://developers.openai.com/cookbook/examples/agents_api/apps/data_analyst/readme)：应用生命周期结束时 await client.close()。
-- [Anthropic Python SDK](https://platform.claude.com/docs/en/cli-sdks-libraries/sdks/python#managing-http-resources)：客户端的显式关闭和上下文管理。
+[生命周期测试](../../tests/unit/test_client_lifecycle.py)覆盖逐请求创建、正常关闭、未消费流、提前退出、失败和取消。
+[真实 SDK 并发测试](../../tests/integration/test_concurrency.py)验证不同响应和客户端的隔离。
+[依赖边界测试](../../tests/contract/test_codec_boundaries.py)验证 SDK 执行仍由 Transport 拥有。

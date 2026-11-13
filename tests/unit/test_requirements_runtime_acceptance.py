@@ -103,7 +103,10 @@ async def test_nonstream_output_hook_receives_only_the_complete_returned_draft(m
     client = FakeClient(
         [chat_event(reasoning="reason"), chat_event(content="complete tail", finish="stop")]
     )
-    monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", lambda **kwargs: client)
+    monkeypatch.setattr(
+        "my_llm.codec.openai.chat.transport.AsyncOpenAI",
+        lambda **kwargs: client,
+    )
     drafts = []
 
     def hook(draft, losses, context):
@@ -113,12 +116,12 @@ async def test_nonstream_output_hook_receives_only_the_complete_returned_draft(m
         assert draft["content"] == "complete tail"
         draft["content"] += " repaired"
 
-    async with llm_for_chat(semantic_loss_protocol="hook", output_semantic_loss_hook=hook) as llm:
-        result = await llm.generate(messages=[{"role": "user", "content": "question"}])
-        assert drafts == [result]
-        assert drafts[0] is result
-        assert result["content"] == "complete tail repaired"
-        assert llm.get_last_usage() is None
+    llm = llm_for_chat(semantic_loss_protocol="hook", output_semantic_loss_hook=hook)
+    result = await llm.generate(messages=[{"role": "user", "content": "question"}])
+    assert drafts == [result]
+    assert drafts[0] is result
+    assert result["content"] == "complete tail repaired"
+    assert llm.get_last_usage() is None
     assert client.closed and client.upstream.closed
 
 
@@ -126,16 +129,19 @@ async def test_nonstream_raise_contains_the_tail_after_the_losing_chunk(monkeypa
     client = FakeClient(
         [chat_event(reasoning="reason"), chat_event(content="complete tail", finish="stop")]
     )
-    monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", lambda **kwargs: client)
-    async with llm_for_chat() as llm:
-        with pytest.raises(SemanticLossError) as caught:
-            await llm.generate(messages=[{"role": "user", "content": "question"}])
-        error = caught.value
-        assert error.draft == {"role": "assistant", "content": "complete tail"}
-        assert error.context.stage == "result"
-        assert error.losses.origin_source == "output"
-        assert llm.get_last_usage() is None
-        assert client.upstream.closed
+    monkeypatch.setattr(
+        "my_llm.codec.openai.chat.transport.AsyncOpenAI",
+        lambda **kwargs: client,
+    )
+    llm = llm_for_chat()
+    with pytest.raises(SemanticLossError) as caught:
+        await llm.generate(messages=[{"role": "user", "content": "question"}])
+    error = caught.value
+    assert error.draft == {"role": "assistant", "content": "complete tail"}
+    assert error.context.stage == "result"
+    assert error.losses.origin_source == "output"
+    assert llm.get_last_usage() is None
+    assert client.upstream.closed
     assert client.closed
 
 
@@ -147,7 +153,10 @@ async def test_request_hook_edits_the_same_draft_before_transport(monkeypatch):
     ]
     messages.append({"role": "user", "content": "complete tail"})
     client = FakeClient([chat_event(content="answer", finish="stop")])
-    monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", lambda **kwargs: client)
+    monkeypatch.setattr(
+        "my_llm.codec.openai.chat.transport.AsyncOpenAI",
+        lambda **kwargs: client,
+    )
     drafts = []
     upstream = ChatCompletionsTransport.upstream
 
@@ -169,7 +178,7 @@ async def test_request_hook_edits_the_same_draft_before_transport(monkeypatch):
         draft["messages"].append({"role": "user", "content": "hook addition"})
 
     monkeypatch.setattr(ChatCompletionsTransport, "upstream", checked_upstream)
-    async with MyLLM(
+    llm = MyLLM(
         provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
         model=ModelProfile(
             model=Attribute(default_value="demo"),
@@ -178,32 +187,35 @@ async def test_request_hook_edits_the_same_draft_before_transport(monkeypatch):
         stdio_protocol="anthropic",
         semantic_loss_protocol="hook",
         input_semantic_loss_hook=hook,
-    ) as llm:
-        result = await llm.generate(messages=messages)
-        assert result["content"] == [{"type": "text", "text": "answer"}]
+    )
+    result = await llm.generate(messages=messages)
+    assert result["content"] == [{"type": "text", "text": "answer"}]
     assert len(drafts) == 1 and client.upstream.closed
 
 
 async def test_stream_failure_after_terminal_keeps_the_last_successful_usage(monkeypatch):
     client = FakeClient([chat_event(content="first", finish="stop", usage={"total_tokens": 7})])
-    monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", lambda **kwargs: client)
-    async with llm_for_chat() as llm:
-        first = await llm.generate(messages=[{"role": "user", "content": "first"}], stream=True)
-        async with first:
-            async for _ in first:
-                pass
-        assert llm.get_last_usage() == Usage(total=7)
+    monkeypatch.setattr(
+        "my_llm.codec.openai.chat.transport.AsyncOpenAI",
+        lambda **kwargs: client if not client.closed else client.fork(),
+    )
+    llm = llm_for_chat()
+    first = await llm.generate(messages=[{"role": "user", "content": "first"}], stream=True)
+    async with first:
+        async for _ in first:
+            pass
+    assert llm.get_last_usage() == Usage(total=7)
 
-        client.events = [chat_event(content="failed", finish="stop", usage={"total_tokens": 99})]
-        client.failure = RuntimeError("failure after protocol terminal")
-        failed = await llm.generate(messages=[{"role": "user", "content": "second"}], stream=True)
-        with pytest.raises(RuntimeError, match="after protocol terminal"):
-            async with failed:
-                async for _ in failed:
-                    pass
-        assert failed.result is None
-        assert llm.get_last_usage() == Usage(total=7)
-        assert all(response.closed for response in client.streams)
+    client.events = [chat_event(content="failed", finish="stop", usage={"total_tokens": 99})]
+    client.failure = RuntimeError("failure after protocol terminal")
+    failed = await llm.generate(messages=[{"role": "user", "content": "second"}], stream=True)
+    with pytest.raises(RuntimeError, match="after protocol terminal"):
+        async with failed:
+            async for _ in failed:
+                pass
+    assert failed.result is None
+    assert llm.get_last_usage() == Usage(total=7)
+    assert all(response.closed for response in client.streams)
 
 
 @pytest.mark.parametrize("stdio", PROTOCOLS)
@@ -246,7 +258,10 @@ async def test_native_tool_events_have_complete_calls_only_after_source_eof(monk
             chat_event(finish="tool_calls"),
         ]
     )
-    monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", lambda **kwargs: client)
+    monkeypatch.setattr(
+        "my_llm.codec.openai.chat.transport.AsyncOpenAI",
+        lambda **kwargs: client,
+    )
     messages = MyCodec().convert(
         [{"role": "user", "content": "question"}],
         input_format="openai_chat",
@@ -254,60 +269,60 @@ async def test_native_tool_events_have_complete_calls_only_after_source_eof(monk
     )["messages"]
     expected = {"first": {"x": {"nested": [1, 2]}}, "second": {"y": 2}}
     seen = set()
-    async with MyLLM(
+    llm = MyLLM(
         provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
         model=ModelProfile(
             model=Attribute(default_value="demo"),
             supports_function_calling=Config(default_value=True),
         ),
         stdio_protocol=stdio,
-    ) as llm:
-        stream = await llm.generate(messages=messages, stream=True)
-        async with stream:
-            async for event in stream:
-                if stdio == "openai_chat":
-                    calls = [
-                        call["function"]
-                        for choice in event.get("choices", [])
-                        for call in choice["delta"].get("tool_calls", [])
-                    ]
-                elif stdio == "anthropic":
-                    assert event.get("delta", {}).get("type") != "input_json_delta"
-                    block = event.get("content_block", {})
-                    calls = (
-                        [{"name": block["name"], "arguments": block["input"]}]
-                        if block.get("type") == "tool_use"
-                        else []
-                    )
-                else:
-                    assert event["type"] != "response.function_call_arguments.delta"
-                    items = (
-                        [event["item"]]
-                        if "item" in event
-                        else event["response"]["output"]
-                        if "response" in event
-                        else [event]
-                    )
-                    calls = [
-                        {"name": item["name"], "arguments": item["arguments"]}
-                        for item in items
-                        if item.get("type")
-                        in ("function_call", "response.function_call_arguments.done")
-                    ]
-                for call in calls:
-                    assert client.upstream.exhausted
-                    arguments = call["arguments"]
-                    if isinstance(arguments, str):
-                        arguments = json.loads(arguments)
-                    assert arguments == expected[call["name"]]
-                    seen.add(call["name"])
-        assert seen == expected.keys()
-        native_messages = stream.result if isinstance(stream.result, list) else [stream.result]
-        final = MyCodec().convert(native_messages, input_format=stdio, target_format="openai_chat")[
-            "messages"
-        ][0]
-        assert {
-            call["function"]["name"]: json.loads(call["function"]["arguments"])
-            for call in final["tool_calls"]
-        } == expected
+    )
+    stream = await llm.generate(messages=messages, stream=True)
+    async with stream:
+        async for event in stream:
+            if stdio == "openai_chat":
+                calls = [
+                    call["function"]
+                    for choice in event.get("choices", [])
+                    for call in choice["delta"].get("tool_calls", [])
+                ]
+            elif stdio == "anthropic":
+                assert event.get("delta", {}).get("type") != "input_json_delta"
+                block = event.get("content_block", {})
+                calls = (
+                    [{"name": block["name"], "arguments": block["input"]}]
+                    if block.get("type") == "tool_use"
+                    else []
+                )
+            else:
+                assert event["type"] != "response.function_call_arguments.delta"
+                items = (
+                    [event["item"]]
+                    if "item" in event
+                    else event["response"]["output"]
+                    if "response" in event
+                    else [event]
+                )
+                calls = [
+                    {"name": item["name"], "arguments": item["arguments"]}
+                    for item in items
+                    if item.get("type")
+                    in ("function_call", "response.function_call_arguments.done")
+                ]
+            for call in calls:
+                assert client.upstream.exhausted
+                arguments = call["arguments"]
+                if isinstance(arguments, str):
+                    arguments = json.loads(arguments)
+                assert arguments == expected[call["name"]]
+                seen.add(call["name"])
+    assert seen == expected.keys()
+    native_messages = stream.result if isinstance(stream.result, list) else [stream.result]
+    final = MyCodec().convert(native_messages, input_format=stdio, target_format="openai_chat")[
+        "messages"
+    ][0]
+    assert {
+        call["function"]["name"]: json.loads(call["function"]["arguments"])
+        for call in final["tool_calls"]
+    } == expected
     assert client.closed and client.upstream.closed

@@ -51,6 +51,13 @@ class FakeClient:
         self.close_count += 1
         self.closed = True
 
+    def fork(self):
+        """Create a fresh client for this scenario, sharing captured observations."""
+        client = FakeClient(self.events, failure=self.failure)
+        client.requests = self.requests
+        client.streams = self.streams
+        return client
+
 
 def sse(events, *, anthropic=False, done=True):
     return "".join(

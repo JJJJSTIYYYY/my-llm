@@ -84,7 +84,7 @@ async def test_signed_tool_round_trip_uses_only_supported_wire_fields(monkeypatc
         return client
 
     monkeypatch.setattr("my_llm.codec.anthropic.transport.AsyncAnthropic", factory)
-    async with MyLLM(
+    llm = MyLLM(
         provider=ProviderProfile(
             protocol=Config(default_value="anthropic"), api_key=parameter("api_key", "local-test")
         ),
@@ -94,32 +94,32 @@ async def test_signed_tool_round_trip_uses_only_supported_wire_fields(monkeypatc
             supports_function_calling=config(True),
         ),
         stdio_protocol="anthropic",
-    ) as llm:
-        history = [{"role": "user", "content": "weather?"}]
-        tools = [
-            {
-                "name": "weather",
-                "input_schema": {"type": "object", "properties": {"city": {"type": "string"}}},
-            }
-        ]
-        response = await llm.generate(messages=history, tools=tools, reasoning=True, stream=stream)
-        if stream:
-            async with response:
-                async for _ in response:
-                    pass
-            response = response.result
-        assert "encrypted-payload" in json.dumps(response)
-        assert "future_block" not in json.dumps(response)
-        assert "__my_llm_codec_" not in json.dumps(response)
-        history.append(json.loads(json.dumps(response)))
-        history.append(
-            {
-                "role": "user",
-                "content": [{"type": "tool_result", "tool_use_id": "call_1", "content": "Sunny"}],
-            }
-        )
-        final = await llm.generate(messages=history, tools=tools, reasoning=True)
-        assert final["content"] == [{"type": "text", "text": "Hello"}]
+    )
+    history = [{"role": "user", "content": "weather?"}]
+    tools = [
+        {
+            "name": "weather",
+            "input_schema": {"type": "object", "properties": {"city": {"type": "string"}}},
+        }
+    ]
+    response = await llm.generate(messages=history, tools=tools, reasoning=True, stream=stream)
+    if stream:
+        async with response:
+            async for _ in response:
+                pass
+        response = response.result
+    assert "encrypted-payload" in json.dumps(response)
+    assert "future_block" not in json.dumps(response)
+    assert "__my_llm_codec_" not in json.dumps(response)
+    history.append(json.loads(json.dumps(response)))
+    history.append(
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "call_1", "content": "Sunny"}],
+        }
+    )
+    final = await llm.generate(messages=history, tools=tools, reasoning=True)
+    assert final["content"] == [{"type": "text", "text": "Hello"}]
     assert requests[1]["messages"][1]["content"] == [thinking, redacted, call]
     assert requests[1]["messages"][2]["content"][0]["tool_use_id"] == "call_1"
-    assert len(clients) == 1 and clients[0].is_closed()
+    assert len(clients) == 2 and all(client.is_closed() for client in clients)

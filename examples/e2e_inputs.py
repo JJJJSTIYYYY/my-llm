@@ -240,69 +240,67 @@ async def replay_scenario(provider, model, stdio, *, request_interval=0.0, evide
         "result, reply with that number only and do not call the tool again."
     )
     for stream in (False, True):
-        async with MyLLM(
+        llm = MyLLM(
             provider=provider, model=model, stdio_protocol=stdio, semantic_loss_protocol="raise"
-        ) as llm:
-            upstream = llm.resolved_profile.protocol
-            observed = _ObservedTransport(llm.codec.transport(upstream), evidence)
-            llm.codec.codecs[upstream].transport = observed
-            prompt = (
-                UserMessage("user", [TextContent(prompt_text)])
-                if stdio == "middleware"
-                else {"role": "user", "content": prompt_text}
-            )
-            tools = _tools(stdio)
-            first = await _collect(llm, [prompt], tools, stream, request_interval)
-            source = _source_reasoning(upstream, observed.responses[0], llm.resolved_profile)
-            assert _has_reasoning(source), (
-                "upstream returned no nonempty reasoning; padding cannot satisfy this test"
-            )
-            returned = (
-                [part.feedback_item for part in first.content if isinstance(part, ReasoningContent)]
-                if stdio == "middleware"
-                else _reasoning_items(stdio, first if stdio == "openai_responses" else [first])
-            )
-            record = {
-                "stream": stream,
-                "source_items": len(source),
-                "source_sha256": _fingerprint(source),
-                "returned_sha256": _fingerprint(returned),
-            }
-            evidence["roundtrips"].append(record)
-            if stdio == "middleware" and upstream == "openai_chat":
-                assert [
-                    part.reasoning for part in first.content if isinstance(part, ReasoningContent)
-                ] == source, "visible Chat reasoning changed"
-            record["returned_exact"] = returned == source
-            assert record["returned_exact"], "MyLLM's first result changed the original reasoning"
-            value = str(int(uuid4().hex[:7], 16))
-            messages = [prompt, *_replay_turn(stdio, first, value)]
-            before = deepcopy(messages)
-            prepared = await prepare(llm, messages, tools)
-            prepared_items = _reasoning_items(
-                upstream, prepared["input" if upstream == "openai_responses" else "messages"]
-            )
-            record["prepared_exact"] = prepared_items == source
-            record["prepared_sha256"] = _fingerprint(prepared_items)
-            assert record["prepared_exact"], (
-                "next request preparation changed the original reasoning"
-            )
-            final = await _collect(llm, messages, tools, stream, request_interval)
-            assert len(observed.requests) == 2, "unexpected number of real HTTP requests"
-            body = observed.requests[1]
-            replayed = _reasoning_items(
-                upstream, body["input" if upstream == "openai_responses" else "messages"]
-            )
-            record["wire_exact"] = replayed == source
-            record["wire_sha256"] = _fingerprint(replayed)
-            assert record["wire_exact"], "actual HTTP request did not replay the original reasoning"
-            assert _has_reasoning(replayed), "empty reasoning padding reached the wire"
-            paired = wire_summary(upstream, body)
-            assert paired["calls"] == paired["results"] == 1 and paired["ids_paired"]
-            assert paired["empty_results"] == 0
-            assert answer(final, stdio).strip() == value, "tool roundtrip did not complete"
-            assert messages == before, "replay changed caller history"
-            record["nonempty_replay"] = True
+        )
+        upstream = llm.resolved_profile.protocol
+        observed = _ObservedTransport(llm.codec.transport(upstream), evidence)
+        llm.codec.codecs[upstream].transport = observed
+        prompt = (
+            UserMessage("user", [TextContent(prompt_text)])
+            if stdio == "middleware"
+            else {"role": "user", "content": prompt_text}
+        )
+        tools = _tools(stdio)
+        first = await _collect(llm, [prompt], tools, stream, request_interval)
+        source = _source_reasoning(upstream, observed.responses[0], llm.resolved_profile)
+        assert _has_reasoning(source), (
+            "upstream returned no nonempty reasoning; padding cannot satisfy this test"
+        )
+        returned = (
+            [part.feedback_item for part in first.content if isinstance(part, ReasoningContent)]
+            if stdio == "middleware"
+            else _reasoning_items(stdio, first if stdio == "openai_responses" else [first])
+        )
+        record = {
+            "stream": stream,
+            "source_items": len(source),
+            "source_sha256": _fingerprint(source),
+            "returned_sha256": _fingerprint(returned),
+        }
+        evidence["roundtrips"].append(record)
+        if stdio == "middleware" and upstream == "openai_chat":
+            assert [
+                part.reasoning for part in first.content if isinstance(part, ReasoningContent)
+            ] == source, "visible Chat reasoning changed"
+        record["returned_exact"] = returned == source
+        assert record["returned_exact"], "MyLLM's first result changed the original reasoning"
+        value = str(int(uuid4().hex[:7], 16))
+        messages = [prompt, *_replay_turn(stdio, first, value)]
+        before = deepcopy(messages)
+        prepared = await prepare(llm, messages, tools)
+        prepared_items = _reasoning_items(
+            upstream, prepared["input" if upstream == "openai_responses" else "messages"]
+        )
+        record["prepared_exact"] = prepared_items == source
+        record["prepared_sha256"] = _fingerprint(prepared_items)
+        assert record["prepared_exact"], "next request preparation changed the original reasoning"
+        final = await _collect(llm, messages, tools, stream, request_interval)
+        assert len(observed.requests) == 2, "unexpected number of real HTTP requests"
+        body = observed.requests[1]
+        replayed = _reasoning_items(
+            upstream, body["input" if upstream == "openai_responses" else "messages"]
+        )
+        record["wire_exact"] = replayed == source
+        record["wire_sha256"] = _fingerprint(replayed)
+        assert record["wire_exact"], "actual HTTP request did not replay the original reasoning"
+        assert _has_reasoning(replayed), "empty reasoning padding reached the wire"
+        paired = wire_summary(upstream, body)
+        assert paired["calls"] == paired["results"] == 1 and paired["ids_paired"]
+        assert paired["empty_results"] == 0
+        assert answer(final, stdio).strip() == value, "tool roundtrip did not complete"
+        assert messages == before, "replay changed caller history"
+        record["nonempty_replay"] = True
     return evidence
 
 
@@ -541,71 +539,68 @@ async def input_scenario(
     image = case in IMAGE_CASES
     evidence = {} if evidence is None else evidence
     evidence["requests"] = 0
-    async with MyLLM(
+    llm = MyLLM(
         provider=provider,
         model=model,
         stdio_protocol=stdio,
         semantic_loss_protocol="hook" if image else semantic_loss_protocol,
         input_semantic_loss_hook=chat_semantic_loss_hook if image else None,
-    ) as llm:
-        messages, tools = history(stdio, case, "call_myllm_" + uuid4().hex)
-        before = deepcopy((messages, tools))
-        if image:
-            llm.set_semantic_loss_policy(semantic_loss_protocol="raise")
-            try:
-                await prepare(llm, messages, tools)
-            except SemanticLossError as error:
-                assert any("image" in loss.reason for loss in error.losses)
-                losses = len(error.losses.items)
-            else:
-                raise AssertionError("mixed tool-result image did not trigger semantic loss")
-            llm.set_semantic_loss_policy(
-                semantic_loss_protocol="hook",
-                input_semantic_loss_hook=chat_semantic_loss_hook,
-            )
-            control = {"outcome": "local_semantic_loss", "losses": losses}
+    )
+    messages, tools = history(stdio, case, "call_myllm_" + uuid4().hex)
+    before = deepcopy((messages, tools))
+    if image:
+        llm.set_semantic_loss_policy(semantic_loss_protocol="raise")
+        try:
+            await prepare(llm, messages, tools)
+        except SemanticLossError as error:
+            assert any("image" in loss.reason for loss in error.losses)
+            losses = len(error.losses.items)
         else:
-            evidence["requests"] += int(not offline)
-            control = (
-                {"outcome": "not_sent_offline"}
-                if offline
-                else await raw_control(llm, case, request_interval=request_interval)
-            )
-        evidence["raw_api"] = control
-        request = await prepare(llm, messages, tools)
-        summary = wire_summary(llm.resolved_profile.protocol, request)
-        evidence["prepared_request"] = summary
-        assert summary["calls"] == summary["results"] == 1 and summary["ids_paired"], summary
-        assert not summary["orphan_marker"], "orphan tool-result reached the request"
-        if case == "missing_tool_result":
-            assert summary["empty_results"] == 1, "MyLLM did not pad the missing result"
-        if case in REASONING_CASES:
-            assert summary["reasoning"] == [{"present": True, "empty": True}], summary
-        if image:
-            native = request["messages"]
-            tool = next(m for m in native if m["role"] == "tool")
-            assert tool["content"].startswith(RESULT_TEXT)
-            reference = tool["content"][len(RESULT_TEXT) :]
-            assert reference.startswith("[Image: image_") and reference.endswith("]")
-            assert native[-1]["role"] == "user"
-            if case == "tool_result_images":
-                assert native[-1]["content"] == [
-                    {"type": "text", "text": reference + "\n"},
-                    {"type": "image_url", "image_url": {"url": DATA_URL}},
-                ]
-            else:
-                assert native[-1]["content"] == reference + "\n[Unsupported Image]\n"
-            assert (
-                native.index(tool)
-                == next(i for i, m in enumerate(native) if m.get("tool_calls")) + 1
-            )
-        completions = evidence["completions"] = []
-        for stream in () if offline else (False, True):
-            evidence["requests"] += 1
-            completions.append(
-                await complete(
-                    llm, messages, tools, stream=stream, request_interval=request_interval
-                )
-            )
-        assert (messages, tools) == before, "example or translation changed caller input"
-        return evidence
+            raise AssertionError("mixed tool-result image did not trigger semantic loss")
+        llm.set_semantic_loss_policy(
+            semantic_loss_protocol="hook",
+            input_semantic_loss_hook=chat_semantic_loss_hook,
+        )
+        control = {"outcome": "local_semantic_loss", "losses": losses}
+    else:
+        evidence["requests"] += int(not offline)
+        control = (
+            {"outcome": "not_sent_offline"}
+            if offline
+            else await raw_control(llm, case, request_interval=request_interval)
+        )
+    evidence["raw_api"] = control
+    request = await prepare(llm, messages, tools)
+    summary = wire_summary(llm.resolved_profile.protocol, request)
+    evidence["prepared_request"] = summary
+    assert summary["calls"] == summary["results"] == 1 and summary["ids_paired"], summary
+    assert not summary["orphan_marker"], "orphan tool-result reached the request"
+    if case == "missing_tool_result":
+        assert summary["empty_results"] == 1, "MyLLM did not pad the missing result"
+    if case in REASONING_CASES:
+        assert summary["reasoning"] == [{"present": True, "empty": True}], summary
+    if image:
+        native = request["messages"]
+        tool = next(m for m in native if m["role"] == "tool")
+        assert tool["content"].startswith(RESULT_TEXT)
+        reference = tool["content"][len(RESULT_TEXT) :]
+        assert reference.startswith("[Image: image_") and reference.endswith("]")
+        assert native[-1]["role"] == "user"
+        if case == "tool_result_images":
+            assert native[-1]["content"] == [
+                {"type": "text", "text": reference + "\n"},
+                {"type": "image_url", "image_url": {"url": DATA_URL}},
+            ]
+        else:
+            assert native[-1]["content"] == reference + "\n[Unsupported Image]\n"
+        assert (
+            native.index(tool) == next(i for i, m in enumerate(native) if m.get("tool_calls")) + 1
+        )
+    completions = evidence["completions"] = []
+    for stream in () if offline else (False, True):
+        evidence["requests"] += 1
+        completions.append(
+            await complete(llm, messages, tools, stream=stream, request_interval=request_interval)
+        )
+    assert (messages, tools) == before, "example or translation changed caller input"
+    return evidence

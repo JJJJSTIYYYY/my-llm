@@ -43,7 +43,7 @@ Decoder.result 默认返回首条消息；Responses 等协议可覆盖为列表�
 ## Decoder 的固定请求流程
 
 Decoder.prepare(intermediate, client) 返回 {client, request, local} 三部分字典：
-client 是 SDK 构造参数，request 是 SDK 调用参数，local 包含 stream 和用于客户端复用的 client_key。
+client 是 SDK 构造参数，request 是 SDK 调用参数，local 包含 stream。
 完整准备路径每次只调用一次 validate_parameters 返回 PreparedOptions，再交给 request。
 离线 Decoder.request 可自行准备一次 options；已提供 options 时直接复用。
 
@@ -104,7 +104,7 @@ create_client(parameters: dict) 同步用已准备 kwargs 构造 SDK；默认 cl
 upstream(client, request: dict) 返回异步上下文管理器，把 **request 交给官方 SDK，
 完整消费、提前关闭、异常和取消时都释放本次响应，但不关闭借用的客户端。
 Transport 不接收 Profile、生成控制参数，也不解析路径、过滤或校验请求。
-MyLLM 延迟创建并复用一个实例级客户端，负责最终关闭。
+MyLLM 在每次请求开始消费时创建独立客户端，先关闭响应再关闭本次客户端。
 具体资源规则见[生命周期设计](../design/client-lifecycle.md)。
 
 ## Codec 组合

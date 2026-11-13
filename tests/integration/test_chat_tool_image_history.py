@@ -114,34 +114,34 @@ async def test_hook_preserves_complete_parallel_tool_groups_on_wire_and_cached_r
         move_tool_images_to_user_message(draft, losses, context)
         assert_chat_tool_sequence(draft["messages"])
 
-    async with configured_llm("openai_chat", source, cached) as llm:
-        llm.set_semantic_loss_policy(semantic_loss_protocol="hook", input_semantic_loss_hook=hook)
-        for attempt in range(2):
-            result = await llm.generate(messages=batch, stream=stream)
-            if stream:
-                await consume(result)
-            body = wire_request(chat_sdk)
-            assert_chat_tool_sequence(body["messages"])
-            assert image_urls(body["messages"][-1]) == [
-                f"https://example.test/{key}.png" for key in result_ids
-            ]
-            references = image_references(body["messages"][-1])
-            assert len(references) == len(set(references)) == len(result_ids)
-            tools = {m["tool_call_id"]: m for m in body["messages"] if m["role"] == "tool"}
-            for reference, call_id in zip(references, result_ids, strict=True):
-                assert reference in tools[call_id]["content"]
-            assert len([m for m in body["messages"] if m["role"] == "tool"]) == count * rounds
-            if attempt == 0:
-                first = body["messages"]
-            else:
-                assert without_image_ids(body["messages"]) == without_image_ids(first)
-                if cached:
-                    assert body["messages"] == first
-        await llm.generate(messages=[{"role": "user", "content": "next"}])
-        following = wire_request(chat_sdk)["messages"]
-        assert_chat_tool_sequence(following)
-        if cached:
-            assert following[:-1] == first
+    llm = configured_llm("openai_chat", source, cached)
+    llm.set_semantic_loss_policy(semantic_loss_protocol="hook", input_semantic_loss_hook=hook)
+    for attempt in range(2):
+        result = await llm.generate(messages=batch, stream=stream)
+        if stream:
+            await consume(result)
+        body = wire_request(chat_sdk)
+        assert_chat_tool_sequence(body["messages"])
+        assert image_urls(body["messages"][-1]) == [
+            f"https://example.test/{key}.png" for key in result_ids
+        ]
+        references = image_references(body["messages"][-1])
+        assert len(references) == len(set(references)) == len(result_ids)
+        tools = {m["tool_call_id"]: m for m in body["messages"] if m["role"] == "tool"}
+        for reference, call_id in zip(references, result_ids, strict=True):
+            assert reference in tools[call_id]["content"]
+        assert len([m for m in body["messages"] if m["role"] == "tool"]) == count * rounds
+        if attempt == 0:
+            first = body["messages"]
+        else:
+            assert without_image_ids(body["messages"]) == without_image_ids(first)
+            if cached:
+                assert body["messages"] == first
+    await llm.generate(messages=[{"role": "user", "content": "next"}])
+    following = wire_request(chat_sdk)["messages"]
+    assert_chat_tool_sequence(following)
+    if cached:
+        assert following[:-1] == first
     assert snapshots
     for messages in snapshots:
         assert_chat_tool_sequence(messages)
@@ -155,10 +155,10 @@ async def test_unsupported_image_markers_preserve_parallel_tool_pairing(
     chat_sdk, source, cached, vision
 ):
     batch = [*call_messages(source, ["a", "b"]), *result_messages(source, ["b", "a"])]
-    async with configured_llm(
+    llm = configured_llm(
         "openai_chat", source, cached, supports_vision=Config(default_value=vision)
-    ) as llm:
-        await llm.generate(messages=batch)
+    )
+    await llm.generate(messages=batch)
     messages = wire_request(chat_sdk)["messages"]
     assert_chat_tool_sequence(messages)
     if vision:
@@ -218,30 +218,28 @@ async def test_pairing_fallback_and_image_hook_compose_on_final_wire(
             content.pop(0)
     batch = [*calls, *results]
     before = deepcopy(batch)
-    async with configured_llm("openai_chat", source, cached) as llm:
-        for _ in range(2):
-            await llm.generate(messages=batch)
-            messages = wire_request(chat_sdk)["messages"]
-            assert_chat_tool_sequence(messages)
-            tools = {m["tool_call_id"]: m for m in messages if m["role"] == "tool"}
-            assert set(tools) == {"a", "b"}
-            assert len([m for m in messages if m["role"] == "tool"]) == 2
-            if repair == "duplicate_result":
-                assert IMAGE_REFERENCE.sub("", tools["a"]["content"]) == "result:aresult:a"
-            if repair in ("idless_result", "missing_result", "missing_all_results"):
-                assert tools["b"]["content"] == ""
-            if repair == "image_only_results":
-                assert all(
-                    IMAGE_REFERENCE.sub("", tool["content"]) == "" for tool in tools.values()
-                )
-                assert all(len(image_references(tool)) == 1 for tool in tools.values())
-            if expected_ids:
-                assert image_urls(messages[-1]) == [
-                    f"https://example.test/{key}.png" for key in expected_ids
-                ]
-            else:
-                assert not any(m["role"] == "user" for m in messages)
-            assert "orphan" not in str(messages)
+    llm = configured_llm("openai_chat", source, cached)
+    for _ in range(2):
+        await llm.generate(messages=batch)
+        messages = wire_request(chat_sdk)["messages"]
+        assert_chat_tool_sequence(messages)
+        tools = {m["tool_call_id"]: m for m in messages if m["role"] == "tool"}
+        assert set(tools) == {"a", "b"}
+        assert len([m for m in messages if m["role"] == "tool"]) == 2
+        if repair == "duplicate_result":
+            assert IMAGE_REFERENCE.sub("", tools["a"]["content"]) == "result:aresult:a"
+        if repair in ("idless_result", "missing_result", "missing_all_results"):
+            assert tools["b"]["content"] == ""
+        if repair == "image_only_results":
+            assert all(IMAGE_REFERENCE.sub("", tool["content"]) == "" for tool in tools.values())
+            assert all(len(image_references(tool)) == 1 for tool in tools.values())
+        if expected_ids:
+            assert image_urls(messages[-1]) == [
+                f"https://example.test/{key}.png" for key in expected_ids
+            ]
+        else:
+            assert not any(m["role"] == "user" for m in messages)
+        assert "orphan" not in str(messages)
     assert batch == before
 
 
@@ -294,20 +292,20 @@ async def test_tool_results_stay_contiguous_when_history_contains_ordinary_text(
         before_hook.append(deepcopy(draft["messages"]))
         move_tool_images_to_user_message(draft, losses, context)
 
-    async with configured_llm("openai_chat", source, cached) as llm:
-        llm.set_semantic_loss_policy(semantic_loss_protocol="hook", input_semantic_loss_hook=hook)
-        await llm.generate(messages=batch)
-        messages = wire_request(chat_sdk)["messages"]
-        await llm.generate(messages=batch)
-        retry = wire_request(chat_sdk)["messages"]
-        assert without_image_ids(retry) == without_image_ids(messages)
-        if cached:
-            assert retry == messages
-        await llm.generate(messages=[{"role": "user", "content": "next"}])
-        following = wire_request(chat_sdk)["messages"]
-        assert_chat_tool_sequence(following)
-        if cached:
-            assert following[:-1] == messages
+    llm = configured_llm("openai_chat", source, cached)
+    llm.set_semantic_loss_policy(semantic_loss_protocol="hook", input_semantic_loss_hook=hook)
+    await llm.generate(messages=batch)
+    messages = wire_request(chat_sdk)["messages"]
+    await llm.generate(messages=batch)
+    retry = wire_request(chat_sdk)["messages"]
+    assert without_image_ids(retry) == without_image_ids(messages)
+    if cached:
+        assert retry == messages
+    await llm.generate(messages=[{"role": "user", "content": "next"}])
+    following = wire_request(chat_sdk)["messages"]
+    assert_chat_tool_sequence(following)
+    if cached:
+        assert following[:-1] == messages
     assert messages[-1]["role"] == "user"
     assert len(image_urls(messages[-1])) == (1 if "missing_result" in interruption else 2)
     assert "ordinary text" in str(messages)
@@ -340,21 +338,19 @@ async def test_interleaved_tool_rounds_keep_each_call_group_contiguous(chat_sdk,
         *result_messages(source, ["d", "b", "c"]),
     ]
     before = deepcopy(batch)
-    async with configured_llm("openai_chat", source, cached) as llm:
-        for _ in range(2):
-            await llm.generate(messages=batch)
-            messages = wire_request(chat_sdk)["messages"]
-            assert_chat_tool_sequence(messages)
-            assert [m["tool_call_id"] for m in messages if m["role"] == "tool"] == [
-                "a",
-                "b",
-                "d",
-                "c",
-            ]
-            assert image_urls(messages[-1]) == [
-                f"https://example.test/{key}.png" for key in ("a", "d", "b", "c")
-            ]
-            assert [m["content"] for m in messages if m["role"] == "user"][:-1] == [
-                "between rounds"
-            ]
+    llm = configured_llm("openai_chat", source, cached)
+    for _ in range(2):
+        await llm.generate(messages=batch)
+        messages = wire_request(chat_sdk)["messages"]
+        assert_chat_tool_sequence(messages)
+        assert [m["tool_call_id"] for m in messages if m["role"] == "tool"] == [
+            "a",
+            "b",
+            "d",
+            "c",
+        ]
+        assert image_urls(messages[-1]) == [
+            f"https://example.test/{key}.png" for key in ("a", "d", "b", "c")
+        ]
+        assert [m["content"] for m in messages if m["role"] == "user"][:-1] == ["between rounds"]
     assert batch == before

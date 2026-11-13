@@ -46,98 +46,99 @@ async def probe(workload, stream, concurrency, iterations):
     provider, model = profiles(workload.protocol)
     parameters = controls(workload.protocol)
     with LocalSDK(workload.protocol, frames) as sdk:
-        async with MyLLM(provider=provider, model=model, stdio_protocol=workload.stdio) as llm:
-            await measure(llm, workload, stream=stream, parameters=parameters)
-            sdk.release_samples()
-            before_cache = caches()
-            gc.collect()
-            tracemalloc.start()
-            try:
-                _, result = await measure(llm, workload, stream=stream, parameters=parameters)
-                current, peak = tracemalloc.get_traced_memory()
-            finally:
-                tracemalloc.stop()
-            validate_exchange(workload, workload.stdio, result, sdk)
-            after_cache = caches()
-            sdk.release_samples()
-            # Every response waits for the other requests before yielding bytes.
-            # This proves overlap even though the in-memory SDK has no I/O wait.
-            barrier = asyncio.Barrier(concurrency)
-            active = 0
-            peak_active = 0
-
-            class ConcurrentBody(Body):
-                async def __aiter__(self):
-                    nonlocal active, peak_active
-                    active += 1
-                    peak_active = max(peak_active, active)
-                    await barrier.wait()
-                    async for frame in super().__aiter__():
-                        yield frame
-
-                async def aclose(self):
-                    nonlocal active
-                    if not self.closed:
-                        active -= 1
-                    await super().aclose()
-
-            def respond(request):
-                response = original(request)
-                body = ConcurrentBody(frames)
-                sdk.bodies[-1] = body
-                response.stream = body
-                return response
-
-            original = sdk.respond
-            sdk.respond = respond
-            # MockTransport captured the old bound method; switch its handler.
-            # Build a fresh instance so every SDK binds the concurrent handler.
+        llm = MyLLM(provider=provider, model=model, stdio_protocol=workload.stdio)
+        await measure(llm, workload, stream=stream, parameters=parameters)
         sdk.release_samples()
+        before_cache = caches()
+        gc.collect()
+        tracemalloc.start()
+        try:
+            _, result = await measure(llm, workload, stream=stream, parameters=parameters)
+            current, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        validate_exchange(workload, workload.stdio, result, sdk)
+        after_cache = caches()
+        sdk.release_samples()
+        # Every response waits for the other requests before yielding bytes.
+        # This proves overlap even though the in-memory SDK has no I/O wait.
+        barrier = asyncio.Barrier(concurrency)
+        active = 0
+        peak_active = 0
+
+        class ConcurrentBody(Body):
+            async def __aiter__(self):
+                nonlocal active, peak_active
+                active += 1
+                peak_active = max(peak_active, active)
+                await barrier.wait()
+                async for frame in super().__aiter__():
+                    yield frame
+
+            async def aclose(self):
+                nonlocal active
+                if not self.closed:
+                    active -= 1
+                await super().aclose()
+
+        def respond(request):
+            response = original(request)
+            body = ConcurrentBody(frames)
+            sdk.bodies[-1] = body
+            response.stream = body
+            return response
+
+        original = sdk.respond
+        sdk.respond = respond
+        # MockTransport captured the old bound method; switch its handler.
+        # Build a fresh instance so every SDK binds the concurrent handler.
+        sdk.release_samples()
+        serial_client_count = sdk.created_clients
         samples = []
-        async with MyLLM(provider=provider, model=model, stdio_protocol=workload.stdio) as llm:
-            for index in range(iterations + 3):
-                sdk.release_samples()
-                memory_probe = index == iterations + 2
-                if memory_probe:
-                    gc.collect()
-                    tracemalloc.start()
-                start = perf_counter_ns()
-                try:
-                    async with asyncio.timeout(60):
-                        results = await asyncio.gather(
-                            *(
-                                measure(
-                                    llm,
-                                    workload,
-                                    stream=stream,
-                                    parameters={
-                                        **parameters,
-                                        "extra_headers": {
-                                            "x-benchmark": "request",
-                                            "x-request": str(request_index),
-                                        },
+        llm = MyLLM(provider=provider, model=model, stdio_protocol=workload.stdio)
+        for index in range(iterations + 3):
+            sdk.release_samples()
+            memory_probe = index == iterations + 2
+            if memory_probe:
+                gc.collect()
+                tracemalloc.start()
+            start = perf_counter_ns()
+            try:
+                async with asyncio.timeout(60):
+                    results = await asyncio.gather(
+                        *(
+                            measure(
+                                llm,
+                                workload,
+                                stream=stream,
+                                parameters={
+                                    **parameters,
+                                    "extra_headers": {
+                                        "x-benchmark": "request",
+                                        "x-request": str(request_index),
                                     },
-                                )
-                                for request_index in range(concurrency)
+                                },
                             )
+                            for request_index in range(concurrency)
                         )
-                    elapsed = (perf_counter_ns() - start) / 1_000_000
-                    if memory_probe:
-                        concurrent_current, concurrent_peak = tracemalloc.get_traced_memory()
-                finally:
-                    if memory_probe:
-                        tracemalloc.stop()
-                if index >= 2 and not memory_probe:
-                    samples.append(elapsed)
-                for _, result in results:
-                    validate_result(workload, workload.stdio, result)
-                assert all(body.closed for body in sdk.bodies)
-                assert {request.headers["x-request"] for request in sdk.requests} == {
-                    str(index) for index in range(concurrency)
-                }
-            client_count = sdk.created_clients - 1
+                    )
+                elapsed = (perf_counter_ns() - start) / 1_000_000
+                if memory_probe:
+                    concurrent_current, concurrent_peak = tracemalloc.get_traced_memory()
+            finally:
+                if memory_probe:
+                    tracemalloc.stop()
+            if index >= 2 and not memory_probe:
+                samples.append(elapsed)
+            for _, result in results:
+                validate_result(workload, workload.stdio, result)
+            assert all(body.closed for body in sdk.bodies)
+            assert {request.headers["x-request"] for request in sdk.requests} == {
+                str(index) for index in range(concurrency)
+            }
+        client_count = sdk.created_clients - serial_client_count
     assert peak_active == concurrency
-    assert client_count == 1
+    assert client_count == concurrency * (iterations + 3)
     return {
         "memory": {"current_bytes": current, "peak_bytes": peak},
         "cache_before": before_cache,
@@ -165,7 +166,7 @@ async def run(options):
         "fingerprint_definition": "SHA256 of sorted relative paths + NUL + file bytes + NUL; runtime includes my_llm Python sources; harness includes measuring code, fixtures, helpers and pinned schemas",
         "workload_definition": "native supported text/image/tool history and signed reasoning; cross-protocol intersection without reasoning; excludes unsupported file/audio/metadata/citations",
         "versions": {name: version(name) for name in ("openai", "anthropic", "httpx", "pydantic")},
-        "memory_definition": "separate tracemalloc probes after warmup and gc.collect; excludes fixtures and client construction; includes returned result and captured HTTP observations; not RSS",
+        "memory_definition": "separate tracemalloc probes after warmup and gc.collect; excludes fixtures; includes per-call client construction and cleanup; includes returned result and captured HTTP observations; not RSS",
         "timing_definition": "real SDK over immediate in-memory HTTP; serial benchmark boundary unchanged; concurrent batches await all complete results, two warmup batches; default GC; no tracing during timing",
         "size": asdict(size),
         "iterations": options.iterations,

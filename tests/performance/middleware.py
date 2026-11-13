@@ -55,33 +55,31 @@ async def paired(workload, *, streaming, iterations, warmup, chunk_bytes):
     samples = {"native": [], "middleware": []}
     observed = {}
     with LocalSDK(workload.protocol, frames) as sdk:
-        async with (
-            MyLLM(provider=provider, model=model, stdio_protocol=workload.stdio) as native_llm,
-            MyLLM(provider=provider, model=model, stdio_protocol="middleware") as middle_llm,
-        ):
-            variants = {
-                "native": (native_llm, workload),
-                "middleware": (middle_llm, direct),
-            }
-            for index in range(warmup + iterations):
-                # N/M then M/N forms repeated N M M N blocks, balancing order.
-                order = ("native", "middleware") if index % 2 == 0 else ("middleware", "native")
-                for name in order:
-                    llm, current = variants[name]
-                    sdk.release_samples()
-                    sample, result = await measure(
-                        llm,
-                        current,
-                        stream=streaming,
-                        parameters=parameters,
-                    )
-                    validate_exchange(current, current.stdio, result, sdk)
-                    request = sdk.requests[-1].content
-                    observed[name] = hashlib.sha256(request).hexdigest()
-                    if index >= warmup:
-                        samples[name].append(sample)
-            assert observed["native"] == observed["middleware"], "request bytes must match"
-            assert sdk.created_clients == 2
+        native_llm = MyLLM(provider=provider, model=model, stdio_protocol=workload.stdio)
+        middle_llm = MyLLM(provider=provider, model=model, stdio_protocol="middleware")
+        variants = {
+            "native": (native_llm, workload),
+            "middleware": (middle_llm, direct),
+        }
+        for index in range(warmup + iterations):
+            # N/M then M/N forms repeated N M M N blocks, balancing order.
+            order = ("native", "middleware") if index % 2 == 0 else ("middleware", "native")
+            for name in order:
+                llm, current = variants[name]
+                sdk.release_samples()
+                sample, result = await measure(
+                    llm,
+                    current,
+                    stream=streaming,
+                    parameters=parameters,
+                )
+                validate_exchange(current, current.stdio, result, sdk)
+                request = sdk.requests[-1].content
+                observed[name] = hashlib.sha256(request).hexdigest()
+                if index >= warmup:
+                    samples[name].append(sample)
+        assert observed["native"] == observed["middleware"], "request bytes must match"
+        assert sdk.created_clients == 2 * (warmup + iterations)
         assert all(body.closed for body in sdk.bodies)
         assert all(client.is_closed for client in sdk.http_clients)
     results = {name: summarize(values) for name, values in samples.items()}

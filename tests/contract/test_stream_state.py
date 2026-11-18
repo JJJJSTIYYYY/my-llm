@@ -12,6 +12,7 @@ import pytest
 from my_llm import IncompleteStreamError, MessageValidationError, MyCodec
 from my_llm.codec.shared.stream import metadata
 from my_llm.runtime.state import StreamState
+from tests.helpers.profiles import parameter
 from tests.helpers.protocols import PROTOCOLS, chat_event, response_completed, stream_events
 from tests.helpers.sdk import EVENT_TYPES, assert_native, assert_output_native
 from tests.helpers.streaming import render
@@ -120,6 +121,70 @@ def response_text_events(output):
     for sequence, event in enumerate(events):
         event["sequence_number"] = sequence
     return events
+
+
+@pytest.mark.parametrize("source", PROTOCOLS)
+@pytest.mark.parametrize("tool", [False, True], ids=["text", "tool"])
+def test_public_middleware_events_keep_the_completed_responses_output(source, tool):
+    codec = MyCodec()
+    middleware = codec.convert(
+        chunks=stream_events(source, tool=tool),
+        input_format=source,
+        target_format="middleware",
+    )["chunks"]
+    saved = json.loads(json.dumps([event.to_wire() for event in middleware]))
+    saved[-1].pop("output_blocks", None)
+
+    for chunks in (middleware, saved):
+        output = codec.decode(chunks=chunks, target_format="openai_responses")["chunks"]
+        validate_events("openai_responses", output, output=True)
+        completed = output[-1]["response"]["output"]
+        assert completed == [
+            event["item"] for event in output if event["type"] == "response.output_item.done"
+        ]
+        assert completed[0]["content"][0]["text"] == "Hello"
+        if tool:
+            assert completed[1]["call_id"] == "call_1"
+            assert json.loads(completed[1]["arguments"]) == {"city": "上海"}
+
+        replayed = codec.convert(
+            chunks=output,
+            input_format="openai_responses",
+            target_format="middleware",
+        )["chunks"]
+        assert codec.decode(replayed[-1].messages, target_format="openai_chat") == codec.decode(
+            middleware[-1].messages, target_format="openai_chat"
+        )
+
+
+def test_public_middleware_responses_output_reindexes_filtered_blocks(profile_factory):
+    codec = MyCodec(semantic_loss_protocol="ignore")
+    profile = profile_factory(reasoning_enable=parameter("reasoning_enable", supports=False))
+    middleware = codec.convert(
+        chunks=[
+            chat_event(reasoning="hidden"),
+            chat_event(content="Hello"),
+            chat_event(finish="stop"),
+        ],
+        input_format="openai_chat",
+        target_format="middleware",
+        semantic_profile=profile,
+    )["chunks"]
+    assert [event.index for event in middleware if event.type == "block_start"] == [1]
+
+    output = codec.decode(chunks=middleware, target_format="openai_responses")["chunks"]
+    items = output[-1]["response"]["output"]
+    assert len(items) == 1
+    assert items[0]["content"][0]["text"] == "Hello"
+    assert {event["output_index"] for event in output if "output_index" in event} == {0}
+    assert (
+        codec.convert(
+            chunks=output,
+            input_format="openai_responses",
+            target_format="middleware",
+        )["chunks"][-1].type
+        == "finish"
+    )
 
 
 @pytest.mark.parametrize("source", PROTOCOLS)
@@ -253,6 +318,54 @@ def anthropic_events(blocks):
         events.append({"type": "content_block_stop", "index": index})
     events.extend(stream_events("anthropic")[-2:])
     return events
+
+
+@pytest.mark.parametrize("source", ["openai_responses", "anthropic"])
+def test_public_middleware_responses_output_omits_opaque_reasoning(source):
+    if source == "openai_responses":
+        incoming = [
+            response_completed(
+                [
+                    {
+                        "type": "reasoning",
+                        "id": "rs_1",
+                        "summary": [],
+                        "encrypted_content": "opaque",
+                    },
+                    response_message(1, ["visible"]),
+                ]
+            )
+        ]
+    else:
+        incoming = anthropic_events(
+            [
+                ({"type": "redacted_thinking", "data": "opaque"}, []),
+                (
+                    {"type": "thinking", "thinking": "", "signature": ""},
+                    [
+                        {"type": "thinking_delta", "thinking": ""},
+                        {"type": "signature_delta", "signature": "signed"},
+                    ],
+                ),
+                ({"type": "text", "text": ""}, [{"type": "text_delta", "text": "visible"}]),
+            ]
+        )
+    codec = MyCodec(semantic_loss_protocol="ignore")
+    middleware = codec.convert(chunks=incoming, input_format=source, target_format="middleware")[
+        "chunks"
+    ]
+    output = codec.decode(chunks=middleware, target_format="openai_responses")["chunks"]
+    validate_events("openai_responses", output, output=True)
+    assert {event["output_index"] for event in output if "output_index" in event} == {0}
+    items = output[-1]["response"]["output"]
+    assert items == [
+        event["item"] for event in output if event["type"] == "response.output_item.done"
+    ]
+    assert items[0]["content"][0]["text"] == "visible"
+    replayed = codec.convert(
+        chunks=output, input_format="openai_responses", target_format="middleware"
+    )["chunks"]
+    assert replayed[-1].messages[0].content[0].text == "visible"
 
 
 def test_empty_thinking_and_redacted_blocks_keep_order_and_signatures():

@@ -333,6 +333,10 @@ class ResponsesDecoder(BaseDecoder):
         content that the target protocol cannot express as semantic losses.
         """
         result = []
+        origin = parameters.get("source_protocol")
+        public_blocks, output_indices = [], {}
+        if chunks and chunks[-1]["type"] == "finish" and "output_blocks" not in chunks[-1]:
+            public_blocks, output_indices = self._public_completion(chunks, origin)
         for event in events(chunks):
             kind = event.get("type")
             if kind in ("block_start", "block_stop", "tool", "block"):
@@ -345,6 +349,11 @@ class ResponsesDecoder(BaseDecoder):
                     parameters.get("source_protocol") if owner is None else owner
                 ) == constants.PROTOCOL
             index, part_index, item_id, native = self._address(event, parameters)
+            if index in output_indices and not native and kind not in ("start", "finish"):
+                index = output_indices[index]
+                if index is None:
+                    continue
+                item_id = f"item_{index}"
             if kind == "start":
                 result.append(
                     {
@@ -511,13 +520,12 @@ class ResponsesDecoder(BaseDecoder):
                         "Responses cannot represent the source finish reason",
                         details={"reason": event["reason"]},
                     )
-                output = self._completed_output(
-                    event, parameters.get("source_protocol"), parameters
-                )
+                entries = event.get("output_blocks", public_blocks)
+                output = self._completed_output(entries, origin, parameters)
                 if self._native_items(parameters):
                     represented = {
                         entry["source_ref"][1]
-                        for entry in event.get("output_blocks", [])
+                        for entry in entries
                         if entry.get("source_ref") is not None
                     }
                     for output_index, item in enumerate(output):
@@ -609,9 +617,50 @@ class ResponsesDecoder(BaseDecoder):
         item.setdefault("status", "completed")
         return item
 
-    def _completed_output(self, event: dict, origin: str | None, parameters: dict) -> list[dict]:
+    def _public_completion(
+        self, chunks: list[dict], origin: str | None
+    ) -> tuple[list[dict], dict[int, int | None]]:
+        """Pair final middleware content with stream indices and skip unrenderable items."""
+        completed = {
+            event.get("index", 0): event
+            for event in chunks
+            if event["type"] in ("block_stop", "block", "tool")
+        }
+        indices = sorted(completed)
+        if "messages" in chunks[-1]:
+            blocks = [block for message in chunks[-1]["messages"] for block in message["content"]]
+            # A finish-only projection has no preceding block events to supply indices.
+            if len(indices) != len(blocks):
+                indices = list(range(len(blocks)))
+        else:
+            blocks = [completed[index]["block"] for index in indices]
+
+        entries, output_indices = [], {}
+        for index, block in zip(indices, blocks, strict=True):
+            if (
+                origin != constants.PROTOCOL
+                and block["type"] == "thinking"
+                and not block.get("reasoning")
+            ):
+                foreign_block(block)
+                output_indices[index] = None
+                continue
+            position = len(entries)
+            if index != position:
+                output_indices[index] = position
+            entries.append(
+                {
+                    "index": position,
+                    "source_ref": completed.get(index, {}).get("source_ref"),
+                    "block": block,
+                }
+            )
+        return entries, output_indices
+
+    def _completed_output(
+        self, entries: list[dict], origin: str | None, parameters: dict
+    ) -> list[dict]:
         """Reconstruct completed output items, preserving source item grouping when available."""
-        entries = event.get("output_blocks", [])
         if not self._native_items(parameters):
             result = []
             for entry in entries:

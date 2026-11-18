@@ -146,7 +146,8 @@ def test_accumulation_survives_json_round_trips_and_batch_boundaries(source, bat
 
 
 @pytest.mark.parametrize("parts", [1, 2, 100])
-def test_text_and_tool_results_do_not_depend_on_fragment_partition(parts):
+@pytest.mark.parametrize("fragment_fields", [{}, {"type": None}], ids=["omitted", "null"])
+def test_text_and_tool_results_do_not_depend_on_fragment_partition(parts, fragment_fields):
     text = "中文🙂 and quoted text"
     argument_text = json.dumps({"city": "上海", "nested": {"values": [1, 2]}}, ensure_ascii=False)
 
@@ -156,7 +157,7 @@ def test_text_and_tool_results_do_not_depend_on_fragment_partition(parts):
 
     events = [chat_event(content=fragment) for fragment in split(text)]
     for index, fragment in enumerate(split(argument_text)):
-        call = {"index": 0, "function": {"arguments": fragment}}
+        call = {"index": 0, "function": {"arguments": fragment}, **fragment_fields}
         if index == 0:
             call.update(id="call_1", type="function")
             call["function"]["name"] = "weather"

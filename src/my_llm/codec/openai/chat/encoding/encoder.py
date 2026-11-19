@@ -307,7 +307,7 @@ class ChatCompletionsEncoder(BaseEncoder):
                 if feedback is not None:
                     ops.append(feedback_operation(BlockRef("thinking"), feedback))
                 for call in delta.get("tool_calls") or []:
-                    if call.get("type", "function") == "function":
+                    if call.get("type") in (None, "function"):
                         function = call.get("function", {})
                         ops.extend(
                             tool_operations(

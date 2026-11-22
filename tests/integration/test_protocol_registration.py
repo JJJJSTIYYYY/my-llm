@@ -10,10 +10,6 @@ from typing_extensions import TypedDict
 
 from my_llm import (
     Attribute,
-    BaseCodec,
-    BaseDecoder,
-    BaseEncoder,
-    BaseTransport,
     Config,
     ConfigurationError,
     InputParameter,
@@ -29,6 +25,7 @@ from my_llm import (
     resolve_profiles,
 )
 from my_llm.basic import protocols
+from my_llm.codec.base import BaseCodec, BaseDecoder, BaseEncoder, BaseTransport
 from my_llm.codec.shared.conversion import (
     decode_functions,
     encode_functions,
@@ -335,15 +332,15 @@ def test_new_protocol_queries_filter_plans_once_per_batch(registered, monkeypatc
 
 
 def test_builtin_fixture_protocols_cover_all_registered_protocols():
-    assert set(PROTOCOLS) == set(MyCodec().codecs)
+    assert set(PROTOCOLS) == set(MyCodec()._codecs)
 
 
 def test_registration_adds_defaults_and_preserves_existing_converter_snapshot(monkeypatch):
     monkeypatch.setattr(protocols, "_CODECS", protocols.registered_codec_factories())
     existing = MyCodec()
     MyCodec.register(Codec)
-    assert PROTOCOL not in existing.codecs
-    assert isinstance(MyCodec().codecs[PROTOCOL], Codec)
+    assert PROTOCOL not in existing._codecs
+    assert isinstance(MyCodec()._codecs[PROTOCOL], Codec)
     provider, model = profiles()
     resolved = resolve_profiles(provider, model)
     assert resolved.parameter("max_tokens", "input").path == "$.limit"
@@ -352,7 +349,7 @@ def test_registration_adds_defaults_and_preserves_existing_converter_snapshot(mo
     with pytest.raises(ConfigurationError, match="registered|duplicate|already"):
         MyCodec.register(Codec)
     with pytest.raises(UnsupportedProviderError):
-        existing.transport(PROTOCOL)
+        existing._transport(PROTOCOL)
 
 
 @pytest.mark.parametrize(
@@ -402,7 +399,7 @@ def test_registration_allows_instance_state_and_keeps_components_independent(mon
             self.pending = []
 
     MyCodec.register(StatefulCodec)
-    first, second = MyCodec().codecs[PROTOCOL], MyCodec().codecs[PROTOCOL]
+    first, second = MyCodec()._codecs[PROTOCOL], MyCodec()._codecs[PROTOCOL]
     assert first is not second
     for name in ("encoder", "decoder", "transport", "semantic_loss_adaptor"):
         assert getattr(first, name) is not getattr(second, name)
@@ -512,7 +509,7 @@ async def test_independent_protocol_joins_conversion_and_request_lifecycle(
 async def test_builtin_upstreams_render_registered_protocol_without_shared_changes(
     registered, monkeypatch, upstream, streaming
 ):
-    transport = MyCodec().transport(upstream)
+    transport = MyCodec()._transport(upstream)
 
     @asynccontextmanager
     async def upstream_events(self, client, request):
@@ -589,11 +586,11 @@ async def test_protocol_default_bindings_are_isolated_between_profiles_and_reque
 def test_custom_usage_mode_is_owned_by_decoder(registered):
     provider, model = profiles()
     instance = MyLLM(provider=replace(provider, usage_mode=config("native")), model=model)
-    inputs = instance.codec.encode(
+    inputs = instance._codec.encode(
         [{"speaker": "user", "body": "complete tail"}], input_format=PROTOCOL
     )
     with pytest.raises(SemanticLossError, match="usage_mode") as caught:
-        instance.codec.request(inputs, instance.resolved_profile)
+        instance._codec._request(inputs, instance.resolved_profile)
     assert "complete tail" in str(caught.value.draft)
     assert [(loss.origin_path, loss.origin_value) for loss in caught.value.losses] == [
         ("$.usage_mode", "native")
@@ -614,12 +611,14 @@ def test_registered_protocol_owns_its_metadata_projection_and_merge_paths(regist
         },
         {"body": "", "done": True, "trace": {"phase": "complete"}},
     ]
-    encoded = codec.encode(chunks=incoming, input_format=PROTOCOL)["chunks"]
+    encoded = codec._encode_chunks(chunks=incoming, input_format=PROTOCOL)
     assert "vendor_unconfigured" not in str(encoded)
     operations = state.feed(encoded)
     operations.extend(state.finish())
     assert state.metadata["trace"] == {"token": "trace-1", "phase": "complete"}
-    output = codec.decode(chunks=operations, target_format=PROTOCOL, **state.metadata)["chunks"]
+    output = codec._decode(
+        chunks=operations, target_format=PROTOCOL, stream_metadata=state.metadata, **state.metadata
+    )["chunks"]
     assert output[-1] == {
         "body": "",
         "done": True,
@@ -628,7 +627,7 @@ def test_registered_protocol_owns_its_metadata_projection_and_merge_paths(regist
 
 
 def test_independent_stream_hooks_capture_their_mutable_metadata(registered):
-    codec = MyCodec().codecs[PROTOCOL]
+    codec = MyCodec()._codecs[PROTOCOL]
     trace = {"token": {"parts": ["original"]}}
     incoming = [{"body": "hello", "done": False, "trace": trace}]
     encoded = codec.encoder.chunks(incoming)
@@ -665,11 +664,11 @@ def test_external_encoder_inherits_output_routes_and_missing_value_semantics(
     )
     profile = resolve_profiles(provider, replace(model, content=declaration))
     codec = MyCodec()
-    intermediate = codec.codecs[PROTOCOL].encoder.chunks(
+    intermediate = codec._codecs[PROTOCOL].encoder.chunks(
         [{"body": "native", "done": False, "vendor": payload}], profile
     )
     assert intermediate[0]["events"][0]["value"] == expected
-    request = codec.request(
+    request = codec._request(
         {"messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]}, profile
     )
     assert "vendor" not in request
@@ -696,11 +695,11 @@ def test_external_protocol_inherits_generic_input_parameters_and_source_isolatio
     )
     profile = resolve_profiles(provider, model)
     codec = MyCodec()
-    intermediate = codec.codecs[PROTOCOL].encoder.messages(
+    intermediate = codec._codecs[PROTOCOL].encoder.messages(
         [{"speaker": "user", "body": "native"}], profile
     )
     assert intermediate[0]["content"][0]["text"] == "fallback"
-    request = codec.request({"messages": intermediate}, profile)
+    request = codec._request({"messages": intermediate}, profile)
     assert request["hint"] == {"vendor": 7}
     assert "encoder_only" not in request
     assert "body" not in request

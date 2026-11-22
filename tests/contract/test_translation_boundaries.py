@@ -10,6 +10,7 @@ from copy import deepcopy
 import pytest
 
 from my_llm import MessageValidationError, MyCodec
+from my_llm.runtime.state import StreamState
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import PROTOCOLS, history, stream_events, tools
 
@@ -166,7 +167,7 @@ def test_unknown_intermediate_blocks_are_rejected(target):
 
 
 def test_preparation_and_sdk_execution_have_separate_interfaces():
-    for codec in MyCodec().codecs.values():
+    for codec in MyCodec()._codecs.values():
         for direction in (codec.encoder, codec.decoder):
             for name in ("create_client", "close_client", "upstream"):
                 assert not hasattr(direction, name)
@@ -287,7 +288,15 @@ def test_direct_responses_intermediate_annotations_are_filtered_in_every_event()
     ]
     original = deepcopy(chunks)
 
-    output = MyCodec().decode(chunks=chunks, target_format="openai_responses")["chunks"]
+    state = StreamState("demo")
+    events = state.feed(chunks)
+    events.extend(state.finish())
+    output = MyCodec()._decode(
+        chunks=events,
+        target_format="openai_responses",
+        stream_metadata=state.metadata,
+        **state.metadata,
+    )["chunks"]
 
     assert_no_unknown(output)
     assert "cite" not in str(output)

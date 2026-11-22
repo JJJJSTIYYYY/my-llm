@@ -10,6 +10,7 @@ from my_llm.basic.exceptions import ResponseFailedError, ResponseIncompleteError
 from my_llm.basic.semantic_loss import originated
 from my_llm.codec.base.encoder import BaseEncoder
 from my_llm.codec.openai.responses.encoding.content import (
+    content_blocks,
     encode_content,
 )
 from my_llm.codec.shared.conversion import (
@@ -356,7 +357,7 @@ class ResponsesEncoder(BaseEncoder):
                         metadata(
                             {
                                 "response_items": {
-                                    str(i): self._item_metadata(item)
+                                    str(i): self._item_metadata(item, completed=True)
                                     for i, item in enumerate(output)
                                     if item.get("type")
                                     in constants.MESSAGE_REASONING_FUNCTION_CALL_ITEM_TYPES
@@ -472,9 +473,12 @@ class ResponsesEncoder(BaseEncoder):
         """Project recognized response metadata into a middleware metadata operation."""
         return project_metadata(event, constants.RESPONSE_FIELD_TO_MIDDLEWARE_METADATA)
 
-    def _item_metadata(self, item: dict) -> dict:
-        """Record native output-item headers for identity-preserving stream rendering."""
-        return project_metadata(item, constants.ITEM_FIELD_TO_MIDDLEWARE_METADATA)
+    def _item_metadata(self, item: dict, *, completed: bool = False) -> dict:
+        """Record recognized headers and distinguish final empty messages from filtered content."""
+        header = project_metadata(item, constants.ITEM_FIELD_TO_MIDDLEWARE_METADATA)
+        if completed and item.get("type") == "message":
+            header["empty"] = not item["content"]
+        return header
 
     def _snapshot(
         self,
@@ -486,6 +490,17 @@ class ResponsesEncoder(BaseEncoder):
         """Address recognized final blocks with their live item/part coordinates."""
         blocks = []
         for index, item in enumerate(output):
+            if item.get("type") == "message":
+                identity = select(item, *constants.ITEM_ID_STATUS_FIELDS)
+                for part, block in content_blocks(
+                    item.get("content"),
+                    path=f"{path}[{index}].content",
+                    allow_images=item.get("role") == "user",
+                ):
+                    if identity:
+                        block["item"] = identity
+                    blocks.append({"ref": BlockRef(block["type"], index, part), "block": block})
+                continue
             encoded = self._messages([item], profile)
             if not encoded:
                 continue
@@ -502,14 +517,10 @@ class ResponsesEncoder(BaseEncoder):
                         }
                     )
                 else:
-                    origin_value = item
-                    if item.get("type") == "message":
-                        origin_path += block.origin_path.removeprefix("$.messages[0]")
-                        origin_value = block.origin_value
                     blocks.append(
                         {
                             "ref": BlockRef(kind, index, part),
-                            "block": originated(block, origin_path, origin_value),
+                            "block": originated(block, origin_path, item),
                         }
                     )
         return {"type": "snapshot", "blocks": blocks}

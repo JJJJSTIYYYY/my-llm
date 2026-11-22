@@ -1,7 +1,9 @@
 # 中间协议与语义损失迁移
 
 `MyCodec.encode()` 返回 SDK 无关的 `ProtocolMiddleWare`。通过 `.messages`、`.tools`、
-`.stream`、`.usage` 访问具体模型；`.to_wire()` 用于检查内部投影，不应作为应用会话历史。
+`.stream`、`.usage` 访问具体模型；`.stream` 是完整流累积后的 `MessageEvent` 列表。
+公开事件的 `to_wire()` 投影可经 JSON 保存后交给 `MyCodec.decode(chunks=...)` 独立翻译；
+生成接口的应用会话历史仍传具体 `.messages` 模型列表。
 完整字段、方向与缓存边界见[协议定义](../design/protocol-middleware.md)。
 也可显式设置 `stdio_protocol="middleware"`，直接使用 `.messages` / `.tools` 中的具体模型
 作为应用历史，详见[直接输入输出指南](middleware-io.md)。
@@ -43,7 +45,7 @@ llm.set_semantic_loss_policy(
 
 `ignore` 不保留损失历史或输出日志；`hook` 未提供函数时使用空函数。
 hook 接收 `(draft, losses, context)`，返回值忽略。请求 hook 可以是同步或异步函数，
-`MyLLM.generate()` 与 `await MyCodec.prepare(...)` 会直接等待它完成；离线转换及输出 hook 使用同步函数。
+`MyLLM.generate()` 会直接等待它完成；离线转换及输出 hook 使用同步函数。
 hook 可以原地修改、抛错、
 重排内容或不做修改。生成请求的 hook 收到完整 SDK 请求；离线 convert 的消息 / 工具 hook 收到相应目标集合。
 启用消息缓存时，消息翻译结果在调用 adaptor 前已经保存。hook 对请求的修改不会自动回写缓存，

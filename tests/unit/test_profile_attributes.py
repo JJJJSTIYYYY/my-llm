@@ -52,7 +52,7 @@ def test_custom_attributes_are_validated_without_copying_or_routing_payloads():
     assert {"description", "model", "models", "max_context_window"}.isdisjoint(profile.values)
     assert profile.model == "demo"
     assert profile.parameter("description") is None
-    request = MyCodec().request(
+    request = MyCodec()._request(
         MyCodec().encode([{"role": "user", "content": "hi"}], input_format="openai_chat"),
         profile,
     )

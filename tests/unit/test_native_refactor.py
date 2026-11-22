@@ -30,11 +30,11 @@ async def test_object_and_array_tool_results_prepare_as_text_in_every_direction(
         max_tokens=parameter("max_tokens", 2048, protocol=target),
     )
     codec = MyCodec()
-    prepared = await codec.prepare(
+    prepared = await codec._prepare(
         {"messages": messages, "tools": omit, "stream": False},
         profile,
         input_format=source,
-        client=codec.client_parameters(profile),
+        client=codec._client_parameters(profile),
     )
     assert json.loads(native_result_text(target, prepared["request"])) == payload
     assert messages == before
@@ -45,7 +45,7 @@ def test_unsupported_response_metadata_is_never_inspected_or_copied():
         def __deepcopy__(self, memo):
             raise AssertionError("unsupported metadata was inspected")
 
-    output = MyCodec().encode(
+    output = MyCodec()._encode_chunks(
         chunks=[
             {
                 "type": "response.created",
@@ -54,7 +54,7 @@ def test_unsupported_response_metadata_is_never_inspected_or_copied():
         ],
         input_format="openai_responses",
     )
-    assert output["chunks"][0]["events"][0]["values"] == {"response_id": "r1", "model": "demo"}
+    assert output[0]["events"][0]["values"] == {"response_id": "r1", "model": "demo"}
 
 
 def test_loss_provenance_does_not_traverse_unsupported_fields():
@@ -113,9 +113,11 @@ def test_snapshot_source_positions_do_not_shift_when_unsupported_blocks_are_drop
             "content": [{"type": "input_file", "file_data": "ignored"}, part],
         }
     ]
-    encoded = MyCodec().encode(chunks=[response_completed(output)], input_format="openai_responses")
+    encoded = MyCodec()._encode_chunks(
+        chunks=[response_completed(output)], input_format="openai_responses"
+    )
     snapshot = next(
-        event for batch in encoded.stream for event in batch.events if event["type"] == "snapshot"
+        event for batch in encoded for event in batch["events"] if event["type"] == "snapshot"
     )
     block = snapshot["blocks"][0]["block"]
     assert block.origin_path == "$.chunks[0].response.output[0].content[1]"
@@ -242,7 +244,7 @@ def test_unsupported_native_fields_are_discarded_before_sdk_validation(source, t
     codec = MyCodec()
     incoming = deepcopy(UNSUPPORTED_INPUTS[source])
     original = deepcopy(incoming)
-    codec.codecs[source].encoder.validate_input(incoming)
+    codec._codecs[source].encoder.validate_input(incoming)
     result = codec.convert(incoming, input_format=source, target_format=target)
     assert "keep" in str(result)
     assert not any(
@@ -257,7 +259,7 @@ def test_unsupported_native_fields_are_discarded_before_sdk_validation(source, t
 def test_unsigned_reasoning_remains_distinct_or_reports_loss(source, target):
     codec = MyCodec()
     incoming = native_reasoning(source)
-    codec.codecs[source].encoder.validate_input(incoming)
+    codec._codecs[source].encoder.validate_input(incoming)
     if source != target:
         with pytest.raises(SemanticLossError) as captured:
             codec.convert(incoming, input_format=source, target_format=target)
@@ -521,7 +523,7 @@ def test_responses_and_chat_share_only_the_canonical_created_at_timestamp(source
         assert all(
             event["response"]["created_at"] == 123456 for event in output if "response" in event
         )
-    generated = MyCodec().decoder("openai_responses").chunks([{"type": "start"}], created=999)
+    generated = MyCodec()._decoder("openai_responses").chunks([{"type": "start"}], created=999)
     assert generated[0]["response"]["created_at"] == 0
 
 
@@ -571,7 +573,7 @@ def test_responses_reasoning_delta_starts_one_visible_reasoning_block():
     }
     codec = MyCodec()
     state = StreamState("demo")
-    events = state.feed(codec.encode(chunks=[incoming], input_format="openai_responses").stream)
+    events = state.feed(codec._encode_chunks(chunks=[incoming], input_format="openai_responses"))
     block = next(
         MessageEvent.from_wire(event).block for event in events if event["type"] == "block_start"
     )

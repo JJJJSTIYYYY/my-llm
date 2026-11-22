@@ -11,6 +11,7 @@ from my_llm import (
     Config,
     ModelProfile,
     MyLLM,
+    MyCodec,
     ProviderProfile,
     TextContent,
     UserMessage,
@@ -32,12 +33,12 @@ async def ask():
     return history
 ```
 
-`generate()` 的 `messages` 接受非空的模型列表或元组，`tools` 接受 `FunctionTool` 列表或元组。
+`MyLLM.generate()` 的 `messages` 接受非空的模型列表或元组，`tools` 接受 `FunctionTool` 列表或元组。
 `tools=None` / `omit` 不发送工具，`tools=[]` 发送空工具列表。原生字典不能用于此入口；
 来自 `MyCodec.encode()` 的值可以直接传入：
 
 ```python
-middle = llm.codec.encode(
+middle = MyCodec().encode(
     messages=[{"role": "user", "content": "你好"}],
     input_format="openai_chat",
 )
@@ -45,8 +46,8 @@ reply = await llm.generate(messages=middle.messages, tools=middle.tools)
 ```
 
 传入 `ProtocolMiddleWare.messages` 和 `.tools` 属性，保留具体模型；字典索引提供的是供底层转换查看的投影。
-`ProtocolMiddleWare` 容器本身不是 `messages` 参数。顶层一次性 `generate()` 同样支持此入口，
-返回流仍由调用方负责消费或关闭，临时实例无需关闭。
+`ProtocolMiddleWare` 容器本身不是 `messages` 参数。
+返回流由调用方负责消费或关闭。
 
 ## 模型与工具回合
 
@@ -58,7 +59,7 @@ reply = await llm.generate(messages=middle.messages, tools=middle.tools)
 | 内容 | `TextContent`、`ImageContent`、`ImageSource`、`ReasoningContent`、`ToolCall` |
 | 工具与类型别名 | `FunctionTool`、`MessageContent`、`ToolResult`、`JsonObject`、`JsonValue` |
 | 公开生成结果 | `AssistantMessage`、`MessageEvent` |
-| 转换容器 | `ProtocolMiddleWare`、`StreamBatch` |
+| 转换容器与终态块 | `ProtocolMiddleWare`、`StreamBlock` |
 | 源项身份 | `ItemIdentity` |
 | 用量和来源 | `Usage`、`Origin` |
 
@@ -140,8 +141,10 @@ reply = stream.result  # 成功耗尽后为 AssistantMessage；此前或提前�
 usage = llm.get_last_usage()
 ```
 
-`MessageEvent` 是累积和校验后的公开事件。`StreamBatch.events` 是供协议扩展和状态机使用的
-内部操作字典列表；应用消费生成流时使用下表事件。
+`MessageEvent` 是累积和校验后的公开事件。`MyCodec.encode(chunks=完整原生事件列表)`
+和 `convert(..., target_format="middleware")` 返回同一公开事件结构。
+内部 `StreamBatch` 仅连接 encoder 与状态机，不作为公开转换结果或输入。
+应用消费生成流时使用下表事件。
 
 | `type` | 有效内容 |
 | --- | --- |
@@ -151,8 +154,11 @@ usage = llm.get_last_usage()
 | `block_stop` | `index`、`source_ref`、完整文本/思维 `block` |
 | `block` | `index`、`source_ref`、完整非文本块 |
 | `tool` | `index`、`tool_index`、`source_ref`、完整 `ToolCall` |
-| `finish` | `reason`、完整 `messages` |
+| `finish` | `reason`、完整 `messages`、`output_blocks: list[StreamBlock]`、已提取上下文 `metadata` |
 
+各事件携带来源 `protocol`，`finish.metadata` 保存 encoder 已提取的上下文，以保持原生推理反馈与项身份。
+这些字段只包含中间层已支持的信息，不透传未识别原生字段。
+`output_blocks` 中的 `StreamBlock` 保存终态块及源引用；应用通常只需处理增量和工具事件。
 工具调用及其后续块等到上游成功 EOF 后才集中交付；失败或截断不会泄露未完成调用。
 用量不进入事件或回复，只通过成功流的 `get_last_usage()` 获取。事件、结果和不同调用之间
 不共享可变应用内容；`stream.result` 重复读取返回同一结果对象。
@@ -164,8 +170,8 @@ usage = llm.get_last_usage()
 raise / ignore / hook 处理；请求 hook 收到完整原生 SDK 请求，返回 hook 收到中间模型结果或事件列表，
 原位修改生效。请求来源位置引用实际传入的中间内容模型，不修改调用者的 `Origin`。
 
-输入在 `await generate()` 的准备阶段隔离；调用者可在流消费前修改自己的历史。
-应用仍负责追加完成回复。必须关闭未耗尽的流及实例。
+输入在 `await llm.generate()` 的准备阶段隔离；调用者可在流消费前修改自己的历史。
+应用仍负责追加完成回复。必须关闭未耗尽的流；MyLLM 实例无需关闭。
 `enable_message_cache=True` 对模型列表使用相同的增量与重试规则：连续相同消息批次不重复追加，
 同一实例不支持并发生成，先完成或关闭前一条流再调用下一次生成。
 不同实例可以并发；详细约定见[增量消息缓存](../reference/api.md#增量消息缓存)。
@@ -175,15 +181,16 @@ raise / ignore / hook 处理；请求 hook 收到完整原生 SDK 请求，返�
 `Origin` 只记录错误定位来源，不作为 payload 字段输出。
 未知原生字段由 encoder 过滤。公共中间输入入口遇到未知内容类型、操作或增量字段，
 以及缺少必需字段时，抛出带路径的 `MessageValidationError`；`ignore` / `hook` 不会跳过格式校验。
-`decode(chunks=...)` 对 `StreamBatch` 和原始批次字典使用相同校验，再进入状态机。
+`encode(chunks=...)` 接受完整原生响应流，`decode(chunks=...)` 接受完整公开中间事件。
+公开转换方法不会跨调用记住流片段；实时消费通过 `MyLLM.generate(stream=True)` 完成。
 
 请求直接进入上游现有 `Decoder.prepare()`，跳过源 encoder。返回由上游现有 encoder 和
 同一个请求状态机生成具体模型，跳过目标 decoder。没有注册名为 `middleware` 的 codec，
 也没有增加 encoder、decoder 或 transport；该名称保留给 stdio。
-SDK 客户端仍属于实例；Schema 缓存仅保存有界类型规则，中间输入、结果和来源不进入全局缓存。
+SDK 客户端属于本次生成调用；Schema 缓存仅保存有界类型规则，中间输入、结果和来源不进入全局缓存。
 
 离线 `MyCodec.convert(..., input_format=<原生协议>, target_format="middleware")`
-也可得到具体消息、工具和完整公开事件。直接调用 `decode()` / `result()` 输出中间模型时，
+也可得到具体消息、工具和完整公开事件。直接调用 `decode()` 输出中间模型时，
 须额外传入 `input_format=<原生来源>`，用于语义损失上下文。
 
 性能方法与结果见[性能指南](performance.md#中间协议直接输入输出)。

@@ -1,6 +1,5 @@
-"""Instance reuse identifiers, explicit resolution and cache lifecycle."""
+"""Explicit profile snapshots, instance ownership and cache lifecycle."""
 
-from copy import deepcopy
 from dataclasses import replace
 
 import pytest
@@ -13,6 +12,7 @@ from my_llm import (
     ModelProfile,
     MyLLM,
     ProviderProfile,
+    resolve_profiles,
 )
 
 
@@ -22,11 +22,11 @@ def profiles():
     )
 
 
-def test_resolve_profile_class_method_returns_independent_snapshot():
+def test_resolved_configuration_and_instances_own_independent_snapshots():
     provider, model = profiles()
     provider.extra_body = Config(default_value={"nested": [1]})
     provider.__post_init__()
-    resolved = MyLLM.resolve_profile(provider, model)
+    resolved = resolve_profiles(provider, model)
     first = MyLLM(provider=provider, model=model, resolved_profile=resolved)
     second = MyLLM(provider=provider, model=model, resolved_profile=resolved)
     resolved.values["extra_body"]["nested"].append(2)
@@ -37,7 +37,7 @@ def test_resolve_profile_class_method_returns_independent_snapshot():
 
 def test_reused_snapshot_skips_resolution(monkeypatch):
     provider, model = profiles()
-    resolved = MyLLM.resolve_profile(provider, model)
+    resolved = resolve_profiles(provider, model)
 
     def unexpected(*args, **kwargs):
         raise AssertionError("must not resolve again")
@@ -47,28 +47,12 @@ def test_reused_snapshot_skips_resolution(monkeypatch):
     assert llm.resolved_profile == resolved
 
 
-@pytest.mark.parametrize(
-    "values,expected",
-    [
-        (("openai_chat", "demo", "openai_chat"), True),
-        (("other", "demo", "openai_chat"), False),
-        (("openai_chat", "other", "openai_chat"), False),
-        (("openai_chat", "demo", "anthropic"), False),
-        (("OPENAI_CHAT", "demo", "openai_chat"), False),
-    ],
-)
-def test_compare_matches_all_three_strings(values, expected):
-    provider, model = profiles()
-    llm = MyLLM(provider=provider, model=model, stdio_protocol="openai_chat")
-    assert llm.compare(*values) is expected
-
-
 def test_provider_identity_can_differ_from_protocol():
     provider, model = profiles()
     provider = replace(provider, provider=Attribute(default_value="vendor"))
     llm = MyLLM(provider=provider, model=model, stdio_protocol="openai_chat")
-    assert llm.compare("vendor", "demo", "openai_chat") is True
-    assert llm.compare("openai_chat", "demo", "openai_chat") is False
+    assert llm.provider.provider.default_value == "vendor"
+    assert llm.resolved_profile.protocol == "openai_chat"
     assert "provider" not in llm.resolved_profile.values
 
 
@@ -92,20 +76,8 @@ def test_provider_identity_defaults_to_final_protocol_when_only_model_selects_it
     )
     llm = MyLLM(provider=provider, model=model, stdio_protocol="openai_chat")
     assert llm.provider.provider.default_value == "anthropic"
-    assert llm.compare("anthropic", "demo", "openai_chat") is True
-
-
-def test_compare_does_not_resolve_or_modify_state(monkeypatch):
-    provider, model = profiles()
-    llm = MyLLM(provider=provider, model=model, stdio_protocol="openai_chat")
-    before = deepcopy(llm.resolved_profile)
-
-    def unexpected(*args, **kwargs):
-        raise AssertionError("compare must only compare identifiers")
-
-    monkeypatch.setattr("my_llm.my_llm.resolve_profiles", unexpected)
-    assert llm.compare("openai_chat", "demo", "openai_chat") is True
-    assert llm.resolved_profile == before
+    assert llm.resolved_profile.protocol == "anthropic"
+    assert llm.stdio_protocol == "openai_chat"
 
 
 def test_precomputed_snapshot_still_validates_protocol():
@@ -113,7 +85,7 @@ def test_precomputed_snapshot_still_validates_protocol():
     provider = replace(
         provider, max_tokens=InputParameter(path="$.unsupported_parameter", default_value=128)
     )
-    resolved = MyLLM.resolve_profile(provider, model)
+    resolved = resolve_profiles(provider, model)
     with pytest.raises(ConfigurationError, match="max_tokens"):
         MyLLM(provider=provider, model=model, resolved_profile=resolved)
 
@@ -128,7 +100,7 @@ def test_snapshot_requires_resolved_profile(value):
 async def test_clear_cache_removes_only_instance_history_and_deduplication():
     provider, model = profiles()
     llm = MyLLM(provider=provider, model=model, enable_message_cache=True)
-    cache = llm.codec._message_cache
+    cache = llm._codec._message_cache
     cache.update(llm._message_cache_key, [{"text": "old"}], fingerprint=b"same")
     cache.update("other", [{"text": "keep"}])
     llm.clear_cache()

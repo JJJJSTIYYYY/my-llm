@@ -132,9 +132,8 @@ Profiles 是可变 dataclass，可直接重新赋值字段，也可使用 `datac
 重新赋值 Config 或 Parameter 后，调用 `__post_init__()` 绑定声明身份，再创建 MyLLM。
 MyLLM 构造时隔离配置的嵌套可变数据；请求只在需要独立所有权的边界复制数据。
 
-`MyLLM.resolve_profile(provider, model)` 返回可传入构造函数的独立配置快照；初始化不计算配置哈希。
-`llm.compare(new_provider, new_model, new_stdio_protocol)` 仅精确比较 Provider 标识、模型 ID 和输入输出协议字符串，
-返回 bool，不判断完整配置等价性。Provider 的 `provider: Attribute[str]` 默认采用协议名，可显式指定应用层标识。
+`resolve_profiles(provider, model)` 返回可传入构造函数的独立配置快照；初始化不计算配置哈希。
+Provider 的 `provider: Attribute[str]` 默认采用协议名，可显式指定应用层标识。
 实例复用和不同会话的缓存隔离由应用层负责；`llm.clear_cache()` 清空当前实例的消息翻译历史和批次去重状态。
 接口细节见 [MyLLM API](api.md)。
 

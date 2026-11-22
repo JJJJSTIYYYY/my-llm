@@ -1,6 +1,6 @@
 # 项目架构与职责边界
 
-2026-11-13 更新。一次 `generate(messages=..., stream=True, max_tokens=1024)` 将完整调用参数
+2026-11-22 更新。一次 `MyLLM.generate(messages=..., stream=True, max_tokens=1024)` 将完整调用参数
 打包为字典，连同已解析 Profile 进入 Codec。Encoder 先投影支持字段、验证输入协议并生成类型化中间协议；
 Decoder 应用参数路径、默认值、覆盖规则及目标 SDK Schema，输出三个明确的目的地：
 
@@ -24,9 +24,9 @@ src/my_llm/
 ├── __init__.py                 # 统一公开导出
 ├── _version.py                 # 构建与发行版本
 ├── py.typed                    # 类型标记
-├── my_llm.py                   # MyLLM / generate、请求客户端生命周期、流编排
+├── my_llm.py                   # MyLLM.generate、请求客户端生命周期、流编排
 ├── cache/                      # 缓存实现与所有权隔离
-│   ├── __init__.py             # 缓存接口导出
+│   ├── __init__.py             # 内部缓存包说明
 │   ├── compiled_cache.py       # CompiledCache、SDK 类型计划编译、过滤与验证
 │   └── message_cache.py        # MessageCache，已翻译增量历史的更新与快照
 ├── basic/                      # 配置、模型与运行时共用的基础能力
@@ -63,7 +63,7 @@ src/my_llm/
 | BaseDecoder | 请求选项解析、参数映射、默认值与覆盖、工具关联及能力验证、目标 Schema 过滤和验证、最终字典及结果形状。 |
 | BaseTransport | create_client(parameters)、upstream(client, request)、close_client(client)；不接收 Profile 或原始生成参数。 |
 | BaseCodec | 声明身份及 ProtocolDefaults，组合 Encoder / Decoder / Transport；在调用损失 adaptor 前发布消息翻译缓存。 |
-| MyCodec | 注册快照、输入协议绑定、prepare 路由；持有实例独立的 MessageCache。 |
+| MyCodec | 注册快照、输入协议绑定、内部 _prepare 路由；持有实例独立的 MessageCache。 |
 | CompiledCache / MessageCache | 分别保存进程级类型规则和按实例键隔离的已翻译输入历史，集中管理缓存操作与快照。 |
 | Profile / resolve_profiles | 分层合并、声明分类、通用字段验证、连接参数解析及独立配置快照。 |
 | MyLLM | 固定实例配置、uuid4 消息缓存键、已准备连接字典、延迟请求客户端生命周期、生成和输出编排。 |
@@ -76,11 +76,11 @@ MyLLM 的 Profile 解析从本实例 MyCodec 获取协议默认声明，后续�
 Encoder / Decoder 不创建 SDK 客户端，也不相互导入。官方类型与方法签名可用于静态 Schema 分析；
 实际 SDK 构造和调用只发生在 Transport。双向共用辅助按职责放在协议根目录，
 例如 anthropic/content.py；单个模块不额外套 utils 目录。
-包初始化文件只导出接口；公共执行逻辑不按具体协议名分支。
+包初始化文件仅聚合公开类型与必要扩展契约；公共执行逻辑不按具体协议名分支。
 
 目录按责任边界分组，不按方法数量拆分。中间协议只设三个实现模块；消息模型与 wire
 解析相邻，流模型与事件投影相邻，完整输入校验与容器相邻。MyLLM、MyCodec、各协议
-Encoder / Decoder 的完整调用流程仍集中在所属类中。初始化文件仅重导出；运行时内部
+Encoder / Decoder 的完整调用流程仍集中在所属类中。初始化文件只声明包归属或公开导出；运行时内部
 直接导入定义模块。`from my_llm import ...` 和 `from my_llm.middleware import ...`
 继续提供同一组协议模型。MyLLM 执行编排位于顶层 my_llm.py；
 基础能力在 basic，缓存实现在 cache，响应流状态在 runtime。迁移后的内部路径不保留转发文件。
@@ -92,8 +92,8 @@ Encoder / Decoder 的完整调用流程仍集中在所属类中。初始化文�
       → Decoder.validate_profile → Decoder.client_parameters → 实例连接字典
 
 请求：generate 完整输入字典 + ResolvedProfile
-      → MyCodec.bind_input（已绑定时直接使用，否则唯一识别）
-      → await MyCodec.prepare
+      → MyCodec._bind_input（已绑定时直接使用，否则唯一识别）
+      → await MyCodec._prepare
       → 输入 Encoder.request → 输入验证 → 消息与工具中间态
       → await BaseCodec.prepare → 上游 Decoder.prepare
           → validate_parameters（每次一次）
@@ -120,9 +120,12 @@ Model 未设置协议时继承 Provider。`stdio_protocol` 选择业务输入输
 AssistantMessage / MessageEvent，略过 stdio Decoder。该 stdio 名称不注册协议组件。
 模型和公开事件字段见[直接使用中间协议](../guides/middleware-io.md)。
 
-`MyCodec.request(intermediate, profile, **parameters)` 保留为离线构造原生 SDK 请求的便利入口，
+`MyCodec._request(intermediate, profile, **parameters)` 是内部原生请求组装步骤，
 与完整 prepare 共用 Decoder.request。它返回裸请求字典，不创建客户端。
-`Decoder.native_request` 用于已有原生字典的独立过滤验证，也不执行 SDK。
+`Decoder.native_request` 执行内部原生字典过滤验证，也不执行 SDK。
+请求准备、组件访问和结果组装均为内部步骤，不作为可独立使用的公开业务接口。
+公开翻译入口为 `MyCodec.encode` / `decode` / `convert`；非空流翻译以完整响应为一次调用单位，
+公开中间态统一为 `MessageEvent`，内部 `StreamBatch` 仅用于实时累积和组件协作。
 
 ## 参数分类与优先级
 
@@ -175,7 +178,7 @@ cache/compiled_cache.py 集中管理 SDK 类型分析、计划编译、过滤与
 类型分析命中后，当前请求仍逐值选择分支、过滤和验证；输入和输出的验证分别保证两个协议边界。
 详见 [Schema 过滤计划缓存](schema-filter-cache.md)。
 
-`MyLLM(enable_message_cache=True)` 将开关和实例生成的 uuid4 键传入 `MyCodec.prepare`，
+`MyLLM(enable_message_cache=True)` 将开关和实例生成的 uuid4 键传入 `MyCodec._prepare`，
 由 `BaseCodec.prepare` 管理对应消息批次的发布。
 以上游 OpenAI Chat 为例：首次提交 `[system, user]`，下次提交 `[assistant, user]`，两批分别走原有翻译流程；
 MessageCache 按原始输入哈希判断是否追加当前消息翻译列表，

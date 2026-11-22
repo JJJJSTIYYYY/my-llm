@@ -90,7 +90,7 @@ def test_api_key_header_path_uses_the_official_sdk_header_option(monkeypatch, pr
         ),
         model=ModelProfile(model=Attribute(default_value="demo")),
     )
-    assert llm.codec.transport(protocol).create_client(llm.client_parameters) is client
+    assert llm._codec._transport(protocol).create_client(llm._client_parameters) is client
     options = captured[0]
     assert "api_key" not in options
     headers = options["default_headers"]
@@ -184,15 +184,15 @@ def test_incompatible_usage_modes_are_decoder_losses(protocol, usage, policy):
         semantic_loss_protocol=policy,
         input_semantic_loss_hook=hook,
     )
-    inputs = instance.codec.encode(
+    inputs = instance._codec.encode(
         [{"role": "user", "content": "complete tail"}], input_format="openai_chat"
     )
     if policy == "raise":
         with pytest.raises(SemanticLossError, match="usage_mode") as caught:
-            instance.codec.request(inputs, instance.resolved_profile)
+            instance._codec._request(inputs, instance.resolved_profile)
         request = caught.value.draft
     else:
-        request = instance.codec.request(inputs, instance.resolved_profile)
+        request = instance._codec._request(inputs, instance.resolved_profile)
         if policy == "hook":
             assert observed[0] is request
             assert request["handled_usage_mode"] is True

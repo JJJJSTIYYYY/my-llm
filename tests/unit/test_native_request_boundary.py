@@ -80,7 +80,7 @@ def test_system_unknown_fields_do_not_enter_intermediate_or_sdk_request(
     intermediate = codec.encode(history, input_format=source)
     assert "vendor_" not in str(intermediate)
     before_request = deepcopy(intermediate)
-    request = codec.request(
+    request = codec._request(
         intermediate,
         profile_factory(target, max_tokens=parameter("max_tokens", 2048, protocol=target)),
     )
@@ -132,7 +132,7 @@ def test_direct_native_requests_validate_generation_settings(
         request.setdefault("max_tokens", 2048)
     original = deepcopy(request)
     with pytest.raises(expected, match=match):
-        MyCodec().decoder(protocol).native_request(
+        MyCodec()._decoder(protocol).native_request(
             request,
             profile_factory(protocol, max_tokens=parameter("max_tokens", 2048, protocol=protocol)),
         )
@@ -152,7 +152,7 @@ def test_anthropic_tool_json_schema_preserves_open_keywords(profile_factory):
     original = deepcopy(tool)
     request = (
         MyCodec()
-        .decoder("anthropic")
+        ._decoder("anthropic")
         .native_request(
             {
                 "messages": [{"role": "user", "content": "hello"}],
@@ -188,7 +188,7 @@ def test_request_projection_addresses_sdk_fields_without_reading_extensions(
         def __deepcopy__(self, memo):
             pytest.fail("unknown fields must not be read or copied")
 
-    bound = MyCodec().decoder(protocol)
+    bound = MyCodec()._decoder(protocol)
     messages = [AddressedDict(message, vendor=Unreadable()) for message in history(protocol)]
     request = AddressedDict(model="demo", stream=True, vendor=Unreadable())
     request[bound.message_path[0]] = messages
@@ -231,7 +231,7 @@ def test_profile_extension_restores_only_its_declared_unknown_sdk_leaf():
     )
     request = (
         MyCodec()
-        .decoder("openai_responses")
+        ._decoder("openai_responses")
         .native_request(
             {
                 "model": "demo",
@@ -262,7 +262,7 @@ def test_anthropic_adaptive_profile_uses_actual_translated_thinking(path):
     codec = MyCodec()
     intermediate = codec.encode([{"role": "user", "content": "hello"}], input_format="openai_chat")
 
-    request = codec.request(intermediate, profile, reasoning=True)
+    request = codec._request(intermediate, profile, reasoning=True)
 
     thinking = request["thinking"] if path == "$.thinking" else request["extra_body"]["thinking"]
     assert thinking == {"type": "adaptive"}
@@ -353,7 +353,7 @@ def test_nested_request_paths_delegate_to_override_hooks_once_and_capture_payloa
 def test_direct_chat_request_preserves_explicit_none_extra_body(profile_factory):
     request = (
         MyCodec()
-        .decoder("openai_chat")
+        ._decoder("openai_chat")
         .native_request(
             {"messages": [{"role": "user", "content": "hello"}], "extra_body": None},
             profile_factory("openai_chat"),
@@ -375,7 +375,7 @@ def test_declared_unknown_sdk_root_reports_configuration_error():
         ProviderProfile(protocol=Config(default_value="openai_chat")),
         ExtendedModel(model=Attribute(default_value="demo")),
     )
-    bound = MyCodec().decoder("openai_chat")
+    bound = MyCodec()._decoder("openai_chat")
 
     for validate in (bound.validate_profile,):
         with pytest.raises(ConfigurationError, match="vendor.*SDK parameter 'vendor'"):

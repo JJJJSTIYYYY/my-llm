@@ -78,7 +78,7 @@ async def test_api_key_overrides_reach_sdk_headers_and_close_clients(
     assert all(client.is_closed() for client in clients)
     assert llm.resolved_profile.get("api_key") == "profile-key"
     assert provider.api_key.default_value == "profile-key"
-    assert llm.client_parameters == constructors[0]
+    assert llm._client_parameters == constructors[0]
     assert all(client.is_closed() for client in clients)
     keys = ["profile-key", "call-key", "profile-key", "call-key", "profile-key"]
     header = "x-api-key" if protocol == "anthropic" and path == "$.api_key" else "Authorization"

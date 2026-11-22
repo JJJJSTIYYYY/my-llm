@@ -244,8 +244,8 @@ async def replay_scenario(provider, model, stdio, *, request_interval=0.0, evide
             provider=provider, model=model, stdio_protocol=stdio, semantic_loss_protocol="raise"
         )
         upstream = llm.resolved_profile.protocol
-        observed = _ObservedTransport(llm.codec.transport(upstream), evidence)
-        llm.codec.codecs[upstream].transport = observed
+        observed = _ObservedTransport(llm._codec._transport(upstream), evidence)
+        llm._codec._codecs[upstream].transport = observed
         prompt = (
             UserMessage("user", [TextContent(prompt_text)])
             if stdio == "middleware"
@@ -432,11 +432,11 @@ def wire_summary(protocol, request):
 
 async def prepare(llm, messages, tools):
     return (
-        await llm.codec.prepare(
+        await llm._codec._prepare(
             {"messages": messages, "tools": tools, "stream": True},
             llm.resolved_profile,
             input_format=llm.stdio_protocol,
-            client=llm.client_parameters,
+            client=llm._client_parameters,
         )
     )["request"]
 
@@ -446,7 +446,7 @@ async def raw_control(llm, case, *, request_interval):
     profile = llm.resolved_profile
     protocol = profile.protocol
     messages, tools = history(protocol, case, "call_raw_" + uuid4().hex)
-    decoder = llm.codec.decoder(protocol)
+    decoder = llm._codec._decoder(protocol)
     request = decoder.assemble_request(
         messages,
         tools,
@@ -454,8 +454,8 @@ async def raw_control(llm, case, *, request_interval):
         request=decoder.request_parameters(profile, decoder.validate_parameters(profile)),
     )
     summary = wire_summary(protocol, request)
-    transport = llm.codec.codecs[protocol].transport
-    client = transport.create_client(llm.client_parameters)
+    transport = llm._codec._codecs[protocol].transport
+    client = transport.create_client(llm._client_parameters)
     try:
         await asyncio.sleep(request_interval)
         events = 0

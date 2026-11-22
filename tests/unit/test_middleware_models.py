@@ -19,7 +19,6 @@ from my_llm import (
     Origin,
     ProtocolMiddleWare,
     ReasoningContent,
-    StreamBatch,
     TextContent,
     ToolCall,
     ToolMessage,
@@ -28,7 +27,7 @@ from my_llm import (
 )
 from my_llm.middleware.models import content_from_wire, messages_from_wire, tools_from_wire
 from my_llm.middleware.protocol import generation_input
-from my_llm.middleware.stream import stream_from_wire
+from my_llm.middleware.stream import StreamBatch, StreamBlock, stream_from_wire
 
 
 def assert_fields_exercised(model, supplied, *, implicit=()):
@@ -377,7 +376,7 @@ def test_generation_rejects_non_string_visible_reasoning():
 
 
 EVENTS = [
-    {"type": "start"},
+    {"type": "start", "protocol": "openai_chat"},
     {
         "type": "block_start",
         "index": 0,
@@ -408,6 +407,8 @@ EVENTS = [
         "type": "finish",
         "reason": "tool_calls",
         "messages": [AssistantMessage("assistant", [TextContent("answer")], item=identity())],
+        "metadata": {"response_id": "response-1"},
+        "output_blocks": [StreamBlock(0, TextContent("answer"), ("text", 0, 0))],
     },
 ]
 
@@ -426,7 +427,7 @@ def test_complete_middleware_envelope_survives_roundtrip():
     supplied = {
         "messages": [UserMessage("user", [TextContent("question")], item=identity())],
         "tools": [FunctionTool("add", parameters={"type": "object"}, strict=False)],
-        "stream": [StreamBatch("example", OPERATIONS)],
+        "stream": [MessageEvent(**event) for event in EVENTS],
         "usage": Usage(input=4, output=2, total=6, cached=0, reasoning=1),
     }
     assert_fields_exercised(ProtocolMiddleWare, supplied)
@@ -435,7 +436,7 @@ def test_complete_middleware_envelope_survives_roundtrip():
     restored = ProtocolMiddleWare(
         messages=messages_from_wire(wire["messages"]),
         tools=tools_from_wire(wire["tools"]),
-        stream=stream_from_wire(wire["chunks"]),
+        stream=[MessageEvent.from_wire(event) for event in wire["chunks"]],
         usage=Usage.from_record(wire["usage"]),
     )
     assert restored.to_wire() == wire
@@ -494,31 +495,25 @@ def test_public_wire_readers_report_structural_errors(reader, wire, path):
     assert path in str(captured.value)
 
 
-@pytest.mark.parametrize("target", [*my_llm.MyCodec().codecs, "middleware"])
+@pytest.mark.parametrize("target", [*my_llm.MyCodec()._codecs, "middleware"])
 @pytest.mark.parametrize("typed", [False, True])
 @pytest.mark.parametrize("policy", ["raise", "ignore", "hook"])
 @pytest.mark.parametrize(
-    "operation",
+    "event",
     [
         {"type": "unknown"},
-        {
-            "type": "block_delta",
-            "ref": ("text", 0, 0),
-            "kind": "text",
-            "field": "unknown",
-            "value": "x",
-        },
-        {
-            "type": "block_set",
-            "ref": ("thinking", 0, 0),
-            "block": {"type": "thinking", "reasoning": 123},
-        },
+        {"type": "delta", "field": "unknown", "value": "x"},
+        {"type": "block", "block": {"type": "thinking", "reasoning": 123}},
     ],
 )
-def test_decode_validates_raw_and_typed_batches_before_state_dispatch(
-    target, typed, policy, operation
+def test_decode_validates_raw_and_typed_public_events_before_rendering(
+    target, typed, policy, event
 ):
-    batch = StreamBatch("openai_chat", [operation, {"type": "finish"}])
+    value = dict(event)
+    if typed:
+        if "block" in value:
+            value["block"] = ReasoningContent(reasoning=123)
+        value = MessageEvent(**value)
 
     def hook(*args):
         pytest.fail("malformed middleware must not invoke semantic-loss hooks")
@@ -526,40 +521,28 @@ def test_decode_validates_raw_and_typed_batches_before_state_dispatch(
     codec = my_llm.MyCodec(policy, input_semantic_loss_hook=hook, output_semantic_loss_hook=hook)
     with pytest.raises(MessageValidationError):
         codec.decode(
-            chunks=[batch if typed else batch.to_wire()],
+            chunks=[value, MessageEvent("finish", reason="stop")],
             target_format=target,
             input_format="openai_chat",
         )
 
 
-def test_encode_and_decode_share_operation_validation(monkeypatch):
-    codec = my_llm.MyCodec()
-    wire = StreamBatch("openai_chat", [{"type": "unknown"}]).to_wire()
-    monkeypatch.setattr(
-        type(codec.codecs["openai_chat"].encoder), "_chunks", lambda *a, **kw: [wire]
-    )
-    with pytest.raises(MessageValidationError) as encoded:
-        codec.encode(chunks=[], input_format="openai_chat")
-    with pytest.raises(MessageValidationError) as decoded:
-        codec.decode(chunks=[wire], target_format="openai_chat")
-    assert str(encoded.value) == str(decoded.value)
+def test_decode_revalidates_public_events_mutated_after_encoding():
+    from tests.helpers.protocols import stream_events
 
-
-def test_decode_revalidates_batches_mutated_after_encoding():
     codec = my_llm.MyCodec()
-    encoded = codec.encode(
-        chunks=[{"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}],
-        input_format="openai_chat",
-    )
-    encoded.stream[0].events.append({"type": "unknown"})
-    with pytest.raises(MessageValidationError, match="operation"):
+    encoded = codec.encode(chunks=stream_events("openai_chat"), input_format="openai_chat")
+    next(event for event in encoded.stream if event.type == "delta").field = "unknown"
+    with pytest.raises(MessageValidationError, match="delta field"):
         codec.decode(chunks=encoded.stream, target_format="openai_chat")
 
 
-def test_decode_rejects_mixed_batch_and_public_event_streams():
-    with pytest.raises(MessageValidationError, match="cannot mix"):
+@pytest.mark.parametrize("typed", [False, True])
+def test_decode_rejects_internal_operation_batches(typed):
+    batch = StreamBatch("openai_chat", [])
+    with pytest.raises(MessageValidationError, match="event"):
         my_llm.MyCodec().decode(
-            chunks=[StreamBatch("openai_chat", []), MessageEvent("start")],
+            chunks=[batch if typed else batch.to_wire()],
             target_format="openai_chat",
         )
 
@@ -600,12 +583,8 @@ def test_wire_validation_does_not_wrap_application_copy_errors():
 )
 def test_partial_operations_still_require_a_known_content_kind(operation):
     wire = StreamBatch("openai_chat", [operation]).to_wire()
-    for read in (
-        lambda: stream_from_wire([wire]),
-        lambda: my_llm.MyCodec().decode(chunks=[wire], target_format="openai_chat"),
-    ):
-        with pytest.raises(MessageValidationError, match="content type"):
-            read()
+    with pytest.raises(MessageValidationError, match="content type"):
+        stream_from_wire([wire])
 
 
 @pytest.mark.parametrize(
@@ -624,8 +603,8 @@ def test_partial_operations_still_require_a_known_content_kind(operation):
         ),
     ],
 )
-def test_public_validators_do_not_format_success_paths(name, value):
-    import my_llm.middleware as middleware
+def test_internal_validators_do_not_format_success_paths(name, value):
+    import my_llm.middleware.validation as middleware
 
     class FailureOnlyPath(str):
         def __format__(self, spec):
@@ -691,8 +670,8 @@ def test_public_validators_do_not_format_success_paths(name, value):
         ),
     ],
 )
-def test_public_validators_preserve_nested_error_paths(name, value, path):
-    import my_llm.middleware as middleware
+def test_internal_validators_preserve_nested_error_paths(name, value, path):
+    import my_llm.middleware.validation as middleware
 
     with pytest.raises(MessageValidationError) as captured:
         getattr(middleware, name)(value, path="$.custom")
@@ -709,13 +688,13 @@ def test_public_validators_preserve_nested_error_paths(name, value, path):
     ],
 )
 def test_finish_structures_are_optional(finish):
-    from my_llm.middleware import validate_events
+    from my_llm.middleware.validation import validate_events
 
     validate_events([finish])
 
 
 def test_event_structured_fields_must_match_the_event_kind():
-    from my_llm.middleware import validate_events
+    from my_llm.middleware.validation import validate_events
 
     with pytest.raises(MessageValidationError, match=r"chunks\[0\].messages"):
         validate_events([{"type": "delta", "field": "text", "value": "x", "messages": []}])

@@ -1,8 +1,9 @@
 # 流状态与块身份
 
-协议依据复核日期：2026-10-17；字段边界与操作契约更新于 2026-10-20。依据官方协议定义，维护
+协议依据复核日期：2026-10-17；公开流契约更新于 2026-11-22。依据官方协议定义，维护
 [`StreamState`](../../src/my_llm/runtime/state.py) 的块身份、累积和发布规则。
-公开接口继续返回各协议的标准字典；下述操作仅属于内部 Codec 边界。
+生成接口按 stdio 返回原生标准字典或公开 `MessageEvent`；下述累积操作仅属于内部 Codec 边界。
+`StreamState` 和内部批次不提供独立业务调用契约。
 
 ## 官方依据
 
@@ -12,9 +13,27 @@
 | OpenAI Responses | [流事件](https://developers.openai.com/api/reference/resources/responses/streaming-events)：output_index 标识输出项，content_index / summary_index 标识文本或思考摘要部分；完成响应提供最终 output。 |
 | Anthropic | [Streaming messages](https://platform.claude.com/docs/en/build-with-claude/streaming)：内容块按 index 开启、增量更新和关闭；签名在块关闭前到达；display=omitted 时 thinking 文本可以为空。 |
 
+## 公开流转换边界
+
+`MyCodec.encode(chunks=完整原生事件列表, input_format=来源协议)` 在内部完成累积和成功 EOF 校验，
+返回的 `ProtocolMiddleWare.stream` 是 `list[MessageEvent]`；字典投影键 `chunks` 也只包含公开事件。
+`MyCodec.decode(chunks=完整公开事件列表, target_format=目标协议)` 独立完成目标翻译，
+不要求调用方接触 `StreamBatch`、`StreamState` 或组件方法。
+`MyCodec.convert(chunks=完整原生事件列表, ...)` 在同一次调用中连接这两步。
+转换器不记住上一轮的流片段；实时响应通过 `MyLLM.generate(stream=True)` 消费。
+
+每个公开事件携带来源 `protocol`；`finish` 另外保存 encoder 已提取的 `metadata` 上下文，
+以及 `messages` 和 `output_blocks: list[StreamBlock]` 终态快照。
+`StreamBlock` 的 `index`、`source_ref` 和具体 `block` 明确保留终态块身份。
+这些内容均参与 wire 投影，因此公开事件经 JSON 保存后仍可完整交给 `decode()`。
+上下文只包含中间层已识别的字段，不保存未知原生字段或原始事件。
+
+实时生成内部可逐片编码、累积和渲染；这些步骤复用同一次请求的状态，
+不属于公开翻译方法对完整流的保证范围。
+
 ## 操作边界
 
-Encoder 无状态，只翻译本次传入事件中已识别的字段。内部批次结构为
+Encoder 无状态，只翻译本次传入事件中已识别的字段。内部 `StreamBatch` 批次结构为
 `{"type": "batch", "protocol": "来源协议", "events": [...]}`，只包含已识别的操作，
 不保存原始事件或未识别的扩展。
 
@@ -43,8 +62,10 @@ values 在状态入口捕获独立副本，只复制 path 经过的已有容器�
 
 `BlockRef(scope, index, part)` 使用固定结构表示源地址；所有累积器映射键都归一为此类型。
 NamedTuple 在中间字典中可直接 JSON 序列化，反序列化后的列表在累积器入口还原。
-输出块位置来自请求内块列表，与源引用分离。内部发布事件携带 source_ref；
-Responses Decoder 据此保持原生父 item 身份与内容/摘要索引，不把多个 part 改成多个加密 item。没有 `index=None` 约定，
+输出块位置来自请求内块列表，与源引用分离。公开事件与终态块均保留 source_ref；
+Responses Decoder 使用源引用与已识别的项头上下文保持原生父 item 分组，并为保留的目标项
+及其 part 建立连续地址映射。能力过滤不改变源引用，目标索引由映射确定，不直接复用源块位置。
+映射属于本次渲染状态，增量事件和最终 output 使用同一份映射。没有 `index=None` 约定，
 也没有 `part_n`、`complete_n` 或 `final_n` 合成键。
 
 `BlockState` 收拢内容、片段列表、工具参数列表和发布/关闭状态。
@@ -84,7 +105,7 @@ EOF 本身不代表成功，必须收到源协议的终止操作。重复原生�
 
 [`test_stream_state.py`](../../tests/contract/test_stream_state.py) 使用独立编写的原生事件覆盖：
 
-- 三协议中间事件经 JSON 往返后，逐块或批量输入的结果一致。
+- 三协议公开中间事件经 JSON 往返后，完整流独立翻译的结果一致；内部累积另验证不同分片边界。
 - 改变同一文本和工具参数的分片方式，Unicode、嵌套 JSON 和结果保持一致。
 - 重复文本的引用信息按输出项及内容部分隔离。
 - 最终快照补齐多个缺失块和后缀；相互矛盾的已发布文本、遗漏已有块的快照报错。

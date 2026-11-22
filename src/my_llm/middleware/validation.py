@@ -306,6 +306,12 @@ _EVENT_STRUCTURES = (
 def _event(value) -> None:
     """Check a public event and the nested structures allowed for its type."""
     kind = _kind(value, _EVENT_FIELDS, "event")
+    if "protocol" in value and not isinstance(value["protocol"], str):
+        raise _InvalidWire("expected a source protocol string", ".protocol")
+    if "metadata" in value:
+        if kind != "finish":
+            raise _InvalidWire("only finish carries completed stream metadata", ".metadata")
+        _member(value, "metadata", _object)
     if kind == "delta" and value["field"] not in ("text", "reasoning"):
         raise _InvalidWire("unknown middleware delta field", ".field")
     for name, check in _EVENT_STRUCTURES:
@@ -429,3 +435,15 @@ def validate_operations(
 def validate_events(values: list, path: str = "$.chunks") -> None:
     """Check public events, including optional finish messages and output blocks."""
     _validate(values, _events, path)
+
+
+def validate_complete_stream(values: list) -> None:
+    """Check public offline translation input, including its required final snapshot."""
+    validate_events(values)
+    if not values:
+        return
+    if values[-1]["type"] != "finish" or any(event["type"] == "finish" for event in values[:-1]):
+        from my_llm.basic.exceptions import IncompleteStreamError
+
+        raise IncompleteStreamError("translation requires one complete middleware stream")
+    _validate(values[-1], _fields, "$.chunks[-1]", ("reason", "messages", "output_blocks"))

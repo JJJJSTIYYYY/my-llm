@@ -2,13 +2,15 @@
 
 每个协议实现 BaseEncoder、BaseDecoder、BaseTransport，由 BaseCodec 组合并声明 ProtocolDefaults。
 Encoder 接收完整调用字典，验证和编码输入；Decoder 准备客户端参数、请求参数和本地控制项；
-Transport 只构造／调用 SDK、关闭客户端及本次响应。四个基类、PreparedOptions、Parameter 和 Config 均从 my_llm 导入。
+Transport 只构造／调用 SDK、关闭客户端及本次响应。扩展基类从 `my_llm.codec.base` 导入；
+内部 `PreparedOptions` 位于 `my_llm.codec.shared.options`，配置模型从 `my_llm` 导入。
+这些组件属于扩展实现契约，业务调用仅使用 `MyLLM.generate` 与 `MyCodec.encode` / `decode` / `convert`。
 
 ## 目录与实例生命周期
 
 协议包包含 codec.py、transport.py、encoding/encoder.py、decoding/decoder.py；内容辅助放在各方向 content.py，
 双向共用规则按职责直接放在协议根目录。例如 Anthropic 的内容规则放在 content.py，不再为单个模块建立 utils/。
-注册工厂每次创建独立 codec 与组件，允许实例状态；不能共享 adaptor 或可变组件。初始化文件只导出接口。
+注册工厂每次创建独立 codec 与组件，允许实例状态；不能共享 adaptor 或可变组件。初始化文件仅在扩展契约层导出必要基类；原生组件从其实现模块导入。
 不导入其他协议实现，也不让 Encoder / Decoder 相互导入或依赖 Transport。
 官方 SDK 类型和方法签名可用于静态 Schema 分析；SDK 客户端创建和调用只能出现在 Transport。
 
@@ -20,9 +22,9 @@ Transport 只构造／调用 SDK、关闭客户端及本次响应。四个基类
 | BaseDecoder | protocol、request_schema、message_type / tool_type、message_path / tool_path、_messages / _tools / _chunks、usage、assemble_request。 |
 | BaseTransport | create_client(parameters: dict)、upstream(client, request: dict)。 |
 
-属性可用类属性实现。messages / tools / chunks 是固定公开入口，私有钩子的签名为
+属性可用类属性实现。messages / tools / chunks 是组件内部固定入口，私有钩子的签名为
 (values: list, profile: ResolvedProfile | None = None, **parameters)。
-Encoder.matches 负责整批识别。validate_input 是固定公开入口，先通过 _validation_messages / _validation_tools 丢弃未支持原生字段，再使用公开 SDK 类型只读验证；自定义输入语义通过这些投影钩子和 validate_values 实现。request 复用已归一化视图执行同一组验证钩子，不重复进入公开输入边界。
+Encoder.matches 负责整批识别。validate_input 是组件内部固定校验入口，先通过 _validation_messages / _validation_tools 丢弃未支持原生字段，再使用公开 SDK 类型只读验证；自定义输入语义通过这些投影钩子和 validate_values 实现。request 复用已归一化视图执行同一组验证钩子，不重复进入输入校验边界。
 Encoder.request(inputs, profile) 接收完整 generate 输入并输出包含 profile 和类型化 middleware 的调用信封。
 
 两个方向的私有转换钩子只读借用输入，只处理已识别字段，不保留未知字段或原始快照。
@@ -33,7 +35,7 @@ Decoder 的消息循环通过 `codec.shared.input.message_feedback(messages, pro
 `message_feedback` 内部固定对连续的 Responses 来源 assistant 项分组，完成消息合并与回传判断；其他消息逐条处理。
 Chat、Anthropic 默认合并组内内容；Responses 传 `merge=False`，仅按组判断回传，保留原生 item 身份。调用方无需指定来源分组协议。
 回传策略排除的思考不记录损失；能力损失与协议原生限制一同交给完整 draft 的 adaptor 处理。
-公开 messages / tools 捕获独立结果；内部 Decoder.request 直接调用私有钩子，
+组件 messages / tools 捕获独立结果；内部 Decoder.request 直接调用私有钩子，
 由最终 native_request 捕获 SDK 需要的可变内容，避免先复制公开转换结果再复制请求。
 工具参数、结果和 JSON Schema 的开放字典应完整保留内部应用键。
 两个方向的 _chunks 直接构造独立事件，只复制借入的可变叶；不可变文本不需要再次复制。
@@ -73,7 +75,7 @@ assemble_request(messages, tools, profile, *, request: dict, **parameters) 只�
 
 不覆盖 final 的 request / prepare / native_request。tools=None 省略，tools=[] 显式发送空列表。
 BaseCodec.validate_profile 委托 Decoder；MyLLM 在构造时调用，并准备连接字典。
-MyCodec.request 是离线原生请求入口，共用 Decoder 请求流程；完整调用使用 MyCodec.prepare。
+MyCodec._request 与 MyCodec._prepare 只服务生成内部流程，不作为独立公开业务入口。
 中间消息的结构检查与工具关联收集共用一次遍历，关联错误在工具定义和控制项检查后报告。
 三种内置协议共用 BaseDecoder.filter_messages 的外层循环，不根据翻译标记跳过能力处理。
 InputPolicy 在本次过滤开始时读取固定的模型能力和推理反馈配置，逐条检查仍保留损失来源与路径。
@@ -132,7 +134,6 @@ SDK 根参数必须符合 SDK 调用签名，非标准字段使用 SDK 正式提
 ```python
 from my_llm import (
     Attribute,
-    BaseCodec,
     Config,
     ModelProfile,
     MyCodec,
@@ -143,6 +144,8 @@ from my_llm import (
     omit,
 )
 from copy import deepcopy
+
+from my_llm.codec.base import BaseCodec
 
 from your_package.decoding.decoder import ExampleDecoder
 from your_package.encoding.encoder import ExampleEncoder
@@ -190,7 +193,9 @@ MyCodec / MyLLM 实例保留创建时的注册快照；注册新协议后需创�
 ## 中间态与字段边界
 
 消息使用 role 与 content 块；工具调用与结果使用 tool_use / tool_result。
-公开中间态是具体 ProtocolMiddleWare 及类型化模型；临时字典仅服务原生解析和组装。应用历史仍使用原生协议值。
+公开中间态是具体 ProtocolMiddleWare 及类型化模型，`stream` 统一保存公开 `MessageEvent`；
+临时字典与内部 `StreamBatch` 仅服务原生解析、累积和组装。应用历史可使用原生值，
+也可显式选择 middleware stdio 后传具体消息模型。
 
 - 中间态只包含已识别字段；未声明的非标准字段直接跳过，不读取、不校验，也不逐项扫描检查未知键。
 - protocol 字符串记录必要的来源语义；共享函数据此识别 Responses 项分组，各 decoder 选择是否合并，不在公共模型保存合并指令或原始对象、事件。

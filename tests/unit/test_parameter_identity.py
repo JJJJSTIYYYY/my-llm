@@ -281,7 +281,7 @@ def test_unsupported_output_parameter_is_preserved_by_encoder_and_lost_in_decode
             **{name: parameter(name, protocol=protocol, supports=False)},
         ),
     )
-    codec = MyCodec().codecs[protocol]
+    codec = MyCodec()._codecs[protocol]
     event = codec.decoder.chunks(
         [
             {
@@ -342,14 +342,14 @@ def test_anthropic_initial_block_cannot_restore_unsupported_output(name, kind):
     ]
     before = deepcopy(incoming)
     state = StreamState("demo")
-    state.feed(MyCodec().codecs["anthropic"].encoder.chunks(incoming, profile))
+    state.feed(MyCodec()._codecs["anthropic"].encoder.chunks(incoming, profile))
     state.finish()
     result = state.messages()[0]["content"][0]
     assert result.get("reasoning" if kind == "thinking" else kind, "") == "disabled"
     from my_llm import SemanticLossError
 
     with pytest.raises(SemanticLossError, match="model does not support"):
-        MyCodec().result(state.messages(), target_format="anthropic", semantic_profile=profile)
+        MyCodec()._result(state.messages(), target_format="anthropic", semantic_profile=profile)
     if kind == "thinking":
         assert result["feedback_item"]["signature"] == "native-signature"
     assert incoming == before
@@ -401,7 +401,7 @@ def test_responses_final_snapshot_cannot_restore_unsupported_output(name):
     ]
     before = deepcopy(incoming)
     state = StreamState("demo")
-    state.feed(MyCodec().codecs["openai_responses"].encoder.chunks(incoming, profile))
+    state.feed(MyCodec()._codecs["openai_responses"].encoder.chunks(incoming, profile))
     state.finish()
     blocks = [block for message in state.messages() for block in message["content"]]
     text = next(block for block in blocks if block["type"] == "text")
@@ -412,7 +412,7 @@ def test_responses_final_snapshot_cannot_restore_unsupported_output(name):
     from my_llm import SemanticLossError
 
     with pytest.raises(SemanticLossError, match="model does not support"):
-        MyCodec().result(
+        MyCodec()._result(
             state.messages(), target_format="openai_responses", semantic_profile=profile
         )
     assert reasoning["feedback_item"]["encrypted_content"] == "opaque-reasoning"

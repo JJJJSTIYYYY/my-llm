@@ -1,6 +1,6 @@
 import pytest
 
-from my_llm import Attribute, Config, ConfigurationError, ModelProfile, ProviderProfile, generate
+from my_llm import Attribute, Config, ConfigurationError, ModelProfile, MyLLM, ProviderProfile
 from my_llm.profile.resolution import resolve_profiles
 from tests.helpers.profiles import parameter
 from tests.helpers.protocols import chat_event, response_completed
@@ -203,11 +203,8 @@ async def test_metadata_does_not_change_request_or_limit_content(protocol, windo
         lambda **kwargs: client,
     )
     text = "content longer than the configured context window " * 10
-    await generate(
-        stdio_protocol="openai_chat",
-        provider=provider,
-        model=model,
-        messages=[{"role": "user", "content": text}],
+    await MyLLM(stdio_protocol="openai_chat", provider=provider, model=model).generate(
+        messages=[{"role": "user", "content": text}]
     )
     request = client.requests[0]
     assert "models" not in request and "max_context_window" not in request

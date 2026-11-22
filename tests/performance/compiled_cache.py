@@ -38,8 +38,8 @@ async def benchmark(protocol, iterations, warmup):
     }
 
     async def prepare():
-        return await llm.codec.prepare(
-            inputs, llm.resolved_profile, input_format=protocol, client=llm.client_parameters
+        return await llm._codec._prepare(
+            inputs, llm.resolved_profile, input_format=protocol, client=llm._client_parameters
         )
 
     (await prepare())

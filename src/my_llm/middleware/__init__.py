@@ -1,4 +1,4 @@
-"""Public SDK-independent protocol models and conversion helpers."""
+"""Public SDK-independent messages, tools and stream event models."""
 
 from my_llm.middleware.models import (
     AssistantMessage,
@@ -12,36 +12,20 @@ from my_llm.middleware.models import (
     Message,
     MessageContent,
     Origin,
-    ProtocolValue,
     ReasoningContent,
     TextContent,
     ToolCall,
     ToolMessage,
     ToolResult,
     UserMessage,
-    content_from_validated_wire,
-    content_from_wire,
-    messages_from_validated_wire,
-    messages_from_wire,
-    tools_from_wire,
 )
 from my_llm.middleware.protocol import (
     ProtocolMiddleWare,
-    generation_input,
-    wire_values,
 )
 from my_llm.middleware.stream import (
     MessageEvent,
-    StreamBatch,
+    StreamBlock,
     Usage,
-    stream_from_wire,
-)
-from my_llm.middleware.validation import (
-    validate_content,
-    validate_events,
-    validate_messages,
-    validate_operations,
-    validate_tools,
 )
 
 __all__ = [
@@ -58,26 +42,12 @@ __all__ = [
     "MessageEvent",
     "Origin",
     "ProtocolMiddleWare",
-    "ProtocolValue",
     "ReasoningContent",
     "ToolResult",
-    "StreamBatch",
+    "StreamBlock",
     "TextContent",
     "ToolCall",
     "ToolMessage",
     "Usage",
     "UserMessage",
-    "content_from_validated_wire",
-    "content_from_wire",
-    "generation_input",
-    "messages_from_validated_wire",
-    "messages_from_wire",
-    "stream_from_wire",
-    "tools_from_wire",
-    "validate_content",
-    "validate_events",
-    "validate_messages",
-    "validate_operations",
-    "validate_tools",
-    "wire_values",
 ]

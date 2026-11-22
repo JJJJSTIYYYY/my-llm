@@ -105,7 +105,7 @@ def test_tool_definition_error_keeps_precedence_over_association_error():
     provider, model = profiles("openai_chat")
     llm = MyLLM(provider=provider, model=model, stdio_protocol="middleware")
     with pytest.raises(MessageValidationError, match="functions"):
-        llm.codec.decoder("openai_chat").request(
+        llm._codec._decoder("openai_chat").request(
             [
                 {
                     "role": "user",
@@ -121,7 +121,7 @@ def test_invalid_controls_keep_precedence_over_association_error():
     provider, model = profiles("openai_chat")
     llm = MyLLM(provider=provider, model=model, stdio_protocol="middleware")
     with pytest.raises(ConfigurationError, match="stream must be a bool"):
-        llm.codec.decoder("openai_chat").request(
+        llm._codec._decoder("openai_chat").request(
             [{"role": "invalid", "content": []}], None, llm.resolved_profile, stream="invalid"
         )
 
@@ -131,7 +131,7 @@ def test_invalid_controls_keep_precedence_over_association_error():
 def test_transformed_messages_keep_capability_checks_for_every_protocol(protocol, injected):
     provider, model = profiles(protocol)
     llm = MyLLM(provider=provider, model=model, stdio_protocol="openai_chat")
-    decoder = llm.codec.decoder(protocol)
+    decoder = llm._codec._decoder(protocol)
     if injected == "tool_round":
         additions = history(protocol)
         capability, reason = "supports_function_calling", "function calling"
@@ -159,7 +159,7 @@ def test_transformed_messages_keep_capability_checks_for_every_protocol(protocol
 def test_protocols_share_filter_messages_and_keep_sdk_projection(protocol):
     provider, model = profiles(protocol)
     llm = MyLLM(provider=provider, model=model, stdio_protocol=protocol)
-    decoder = llm.codec.decoder(protocol)
+    decoder = llm._codec._decoder(protocol)
     assert type(decoder).filter_messages is BaseDecoder.filter_messages
     native = user_message(protocol, "hello", media=False)
     native["unknown_extension"] = {"ignored": True}
@@ -173,7 +173,7 @@ def test_protocols_share_filter_messages_and_keep_sdk_projection(protocol):
 def test_filter_policy_reads_capabilities_once_for_the_entire_batch(monkeypatch, protocol):
     provider, model = profiles(protocol)
     llm = MyLLM(provider=provider, model=model, stdio_protocol=protocol)
-    decoder = llm.codec.decoder(protocol)
+    decoder = llm._codec._decoder(protocol)
     original = input_module.supports_content
     reads = []
 
@@ -192,7 +192,7 @@ def test_filter_policy_reads_capabilities_once_for_the_entire_batch(monkeypatch,
 def test_public_request_revalidates_mutated_middleware_models():
     provider, model = profiles("openai_chat")
     llm = MyLLM(provider=provider, model=model, stdio_protocol="openai_chat")
-    encoded = llm.codec.encode(
+    encoded = llm._codec.encode(
         [{"role": "assistant", "content": "hello", "reasoning_content": "why"}],
         input_format="openai_chat",
     )
@@ -201,7 +201,7 @@ def test_public_request_revalidates_mutated_middleware_models():
     )
     reasoning.reasoning = 123
     with pytest.raises(MessageValidationError, match="reasoning"):
-        llm.codec.request(encoded, llm.resolved_profile)
+        llm._codec._request(encoded, llm.resolved_profile)
 
 
 async def test_cached_translation_is_filtered_again_without_readding_unsupported_content():
@@ -226,15 +226,15 @@ async def test_cached_translation_is_filtered_again_without_readding_unsupported
         semantic_loss_protocol="ignore",
         enable_message_cache=True,
     )
-    llm.codec.codecs["openai_chat"].decoder = ExtensionDecoder()
+    llm._codec._codecs["openai_chat"].decoder = ExtensionDecoder()
 
     async def prepare(text):
         return (
-            await llm.codec.prepare(
+            await llm._codec._prepare(
                 {"messages": [{"role": "user", "content": text}], "tools": None, "stream": True},
                 llm.resolved_profile,
                 input_format="openai_chat",
-                client=llm.client_parameters,
+                client=llm._client_parameters,
                 enable_message_cache=True,
                 message_cache_key=llm._message_cache_key,
             )
@@ -243,7 +243,7 @@ async def test_cached_translation_is_filtered_again_without_readding_unsupported
     first = await prepare("initial")
     expected = [{"type": "text", "text": "initial"}]
     assert first["messages"][0]["content"] == expected
-    cached = llm.codec._message_cache.get(llm._message_cache_key)
+    cached = llm._codec._message_cache.get(llm._message_cache_key)
     assert cached[0]["content"][1]["type"] == "unsupported_extension"
     second = await prepare("next")
     assert second["messages"][0]["content"] == expected
@@ -254,7 +254,7 @@ async def test_cached_translation_is_filtered_again_without_readding_unsupported
 def test_public_filter_override_is_checked_after_returning(protocol):
     provider, model = profiles(protocol)
     llm = MyLLM(provider=provider, model=model, stdio_protocol=protocol)
-    original_type = type(llm.codec.decoder(protocol))
+    original_type = type(llm._codec._decoder(protocol))
 
     class InvalidFilter(original_type):
         def filter_messages(self, messages, profile, **parameters):

@@ -85,7 +85,7 @@ class MyLLM:
         """Create an instance from profiles; see the class for argument contracts."""
         if not isinstance(enable_message_cache, bool):
             raise ConfigurationError("enable_message_cache must be a bool")
-        self.codec = MyCodec(
+        self._codec = MyCodec(
             semantic_loss_protocol=semantic_loss_protocol,
             input_semantic_loss_hook=input_semantic_loss_hook,
             output_semantic_loss_hook=output_semantic_loss_hook,
@@ -95,12 +95,12 @@ class MyLLM:
         if stdio_protocol is not None and (
             not isinstance(stdio_protocol, str)
             or stdio_protocol != "middleware"
-            and stdio_protocol not in self.codec.codecs
+            and stdio_protocol not in self._codec._codecs
         ):
             raise ConfigurationError(f"unsupported stdio_protocol: {stdio_protocol!r}")
         if resolved_profile is None:
             self._resolved_profile = resolve_profiles(
-                provider, model, defaults_for=self.codec.defaults
+                provider, model, defaults_for=self._codec._defaults
             )
         else:
             if not isinstance(provider, ProviderProfile) or not isinstance(model, ModelProfile):
@@ -108,8 +108,8 @@ class MyLLM:
             if not isinstance(resolved_profile, ResolvedProfile):
                 raise ConfigurationError("resolved_profile must be a ResolvedProfile")
             self._resolved_profile = deepcopy(resolved_profile)
-        self.codec.validate_profile(self.resolved_profile)
-        self.client_parameters = self.codec.client_parameters(self.resolved_profile)
+        self._codec._validate_profile(self.resolved_profile)
+        self._client_parameters = self._codec._client_parameters(self.resolved_profile)
         self.provider = deepcopy(provider)
         if self.provider.provider is None:
             self.provider.provider = Attribute(default_value=self.resolved_profile.protocol)
@@ -117,26 +117,13 @@ class MyLLM:
         self._stdio_protocol = stdio_protocol
         self._last_usage: Usage | None = None
 
-    @classmethod
-    def resolve_profile(cls, provider: ProviderProfile, model: ModelProfile) -> ResolvedProfile:
-        """Resolve provider/model settings into an independent configuration snapshot."""
-        return resolve_profiles(provider, model)
-
     def clear_cache(self) -> None:
         """Clear this instance's translated history and last-input deduplication.
 
         Finish or close active streams before clearing. Applications own session
         isolation and decide when a reused instance starts a new conversation.
         """
-        self.codec.expire_message_cache(self._message_cache_key)
-
-    def compare(self, new_provider: str, new_model: str, new_stdio_protocol: str) -> bool:
-        """Compare reuse identifiers; applications own configuration/session isolation."""
-        return (
-            new_provider == self.provider.provider.default_value
-            and new_model == self.model.model.default_value
-            and new_stdio_protocol == self.stdio_protocol
-        )
+        self._codec._expire_message_cache(self._message_cache_key)
 
     @property
     def resolved_profile(self) -> ResolvedProfile:
@@ -156,7 +143,7 @@ class MyLLM:
         output_semantic_loss_hook: SemanticLossHook | None = None,
     ) -> None:
         """Replace this instance's semantic-loss policy and direction-specific hooks."""
-        self.codec.set_semantic_loss_policy(
+        self._codec._set_semantic_loss_policy(
             semantic_loss_protocol=semantic_loss_protocol,
             input_semantic_loss_hook=input_semantic_loss_hook,
             output_semantic_loss_hook=output_semantic_loss_hook,
@@ -169,26 +156,6 @@ class MyLLM:
         A stream must finish successfully before replacing the previous record.
         """
         return replace(self._last_usage) if self._last_usage is not None else None
-
-    def guess_stdio_protocol(self, messages_or_tools: list[Any]) -> Protocol:
-        """Return the bound protocol, or infer and bind it from a whole input list.
-
-        Args:
-            messages_or_tools: Standard messages or tool declarations to inspect.
-
-        Returns:
-            The existing protocol, or the uniquely matching registered protocol.
-
-        Raises:
-            MessageValidationError: Unbound input matches zero or multiple protocols.
-                Empty input cannot identify a protocol. Failed inference leaves the
-                instance unbound.
-        """
-        if self.stdio_protocol is None:
-            self._stdio_protocol = self.codec.bind_input(
-                {"messages": messages_or_tools, "tools": omit}, None
-            )
-        return self.stdio_protocol
 
     async def generate(
         self,
@@ -289,14 +256,14 @@ class MyLLM:
             extra_body=extra_body,
             previous_response_id=previous_response_id,
         )
-        protocol = self.codec.bind_input(inputs, self.stdio_protocol)
+        protocol = self._codec._bind_input(inputs, self.stdio_protocol)
         self._stdio_protocol = protocol
         profile = self.resolved_profile
-        prepared = await self.codec.prepare(
+        prepared = await self._codec._prepare(
             inputs,
             profile,
             input_format=protocol,
-            client=self.client_parameters,
+            client=self._client_parameters,
             enable_message_cache=self.enable_message_cache,
             message_cache_key=self._message_cache_key,
         )
@@ -314,13 +281,15 @@ class MyLLM:
         self, events: list[dict], state: StreamState, protocol: Protocol
     ) -> list[dict | MessageEvent]:
         """Render public middleware events and advance the output sequence number."""
-        output = self.codec.decode(
+        output = self._codec._decode(
             chunks=events,
             target_format=protocol,
             input_format=self.resolved_profile.protocol,
             origin_source="output",
             semantic_profile=self.resolved_profile,
             sequence_number=state.sequence_number,
+            stream_metadata=state.metadata,
+            stream_indices=state.stream_indices,
             **state.metadata,
         )["chunks"]
         state.sequence_number += len(output)
@@ -345,33 +314,36 @@ class MyLLM:
         profile = self.resolved_profile
         streaming = prepared["local"]["stream"]
         try:
-            transport = self.codec.transport(profile.protocol)
+            transport = self._codec._transport(profile.protocol)
             async with AsyncExitStack() as resources:
                 client = transport.create_client(prepared["client"])
                 resources.push_async_callback(transport.close_client, client)
                 upstream = await resources.enter_async_context(
-                    self.codec.upstream(client, prepared["request"], profile)
+                    self._codec._upstream(client, prepared["request"], profile)
                 )
                 chunk_offset = 0
                 async for event in upstream:
-                    encoded = self.codec.encode(
+                    encoded = self._codec._encode_chunks(
                         chunks=[event],
                         input_format=profile.protocol,
                         profile=profile,
                         chunk_offset=chunk_offset,
-                    )["chunks"]
+                    )
                     chunk_offset += 1
                     emitted = state.feed(encoded)
                     if streaming and emitted:
                         for output in self._render(emitted, state, stdio_protocol):
                             yield output
                 final = state.finish()
-                converted = self.codec.result(
+                converted = self._codec._result(
                     final[-1]["messages"],
                     target_format=stdio_protocol,
                     input_format=profile.protocol,
                     origin_source="output",
                     semantic_profile=profile,
+                    final_event=final[-1],
+                    stream_indices=state.stream_indices,
+                    **state.metadata,
                 )
                 if streaming:
                     for output in self._render(final, state, stdio_protocol):
@@ -380,7 +352,7 @@ class MyLLM:
             self._last_usage = Usage.from_record(state.usage) if streaming else None
         except StreamError as exc:
             try:
-                exc.partial_message = self.codec.result(
+                exc.partial_message = self._codec._result(
                     state.messages(partial=True),
                     target_format=stdio_protocol,
                     input_format=profile.protocol,
@@ -389,55 +361,3 @@ class MyLLM:
             except Exception as render_error:
                 exc.add_note(f"Failed to render partial_message: {render_error!r}")
             raise
-
-
-async def generate(
-    *,
-    provider: ProviderProfile,
-    model: ModelProfile | str,
-    messages: Sequence[Any],
-    stdio_protocol: Protocol | None = None,
-    semantic_loss_protocol: LossPolicy = "raise",
-    input_semantic_loss_hook: SemanticLossHook | None = None,
-    output_semantic_loss_hook: SemanticLossHook | None = None,
-    **parameters: Any,
-) -> MessageStream | dict | list | Message:
-    """Generate once with a temporary MyLLM instance.
-
-    Args:
-        provider: Provider connection settings and default upstream protocol.
-        model: ModelProfile or a nonempty model ID. An ID creates a ModelProfile;
-            it does not look up the provider's model catalogue.
-        messages: History in the selected input/output protocol.
-        stdio_protocol: Input/output protocol, or None for unique inference.
-            Typed middleware input requires explicit "middleware".
-        semantic_loss_protocol: "raise", "ignore", or "hook" for semantic loss.
-        input_semantic_loss_hook: Optional sync/async request hook for the "hook" policy.
-        output_semantic_loss_hook: Optional response draft hook for the "hook" policy.
-        **parameters: Generation options accepted by MyLLM.generate, including
-            stream, tools, api_key, max_tokens, reasoning and extra_body.
-
-    Returns:
-        A completed native message/items, or a MessageStream when stream=True.
-        Close a returned stream with ``async with`` or ``await stream.aclose()``
-        to release request resources on early exit.
-
-    Raises:
-        ConfigurationError: The profiles or options are invalid.
-        MessageValidationError: Input is invalid or its protocol is ambiguous.
-        StreamError: The response fails or does not complete successfully.
-
-    The return formats and remaining error behavior match MyLLM.generate.
-    """
-    selected = (
-        ModelProfile(model=Attribute(default_value=model)) if isinstance(model, str) else model
-    )
-    llm = MyLLM(
-        provider=provider,
-        model=selected,
-        stdio_protocol=stdio_protocol,
-        semantic_loss_protocol=semantic_loss_protocol,
-        input_semantic_loss_hook=input_semantic_loss_hook,
-        output_semantic_loss_hook=output_semantic_loss_hook,
-    )
-    return await llm.generate(messages=messages, **parameters)

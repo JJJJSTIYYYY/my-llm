@@ -39,9 +39,9 @@ def test_invalid_options_fail_before_translation(
     def must_not_translate(*args, **kwargs):
         pytest.fail("invalid generation options reached the Decoder")
 
-    monkeypatch.setattr(type(codec.decoder(protocol)), "_messages", must_not_translate)
+    monkeypatch.setattr(type(codec._decoder(protocol)), "_messages", must_not_translate)
     with pytest.raises(ConfigurationError, match=match):
-        codec.request(
+        codec._request(
             intermediate,
             profile_factory(protocol, max_tokens=parameter("max_tokens", 4096, protocol=protocol)),
             **parameters,
@@ -63,9 +63,9 @@ def test_protected_binding_fails_before_translation(monkeypatch, profile_factory
     def must_not_translate(*args, **kwargs):
         pytest.fail("a protected reasoning binding reached the Decoder")
 
-    monkeypatch.setattr(type(codec.decoder(protocol)), "_messages", must_not_translate)
+    monkeypatch.setattr(type(codec._decoder(protocol)), "_messages", must_not_translate)
     with pytest.raises(ConfigurationError, match="cannot override protocol parameters"):
-        codec.request(intermediate, profile, reasoning=True)
+        codec._request(intermediate, profile, reasoning=True)
 
 
 def test_responses_omitted_path_disables_generated_effort(profile_factory):
@@ -107,11 +107,11 @@ def test_prepared_options_and_requests_own_their_nested_values(
         ),
     )
     profile_before = deepcopy(profile.values)
-    options = codec.decoder(protocol).validate_parameters(
+    options = codec._decoder(protocol).validate_parameters(
         profile, reasoning=True, extra_body=caller_body, extra_headers=caller_headers
     )
     options_before = deepcopy(options)
-    request = codec.decoder(protocol).request_parameters(profile, options)
+    request = codec._decoder(protocol).request_parameters(profile, options)
     assert path_value(request, "$." + request_path) == ["default"]
 
     path_value(caller_body, "$." + body_path).append("caller edit")
@@ -126,7 +126,7 @@ def test_prepared_options_and_requests_own_their_nested_values(
     assert profile.values == profile_before
     assert path_value(profile_body, "$." + body_path) == ["profile"]
     assert path_value(
-        codec.decoder(protocol).request_parameters(profile, options), "$." + request_path
+        codec._decoder(protocol).request_parameters(profile, options), "$." + request_path
     ) == ["default"]
 
 

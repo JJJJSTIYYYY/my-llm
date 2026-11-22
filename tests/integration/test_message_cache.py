@@ -95,10 +95,10 @@ async def test_incremental_native_histories_cross_all_protocol_paths(upstream, s
         )
         assert initial == before and delta == delta_before
         assert sdk.created_clients == 2
-        assert key in llm.codec._message_cache
-        assert key in llm.codec._message_cache
+        assert key in llm._codec._message_cache
+        assert key in llm._codec._message_cache
         llm.clear_cache()
-        assert key not in llm.codec._message_cache
+        assert key not in llm._codec._message_cache
     assert all(body.closed for body in sdk.bodies)
 
 
@@ -254,7 +254,7 @@ async def test_loss_hook_edits_are_request_local_and_do_not_update_cached_transl
 
     def hook(draft, losses, context):
         assert context.origin_source == "input" and context.stage == "request"
-        cached_at_hook.append(llm.codec._message_cache.get(llm._message_cache_key))
+        cached_at_hook.append(llm._codec._message_cache.get(llm._message_cache_key))
         draft["messages"].append(
             {"role": "user", "content": [{"type": "text", "text": "hook-added"}]}
         )

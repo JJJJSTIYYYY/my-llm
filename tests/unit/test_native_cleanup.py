@@ -28,8 +28,8 @@ def test_stream_tool_arguments_are_owned_once_at_the_middleware_boundary(protoco
         },
     }
 
-    middleware = MyCodec().encode(chunks=[event], input_format=protocol)
-    tool = middleware.stream[0].events[-1]["block"]
+    middleware = MyCodec()._encode_chunks(chunks=[event], input_format=protocol)
+    tool = middleware[0]["events"][-1]["block"]
     assert len(copies) == 1
     assert tool["input"] == arguments
     arguments["items"][0]["value"] = 2

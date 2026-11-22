@@ -129,15 +129,17 @@ def test_accumulation_survives_json_round_trips_and_batch_boundaries(source, bat
     native = stream_events(source, tool=True)
     before = deepcopy(native)
     for start in range(0, len(native), batch_size):
-        encoded = codec.encode(chunks=native[start : start + batch_size], input_format=source)[
-            "chunks"
-        ]
+        encoded = codec._encode_chunks(
+            chunks=native[start : start + batch_size], input_format=source
+        )
         emitted.extend(state.feed(json.loads(json.dumps(encoded))))
     emitted.extend(state.finish())
-    output = codec.decode(chunks=emitted, target_format="anthropic")["chunks"]
+    output = codec._decode(
+        chunks=emitted, target_format="anthropic", stream_metadata=state.metadata
+    )["chunks"]
     validate_events("anthropic", output, output=True)
     reconstructed = StreamState("demo")
-    reconstructed.feed(codec.encode(chunks=output, input_format="anthropic")["chunks"])
+    reconstructed.feed(codec._encode_chunks(chunks=output, input_format="anthropic"))
     reconstructed.finish()
     collected = codec.decode(state.messages(), target_format="openai_chat")["messages"]
     replayed = codec.decode(reconstructed.messages(), target_format="openai_chat")["messages"]
@@ -176,7 +178,7 @@ def test_text_and_tool_results_do_not_depend_on_fragment_partition(parts):
     }
     assert MyCodec().decode(state.messages(), target_format="openai_chat")["messages"] == [expected]
     replayed = StreamState("demo")
-    replayed.feed(MyCodec().encode(chunks=emitted, input_format="openai_chat")["chunks"])
+    replayed.feed(MyCodec()._encode_chunks(chunks=emitted, input_format="openai_chat"))
     replayed.finish()
     assert replayed.messages() == state.messages()
 
@@ -227,17 +229,17 @@ def test_snapshot_supplements_each_unstreamed_block_and_suffix(live_text):
 def test_snapshot_cannot_silently_replace_already_emitted_text():
     codec, state = MyCodec(), StreamState("demo")
     state.feed(
-        codec.encode(
+        codec._encode_chunks(
             chunks=[{"type": "response.output_text.delta", "delta": "old"}],
             input_format="openai_responses",
-        )["chunks"]
+        )
     )
     with pytest.raises(IncompleteStreamError, match="contradicts"):
         state.feed(
-            codec.encode(
+            codec._encode_chunks(
                 chunks=[response_completed([response_message(0, ["new"])])],
                 input_format="openai_responses",
-            )["chunks"]
+            )
         )
     assert not state.finished
     assert state.messages(partial=True)[0]["content"][0]["text"] == "old"
@@ -288,7 +290,7 @@ def test_empty_thinking_and_redacted_blocks_keep_order_and_signatures():
         "feedback_item": {"type": "thinking", "thinking": "", "signature": "signed"},
     }
     reconstructed = StreamState("demo")
-    reconstructed.feed(MyCodec().encode(chunks=output, input_format="anthropic")["chunks"])
+    reconstructed.feed(MyCodec()._encode_chunks(chunks=output, input_format="anthropic"))
     reconstructed.finish()
     assert reconstructed.messages() == state.messages()
 
@@ -309,13 +311,15 @@ def test_tool_and_following_text_wait_for_success_and_keep_source_order(target):
     )
     codec, state = MyCodec(), StreamState("demo")
     for event in incoming:
-        assert state.feed(codec.encode(chunks=[event], input_format="anthropic")["chunks"]) == []
+        assert state.feed(codec._encode_chunks(chunks=[event], input_format="anthropic")) == []
     final = state.finish()
-    output = codec.decode(chunks=final, target_format=target)["chunks"]
+    output = codec._decode(chunks=final, target_format=target, stream_metadata=state.metadata)[
+        "chunks"
+    ]
     validate_events(target, output, output=True)
     assert [entry["block"]["type"] for entry in final[-1]["output_blocks"]] == ["tool_use", "text"]
     reconstructed = StreamState("demo")
-    reconstructed.feed(codec.encode(chunks=output, input_format=target)["chunks"])
+    reconstructed.feed(codec._encode_chunks(chunks=output, input_format=target))
     reconstructed.finish()
     chat = codec.decode(reconstructed.messages(), target_format="openai_chat")["messages"][0]
     assert chat["content"] == "after"
@@ -387,7 +391,7 @@ def test_invalid_tool_json_does_not_mark_stream_finished_or_mask_partial_text():
         ),
         chat_event(finish="length"),
     ]
-    emitted = state.feed(codec.encode(chunks=native, input_format="openai_chat")["chunks"])
+    emitted = state.feed(codec._encode_chunks(chunks=native, input_format="openai_chat"))
     assert all(event["type"] != "tool" for event in emitted)
     assert state.messages(partial=True)[0]["content"] == [{"type": "text", "text": "partial"}]
     with pytest.raises(MessageValidationError, match="JSON object"):
@@ -398,19 +402,17 @@ def test_invalid_tool_json_does_not_mark_stream_finished_or_mask_partial_text():
 def test_missing_terminal_and_post_finish_updates_are_rejected():
     codec, state = MyCodec(), StreamState("demo")
     state.feed(
-        codec.encode(chunks=[chat_event(content="partial")], input_format="openai_chat")["chunks"]
+        codec._encode_chunks(chunks=[chat_event(content="partial")], input_format="openai_chat")
     )
     with pytest.raises(IncompleteStreamError, match="terminal event"):
         state.finish()
-    state.feed(
-        codec.encode(chunks=[chat_event(finish="stop")], input_format="openai_chat")["chunks"]
-    )
+    state.feed(codec._encode_chunks(chunks=[chat_event(finish="stop")], input_format="openai_chat"))
     state.finish()
     with pytest.raises(IncompleteStreamError, match="already been finalized"):
         state.finish()
     with pytest.raises(IncompleteStreamError, match="already been finalized"):
         state.feed(
-            codec.encode(chunks=[chat_event(content="late")], input_format="openai_chat")["chunks"]
+            codec._encode_chunks(chunks=[chat_event(content="late")], input_format="openai_chat")
         )
 
 
@@ -419,13 +421,13 @@ def test_snapshot_cannot_omit_previously_streamed_blocks(final_texts):
     codec, state = MyCodec(), StreamState("demo")
     output = [response_message(0, ["kept"]), response_message(1, ["removed"])]
     live = response_text_events(output)[:-1]
-    state.feed(codec.encode(chunks=live, input_format="openai_responses")["chunks"])
+    state.feed(codec._encode_chunks(chunks=live, input_format="openai_responses"))
     final = [response_message(0, final_texts)] if final_texts else []
     with pytest.raises(IncompleteStreamError, match="omits streamed blocks"):
         state.feed(
-            codec.encode(chunks=[response_completed(final)], input_format="openai_responses")[
-                "chunks"
-            ]
+            codec._encode_chunks(
+                chunks=[response_completed(final)], input_format="openai_responses"
+            )
         )
     assert not state.finished
     assert [block["text"] for block in state.messages(partial=True)[0]["content"]] == [

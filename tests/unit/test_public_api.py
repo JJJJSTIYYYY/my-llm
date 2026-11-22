@@ -20,22 +20,17 @@ def test_public_contract_uses_standard_messages_and_one_protocol_field():
         "SemanticLossError",
         "SemanticLossItem",
         "SemanticLossGroup",
-        "BaseSemanticLossAdaptor",
         "Message",
         "ToolCall",
         "Usage",
         "MyCodec",
-        "BaseCodec",
-        "BaseEncoder",
-        "BaseDecoder",
-        "BaseTransport",
         "MyLLM",
         "MessageStream",
         "ResolvedProfile",
         "OverridableProfile",
         "Profile",
         "ProtocolDefaults",
-        "PreparedOptions",
+        "StreamBlock",
         "Parameter",
         "Config",
         "Attribute",
@@ -53,12 +48,59 @@ def test_public_contract_uses_standard_messages_and_one_protocol_field():
         "ParameterPath",
         "ParameterDefaultV",
         "UNSET",
+        "generate",
+        "BaseCodec",
+        "BaseEncoder",
+        "BaseDecoder",
+        "BaseTransport",
+        "BaseSemanticLossAdaptor",
+        "PreparedOptions",
+        "StreamBatch",
     ):
         assert not hasattr(my_llm, name)
     assert "api_type" not in ProviderProfile.__dataclass_fields__
     assert "client" not in inspect.signature(MyLLM).parameters
     assert "provider" not in inspect.signature(MyLLM.generate).parameters
     assert "model" not in inspect.signature(MyLLM.generate).parameters
+
+
+def test_package_facades_do_not_export_internal_operations():
+    import my_llm.codec
+    import my_llm.middleware
+    import my_llm.runtime
+
+    assert my_llm.codec.__all__ == ["MyCodec"]
+    assert "generate" not in my_llm.runtime.__all__
+    for name in (
+        "StreamBatch",
+        "wire_values",
+        "generation_input",
+        "validate_events",
+        "validate_messages",
+        "stream_from_wire",
+        "messages_from_wire",
+    ):
+        assert not hasattr(my_llm.middleware, name)
+
+
+def test_execution_and_translation_helpers_are_not_public_entry_points():
+    for name in (
+        "prepare",
+        "request",
+        "result",
+        "decoder",
+        "transport",
+        "defaults",
+        "validate_input",
+        "validate_profile",
+        "client_parameters",
+        "bind_input",
+        "upstream",
+        "match_protocol",
+    ):
+        assert not hasattr(my_llm.MyCodec, name)
+    for name in ("compare", "resolve_profile", "guess_stdio_protocol"):
+        assert not hasattr(MyLLM, name)
 
 
 def test_removed_constructor_options_fail():

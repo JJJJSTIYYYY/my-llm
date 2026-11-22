@@ -28,7 +28,9 @@ codec 布局与接口以本页目录说明、[架构文档](../design/architectu
 新增模块应以职责命名；同协议双向共用辅助放在协议根目录。只有职责确实形成多个模块时才增加目录，不为短小辅助函数单独建包。
 新增协议依据[接入协议指南](adding-protocol.md)实现四个基类的契约并调用 `MyCodec.register(factory)` 注册零参数工厂。
 Protocol 使用 str，新增协议不修改公共入口、枚举、默认值表或公共编排。
-Decoder._messages / _tools 与公开 messages / tools 均返回普通 list，不添加恢复分组。
+Decoder._messages / _tools 与其组件内部 messages / tools 方法均返回普通 list，不添加恢复分组。
+业务边界只保证 `MyLLM.generate` 和 `MyCodec.encode` / `decode` / `convert` 独立使用的正确性；
+内部组件方法与批次按照完整调用链的前置条件协作。
 
 ## 导入约定
 

@@ -140,11 +140,11 @@ def configured_llm(target, source="anthropic", cached=False, **options):
 
 async def prepare(llm, messages, **options):
     return (
-        await llm.codec.prepare(
+        await llm._codec._prepare(
             {"messages": messages, "tools": omit, "stream": False, **options},
             llm.resolved_profile,
             input_format=llm.stdio_protocol,
-            client=llm.client_parameters,
+            client=llm._client_parameters,
             enable_message_cache=llm.enable_message_cache,
             message_cache_key=llm._message_cache_key,
         )

@@ -1,18 +1,5 @@
-"""Stateless bidirectional codecs and protocol implementation contracts."""
+"""Public protocol translation entry point."""
 
-from my_llm.basic.protocols import __getattr__ as __getattr__
-from my_llm.codec.base import BaseCodec, BaseDecoder, BaseEncoder, BaseTransport
 from my_llm.codec.converter import MyCodec
-from my_llm.codec.shared.options import PreparedOptions
 
-__all__ = [
-    "BaseCodec",
-    "BaseDecoder",
-    "BaseEncoder",
-    "BaseTransport",
-    "MyCodec",
-    "PreparedOptions",
-    "AnthropicCodec",
-    "ChatCompletionsCodec",
-    "ResponsesCodec",
-]
+__all__ = ["MyCodec"]

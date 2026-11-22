@@ -27,11 +27,11 @@ def target_profile(profile_factory, target):
 
 async def prepare(codec, messages, source, profile):
     return (
-        await codec.prepare(
+        await codec._prepare(
             {"messages": messages, "tools": omit, "stream": False},
             profile,
             input_format=source,
-            client=codec.client_parameters(profile),
+            client=codec._client_parameters(profile),
         )
     )["request"]
 
@@ -115,8 +115,8 @@ async def test_empty_tool_schema_is_preserved_or_reported_with_complete_draft(
     profile = target_profile(profile_factory, target)
     inputs = {"messages": [{"role": "user", "content": "hi"}], "tools": tools, "stream": False}
     request = (
-        await codec.prepare(
-            inputs, profile, input_format="openai_chat", client=codec.client_parameters(profile)
+        await codec._prepare(
+            inputs, profile, input_format="openai_chat", client=codec._client_parameters(profile)
         )
     )["request"]
     actual = (
@@ -240,14 +240,14 @@ def test_native_feedback_uses_the_message_or_source_context(target, owner):
 
 
 @pytest.mark.parametrize("target", PROTOCOLS)
-def test_foreign_feedback_owner_is_checked_on_public_response_blocks(target):
+def test_foreign_feedback_owner_is_checked_on_response_blocks(target):
     block = {
         "type": "thinking",
         "reasoning": "reason",
         "feedback_item": {"type": "thinking", "thinking": "reason", "signature": "signed"},
     }
     with pytest.raises(SemanticLossError):
-        MyCodec().decode(
+        MyCodec()._decode(
             chunks=[{"type": "block_stop", "index": 0, "block": block}],
             target_format=target,
             source_protocol="openai_responses" if target == "anthropic" else "anthropic",

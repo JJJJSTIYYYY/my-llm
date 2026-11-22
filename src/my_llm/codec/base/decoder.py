@@ -617,13 +617,15 @@ class BaseDecoder(ABC):
         values = output_chunks(values, parameters.pop("semantic_profile", None))
         return self._chunks(values, profile, **parameters)
 
-    def result(self, messages: list) -> dict | list:
-        """Return the first native message as a completed result.
+    def result(
+        self, messages: list, *, final_event: dict | None = None, **parameters: Any
+    ) -> dict | list:
+        """Render the first canonical message as a completed or partial native result.
 
-        Protocols with list-shaped results override this method. messages must contain
-        at least one item for this default implementation.
+        List-shaped protocols override this method. A completed response may also
+        provide its indexed final event and request-owned stream context.
         """
-        return messages[0]
+        return self.messages(messages, **parameters)[0]
 
     @abstractmethod
     def _messages(

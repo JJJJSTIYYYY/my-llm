@@ -132,7 +132,7 @@ async def test_combined_repairs_preserve_reasoning_images_and_cache_on_actual_wi
             assert_repairs(messages, mode)
             requests.append(messages)
             if cached:
-                assert llm.codec._message_cache.get(llm._message_cache_key) == messages
+                assert llm._codec._message_cache.get(llm._message_cache_key) == messages
                 assert messages[0]["content"] == "cached prefix"
         assert without_image_ids(requests[0]) == without_image_ids(requests[1])
         if cached:
@@ -156,7 +156,7 @@ async def test_reasoning_hook_can_be_used_independently_and_updates_existing_cac
     plain = next(m for m in request["messages"] if m.get("content") == "plain answer")
     assert plain["reasoning_content"] == "plain thought"
     assert not IMAGE_REFERENCE.search(str(request))
-    assert llm.codec._message_cache.get(llm._message_cache_key) == request["messages"]
+    assert llm._codec._message_cache.get(llm._message_cache_key) == request["messages"]
     expected = deepcopy(request["messages"])
     plain["reasoning_content"] = "caller edit"
     retry = await prepare(llm, reasoning_history(source))

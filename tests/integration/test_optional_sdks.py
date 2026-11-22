@@ -33,16 +33,14 @@ def test_only_installed_sdks_are_required(installed):
             "openai": ("openai_chat", "openai_responses"),
             "anthropic": ("anthropic",),
         }
-        exports = {
-            "openai": "ChatCompletionsCodec",
-            "anthropic": "AnthropicCodec",
-        }
+        for name in ("ChatCompletionsCodec", "ResponsesCodec", "AnthropicCodec"):
+            assert not hasattr(my_llm.codec, name)
         converter = my_llm.MyCodec()
-        assert set(converter.codecs) == set(protocols.get(installed, ()))
+        assert set(converter._codecs) == set(protocols.get(installed, ()))
         assert "GeminiCodec" not in my_llm.codec.__all__
         assert not hasattr(my_llm.codec, "GeminiCodec")
         for action in (
-            lambda: converter.decoder("gemini"),
+            lambda: converter.encode(messages=[], input_format="gemini"),
             lambda: my_llm.resolve_profiles(
                 my_llm.ProviderProfile(protocol=my_llm.Config(default_value="gemini")),
                 my_llm.ModelProfile(model=my_llm.Attribute(default_value="demo")),
@@ -57,7 +55,7 @@ def test_only_installed_sdks_are_required(installed):
         assert "OllamaCodec" not in my_llm.codec.__all__
         assert not hasattr(my_llm.codec, "OllamaCodec")
         try:
-            converter.decoder("ollama")
+            converter.encode(messages=[], input_format="ollama")
         except my_llm.UnsupportedProviderError:
             pass
         else:
@@ -70,8 +68,7 @@ def test_only_installed_sdks_are_required(installed):
                         my_llm.ModelProfile(model=my_llm.Attribute(default_value="demo")),
                     )
                     assert profile.protocol == protocol
-                    assert converter.decoder(protocol)
-                    assert getattr(my_llm.codec, exports[sdk])
+                    assert converter.encode(messages=[], input_format=protocol).messages == []
                     message = {"role": "user", "content": "hello"}
                     if protocol == "openai_responses":
                         continue
@@ -82,12 +79,11 @@ def test_only_installed_sdks_are_required(installed):
                     continue
                 extra = sdk
                 for action in (
-                    lambda: converter.decoder(protocol),
+                    lambda: converter.encode(messages=[], input_format=protocol),
                     lambda: my_llm.resolve_profiles(
                         my_llm.ProviderProfile(protocol=my_llm.Config(default_value=protocol)),
                         my_llm.ModelProfile(model=my_llm.Attribute(default_value="demo")),
                     ),
-                    lambda: getattr(my_llm.codec, exports[sdk]),
                 ):
                     try:
                         action()

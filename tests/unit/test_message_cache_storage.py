@@ -6,7 +6,7 @@ from weakref import WeakSet
 import pytest
 
 from my_llm import ConfigurationError
-from my_llm.cache import MessageCache
+from my_llm.cache.message_cache import MessageCache
 from my_llm.codec.openai.chat.decoding.decoder import ChatCompletionsDecoder
 
 

@@ -26,7 +26,6 @@ from my_llm import (
     ToolCall,
     ToolMessage,
     UserMessage,
-    generate,
     omit,
 )
 from tests.helpers.protocols import PROTOCOLS, chat_event
@@ -61,7 +60,7 @@ async def test_typed_generation_skips_input_encoder_and_output_decoder(
     provider, model = profiles(protocol)
     with LocalSDK(protocol, wire_frames(protocol, workload.events, 37)) as sdk:
         llm = MyLLM(provider=provider, model=model, stdio_protocol="middleware")
-        native = llm.codec.codecs[protocol]
+        native = llm._codec._codecs[protocol]
         monkeypatch.setattr(type(native.encoder), "request", fail_component)
         monkeypatch.setattr(type(native.decoder), "messages", fail_component)
         monkeypatch.setattr(type(native.decoder), "chunks", fail_component)
@@ -95,14 +94,14 @@ async def test_typed_generation_skips_input_encoder_and_output_decoder(
         assert isinstance(result, AssistantMessage)
         # Native oracle is kept outside the bypass assertions.
         monkeypatch.undo()
-        rendered = MyCodec().result(
+        rendered = MyCodec()._result(
             [result],
             target_format=protocol,
             input_format=protocol,
         )
         validate_exchange(workload, protocol, rendered, sdk)
-        assert set(llm.codec.codecs.instances) == {protocol}
-        assert "middleware" not in llm.codec.codecs
+        assert set(llm._codec._codecs.instances) == {protocol}
+        assert "middleware" not in llm._codec._codecs
     assert middleware.to_wire() == before
     assert all(body.closed for body in sdk.bodies)
 
@@ -294,15 +293,12 @@ async def test_concurrent_calls_isolate_inputs_results_and_events():
         assert all(body.closed for body in sdk.bodies)
 
 
-async def test_one_shot_helper_supports_typed_io_and_closes_clients():
+async def test_generation_supports_typed_io_and_closes_clients():
     workload = build("openai_chat", "openai_chat", SMALL, native=True)
     provider, model = profiles("openai_chat")
     with LocalSDK("openai_chat", wire_frames("openai_chat", workload.events, 97)) as sdk:
-        result = await generate(
-            provider=provider,
-            model=model,
-            stdio_protocol="middleware",
-            messages=[UserMessage("user", [TextContent("hi")])],
+        result = await MyLLM(provider=provider, model=model, stdio_protocol="middleware").generate(
+            messages=[UserMessage("user", [TextContent("hi")])]
         )
         assert isinstance(result, AssistantMessage)
         assert all(client.is_closed for client in sdk.http_clients)
@@ -397,7 +393,7 @@ def test_middleware_is_reserved_for_stdio_and_never_registers_components():
 
     with pytest.raises(ConfigurationError, match="reserved"):
         MyCodec.register(ReservedCodec)
-    assert "middleware" not in MyCodec().codecs
+    assert "middleware" not in MyCodec()._codecs
 
 
 def test_offline_conversion_can_return_typed_models_and_complete_public_events():

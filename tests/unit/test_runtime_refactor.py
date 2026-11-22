@@ -45,16 +45,18 @@ def assert_no_usage(value):
 
 def test_registry_and_llms_create_independent_components():
     first, second = make_llm(), make_llm()
-    for protocol, codec in first.codec.codecs.items():
-        other = second.codec.codecs[protocol]
+    for protocol, codec in first._codec._codecs.items():
+        other = second._codec._codecs[protocol]
         assert codec is not other
         for component in ("encoder", "decoder", "transport", "semantic_loss_adaptor"):
             assert getattr(codec, component) is not getattr(other, component)
     assert codec_for("openai_chat") is not codec_for("openai_chat")
-    assert MyCodec().codecs["openai_chat"] is not MyCodec().codecs["openai_chat"]
-    first.codec.codecs["openai_responses"].defaults.reasoning_enable.default_value["effort"] = "low"
+    assert MyCodec()._codecs["openai_chat"] is not MyCodec()._codecs["openai_chat"]
+    first._codec._codecs["openai_responses"].defaults.reasoning_enable.default_value["effort"] = (
+        "low"
+    )
     assert (
-        second.codec.codecs["openai_responses"].defaults.reasoning_enable.default_value["effort"]
+        second._codec._codecs["openai_responses"].defaults.reasoning_enable.default_value["effort"]
         == "medium"
     )
 
@@ -71,18 +73,18 @@ def test_stdio_binding_cannot_be_reassigned():
 
 def test_loss_policy_reconfiguration_is_local_to_one_llm():
     first, second = make_llm(), make_llm()
-    previous = second.codec.semantic_loss_adaptor
+    previous = second._codec._semantic_loss_adaptor
 
     def hook(draft, losses, context):
         pass
 
     first.set_semantic_loss_policy(semantic_loss_protocol="hook", input_semantic_loss_hook=hook)
-    assert second.codec.semantic_loss_adaptor is previous
-    assert first.codec.semantic_loss_adaptor is not previous
-    assert first.codec.semantic_loss_adaptor.input_semantic_loss_hook is hook
+    assert second._codec._semantic_loss_adaptor is previous
+    assert first._codec._semantic_loss_adaptor is not previous
+    assert first._codec._semantic_loss_adaptor.input_semantic_loss_hook is hook
     assert all(
-        codec.semantic_loss_adaptor is first.codec.semantic_loss_adaptor
-        for codec in first.codec.codecs.values()
+        codec.semantic_loss_adaptor is first._codec._semantic_loss_adaptor
+        for codec in first._codec._codecs.values()
     )
 
 

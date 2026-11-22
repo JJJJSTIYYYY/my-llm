@@ -32,6 +32,7 @@ from my_llm.codec.shared.input import (
     input_content,
     message_feedback,
 )
+from my_llm.codec.shared.output import output_chunks
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
 from my_llm.profile.types import Omit
@@ -333,6 +334,7 @@ class ResponsesDecoder(BaseDecoder):
         content that the target protocol cannot express as semantic losses.
         """
         result = []
+        parameters.setdefault("stream_indices", {})
         for event in events(chunks):
             kind = event.get("type")
             if kind in ("block_start", "block_stop", "tool", "block"):
@@ -344,7 +346,16 @@ class ResponsesDecoder(BaseDecoder):
                 native_owner = (
                     parameters.get("source_protocol") if owner is None else owner
                 ) == constants.PROTOCOL
+            if (
+                kind == "block"
+                and not native_owner
+                and event["block"].get("type") == "thinking"
+                and event["block"].get("reasoning") is None
+            ):
+                foreign_block(event["block"])
+                continue
             index, part_index, item_id, native = self._address(event, parameters)
+            source_index = event["source_ref"][1] if native else event.get("index", 0)
             if kind == "start":
                 result.append(
                     {
@@ -371,7 +382,7 @@ class ResponsesDecoder(BaseDecoder):
                 )
                 if not native or part_index == 0:
                     if native:
-                        item = self._added_item(parameters["response_items"][str(index)])
+                        item = self._added_item(parameters["response_items"][str(source_index)])
                     result.append(
                         {"type": constants.OUTPUT_ITEM_ADDED, "output_index": index, "item": item}
                     )
@@ -452,7 +463,7 @@ class ResponsesDecoder(BaseDecoder):
                             event["block"], index, parameters.get("source_protocol")
                         ),
                         **select(
-                            parameters["response_items"][str(index)],
+                            parameters["response_items"][str(source_index)],
                             *constants.FUNCTION_CALL_ITEM_IDENTITY_FIELDS,
                         ),
                     }
@@ -481,13 +492,6 @@ class ResponsesDecoder(BaseDecoder):
                     )
             elif kind == "block":
                 block = event["block"]
-                if (
-                    not native_owner
-                    and block.get("type") == "thinking"
-                    and not block.get("reasoning")
-                ):
-                    foreign_block(block)
-                    continue
                 item = self._output_item(block, index, parameters.get("source_protocol"))
                 result.append(
                     {
@@ -516,7 +520,7 @@ class ResponsesDecoder(BaseDecoder):
                 )
                 if self._native_items(parameters):
                     represented = {
-                        entry["source_ref"][1]
+                        parameters["stream_indices"][("item", entry["source_ref"][1])]
                         for entry in event.get("output_blocks", [])
                         if entry.get("source_ref") is not None
                     }
@@ -574,9 +578,13 @@ class ResponsesDecoder(BaseDecoder):
             "output_tokens_details": {"reasoning_tokens": reasoning or 0},
         }
 
-    def result(self, messages: list) -> list:
-        """Return all completed Responses output items rather than only the first one."""
-        return messages
+    def result(self, messages: list, *, final_event: dict | None = None, **parameters: Any) -> list:
+        """Render completed indexed output, or canonical messages for a partial result."""
+        if final_event is None:
+            return self.messages(messages, **parameters)
+        final_event = output_chunks([final_event], parameters.pop("semantic_profile", None))[0]
+        parameters.setdefault("stream_indices", {})
+        return self._completed_output(final_event, parameters.get("source_protocol"), parameters)
 
     def _response_envelope(self, **parameters: Any) -> dict:
         # Required native envelope defaults carry no unsupported source metadata.
@@ -599,18 +607,34 @@ class ResponsesDecoder(BaseDecoder):
         }
 
     def _output_item(self, block: dict, index: int, origin: str | None) -> dict:
-        """Render one completed assistant block with a stable native or fallback item ID."""
-        item = self._messages([{"role": "assistant", "content": [block], "protocol": origin}])[0]
-        if block.get("type") == "thinking" and isinstance(block.get("feedback_item"), dict):
-            item = capture(item)
+        """Render a completed block without message-level empty-content fallback."""
+        if block.get("type") == "thinking":
+            feedback = block.get("feedback_item")
+            if origin == constants.PROTOCOL and isinstance(feedback, dict):
+                item = capture(feedback)
+            else:
+                if origin != constants.PROTOCOL:
+                    foreign_block(block)
+                elif feedback is not None:
+                    report_loss(
+                        block, "Responses reasoning feedback requires a native reasoning item"
+                    )
+                item = {"type": "reasoning", "summary": reasoning_summary(block)}
+                if origin == constants.PROTOCOL:
+                    item.update(select(block.get("item", {}), *constants.ITEM_ID_STATUS_FIELDS))
+        else:
+            item = self._messages([{"role": "assistant", "content": [block], "protocol": origin}])[
+                0
+            ]
         if origin != constants.PROTOCOL:
             item["id"] = f"item_{index}"
         item.setdefault("id", f"item_{index}")
-        item.setdefault("status", "completed")
+        if origin != constants.PROTOCOL or item["type"] != "reasoning":
+            item.setdefault("status", "completed")
         return item
 
     def _completed_output(self, event: dict, origin: str | None, parameters: dict) -> list[dict]:
-        """Reconstruct completed output items, preserving source item grouping when available."""
+        """Render the indexed final snapshot using the addresses already emitted."""
         entries = event.get("output_blocks", [])
         if not self._native_items(parameters):
             result = []
@@ -619,51 +643,48 @@ class ResponsesDecoder(BaseDecoder):
                 if (
                     origin != constants.PROTOCOL
                     and block.get("type") == "thinking"
-                    and not block.get("reasoning")
+                    and block.get("reasoning") is None
                 ):
                     foreign_block(block)
                     continue
-                result.append(self._output_item(block, entry["index"], origin))
-            return result
+                index, _, _, _ = self._address(entry, parameters)
+                result.append((index, self._output_item(block, index, origin)))
+            return [item for _, item in sorted(result, key=lambda pair: pair[0])]
         grouped = {}
         for entry in entries:
             ref = entry.get("source_ref")
             index = ref[1] if ref is not None else entry["index"]
             grouped.setdefault(index, []).append(entry["block"])
+            self._address(entry, parameters)
         result = []
-        for index, header in sorted(
+        for source_index, header in sorted(
             parameters["response_items"].items(), key=lambda pair: int(pair[0])
         ):
-            blocks = grouped.get(int(index), [])
+            source_index = int(source_index)
+            blocks = grouped.get(source_index, [])
             kind = header.get("type")
-            if kind == "message":
+            if kind == "message" and (blocks or header.get("empty")):
                 item = {
                     "type": kind,
                     "role": "assistant",
                     "content": render_content(blocks, role="assistant"),
                 }
-            elif kind == "reasoning" and blocks:
-                block = blocks[0]
-                feedback_item = block.get("feedback_item")
-                if feedback_item is not None and not isinstance(feedback_item, dict):
-                    report_loss(
-                        block, "Responses reasoning feedback requires a native reasoning item"
-                    )
-                item = (
-                    capture(feedback_item)
-                    if isinstance(feedback_item, dict)
-                    else {
-                        "type": kind,
-                        "summary": reasoning_summary(block),
-                    }
-                )
-            elif kind == "function_call" and blocks:
-                item = self._output_item(blocks[0], int(index), origin)
+            elif kind in constants.REASONING_FUNCTION_CALL_ITEM_TYPES and blocks:
+                item = self._output_item(blocks[0], source_index, origin)
             else:
                 continue
             item.update(select(header, *constants.FUNCTION_CALL_ITEM_IDENTITY_FIELDS))
-            result.append(item)
-        return result
+            indices = parameters["stream_indices"]
+            key = ("item", source_index)
+            if key in indices:
+                index = indices[key]
+            else:
+                index, _, _, _ = self._address({"source_ref": (kind, source_index, 0)}, parameters)
+            item.setdefault("id", f"item_{index}")
+            if kind != "reasoning":
+                item.setdefault("status", "completed")
+            result.append((index, item))
+        return [item for _, item in sorted(result, key=lambda pair: pair[0])]
 
     def _native_items(self, parameters: dict) -> bool:
         """Whether source Responses metadata supports preserving native item identities."""
@@ -672,14 +693,26 @@ class ResponsesDecoder(BaseDecoder):
         )
 
     def _address(self, event: dict, parameters: dict) -> tuple[int, int, str, bool]:
-        """Resolve output/part indices and item ID from source references or fallback indices."""
-        index, part = event.get("index", 0), 0
+        """Map source blocks/items and parts to stable, contiguous target addresses."""
+        if event.get("type") in ("start", "finish"):
+            return 0, 0, "item_0", False
+        indices = parameters["stream_indices"]
         ref = event.get("source_ref")
-        if self._native_items(parameters) and ref is not None:
-            parent = parameters["response_items"].get(str(ref[1]), {})
-            if parent.get("id"):
-                return ref[1], ref[2], parent["id"], True
-        return index, part, f"item_{index}", False
+        native = self._native_items(parameters) and ref is not None
+        key = ("item", ref[1]) if native else ("block", event.get("index", 0))
+        if key not in indices:
+            indices[key] = indices.get(("next_item",), 0)
+            indices[("next_item",)] = indices[key] + 1
+        index = indices[key]
+        if not native:
+            return index, 0, f"item_{index}", False
+        part_key = ("part", ref[1], ref[2])
+        if part_key not in indices:
+            counter = ("next_part", ref[1])
+            indices[part_key] = indices.get(counter, 0)
+            indices[counter] = indices[part_key] + 1
+        parent = parameters["response_items"][str(ref[1])]
+        return index, indices[part_key], parent.get("id", f"item_{index}"), True
 
     def _added_item(self, item: dict) -> dict:
         """Build an in-progress item header with empty content, summary or arguments."""

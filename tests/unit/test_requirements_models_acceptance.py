@@ -55,8 +55,8 @@ def test_nullable_chat_argument_fragments_are_absent_fragments(sdk):
     ]
     if sdk:
         events = [ChatCompletionChunk.model_validate(event) for event in events]
-    encoded = MyCodec().encode(chunks=events, input_format="openai_chat")
+    encoded = MyCodec()._encode_chunks(chunks=events, input_format="openai_chat")
     state = StreamState("demo")
-    state.feed(encoded["chunks"])
+    state.feed(encoded)
     finished = state.finish()
     assert finished[-1]["messages"][0]["content"][0]["input"] == {}

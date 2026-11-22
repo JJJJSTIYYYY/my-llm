@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from my_llm import Attribute, Config, ModelProfile, MyLLM, ProviderProfile, generate
+from my_llm import Attribute, Config, ModelProfile, MyLLM, ProviderProfile
 from tests.helpers.protocols import chat_event
 from tests.helpers.transport import FakeClient
 
@@ -81,16 +81,12 @@ async def test_request_creation_failure_closes_client(monkeypatch, sdk_factory):
 
 
 @pytest.mark.parametrize("exit_mode", ["complete", "early", "failure", "cancel"])
-async def test_one_shot_stream_owns_and_closes_temporary_client(
-    sdk_factory, monkeypatch, exit_mode
-):
-    stream = await generate(
+async def test_stream_owns_and_closes_request_client(sdk_factory, monkeypatch, exit_mode):
+    stream = await MyLLM(
         stdio_protocol="openai_chat",
         provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
-        model="demo",
-        messages=[{"role": "user", "content": "hi"}],
-        stream=True,
-    )
+        model=ModelProfile(model=Attribute(default_value="demo")),
+    ).generate(messages=[{"role": "user", "content": "hi"}], stream=True)
     assert sdk_factory == []
     while True:
         event = await anext(stream)
@@ -127,13 +123,11 @@ async def test_one_shot_stream_owns_and_closes_temporary_client(
     assert client.close_count == 1 and client.upstream.closed
 
 
-async def test_unstarted_one_shot_stream_does_not_create_client(sdk_factory):
-    stream = await generate(
+async def test_unstarted_stream_does_not_create_client(sdk_factory):
+    stream = await MyLLM(
         stdio_protocol="openai_chat",
         provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
-        model="demo",
-        messages=[{"role": "user", "content": "hi"}],
-        stream=True,
-    )
+        model=ModelProfile(model=Attribute(default_value="demo")),
+    ).generate(messages=[{"role": "user", "content": "hi"}], stream=True)
     await stream.aclose()
     assert sdk_factory == []

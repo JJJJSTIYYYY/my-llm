@@ -6,7 +6,6 @@ import pytest
 
 from my_llm import (
     AssistantMessage,
-    BaseSemanticLossAdaptor,
     FunctionTool,
     ImageContent,
     ImageSource,
@@ -18,6 +17,7 @@ from my_llm import (
     ToolMessage,
     UserMessage,
 )
+from my_llm.basic.semantic_loss import BaseSemanticLossAdaptor
 from my_llm.middleware.models import content_from_wire
 from my_llm.middleware.protocol import generation_input
 from my_llm.profile.types import omit
@@ -122,7 +122,7 @@ async def test_message_name_request_policies_use_complete_sdk_draft(
     before = deepcopy(messages)
 
     async def prepare():
-        return await codec.prepare(
+        return await codec._prepare(
             {**complete_inputs(messages), "max_tokens": 128},
             profile,
             input_format="openai_chat",
@@ -173,7 +173,7 @@ def test_named_typed_output_uses_output_hook_with_final_result_identity(target):
         output_semantic_loss_hook=output_hook,
     )
     message = AssistantMessage("assistant", [TextContent("answer")], name="assistant_name")
-    result = codec.result([message], input_format="openai_chat", target_format=target)
+    result = codec._result([message], input_format="openai_chat", target_format=target)
     assert result is observed[0]
     assert "answer" in str(result)
     assert message.name == "assistant_name"
@@ -189,7 +189,7 @@ def test_chat_disabled_name_reports_loss_in_offline_and_native_request_paths(pro
     assert converted.value.losses.items[0].origin_value == "alice"
     assert "name" not in converted.value.draft["messages"][0]
     with pytest.raises(SemanticLossError) as native:
-        codec.decoder("openai_chat").native_request({"messages": messages}, profile)
+        codec._decoder("openai_chat").native_request({"messages": messages}, profile)
     assert native.value.losses.items[0].origin_path == "$.messages[0].name"
     assert "name" not in native.value.draft["messages"][0]
     assert messages[0]["name"] == "alice"
@@ -249,7 +249,7 @@ def test_reasoning_visible_and_feedback_values_survive_typed_wire_roundtrips(fee
 def test_native_encoders_separate_visible_reasoning_from_feedback(
     protocol, native, visible, feedback
 ):
-    messages = MyCodec().codecs[protocol].encoder.messages([native])
+    messages = MyCodec()._codecs[protocol].encoder.messages([native])
     reasoning = next(part for part in messages[0].content if isinstance(part, ReasoningContent))
     assert reasoning.reasoning == visible
     assert reasoning.feedback_item == feedback
@@ -257,7 +257,7 @@ def test_native_encoders_separate_visible_reasoning_from_feedback(
 
 def test_reasoning_feedback_reaches_decoder_as_a_native_item(monkeypatch):
     codec = MyCodec()
-    decoder = codec.decoder("openai_responses")
+    decoder = codec._decoder("openai_responses")
     original = type(decoder)._messages
     observed = []
     item = {"type": "reasoning", "summary": [{"type": "summary_text", "text": "summary"}]}
@@ -368,11 +368,11 @@ async def test_request_hook_can_move_images_in_place_on_the_final_sdk_request(pr
 
     codec = MyCodec("hook", input_semantic_loss_hook=hook)
     profile = profile_factory("openai_chat", supports_function_calling=config(True))
-    prepared = await codec.prepare(
+    prepared = await codec._prepare(
         complete_inputs(picture_history()),
         profile,
         input_format="anthropic",
-        client=codec.client_parameters(profile),
+        client=codec._client_parameters(profile),
     )
     assert saved == [prepared["request"]]
     assert saved[0] is prepared["request"]
@@ -397,7 +397,7 @@ def test_output_hook_receives_the_same_final_result_and_separate_direction():
         [{"role": "assistant", "content": "answer", "reasoning_content": "reason"}],
         input_format="openai_chat",
     )
-    output = codec.result(encoded.messages, target_format="anthropic", input_format="openai_chat")
+    output = codec._result(encoded.messages, target_format="anthropic", input_format="openai_chat")
     assert output is seen[0]
     assert output["content"][-1]["text"] == "hook"
 
@@ -413,7 +413,7 @@ def test_ignore_and_empty_hook_continue_without_retaining_loss_history():
     )
     assert ignored == empty_hook
     assert values == before
-    assert not hasattr(MyCodec("ignore").semantic_loss_adaptor, "losses")
+    assert not hasattr(MyCodec("ignore")._semantic_loss_adaptor, "losses")
 
 
 def test_hook_can_raise_and_reenter_an_independent_translation():
@@ -497,16 +497,18 @@ def test_codec_handles_an_explicit_complete_error_from_custom_decoder():
             draft, SemanticLossGroup([SemanticLossItem("value", "$.value")], "output"), context
         )
 
-    result = MyCodec("ignore").codecs["openai_chat"].translate(decoder, context, draft_key="chunks")
+    result = (
+        MyCodec("ignore")._codecs["openai_chat"].translate(decoder, context, draft_key="chunks")
+    )
     assert result["chunks"] is draft
 
 
 def test_unused_protocol_factories_are_lazy_and_not_global():
     converter = MyCodec()
-    assert converter.codecs.instances == {}
-    chat = converter.codecs["openai_chat"]
-    assert set(converter.codecs.instances) == {"openai_chat"}
-    assert MyCodec().codecs["openai_chat"] is not chat
+    assert converter._codecs.instances == {}
+    chat = converter._codecs["openai_chat"]
+    assert set(converter._codecs.instances) == {"openai_chat"}
+    assert MyCodec()._codecs["openai_chat"] is not chat
 
 
 def image_history():
@@ -541,7 +543,7 @@ async def test_unsupported_images_report_original_values_and_complete_draft(
             )
         else:
             (
-                await codec.prepare(
+                await codec._prepare(
                     {**complete_inputs(messages), "max_tokens": 128},
                     profile,
                     input_format="openai_chat",
@@ -568,7 +570,7 @@ async def test_unsupported_images_report_original_values_and_complete_draft(
 async def test_enabled_vision_preserves_supported_images_in_requests(profile_factory, target):
     messages = image_history()
     codec = MyCodec()
-    prepared = await codec.prepare(
+    prepared = await codec._prepare(
         {**complete_inputs(messages), "max_tokens": 128},
         profile_factory(target, supports_vision=config(True)),
         input_format="openai_chat",
@@ -583,7 +585,7 @@ async def test_images_in_tool_results_are_model_capability_losses(profile_factor
     before = deepcopy(messages)
     with pytest.raises(SemanticLossError) as caught:
         (
-            await MyCodec().prepare(
+            await MyCodec()._prepare(
                 {**complete_inputs(messages), "max_tokens": 128},
                 profile_factory(target, supports_function_calling=config(True)),
                 input_format="anthropic",
@@ -616,7 +618,7 @@ async def test_vision_loss_policies_and_cache_keep_the_complete_filtered_transla
     profile = profile_factory()
     messages = image_history()
     for _ in range(2):
-        prepared = await codec.prepare(
+        prepared = await codec._prepare(
             complete_inputs(messages),
             profile,
             input_format="openai_chat",
@@ -637,7 +639,7 @@ async def test_vision_loss_raise_commits_filtered_cache_before_the_adaptor(profi
     for _ in range(2):
         with pytest.raises(SemanticLossError):
             (
-                await codec.prepare(
+                await codec._prepare(
                     complete_inputs(image_history()),
                     profile_factory(),
                     input_format="openai_chat",
@@ -656,7 +658,7 @@ async def test_typed_images_keep_the_original_object_as_loss_value(profile_facto
     messages = [UserMessage("user", [image, TextContent("tail")])]
     with pytest.raises(SemanticLossError) as caught:
         (
-            await MyCodec().prepare(
+            await MyCodec()._prepare(
                 complete_inputs(messages), profile_factory(), input_format="middleware", client={}
             )
         )

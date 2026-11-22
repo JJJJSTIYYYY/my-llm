@@ -56,11 +56,11 @@ async def measure(workload, mode, *, iterations, warmup):
     )
 
     async def prepare(messages):
-        return await llm.codec.prepare(
+        return await llm._codec._prepare(
             {"messages": messages, "tools": workload.tools, "stream": True, **parameters},
             llm.resolved_profile,
             input_format=workload.stdio,
-            client=llm.client_parameters,
+            client=llm._client_parameters,
             enable_message_cache=cached,
             message_cache_key=llm._message_cache_key,
         )
@@ -70,7 +70,7 @@ async def measure(workload, mode, *, iterations, warmup):
         await prepare(delta)
     for index in range(warmup + iterations):
         if mode == "incremental":
-            llm.codec.expire_message_cache(llm._message_cache_key)
+            llm._codec._expire_message_cache(llm._message_cache_key)
             await prepare(history)
         collections = sum(item["collections"] for item in gc.get_stats())
         cpu_start = process_time_ns()

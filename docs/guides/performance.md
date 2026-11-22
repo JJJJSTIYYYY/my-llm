@@ -9,13 +9,13 @@
 .venv/bin/python -m tests.performance.compiled_cache --iterations 15 --warmup 2 --json /tmp/compiled-cache.json
 ```
 
-三种协议使用默认复杂原生负载，测量实际 `MyCodec.prepare()`：一组复用编译规则，另一组
+三种协议使用默认复杂原生负载，测量实际 `MyCodec._prepare()`：一组复用编译规则，另一组
 绕过五类规则 LRU，调用相同编译器。两组均关闭消息缓存，逐对核对完整请求一致与输入不变。
 按缓存/重编译、重编译/缓存交替采样；编译器切换、夹具、实例构造、断言及关闭不计时。
 保留正常 GC，记录逐样本墙钟、CPU、GC 次数、源码指纹及 SDK 版本。
 
 计时包含输入校验、翻译和最终 SDK 请求过滤校验，不创建 SDK 客户端，不含网络或模型推理。
-测量直接等待 `await MyCodec.prepare(...)` 完成，事件循环建立在计时之外；负载不注册语义损失 hook。
+测量直接等待 `await MyCodec._prepare(...)` 完成，事件循环建立在计时之外；负载不注册语义损失 hook。
 该对照确认当前缓存省下的编译成本，不依赖历史性能报告，也不代表前后版本的性能差异。
 暖请求的规则 miss 与条目数必须保持不变。实现见
 [compiled_cache.py](../../tests/performance/compiled_cache.py)。
@@ -28,7 +28,7 @@ Chat Completions → Chat Completions 的增量消息缓存对照：
 .venv/bin/python -m tests.performance.message_cache --json /tmp/my-llm-message-cache.json
 ```
 
-固定每轮新增两条消息，扫描已有历史条数和单条文本长度，比较实际 `MyCodec.prepare()` 的耗时。
+固定每轮新增两条消息，扫描已有历史条数和单条文本长度，比较实际 `MyCodec._prepare()` 的耗时。
 缓存组包含 fingerprint、新增批次捕获与提交，两组仍进行完整原生请求组装、过滤及校验，
 逐次核对生成请求一致。计时不含历史缓存建立、SDK 请求执行、网络或模型推理。
 `--delta-chars 256` 可以固定新增消息长度，单独放大历史文本。
@@ -211,7 +211,7 @@ python -m tests.performance.request_chain --iterations 9 --json /tmp/after.json
 ```sh
 python -m tests.performance.compare /tmp/before.json /tmp/after.json --json /tmp/comparison.json
 ```
-可运行的无网络准备示例见 [request_pipeline.py](../../examples/request_pipeline.py)。
+可运行的无网络翻译示例见 [translation.py](../../examples/translation.py)。
 
 实例构造可单独用 `python -m tests.performance.construction --json /tmp/construction.json` 测量；
 收集尾部定位可用下面的入口，原生与 middleware stdio 成对交替，排除预热后记录 GC 停顿、CPU 时间与暖缓存快照：

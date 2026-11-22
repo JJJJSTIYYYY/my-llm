@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from my_llm import Attribute, Config, ModelProfile, MyLLM, ProviderProfile
+from my_llm import Attribute, Config, ModelProfile, MyLLM, ProviderProfile, resolve_profiles
 from tests.helpers.protocols import stream_events
 from tests.helpers.transport import FakeClient
 
@@ -49,14 +49,14 @@ async def test_models_sharing_a_provider_use_their_selected_protocols(monkeypatc
         assert all(stream.closed for stream in client.streams)
 
 
-async def test_model_protocol_changes_can_be_compared_and_reused():
+def test_model_protocol_changes_use_independent_resolved_snapshots():
     provider = ProviderProfile(protocol=Config(default_value="openai_chat"))
     model = ModelProfile(model=Attribute(default_value="demo"))
     changed_model = replace(model, protocol=Config(default_value="openai_responses"))
 
     original = MyLLM(provider=provider, model=model)
-    assert original.compare("openai_chat", "demo", "openai_chat") is False
-    resolved = MyLLM.resolve_profile(provider, changed_model)
+    assert original.stdio_protocol is None
+    resolved = resolve_profiles(provider, changed_model)
     replacement = MyLLM(
         provider=provider,
         model=changed_model,
@@ -64,5 +64,7 @@ async def test_model_protocol_changes_can_be_compared_and_reused():
         stdio_protocol="openai_chat",
     )
     assert replacement.resolved_profile.parameter("max_tokens").path == "$.max_output_tokens"
-    assert replacement.compare("openai_chat", "demo", "openai_chat") is True
+    assert replacement.provider.provider.default_value == "openai_chat"
+    assert replacement.model.model.default_value == "demo"
+    assert replacement.stdio_protocol == "openai_chat"
     assert original.resolved_profile.protocol == "openai_chat"

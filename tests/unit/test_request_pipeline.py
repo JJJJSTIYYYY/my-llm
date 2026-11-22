@@ -45,8 +45,8 @@ async def test_complete_call_passes_through_codec_with_explicit_destinations(
     workload = build(upstream, stdio, SMALL, native=False)
     provider, model = profiles(upstream)
     codec = MyCodec()
-    encoder_type = type(codec.codecs[stdio].encoder)
-    decoder_type = type(codec.decoder(upstream))
+    encoder_type = type(codec._codecs[stdio].encoder)
+    decoder_type = type(codec._decoder(upstream))
     encoder_request = encoder_type.request
     decoder_prepare = decoder_type.prepare
     decoder_connection = decoder_type.client_parameters
@@ -122,11 +122,11 @@ def test_client_scope_is_declared_instead_of_inferred_from_field_name():
         ModelProfile(model=Attribute(default_value="demo")),
     )
     codec = MyCodec()
-    codec.validate_profile(profile)
-    assert codec.client_parameters(profile) == {"default_headers": {"x-auth": "offline-token"}}
+    codec._validate_profile(profile)
+    assert codec._client_parameters(profile) == {"default_headers": {"x-auth": "offline-token"}}
     assert "authentication" not in dict(profile.request_parameters)
     intermediate = codec.encode([{"role": "user", "content": "hi"}], input_format="openai_chat")
-    assert "extra_headers" not in codec.request(intermediate, profile)
+    assert "extra_headers" not in codec._request(intermediate, profile)
 
 
 @pytest.mark.parametrize("upstream", PROTOCOLS)
@@ -139,8 +139,8 @@ def test_request_projects_native_values_without_public_result_copies(monkeypatch
     def public_copy(*args, **kwargs):
         pytest.fail("request preparation copied the public conversion result before filtering it")
 
-    monkeypatch.setattr(type(codec.decoder(upstream)), "messages", public_copy)
-    request = codec.request(intermediate, profile)
+    monkeypatch.setattr(type(codec._decoder(upstream)), "messages", public_copy)
+    request = codec._request(intermediate, profile)
     assert request["model"] == "benchmark"
 
 
@@ -152,7 +152,7 @@ def test_connection_preparation_does_not_reparse_the_snapshot(monkeypatch):
         pytest.fail("connection values were parsed after profile resolution")
 
     monkeypatch.setattr(resolution, "_connection_parameters", reparsed)
-    assert MyCodec().client_parameters(profile)["base_url"] == "https://benchmark.invalid"
+    assert MyCodec()._client_parameters(profile)["base_url"] == "https://benchmark.invalid"
 
 
 def test_anthropic_open_tool_schema_is_captured_once():
@@ -175,7 +175,7 @@ def test_anthropic_open_tool_schema_is_captured_once():
         ProviderProfile(protocol=Config(default_value="anthropic")),
         ModelProfile(model=Attribute(default_value="demo")),
     )
-    result = MyCodec().decoder("anthropic").filter_tools([source], profile)
+    result = MyCodec()._decoder("anthropic").filter_tools([source], profile)
     assert copies == [True]
     result[0]["input_schema"]["properties"]["choice"]["enum"].append(3)
     assert source["input_schema"]["properties"]["choice"]["enum"] == [1, 2]

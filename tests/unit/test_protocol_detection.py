@@ -12,16 +12,16 @@ from my_llm import (
     MyLLM,
     ProviderProfile,
     UnsupportedProviderError,
-    generate,
 )
 from tests.helpers.profiles import parameter
-from tests.helpers.protocols import PROTOCOLS, history, tools
+from tests.helpers.protocols import PROTOCOLS, chat_event, history, tools
+from tests.helpers.transport import FakeClient
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_complete_native_history_identifies_one_protocol(protocol):
     codec = MyCodec()
-    assert codec.match_protocol(history(protocol)) == protocol
+    assert codec._match_protocol(history(protocol)) == protocol
 
 
 @pytest.mark.parametrize(
@@ -36,13 +36,13 @@ def test_complete_native_history_identifies_one_protocol(protocol):
 )
 def test_non_unique_protocol_has_no_registration_order_fallback(values):
     codec = MyCodec()
-    assert codec.match_protocol(values) is None
-    codec.codecs = dict(reversed(list(codec.codecs.items())))
-    assert codec.match_protocol(values) is None
+    assert codec._match_protocol(values) is None
+    codec._codecs = dict(reversed(list(codec._codecs.items())))
+    assert codec._match_protocol(values) is None
 
 
 def test_chat_tool_declarations_uniquely_identify_chat():
-    assert MyCodec().match_protocol(tools("openai_chat")) == "openai_chat"
+    assert MyCodec()._match_protocol(tools("openai_chat")) == "openai_chat"
 
 
 def test_removed_ollama_protocol_is_rejected_as_upstream_and_stdio():
@@ -71,7 +71,7 @@ async def test_ambiguous_input_fails_before_request_without_binding(monkeypatch,
     def must_not_request(*args, **kwargs):
         pytest.fail("ambiguous input reached native request construction")
 
-    monkeypatch.setattr(MyCodec, "request", must_not_request)
+    monkeypatch.setattr(MyCodec, "_request", must_not_request)
     with pytest.raises(
         MessageValidationError,
         match="stdio_protocol is not specified and cannot be inferred uniquely",
@@ -81,23 +81,30 @@ async def test_ambiguous_input_fails_before_request_without_binding(monkeypatch,
 
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
-def test_failed_inference_leaves_a_later_unique_binding_available(protocol):
+async def test_failed_generation_inference_leaves_a_later_unique_binding_available(
+    protocol, monkeypatch
+):
+    client = FakeClient([chat_event(content="ok"), chat_event(finish="stop")])
+    monkeypatch.setattr("my_llm.codec.openai.chat.transport.AsyncOpenAI", lambda **kwargs: client)
     llm = MyLLM(
         provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
-        model=ModelProfile(model=Attribute(default_value="demo")),
+        model=ModelProfile(
+            model=Attribute(default_value="demo"),
+            supports_function_calling=Config(default_value=True),
+        ),
     )
     for values in ([], [{"unknown": "value"}], [{"role": "user", "content": "hello"}]):
         with pytest.raises(MessageValidationError, match="stdio_protocol"):
-            llm.guess_stdio_protocol(values)
+            await llm.generate(messages=values)
         assert llm.stdio_protocol is None
-    assert llm.guess_stdio_protocol(history(protocol)) == protocol
+    await llm.generate(messages=history(protocol))
     assert llm.stdio_protocol == protocol
+    assert len(client.requests) == 1
 
 
-async def test_one_shot_generation_also_requires_a_unique_or_explicit_protocol():
+async def test_generation_requires_a_unique_or_explicit_protocol():
     with pytest.raises(MessageValidationError, match="stdio_protocol"):
-        await generate(
+        await MyLLM(
             provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
-            model="demo",
-            messages=[{"role": "user", "content": "hello"}],
-        )
+            model=ModelProfile(model=Attribute(default_value="demo")),
+        ).generate(messages=[{"role": "user", "content": "hello"}])

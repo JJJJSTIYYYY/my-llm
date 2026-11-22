@@ -26,7 +26,7 @@ def test_falsey_callable_hook_receives_the_complete_delivered_draft(direction):
         messages = output["messages"]
     else:
         encoded = codec.encode(values, input_format="openai_chat")
-        output = codec.result(
+        output = codec._result(
             encoded.messages, input_format="openai_chat", target_format="anthropic"
         )
         messages = [output]

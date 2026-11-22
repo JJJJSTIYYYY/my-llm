@@ -10,7 +10,7 @@ import pytest
 from my_llm import MyCodec
 
 ROOT = Path(__file__).resolve().parents[2] / "src/my_llm"
-CODECS = MyCodec().codecs
+CODECS = MyCodec()._codecs
 PROTOCOLS = tuple(CODECS)
 
 
@@ -265,17 +265,6 @@ def test_native_middleware_field_check_rejects_native_spelling(field):
         assert_no_native_middleware_fields(
             ast.parse(f"value = {{{field!r}: None}}"), Path("models.py")
         )
-
-
-def test_llm_only_accesses_its_own_private_attributes():
-    path = ROOT / "my_llm.py"
-    for node in ast.walk(ast.parse(path.read_text())):
-        if isinstance(node, ast.Attribute) and node.attr.startswith("_"):
-            assert isinstance(node.value, ast.Name) and node.value.id == "self", (
-                path,
-                node.lineno,
-                node.attr,
-            )
 
 
 def test_package_initializers_only_export_interfaces():

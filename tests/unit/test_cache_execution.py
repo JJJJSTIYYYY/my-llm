@@ -40,11 +40,11 @@ async def test_cached_nested_arguments_are_captured_only_for_storage_and_final_r
     )
 
     async def prepare():
-        return await llm.codec.prepare(
+        return await llm._codec._prepare(
             {"messages": messages, "tools": None, "stream": True},
             llm.resolved_profile,
             input_format="anthropic",
-            client=llm.client_parameters,
+            client=llm._client_parameters,
             enable_message_cache=True,
             message_cache_key=llm._message_cache_key,
         )
@@ -79,17 +79,17 @@ async def test_warm_incremental_prepare_skips_old_translation_and_type_compilati
     original = deepcopy((first, delta, declared))
 
     async def prepare(messages):
-        return await llm.codec.prepare(
+        return await llm._codec._prepare(
             {"messages": messages, "tools": declared, "stream": True, **controls(upstream)},
             llm.resolved_profile,
             input_format=stdio,
-            client=llm.client_parameters,
+            client=llm._client_parameters,
             enable_message_cache=True,
             message_cache_key=llm._message_cache_key,
         )
 
     (await prepare(first))
-    cache = llm.codec._message_cache
+    cache = llm._codec._message_cache
     initial_size = len(cache.get(llm._message_cache_key))
     before = caches()
     translations, associations, native_filters = [], [], []
@@ -103,7 +103,7 @@ async def test_warm_incremental_prepare_skips_old_translation_and_type_compilati
 
         monkeypatch.setattr(type(owner), name, call)
 
-    target = llm.codec.decoder(upstream)
+    target = llm._codec._decoder(upstream)
     track(target, "_messages", translations)
     track(target, "filter_messages", native_filters)
     validate = decoder_module.validate_messages
@@ -115,7 +115,7 @@ async def test_warm_incremental_prepare_skips_old_translation_and_type_compilati
     monkeypatch.setattr(decoder_module, "validate_messages", validate_messages)
     encoded = []
     if stdio != "middleware":
-        track(llm.codec.codecs[stdio].encoder, "_messages", encoded)
+        track(llm._codec._codecs[stdio].encoder, "_messages", encoded)
 
     def unexpected(*args, **kwargs):
         pytest.fail("a warm request must not rebuild SDK types or validators")

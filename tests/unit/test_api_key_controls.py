@@ -10,7 +10,6 @@ from my_llm import (
     ModelProfile,
     MyLLM,
     ProviderProfile,
-    generate,
     omit,
 )
 from tests.helpers.protocols import chat_event
@@ -59,10 +58,10 @@ async def test_explicit_api_key_requires_an_enabled_declaration(clients, declara
 @pytest.mark.parametrize("path", ["$.api_key", "$.extra_headers.Authorization"])
 async def test_omit_removes_only_this_calls_configured_authentication(clients, path):
     llm = make_llm(InputParameter(path=path, default_value="profile-key"))
-    original = dict(llm.client_parameters)
+    original = dict(llm._client_parameters)
     for options in ({"api_key": omit}, {}, {"api_key": omit}, {"api_key": None}):
         await llm.generate(messages=[{"role": "user", "content": "hi"}], **options)
-    assert llm.client_parameters == original
+    assert llm._client_parameters == original
     assert llm.resolved_profile.get("api_key") == "profile-key"
     assert len(clients) == 4
     omitted, inherited = clients[0][0], clients[1][0]
@@ -82,17 +81,15 @@ async def test_unconsumed_override_stream_creates_no_client(clients):
     assert not clients
 
 
-async def test_one_shot_helper_forwards_api_key_and_closes_client(clients):
-    result = await generate(
+async def test_generation_forwards_api_key_and_closes_client(clients):
+    result = await MyLLM(
         provider=ProviderProfile(
             protocol=Config(default_value="openai_chat"),
             api_key=InputParameter(path="$.api_key", default_value="profile-key"),
         ),
-        model="demo",
+        model=ModelProfile(model=Attribute(default_value="demo")),
         stdio_protocol="openai_chat",
-        messages=[{"role": "user", "content": "hi"}],
-        api_key="call-key",
-    )
+    ).generate(messages=[{"role": "user", "content": "hi"}], api_key="call-key")
     assert result["content"] == "ok"
     assert clients[0][0] == {"api_key": "call-key"}
     assert clients[0][1].close_count == 1

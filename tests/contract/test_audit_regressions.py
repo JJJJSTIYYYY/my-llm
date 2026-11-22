@@ -248,7 +248,7 @@ def test_foreign_thinking_streams_can_be_consumed_without_forged_signatures(sour
     output, _ = render(source, target, native)
     native_events(target, output)
     reconstructed = StreamState("demo")
-    reconstructed.feed(MyCodec().encode(chunks=output, input_format=target)["chunks"])
+    reconstructed.feed(MyCodec()._encode_chunks(chunks=output, input_format=target))
     reconstructed.finish()
     assert "Thinking" in str(reconstructed.messages())
     if source != target and target in ("anthropic",):
@@ -269,7 +269,7 @@ def test_foreign_message_extensions_cannot_become_native_request_fields(
     assert all("vendor_metadata" not in message for message in converted)
     filtered = (
         MyCodec()
-        .decoder(target)
+        ._decoder(target)
         .filter_messages(
             converted,
             profile_factory(
@@ -299,7 +299,7 @@ def test_foreign_tool_extensions_cannot_become_native_request_fields(
         "tools"
     ]
     assert all("vendor_metadata" not in tool for tool in converted)
-    filtered = MyCodec().decoder(target).filter_tools(converted, profile_factory(target))
+    filtered = MyCodec()._decoder(target).filter_tools(converted, profile_factory(target))
     assert all("vendor_metadata" not in tool for tool in filtered)
     for tool in filtered:
         assert_native(tool, TOOL_TYPES[target])
@@ -357,7 +357,7 @@ def test_a07_deferred_citations_are_discarded_without_changing_text():
     assert deltas == ["text_delta"]
     assert "citations" not in str(state.messages())
     reconstructed = StreamState("demo")
-    reconstructed.feed(MyCodec().encode(chunks=output, input_format="anthropic")["chunks"])
+    reconstructed.feed(MyCodec()._encode_chunks(chunks=output, input_format="anthropic"))
     reconstructed.finish()
     assert "citations" not in str(reconstructed.messages())
     assert "Hello" in str(reconstructed.messages())
@@ -377,7 +377,7 @@ def test_a07_deferred_citations_are_discarded_without_changing_text():
 )
 def test_a11_documented_usage_tails_remain_legal(protocol, tail):
     _, state = render(protocol, "openai_chat", [*stream_events(protocol), tail])
-    usage = MyCodec().decoder("openai_chat").usage(state.usage)
+    usage = MyCodec()._decoder("openai_chat").usage(state.usage)
     assert usage == {"prompt_tokens": 4, "completion_tokens": 5, "total_tokens": 9}
 
 
@@ -595,11 +595,14 @@ def test_response_stream_metadata_does_not_alias_request_state():
     codec, state = MyCodec(), StreamState("demo")
     created = stream_events("openai_responses")[0]
     created["response"]["metadata"] = {"source": "original"}
-    encoded = codec.encode(chunks=[created], input_format="openai_responses")["chunks"]
+    encoded = codec._encode_chunks(chunks=[created], input_format="openai_responses")
     events = state.feed(encoded)
-    output = codec.decode(chunks=events, target_format="openai_responses", **state.metadata)[
-        "chunks"
-    ]
+    output = codec._decode(
+        chunks=events,
+        target_format="openai_responses",
+        stream_metadata=state.metadata,
+        **state.metadata,
+    )["chunks"]
     before = deepcopy(state.metadata)
     output[0]["response"]["metadata"]["source"] = "changed"
     assert state.metadata == before

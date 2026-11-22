@@ -21,6 +21,8 @@ OpenAI Chat 格式输入 → 任意协议 API → OpenAI Chat 格式输出
 ```
 
 消息、工具和流事件一并转换。更换上游 API，业务层继续使用原有协议收发数据。
+业务调用使用 `MyLLM.generate`；离线翻译使用 `MyCodec.encode` / `decode` / `convert`，各自可独立使用。
+请求准备和原生协议组件属于内部实现，不作为独立业务入口。
 
 ## 主要功能与亮点
 
@@ -117,7 +119,7 @@ async def print_answer(llm):
     return stream.result
 ```
 
-使用 `async with` 管理实例和流。传入工具前，在 `ModelProfile` 中设置
+使用 `async with` 管理响应流，MyLLM 实例无需关闭。传入工具前，在 `ModelProfile` 中设置
 `supports_function_calling=Config(default_value=True)`。
 
 设置 `enable_message_cache=True` 可缓存已翻译的增量消息；连续重发相同批次不会重复追加历史。
@@ -139,6 +141,10 @@ converted = MyCodec().convert(
 print(converted["messages"])
 # [{"role": "user", "content": [{"type": "text", "text": "你好"}]}]
 ```
+
+完整响应流也可离线翻译：`encode(chunks=完整原生流, input_format=...)` 返回公开 `MessageEvent` 列表，
+保存在 `ProtocolMiddleWare.stream`；`decode(chunks=完整中间事件, target_format=...)` 可单独调用，
+也支持事件经 `to_wire()` 和 JSON 保存后重新翻译。实时生成使用 `MyLLM.generate(stream=True)`。
 
 ## 支持的协议
 

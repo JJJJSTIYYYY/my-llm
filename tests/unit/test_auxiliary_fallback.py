@@ -16,7 +16,7 @@ from tests.performance.workloads import profiles
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 @pytest.mark.parametrize("value", [None, "bad", [], 1, True, {}])
 def test_native_usage_ignores_unparseable_values(protocol, value):
-    assert MyCodec().codecs[protocol].encoder.usage(value) is None
+    assert MyCodec()._codecs[protocol].encoder.usage(value) is None
 
 
 @pytest.mark.parametrize(
@@ -29,7 +29,7 @@ def test_native_usage_ignores_unparseable_values(protocol, value):
     ],
 )
 def test_invalid_native_counter_or_nested_details_return_empty(protocol, usage):
-    assert MyCodec().codecs[protocol].encoder.usage(usage) is None
+    assert MyCodec()._codecs[protocol].encoder.usage(usage) is None
 
 
 @pytest.mark.parametrize(
@@ -48,7 +48,7 @@ def test_invalid_native_counter_or_nested_details_return_empty(protocol, usage):
 def test_invalid_canonical_usage_is_empty_at_all_public_projections(value):
     assert Usage.from_record(value) is None
     for protocol in PROTOCOLS:
-        assert MyCodec().codecs[protocol].decoder.usage(value) is None
+        assert MyCodec()._codecs[protocol].decoder.usage(value) is None
     state = StreamState("demo")
     state.feed([{"type": "usage", "usage": value}])
     assert state.usage is None
@@ -106,9 +106,9 @@ async def test_malformed_native_usage_and_auxiliary_metadata_keep_the_response(
     from tests.helpers.transport import FakeClient
 
     monkeypatch.setattr(
-        type(llm.codec.transport(protocol)), "create_client", lambda *_: FakeClient([])
+        type(llm._codec._transport(protocol)), "create_client", lambda *_: FakeClient([])
     )
-    monkeypatch.setattr(type(llm.codec.transport(protocol)), "upstream", open_stream)
+    monkeypatch.setattr(type(llm._codec._transport(protocol)), "upstream", open_stream)
     result = await llm.generate(
         messages=([{"role": "user", "content": "hello"}]),
         stream=streaming,
@@ -152,7 +152,7 @@ async def test_auxiliary_fallback_covers_the_encoder_validation_entry(
     llm = MyLLM(provider=provider, model=model, stdio_protocol="openai_chat")
     codec = ChatCompletionsCodec()
     codec.encoder = CustomEncoder()
-    llm.codec.codecs["openai_chat"] = codec
+    llm._codec._codecs["openai_chat"] = codec
     result = await llm.generate(messages=[{"role": "user", "content": "hello"}], stream=streaming)
     if streaming:
         async with result:
@@ -178,7 +178,7 @@ def test_explicit_validator_stays_strict_and_unknown_operations_are_not_swallowe
         stream_from_wire([{"protocol": "example", "events": [{"type": "unknown"}]}])
 
 
-def test_offline_decode_also_ignores_malformed_auxiliary_data():
+def test_accumulation_ignores_malformed_auxiliary_data_before_rendering():
     chunks = [
         {
             "type": "batch",
@@ -191,8 +191,10 @@ def test_offline_decode_also_ignores_malformed_auxiliary_data():
             ],
         }
     ]
-    rendered = MyCodec().decode(
-        chunks=chunks, target_format="openai_chat", input_format="openai_chat"
+    state = StreamState("demo")
+    events = [*state.feed(chunks), *state.finish()]
+    rendered = MyCodec()._decode(
+        chunks=events, target_format="openai_chat", input_format="openai_chat"
     )
     assert "valid answer" in str(rendered)
 

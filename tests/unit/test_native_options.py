@@ -55,7 +55,7 @@ def test_chat_can_disable_compatible_reasoning_replay(profile_factory, source):
         supports_function_calling=config(True),
         should_feedback_reasoning_item=config("none"),
     )
-    request = codec.request(intermediate, profile, reasoning=True)
+    request = codec._request(intermediate, profile, reasoning=True)
     assert request["reasoning_effort"] == "medium"
     assert all("reasoning_content" not in message for message in request["messages"])
 
@@ -68,7 +68,7 @@ def test_chat_replays_compatible_reasoning_by_default_and_when_enabled(profile_f
         should_feedback_reasoning_item=replay,
         supports_function_calling=config(True),
     )
-    request = codec.request(
+    request = codec._request(
         codec.encode(history("openai_chat"), input_format="openai_chat"), profile, reasoning=True
     )
     assistant = next(message for message in request["messages"] if message.get("tool_calls"))

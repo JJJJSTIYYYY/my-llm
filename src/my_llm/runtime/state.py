@@ -127,6 +127,7 @@ class StreamState:
         self.started = False
         self.finished = False
         self.sequence_number = 0
+        self.stream_indices: dict[tuple, int] = {}
         self.result: Any = None
         self._final_messages: list[dict] | None = None
 

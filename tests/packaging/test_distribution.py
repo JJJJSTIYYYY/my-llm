@@ -121,7 +121,7 @@ def test_build_contains_runtime_modules_and_source_tests(tmp_path, version_overr
             sys.executable,
             "-I",
             "-c",
-            f"import sys; sys.path.insert(0, {str(wheel)!r}); import my_llm; from importlib.metadata import version; assert my_llm.__version__ == version('my-llm-py') == {expected_version!r}; assert my_llm.__file__.startswith({str(wheel)!r}); assert callable(my_llm.generate); assert callable(my_llm.MyLLM.generate); assert not hasattr(my_llm, 'create'); assert not hasattr(my_llm, 'Invoke')",
+            f"import sys; sys.path.insert(0, {str(wheel)!r}); import my_llm; from importlib.metadata import version; assert my_llm.__version__ == version('my-llm-py') == {expected_version!r}; assert my_llm.__file__.startswith({str(wheel)!r}); assert not hasattr(my_llm, 'generate'); assert callable(my_llm.MyLLM.generate); assert not hasattr(my_llm, 'create'); assert not hasattr(my_llm, 'Invoke')",
         ],
         cwd=tmp_path,
         check=True,

@@ -48,13 +48,6 @@ def builtin_codec(protocol: str):
     return getattr(import_module(f"my_llm.codec.{module}"), name)
 
 
-def __getattr__(name: str):
-    for protocol, (_, class_name, _, _) in BUILTIN_CODECS.items():
-        if name == class_name:
-            return builtin_codec(protocol)
-    raise AttributeError(f"module 'my_llm.codec' has no attribute {name!r}")
-
-
 def register_codec(factory: Callable[[], BaseCodec], *, protocol: str) -> None:
     """Store a constructor already validated by MyCodec.register."""
     if protocol in _CODECS:

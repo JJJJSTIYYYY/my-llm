@@ -41,7 +41,7 @@ def test_chat_reasoning_stream_preserves_empty_text_and_matches_native_history(
     protocol, field, chunk, terminal = scalar
     profile = profile_factory(protocol) if profiled else None
     codec = MyCodec()
-    encoder = codec.codecs[protocol].encoder
+    encoder = codec._codecs[protocol].encoder
     state = StreamState("demo")
     for event in [
         *(chunk(**{field: value}) for value in fragments),
@@ -50,7 +50,7 @@ def test_chat_reasoning_stream_preserves_empty_text_and_matches_native_history(
     ]:
         state.feed(encoder.chunks([event], profile))
     state.finish()
-    result = codec.result(state.messages(), input_format=protocol, target_format="middleware")
+    result = codec._result(state.messages(), input_format=protocol, target_format="middleware")
     reasoning = [part for part in result.content if isinstance(part, ReasoningContent)]
     if expected is None:
         assert reasoning == []
@@ -88,7 +88,7 @@ def test_scalar_feedback_stream_uses_its_own_output_parameter(scalar, profile_fa
     block = state.messages()[0]["content"][0]
     assert block["reasoning"] == "shown text"
     assert block["feedback_item"] == "raw item"
-    native = MyCodec().decoder(protocol).messages(state.messages(), profile)
+    native = MyCodec()._decoder(protocol).messages(state.messages(), profile)
     assert native[0][field] == "raw item"
     assert "shown text" not in str(native)
 
@@ -154,7 +154,7 @@ def test_output_feedback_declaration_filters_only_feedback(scalar, profile_facto
     before = deepcopy(message)
     profile = profile_factory(protocol, feedback_reasoning_item=disabled)
     with pytest.raises(SemanticLossError) as captured:
-        MyCodec().result(
+        MyCodec()._result(
             [message], input_format=protocol, target_format="middleware", semantic_profile=profile
         )
     block = captured.value.draft.content[0]
@@ -169,7 +169,7 @@ def test_request_never_recreates_feedback_from_visible_reasoning(scalar, profile
     message = Message("assistant", [ReasoningContent("visible")], protocol=protocol)
     native = (
         MyCodec()
-        .decoder(protocol)
+        ._decoder(protocol)
         .messages(
             [message], profile_factory(protocol, should_feedback_reasoning_item=config("always"))
         )
@@ -184,7 +184,7 @@ def test_unrepresentable_scalar_feedback_reports_loss_instead_of_crashing(scalar
         "assistant", [ReasoningContent("visible", {"encrypted": "raw"})], protocol=protocol
     )
     with pytest.raises(SemanticLossError, match="feedback_item must be text"):
-        MyCodec().decoder(protocol).messages([message], profile_factory(protocol))
+        MyCodec()._decoder(protocol).messages([message], profile_factory(protocol))
 
 
 @pytest.mark.parametrize("feedback", ["raw", {"encrypted": "raw"}])
@@ -192,7 +192,7 @@ def test_native_output_reports_feedback_it_cannot_preserve(scalar, feedback):
     protocol, _, _, _ = scalar
     message = Message("assistant", [ReasoningContent("visible", feedback)], protocol=protocol)
     with pytest.raises(SemanticLossError, match="feedback_item") as captured:
-        MyCodec().decoder(protocol).messages([message])
+        MyCodec()._decoder(protocol).messages([message])
     assert "visible" in str(captured.value.draft)
     assert "raw" not in str(captured.value.draft)
 
@@ -222,7 +222,7 @@ def test_independent_output_filtering_preserves_source_loss_paths(scalar, profil
     )
     profile = profile_factory(protocol, reasoning_content=omit)
     with pytest.raises(SemanticLossError) as captured:
-        MyCodec().decoder(protocol).messages([message], semantic_profile=profile)
+        MyCodec()._decoder(protocol).messages([message], semantic_profile=profile)
     assert len(captured.value.losses) == 2
     assert all(loss.origin_path == "$.native.blocks[3]" for loss in captured.value.losses)
 
@@ -236,7 +236,7 @@ def test_disabling_both_output_fields_removes_reasoning_lifecycle(scalar, profil
         "block": {"type": "thinking", "reasoning": "visible", "feedback_item": "raw"},
     }
     with pytest.raises(SemanticLossError) as captured:
-        MyCodec().decoder(protocol).chunks(
+        MyCodec()._decoder(protocol).chunks(
             [event], semantic_profile=profile, source_protocol=protocol
         )
     assert captured.value.draft == []

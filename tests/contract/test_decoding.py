@@ -28,7 +28,7 @@ def test_native_streams_convert_to_complete_target_streams(source, target, tool)
     output, state = render(source, target, incoming)
     assert incoming == before
     assert state.finished
-    normalized = MyCodec().encode(chunks=output, input_format=target)["chunks"]
+    normalized = MyCodec()._encode_chunks(chunks=output, input_format=target)
     reconstructed = StreamState("demo")
     reconstructed.feed(normalized)
     reconstructed.finish()
@@ -97,7 +97,7 @@ def test_function_argument_fragments_are_not_emitted():
     codec = MyCodec()
     state = StreamState("demo")
     for event in stream_events("openai_chat", tool=True):
-        converted = state.feed(codec.encode(chunks=[event], input_format="openai_chat")["chunks"])
+        converted = state.feed(codec._encode_chunks(chunks=[event], input_format="openai_chat"))
         assert all(c["type"] not in ("tool", "tool_delta") for c in converted)
     tools = [c for c in state.finish() if c["type"] == "tool"]
     assert tools[0]["block"]["input"] == {"city": "上海"}
@@ -110,7 +110,7 @@ def test_standalone_converter_handles_complete_stream_batches(source, target):
     incoming = stream_events(source, tool=True)
     result = codec.convert(chunks=incoming, input_format=source, target_format=target)["chunks"]
     state = StreamState("demo")
-    state.feed(codec.encode(chunks=result, input_format=target)["chunks"])
+    state.feed(codec._encode_chunks(chunks=result, input_format=target))
     state.finish()
     content = [block for message in state.messages() for block in message["content"]]
     assert "Hello" in "".join(block.get("text", "") for block in content)

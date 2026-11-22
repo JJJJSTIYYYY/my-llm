@@ -93,10 +93,10 @@ def test_public_conversions_do_not_expose_cached_terminal_material(source, targe
                 corrupt(child)
             value.append("caller_mutation")
 
-    messages = codec.decoder(target).messages(events[-1]["messages"])
+    messages = codec._decoder(target).messages(events[-1]["messages"])
     corrupt(messages)
     assert state.messages() == expected, f"{source} -> {target}: messages exposed cache"
-    result = codec.result(events[-1]["messages"], target_format=target)
+    result = codec._result(events[-1]["messages"], target_format=target)
     corrupt(result)
     assert state.messages() == expected, f"{source} -> {target}: result exposed cache"
     chunks = codec.decode(chunks=events, target_format=target, source_protocol=source)["chunks"]

@@ -237,7 +237,7 @@ async def test_one_instance_concurrent_stream_and_collected_requests(monkeypatch
             # correct result must not hide transient cross-request stream data.
             codec = MyCodec()
             replay = StreamState("demo")
-            replay.feed(codec.encode(chunks=events, input_format=stdio)["chunks"])
+            replay.feed(codec._encode_chunks(chunks=events, input_format=stdio))
             replay.finish()
             chat = codec.decode(replay.messages(), target_format="openai_chat")["messages"]
             assert_reply(chat[0], "openai_chat", index)

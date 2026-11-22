@@ -43,7 +43,7 @@ def messages(count, chars, *, offset=0):
 
 
 async def prepare(llm, batch, *, cached, key):
-    return await llm.codec.prepare(
+    return await llm._codec._prepare(
         {
             "messages": batch,
             "tools": omit,
@@ -57,7 +57,7 @@ async def prepare(llm, batch, *, cached, key):
         },
         llm.resolved_profile,
         input_format="openai_chat",
-        client=llm.client_parameters,
+        client=llm._client_parameters,
         enable_message_cache=cached,
         message_cache_key=key,
     )
@@ -102,7 +102,7 @@ async def benchmark(history_count, chars, *, delta_count, delta_chars, iteration
         for index in range(warmup + iterations):
             # Reconstruct the same already-translated history before every pair.
             # Otherwise repeated deltas would measure dedup hits or growing histories.
-            llm.codec.expire_message_cache(key)
+            llm._codec._expire_message_cache(key)
             if history:
                 (await prepare(llm, history, cached=True, key=key))
             operations = {
@@ -121,7 +121,7 @@ async def benchmark(history_count, chars, *, delta_count, delta_chars, iteration
             assert len(results["cached"]["request"]["messages"]) == len(full)
             assert json.dumps(full, ensure_ascii=False) == original
     finally:
-        llm.codec.expire_message_cache(key)
+        llm._codec._expire_message_cache(key)
     direct, cached = (summary(samples[name]) for name in ("direct", "cached"))
     return {
         "history_messages": history_count,

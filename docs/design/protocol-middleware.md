@@ -12,7 +12,7 @@ encoder 负责原生投影，decoder 负责目标表达，Transport 只执行 SD
 
 | 模型 | 完整字段 | 语义与归属 |
 | --- | --- | --- |
-| `ProtocolMiddleWare` | `messages`、`tools`、`stream`、`usage` | 通用转换容器；未提供为 `None`，显式空集合保留；`stream` 字典投影键为 `chunks` |
+| `ProtocolMiddleWare` | `messages`、`tools`、`stream`、`usage` | 通用转换容器；未提供为 `None`，显式空集合保留；`stream: list[MessageEvent]`，字典投影键为 `chunks` |
 | `Message` | `role`、`content`、`name`、`protocol`、`item`、`origin` | `role/content` 通用；`name` 由 Chat 表达；`protocol` 标识来源；`item` 为可选源项身份；`origin` 属运行时定位 |
 | `UserMessage` | 继承 `Message` 全部字段，无新增字段 | `role=user`；有序文本和图片 |
 | `InstructionMessage` | 继承 `Message` 全部字段，无新增字段 | `role=system / developer`；有序文本 |
@@ -22,11 +22,11 @@ encoder 负责原生投影，decoder 负责目标表达，Transport 只执行 SD
 | `TextContent` | `text`、`origin`、`type`、`item` | 通用文本，`type=text`；`item` 当前保留 Responses 项身份 |
 | `ImageContent` | `source`、`origin`、`type`、`item` | 通用图片，`type=image`；`item` 当前保留 Responses 项身份 |
 | `ImageSource` | `type`、`url`、`data`、`media_type` | 通用；`type=url` 使用 URL，`type=base64` 使用数据与媒体类型；不下载 URL |
-| `ReasoningContent` | `reasoning`、`feedback_item`、`item`、`origin`、`type` | `reasoning: str \| None` 保存可见思维；`feedback_item: Any \| None` 保存原生回传值；固定 `type=thinking`，来源协议由消息或流批次标识 |
+| `ReasoningContent` | `reasoning`、`feedback_item`、`item`、`origin`、`type` | `reasoning: str \| None` 保存可见思维；`feedback_item: Any \| None` 保存原生回传值；固定 `type=thinking`，来源协议由消息或公开流事件标识 |
 | `ToolCall` | `call_id`、`name`、`arguments`、`origin`、`type`、`item` | 通用完整调用，`type=tool_use`、`arguments: JsonObject`；`item` 当前保留 Responses 项身份 |
 | `FunctionTool` | `name`、`description`、`parameters`、`strict`、`origin` | 通用函数声明；`parameters: JsonObject` 保留应用 Schema；`strict` 按上文协议集合处理 |
-| `StreamBatch` | `protocol`、`events` | encoder 到状态机的内部载体；`events: list[dict]` 是有序操作，不作为应用流事件使用 |
-| `MessageEvent` | `type`、`index`、`source_ref`、`block`、`tool_index`、`field`、`value`、`reason`、`messages` | 通用公开事件；工具调用完整，终态携带具体消息模型；各类型的有效字段见[使用指南](../guides/middleware-io.md#流式输出) |
+| `StreamBlock` | `index`、`block`、`source_ref` | 终态内容块及源引用，由公开完成事件携带 |
+| `MessageEvent` | `type`、`index`、`source_ref`、`block`、`tool_index`、`field`、`value`、`reason`、`messages`、`protocol`、`metadata`、`output_blocks` | 通用公开事件；工具调用完整，终态携带具体消息模型；各类型的有效字段见[使用指南](../guides/middleware-io.md#流式输出) |
 | `Usage` | `input`、`output`、`total`、`cached`、`reasoning` | 通用可选整数；缺失不填零；附加计数由 encoder 归入对应总量 |
 | `Origin` | `path`、`value` | 运行时错误定位；路径与来源引用按只读使用，不枚举未知字段 |
 
@@ -65,7 +65,8 @@ Anthropic 的完整 `thinking` / `redacted_thinking` 块，
 这些键属于中间契约，不接受旧版字段别名。`JsonObject` 是 `dict[str, JsonValue]` 的类型别名，
 运行时仍使用普通字典。
 
-`StreamBatch.events` 直接承载 encoder 已构造并拥有的操作字典，不再经额外 DTO 拆解和还原。
+`StreamBatch` 是 encoder 到状态机的内部载体，不从公开包导出，不作为公开 encode / decode 输入或输出。
+其 `events` 直接承载 encoder 已构造并拥有的操作字典，不再经额外 DTO 拆解和还原。
 操作种类为 `start`、`metadata`、`usage`、`snapshot`、`reason`、`finish`、`block_set`、
 `block_append`、`block_update`、`block_delta`、`block_stop`。工具参数碎片仅在状态机内累积。
 `block_update` 保留实际补丁字段，不用完整内容模型的默认值填充。
@@ -73,22 +74,26 @@ Anthropic 的完整 `thinking` / `redacted_thinking` 块，
 也不把用户提供的未知原生 metadata 纳入支持集合；可搬运哪些字段由源 encoder 决定。
 响应时间统一为通用 `created_at`，Chat decoder 在输出时映射回原生 `created`。
 
-源协议不支持的原生字段由 encoder 静默丢弃。已进入中间契约后，未知内容类型、未知操作种类、
+中间层支持集合之外的原生字段由 encoder 静默丢弃。已进入中间契约后，未知内容类型、未知操作种类、
 不支持的增量字段属于中间协议错误，抛出 `MessageValidationError`，不静默删除。
-`encode()` 和 `decode(chunks=...)` 共用操作校验；后者对 `StreamBatch` 模型及原始字典一视同仁，
-即使模型在编码后被修改也会重新检查，再交给状态机。不允许混合内部批次与公开事件。
+公开 `encode(chunks=...)` 接收完整原生流，内部校验操作、累积并检查 EOF 后，返回 `MessageEvent`。
+公开 `decode(chunks=...)` 只接收完整公开中间事件，并重新检查其结构，不接受内部批次。
+公开事件通过 `protocol` 保留源协议，`finish.metadata` 保存 encoder 已提取上下文，
+`finish.output_blocks` 保存 `StreamBlock` 终态块。经 `to_wire()` 和 JSON 保存后仍可独立翻译。
+公开方法对非空流要求恰好一个末尾 `finish`，不跨调用保存片段；实时应用使用 `MyLLM.generate(stream=True)`。
 公共消息、工具、事件读取入口同样拒绝缺少必需字段的结构；这些格式错误不受语义损失策略影响。
 `block_update` 仍按部分补丁检查，`finish` 操作允许沿用此前的结束原因。
 状态机及内部投影不重复兜底，也不通过捕获任意 `KeyError` / `TypeError` 掩盖应用或内部错误。
 
-校验统一归入 `middleware/validation.py`，公开接口为 `validate_content`、`validate_messages`、
+校验统一归入内部 `middleware/validation.py`，包含 `validate_content`、`validate_messages`、
 `validate_tools`、`validate_operations`（批次及其内部操作）、`validate_events`（公开事件）。
-codec 只依赖公开接口；需要先校验再做能力过滤时，使用 `messages_from_validated_wire` /
+codec 依赖这些内部校验函数；需要先校验再做能力过滤时，使用 `messages_from_validated_wire` /
 `MessageEvent.from_validated_wire` 投影已检查的结果，不重复校验。
 成功路径不构造错误路径字符串、路径节点或闭包；校验失败后才逐层补充字段名和数组索引。
 工具结果允许的内容种类由 wire 与模型输入校验共享；可见 reasoning 只允许字符串或 None。
-事件必需字段和可选字段分别列于规则表中，`finish` 的 `reason`、`messages`、`output_blocks`
-均可缺省；结构字段只能用于对应事件种类。
+内部事件片段按各类型规则检查，结构字段只能用于对应事件种类。公开 `MyCodec.decode`
+还会验证完整流：非空事件列表必须以唯一的 `finish` 结束，且终态必须包含
+`reason`、`messages` 和 `output_blocks`。
 
 显式投影会借用嵌套应用字典、原生回传值及内部操作，不能把 `to_wire()` 视作独立深拷贝。
 输入在准备 SDK 请求时完成隔离；公开生成结果和各公开事件拥有自己的可变数据，

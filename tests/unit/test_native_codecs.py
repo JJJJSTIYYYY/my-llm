@@ -2,15 +2,8 @@ from copy import deepcopy
 
 import pytest
 
-from my_llm import (
-    BaseCodec,
-    BaseDecoder,
-    BaseEncoder,
-    BaseTransport,
-    MessageValidationError,
-    MyCodec,
-    SemanticLossError,
-)
+from my_llm import MessageValidationError, MyCodec, SemanticLossError
+from my_llm.codec.base import BaseCodec, BaseDecoder, BaseEncoder, BaseTransport
 from my_llm.codec.openai.chat.codec import ChatCompletionsCodec
 from my_llm.codec.openai.chat.decoding.decoder import ChatCompletionsDecoder
 from my_llm.codec.openai.chat.encoding.encoder import ChatCompletionsEncoder
@@ -21,7 +14,7 @@ from tests.helpers.protocols import PROTOCOLS, history, tools
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_common_contract_is_stateless_and_symmetric(protocol):
-    codec = MyCodec().codecs[protocol]
+    codec = MyCodec()._codecs[protocol]
     assert isinstance(codec, BaseCodec)
     assert isinstance(codec.encoder, BaseEncoder)
     assert isinstance(codec.decoder, BaseDecoder)
@@ -85,9 +78,9 @@ def test_partial_protocol_implementation_cannot_be_instantiated(base, concrete, 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_decoder_has_no_sdk_lifecycle_interface(protocol):
     converter = MyCodec()
-    decoder = converter.decoder(protocol)
-    transport = converter.transport(protocol)
-    assert transport is converter.codecs[protocol].transport
+    decoder = converter._decoder(protocol)
+    transport = converter._transport(protocol)
+    assert transport is converter._codecs[protocol].transport
     for name in ("create_client", "close_client", "upstream"):
         assert not hasattr(decoder, name)
         assert callable(getattr(transport, name))
@@ -135,7 +128,7 @@ def test_codec_request_translates_before_native_assembly(profile_factory, protoc
         input_format="openai_chat",
     )
     before = deepcopy(intermediate)
-    request = converter.codecs[protocol].request(**intermediate, profile=profile, max_tokens=50)
+    request = converter._codecs[protocol].request(**intermediate, profile=profile, max_tokens=50)
     history_key = "input" if protocol == "openai_responses" else "messages"
     expected_content = {
         "openai_chat": "hello",
@@ -146,8 +139,8 @@ def test_codec_request_translates_before_native_assembly(profile_factory, protoc
     if protocol == "openai_responses":
         expected_message["type"] = "message"
     assert request[history_key] == [expected_message]
-    assert request["tools"] == converter.decoder(protocol).filter_tools(
-        converter.decoder(protocol).tools(intermediate["tools"], profile), profile
+    assert request["tools"] == converter._decoder(protocol).filter_tools(
+        converter._decoder(protocol).tools(intermediate["tools"], profile), profile
     )
     assert intermediate == before
 
@@ -247,8 +240,8 @@ def test_decoder_validates_filtered_native_message_structure(profile_factory):
 )
 def test_protocol_matching_rejects_malformed_nested_containers(values):
     converter = MyCodec()
-    assert converter.match_protocol(values) is None
-    assert all(codec.match_protocol(values) is None for codec in converter.codecs.values())
+    assert converter._match_protocol(values) is None
+    assert all(codec.match_protocol(values) is None for codec in converter._codecs.values())
 
 
 @pytest.mark.parametrize("protocol", ["openai_chat"])
@@ -267,6 +260,6 @@ def test_nullable_native_calls_are_treated_as_absent(protocol):
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_protocols_inherit_common_parameter_execution(protocol):
-    codec = MyCodec().codecs[protocol]
+    codec = MyCodec()._codecs[protocol]
     assert type(codec.encoder).parameter_value is BaseEncoder.parameter_value
     assert type(codec.decoder).request_parameters is BaseDecoder.request_parameters

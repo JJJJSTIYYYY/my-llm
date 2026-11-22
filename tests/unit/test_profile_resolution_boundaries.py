@@ -87,7 +87,7 @@ def test_model_protocol_selects_the_instance_defaults_before_resolution():
 
     def defaults_for(protocol):
         calls.append(protocol)
-        return codec.defaults(protocol)
+        return codec._defaults(protocol)
 
     resolved = resolve_profiles(
         ProviderProfile(protocol=Config(default_value="openai_chat")),
@@ -111,17 +111,17 @@ def test_llm_uses_its_own_codec_for_protocol_validation(monkeypatch):
             super().__init__(**kwargs)
             instances.append(self)
 
-        def validate_profile(self, profile):
+        def _validate_profile(self, profile):
             calls.append((self, profile))
-            super().validate_profile(profile)
+            super()._validate_profile(profile)
 
     monkeypatch.setattr("my_llm.my_llm.MyCodec", Codec)
     llm = MyLLM(
         provider=ProviderProfile(protocol=Config(default_value="openai_chat")),
         model=ModelProfile(model=Attribute(default_value="demo")),
     )
-    assert instances == [llm.codec]
-    assert calls == [(llm.codec, llm.resolved_profile)]
+    assert instances == [llm._codec]
+    assert calls == [(llm._codec, llm.resolved_profile)]
 
 
 @pytest.mark.parametrize(

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from my_llm.basic.data import capture
 from my_llm.middleware.models import (
     Message,
     MessageContent,
@@ -80,6 +81,28 @@ class StreamBatch(ProtocolValue):
 
 
 @dataclass(slots=True)
+class StreamBlock(ProtocolValue):
+    """A completed block in a finish event's indexed output snapshot.
+
+    ``index`` identifies its middleware stream position; ``block`` contains the
+    finalized typed content. ``source_ref`` retains its source item/part address,
+    independently of target-protocol filtering and output positions.
+    """
+
+    index: int
+    block: MessageContent
+    source_ref: tuple[str, int, int] | None = None
+
+    def to_wire(self) -> dict:
+        """Project the indexed terminal block using canonical content fields."""
+        return {
+            "index": self.index,
+            "source_ref": self.source_ref,
+            "block": self.block.to_wire(),
+        }
+
+
+@dataclass(slots=True)
 class MessageEvent(ProtocolValue):
     """Public middleware stream event after tool assembly and EOF validation.
 
@@ -87,6 +110,12 @@ class MessageEvent(ProtocolValue):
     complete ToolCall in ``block`` and arrives only after source EOF. ``finish``
     contains the completed assistant history in ``messages``. Usage is available
     separately through MyLLM.get_last_usage(). Each event owns its mutable values.
+
+    ``protocol`` identifies the source protocol. On ``finish``, ``output_blocks``
+    retains finalized indexed content and ``metadata`` carries only the source
+    context explicitly extracted by its encoder. Preserve these fields when
+    saving events with ``to_wire()``. A complete saved sequence can be supplied
+    to a new MyCodec instance without any private state from the original call.
     """
 
     type: Literal["start", "block_start", "delta", "block_stop", "block", "tool", "finish"]
@@ -98,6 +127,9 @@ class MessageEvent(ProtocolValue):
     value: str | None = None
     reason: str | None = None
     messages: list[Message] | None = None
+    protocol: str | None = None
+    metadata: dict | None = None
+    output_blocks: list[StreamBlock] | None = None
 
     @classmethod
     def from_wire(cls, event: dict) -> MessageEvent:
@@ -111,7 +143,7 @@ class MessageEvent(ProtocolValue):
         return cls(
             type=event["type"],
             index=event.get("index"),
-            source_ref=event.get("source_ref"),
+            source_ref=tuple(event["source_ref"]) if event.get("source_ref") is not None else None,
             block=content_from_validated_wire(event["block"]) if "block" in event else None,
             tool_index=event.get("tool_index"),
             field=event.get("field"),
@@ -120,18 +152,34 @@ class MessageEvent(ProtocolValue):
             messages=messages_from_validated_wire(event["messages"])
             if "messages" in event
             else None,
+            protocol=event.get("protocol"),
+            metadata=capture(event["metadata"]) if "metadata" in event else None,
+            output_blocks=[
+                StreamBlock(
+                    entry["index"],
+                    content_from_validated_wire(entry["block"]),
+                    tuple(entry["source_ref"]) if entry.get("source_ref") is not None else None,
+                )
+                for entry in event["output_blocks"]
+            ]
+            if "output_blocks" in event
+            else None,
         )
 
     def to_wire(self) -> dict:
         """Project present public event fields and nested typed content/messages."""
         result = {"type": self.type}
-        for name in ("index", "source_ref", "tool_index", "field", "value", "reason"):
+        for name in ("index", "source_ref", "tool_index", "field", "value", "reason", "protocol"):
             if (value := getattr(self, name)) is not None:
                 result[name] = value
         if self.block is not None:
             result["block"] = self.block.to_wire()
         if self.messages is not None:
             result["messages"] = [message.to_wire() for message in self.messages]
+        if self.metadata is not None:
+            result["metadata"] = self.metadata
+        if self.output_blocks is not None:
+            result["output_blocks"] = [entry.to_wire() for entry in self.output_blocks]
         return result
 
 

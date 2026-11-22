@@ -311,7 +311,7 @@ async def test_all_native_protocol_pairs_repair_tools_before_sdk_validation(
         max_tokens=parameter("max_tokens", 2048, protocol=target),
     )
     request = (
-        await codec.prepare(
+        await codec._prepare(
             {"messages": messages, "tools": tools(source), "stream": False},
             profile,
             input_format=source,
@@ -338,7 +338,7 @@ async def test_all_orphan_results_fail_without_inventing_a_user_prompt(profile_f
     codec = MyCodec()
     with pytest.raises(MessageValidationError, match="no usable history"):
         (
-            await codec.prepare(
+            await codec._prepare(
                 {
                     "messages": [ToolMessage("tool", [TextContent("result")], call_id="c")],
                     "tools": omit,
@@ -369,7 +369,7 @@ async def test_orphan_message_is_removed_with_all_its_text_in_every_target(profi
     ]
     before = deepcopy(messages)
     request = (
-        await MyCodec().prepare(
+        await MyCodec()._prepare(
             {"messages": messages, "tools": omit, "stream": False, "max_tokens": 2048},
             profile_factory(target, supports_function_calling=config(True)),
             input_format="middleware",
@@ -409,7 +409,7 @@ async def test_native_idless_results_are_discarded_before_missing_results_are_pa
         max_tokens=parameter("max_tokens", 2048, protocol=target),
     )
     request = (
-        await MyCodec().prepare(
+        await MyCodec()._prepare(
             {"messages": messages, "tools": omit, "stream": False},
             profile,
             input_format=source,
@@ -461,7 +461,7 @@ def test_finish_does_not_scan_and_translation_consumes_repaired_slots_once(profi
     assert normalizer.messages.visits == 0
     translated = (
         MyCodec()
-        .decoder("openai_chat")
+        ._decoder("openai_chat")
         ._messages(repaired, profile_factory(supports_function_calling=config(True)))
     )
     assert normalizer.messages.visits == 1
@@ -526,7 +526,7 @@ def test_chat_request_groups_results_without_a_semantic_loss_hook(profile_factor
     before = deepcopy(messages)
     request = (
         MyCodec()
-        .codecs["openai_chat"]
+        ._codecs["openai_chat"]
         .request(messages, None, profile_factory(supports_function_calling=config(True)))
     )
     native = request["messages"]

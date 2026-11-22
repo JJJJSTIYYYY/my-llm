@@ -27,5 +27,5 @@ def test_llm_constructs_only_one_selected_codec_when_resolving_defaults(monkeypa
     )
 
     assert constructions == {upstream: 1}
-    assert set(llm.codec.codecs.instances) == {upstream}
-    assert llm.codec.defaults(upstream) is llm.codec.codecs[upstream].defaults
+    assert set(llm._codec._codecs.instances) == {upstream}
+    assert llm._codec._defaults(upstream) is llm._codec._codecs[upstream].defaults

@@ -237,7 +237,7 @@ def test_declared_extension_defaults_reach_filtered_sdk_request(configured, body
         ),
         ModelProfile(model=Attribute(default_value="demo")),
     )
-    request = codec.request(intermediate, profile)
+    request = codec._request(intermediate, profile)
     assert request.get("extra_body", {}) == expected
 
 

@@ -274,6 +274,7 @@ class AnthropicDecoder(BaseDecoder):
         content that the target protocol cannot express as semantic losses.
         """
         result = []
+        indices = parameters.setdefault("stream_indices", {})
         for event in events(chunks):
             kind = event.get("type")
             if kind in ("block_start", "block_stop", "tool", "block"):
@@ -281,7 +282,19 @@ class AnthropicDecoder(BaseDecoder):
                 native_owner = (
                     parameters.get("source_protocol") if owner is None else owner
                 ) == constants.PROTOCOL
-            index = event.get("index", 0)
+            if kind == "block":
+                block = event["block"]
+                if not native_owner:
+                    block = foreign_block(block)
+                    if block is None:
+                        continue
+                block = decode_block(block)
+                if block is None:
+                    continue
+            index = 0
+            if kind not in ("start", "finish"):
+                key = ("block", event.get("index", 0))
+                index = indices.setdefault(key, len(indices))
             if kind == "start":
                 result.append(
                     {
@@ -352,14 +365,6 @@ class AnthropicDecoder(BaseDecoder):
                     ]
                 )
             elif kind == "block":
-                block = event["block"]
-                if not native_owner:
-                    block = foreign_block(block)
-                    if block is None:
-                        continue
-                block = decode_block(block)
-                if block is None:
-                    continue
                 result.extend(
                     [
                         {

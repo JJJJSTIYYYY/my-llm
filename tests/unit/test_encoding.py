@@ -248,7 +248,7 @@ def test_reasoning_replay_pads_tool_calls_according_to_feedback(
         profile=profile,
         reasoning=thinking,
     )["messages"][0]
-    result = MyCodec().decoder(protocol).filter_messages([result], profile, reasoning=thinking)[0]
+    result = MyCodec()._decoder(protocol).filter_messages([result], profile, reasoning=thinking)[0]
     assert (key in result) is (replay and (bool(visible) and same_protocol or has_calls))
     if key in result:
         assert result[key] == (visible if visible and same_protocol else "")
@@ -289,11 +289,11 @@ def test_unsupported_previous_response_id_uses_loss_policy(profile_factory, prot
     profile = profile_factory(protocol, max_tokens=parameter("max_tokens", 2048, protocol=protocol))
     if policy == "raise":
         with pytest.raises(SemanticLossError, match="support") as caught:
-            codec.request(inputs, profile, previous_response_id="resp_previous")
+            codec._request(inputs, profile, previous_response_id="resp_previous")
         request = caught.value.draft
         assert caught.value.losses.items[0].origin_path == "$.previous_response_id"
     else:
-        request = codec.request(inputs, profile, previous_response_id="resp_previous")
+        request = codec._request(inputs, profile, previous_response_id="resp_previous")
         if policy == "hook":
             assert observed[0] is request
             assert request["handled_previous_response_id"] is True

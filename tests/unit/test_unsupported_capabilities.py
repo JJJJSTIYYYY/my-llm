@@ -57,11 +57,11 @@ def test_unsupported_reasoning_control_reaches_policy_with_complete_request(
     )
     if policy == "raise":
         with pytest.raises(SemanticLossError, match="support") as caught:
-            codec.request(inputs, profile, reasoning=True)
+            codec._request(inputs, profile, reasoning=True)
         assert "complete tail" in str(caught.value.draft)
         assert caught.value.draft["model"] == "demo"
     else:
-        result = codec.request(inputs, profile, reasoning=True)
+        result = codec._request(inputs, profile, reasoning=True)
         assert "complete tail" in str(result)
         if policy == "hook":
             assert observed == [result]
@@ -86,7 +86,7 @@ def test_unsupported_reasoning_effort_is_reported_even_if_enable_is_supported(
         reasoning_effort=parameter("reasoning_effort", supports=False, protocol=protocol),
     )
     with pytest.raises(SemanticLossError, match="support") as caught:
-        codec.request(inputs, profile, reasoning_effort="high")
+        codec._request(inputs, profile, reasoning_effort="high")
     assert "complete tail" in str(caught.value.draft)
     assert any(
         item.origin_path == "$.reasoning_effort" and item.origin_value == "high"
@@ -100,7 +100,7 @@ def test_explicitly_omitted_unsupported_token_limit_is_not_a_loss(profile_factor
     profile = profile_factory(max_tokens=parameter("max_tokens", supports=False))
     codec = MyCodec()
     inputs = codec.encode([{"role": "user", "content": "hello"}], input_format="openai_chat")
-    request = codec.request(inputs, profile, max_tokens=omit)
+    request = codec._request(inputs, profile, max_tokens=omit)
     assert "max_completion_tokens" not in request
 
 
@@ -112,7 +112,7 @@ def test_unsupported_effort_cannot_use_the_native_reasoning_enable_alias(profile
     profile = profile_factory()
     body = {"reasoning_effort": "high"}
     with pytest.raises(SemanticLossError, match="support") as caught:
-        codec.request(inputs, profile, extra_body=body)
+        codec._request(inputs, profile, extra_body=body)
     assert "reasoning_effort" not in caught.value.draft
     assert "reasoning_effort" not in caught.value.draft.get("extra_body", {})
     assert [(loss.origin_path, loss.origin_value) for loss in caught.value.losses] == [
@@ -121,7 +121,7 @@ def test_unsupported_effort_cannot_use_the_native_reasoning_enable_alias(profile
     assert "complete tail" in str(caught.value.draft)
     assert body == {"reasoning_effort": "high"}
 
-    enabled = codec.request(inputs, profile, extra_body={"reasoning_effort": "medium"})
+    enabled = codec._request(inputs, profile, extra_body={"reasoning_effort": "medium"})
     assert enabled["extra_body"]["reasoning_effort"] == "medium"
 
 
@@ -136,7 +136,7 @@ def test_unsupported_token_limit_has_a_complete_draft_for_every_protocol(profile
         [{"role": "user", "content": "complete tail"}], input_format="openai_chat"
     )
     with pytest.raises(SemanticLossError, match="support") as caught:
-        codec.request(inputs, profile, max_tokens=100)
+        codec._request(inputs, profile, max_tokens=100)
     assert "complete tail" in str(caught.value.draft)
     assert path_value(caught.value.draft, declaration.path, "absent") == "absent"
     assert any(
@@ -165,11 +165,11 @@ def test_unsupported_token_limit_removes_public_and_native_values(profile_factor
     body = {"max_completion_tokens": 12}
     if policy == "raise":
         with pytest.raises(SemanticLossError) as caught:
-            codec.request(inputs, profile, max_tokens=100, extra_body=body)
+            codec._request(inputs, profile, max_tokens=100, extra_body=body)
         draft = caught.value.draft
         assert {loss.origin_value for loss in caught.value.losses} == {12, 100}
     else:
-        draft = codec.request(inputs, profile, max_tokens=100, extra_body=body)
+        draft = codec._request(inputs, profile, max_tokens=100, extra_body=body)
         if policy == "hook":
             assert observed[0] is draft
             assert draft["handled_token_limit"] is True
@@ -211,7 +211,7 @@ def test_custom_unsupported_parameter_cannot_be_restored_by_native_body(protocol
     )
     before = deepcopy(body)
     with pytest.raises(SemanticLossError, match="support") as caught:
-        codec.request(inputs, profile, extra_body=body)
+        codec._request(inputs, profile, extra_body=body)
     assert path_value(caught.value.draft, path, "absent") == "absent"
     assert "complete tail" in str(caught.value.draft)
     assert any(loss.origin_value == 0.0 for loss in caught.value.losses)
@@ -266,7 +266,7 @@ def test_decoder_sdk_union_loss_preserves_sibling_blocks_and_input(profile_facto
 def test_encoder_rejects_invalid_protocol_structure_as_message_validation():
     codec = MyCodec("ignore")
     with pytest.raises(MessageValidationError):
-        codec.validate_input("openai_chat", [{"role": "unsupported", "content": "hello"}])
+        codec._validate_input("openai_chat", [{"role": "unsupported", "content": "hello"}])
 
 
 def test_supported_extension_cannot_restore_an_unsupported_parent(profile_factory):
@@ -281,7 +281,7 @@ def test_supported_extension_cannot_restore_an_unsupported_parent(profile_factor
     }
     before = deepcopy(native)
     with pytest.raises(SemanticLossError, match="support") as caught:
-        MyCodec().decoder("openai_responses").native_request(native, profile)
+        MyCodec()._decoder("openai_responses").native_request(native, profile)
     assert "reasoning" not in caught.value.draft
     assert "complete tail" in str(caught.value.draft)
     assert caught.value.losses.items[0].origin_value is native["reasoning"]

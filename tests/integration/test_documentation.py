@@ -50,12 +50,14 @@ def test_configuration_guide_covers_profile_fields_and_local_links():
                 assert (path.parent / target.split("#")[0]).is_file(), target
 
 
-async def test_offline_request_pipeline_example():
+def test_offline_translation_example():
     import runpy
 
-    namespace = runpy.run_path(str(ROOT / "examples/request_pipeline.py"))
-    prepared = await namespace["main"]()
-    assert prepared["request"]["model"] == "example-model"
+    namespace = runpy.run_path(str(ROOT / "examples/translation.py"))
+    converted = namespace["main"]()
+    assert converted["messages"] == [
+        {"role": "user", "content": [{"type": "text", "text": "Hello"}]}
+    ]
 
 
 @pytest.mark.parametrize(
@@ -166,7 +168,7 @@ async def test_sensenova_retry_preserves_passed_rows_and_failure_history(
         calls.append(case)
         assert stdio == llm.stdio_protocol == "middleware"
         assert request_interval == 0
-        assert llm.codec.semantic_loss_adaptor.semantic_loss_protocol == "ignore"
+        assert llm._codec._semantic_loss_adaptor.semantic_loss_protocol == "ignore"
         if not succeeds:
             raise RuntimeError("failure with local-example-key")
         return {"text": "SENSENOVA_OK", "events": 2, "requests": 1}

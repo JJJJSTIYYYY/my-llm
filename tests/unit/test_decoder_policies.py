@@ -18,7 +18,7 @@ def test_omitted_name_capability_does_not_restore_the_protocol_default(profile_f
         input_format="openai_chat",
     )
     with pytest.raises(SemanticLossError) as caught:
-        codec.request(inputs, profile_factory(supports_message_name=omit))
+        codec._request(inputs, profile_factory(supports_message_name=omit))
     assert caught.value.draft["messages"] == [{"role": "user", "content": "complete tail"}]
     loss = caught.value.losses.items[0]
     assert loss.origin_path == "$.messages[0].name"
@@ -110,7 +110,7 @@ def test_encoder_does_not_apply_decoder_capability_policy(monkeypatch, profile_f
     result = codec.encode(
         source, definitions, chunks=stream_events(protocol), input_format=protocol, profile=profile
     )
-    envelope = codec.codecs[protocol].encoder.request(
+    envelope = codec._codecs[protocol].encoder.request(
         {"messages": source, "tools": definitions}, profile
     )
 

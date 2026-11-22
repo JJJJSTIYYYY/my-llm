@@ -1,6 +1,8 @@
 # API 参考
 
 本文介绍 `my_llm` 的公开接口、参数、返回值和使用约束。
+业务执行入口为 `MyLLM.generate`，独立翻译入口为 `MyCodec.encode` / `decode` / `convert`。
+配置、数据模型、语义损失 hook、流生命周期和生成状态读取为这些入口提供配套能力。
 除另行注明外，下列类型、函数和异常均可从 `my_llm` 导入。
 完整配置示例见[配置指南](configuration.md)，协议字段见[标准协议参考](schema/README.md)。
 
@@ -54,25 +56,6 @@ Model 的 `protocol=None` 继承 Provider；Model 明确配置时，Provider 可
 | `provider` / `model` | 构造时传入配置的副本 |
 | `resolved_profile` | 已解析的 `ResolvedProfile` |
 | `stdio_protocol` | 绑定的输入输出协议，推断前可为 `None` |
-| `codec` | 当前实例的 `MyCodec` |
-| `client_parameters` | 已准备的连接参数，供高级集成使用 |
-
-### `MyLLM.resolve_profile(provider, model)`
-
-类方法返回独立的 `ResolvedProfile`，可传入构造函数的 `resolved_profile` 跳过重复解析。
-构造函数复制传入的快照并检查协议约束；不计算配置哈希。
-
-```python
-resolved = MyLLM.resolve_profile(provider, model)
-llm = MyLLM(provider=provider, model=model, resolved_profile=resolved)
-```
-
-### `MyLLM.compare(new_provider, new_model, new_stdio_protocol) -> bool`
-
-三个参数均为字符串，分别与此实例的 `provider.provider.default_value`、模型 ID 和已绑定的
-`stdio_protocol` 精确比较，全部相同返回 `True`。协议尚未推断时，不匹配任何输入协议字符串。
-不解析配置、不检查配置等价性，也不修改配置、客户端或缓存。实例的选择和复用由应用层管理。
-Provider 标识默认采用 Provider 协议名；只有 Model 指定协议时，实例采用最终协议名。
 
 ### `MyLLM.clear_cache() -> None`
 
@@ -173,38 +156,6 @@ async def retry_unconsumed(llm):
 工具参数、结果对象和 JSON Schema 等已识别开放字段中的应用数据会保留。
 需要保留工具调用、思考签名或其他原生内容时，应保存完整返回值或 `stream.result`。
 
-### `await generate(...)`
-
-模块函数提供一次性调用：
-
-```python
-from my_llm import generate
-
-
-async def ask_once(provider, model_id):
-    return await generate(
-        provider=provider,
-        model=model_id,
-        messages=[{"role": "user", "content": "Hello"}],
-        stdio_protocol="openai_chat",
-        max_tokens=512,
-    )
-```
-
-签名为 `generate(*, provider, model, messages, stdio_protocol=None, semantic_loss_protocol="raise", input_semantic_loss_hook=None, output_semantic_loss_hook=None, **parameters)`。
-`provider` 与实例入口相同；`model` 可为 `ModelProfile` 或非空模型 ID 字符串。
-字符串直接作为模型 ID，不查找 Provider 的模型目录。
-`semantic_loss_protocol` 与两个 hook 的含义同 `MyLLM` 构造参数；`parameters` 接收
-`MyLLM.generate` 的其他生成选项。返回值和异常约定相同。
-
-非流式调用结束后自动释放资源。返回流时，必须消费或显式关闭该流，以释放本次调用的资源。
-
-### 协议推断
-
-| 方法 | 返回值及约束 |
-| --- | --- |
-| `llm.guess_stdio_protocol(messages_or_tools)` | 返回已绑定协议；未绑定时从整个列表推断并绑定，非唯一匹配抛出 `MessageValidationError` |
-
 MyLLM 无需关闭或使用上下文管理器。消息翻译缓存由 `clear_cache()` 主动清理，或随实例释放。
 同一实例须在一个异步事件循环内使用；关闭消息缓存时支持并发，启用时必须串行调用。
 
@@ -256,8 +207,8 @@ async def print_stream(llm, prompt):
 | `Origin` | `path`、`value`；仅供错误定位，不作为 payload 字段输出 |
 | `Usage` | 可选整数 `input`、`output`、`total`、`cached`、`reasoning`；缺失为 `None` |
 | `ProtocolMiddleWare` | 可选 `messages`、`tools`、`stream`、`usage`；生成时传模型列表属性；字典投影中 `stream` 对应 `chunks` |
-| `StreamBatch` | `protocol` 和内部操作 `events: list[dict]`，供 encoder 与状态机交互；应用流使用 `MessageEvent` |
-| `MessageEvent` | `type`、可选 `index`、`source_ref`、`block`、`tool_index`、`field`、`value`、`reason`、`messages`；各事件有效字段见[流式输出](../guides/middleware-io.md#流式输出) |
+| `StreamBlock` | 终态块的 `index`、`block` 和可选 `source_ref`，由 `MessageEvent.output_blocks` 携带 |
+| `MessageEvent` | `type`、可选 `index`、`source_ref`、`block`、`tool_index`、`field`、`value`、`reason`、`messages`、来源 `protocol`、已提取上下文 `metadata` 和终态 `output_blocks`；各事件有效字段见[流式输出](../guides/middleware-io.md#流式输出) |
 | `MessageContent`、`ToolResult` | 分别为消息支持内容的联合类型、`TextContent \| ImageContent` |
 | `JsonValue`、`JsonObject` | JSON 值和 `dict[str, JsonValue]` 类型别名，使用普通 Python 值与字典，无额外包装 |
 
@@ -269,11 +220,8 @@ async def print_stream(llm, prompt):
 生成请求在准备阶段隔离输入，公开结果和事件拥有自己的可变数据。
 未知原生字段由 encoder 过滤。公共中间输入入口遇到未知内容类型、操作或增量字段，
 以及缺少必需字段时，抛出带路径的 `MessageValidationError`；`ignore` / `hook` 不会跳过格式校验。
-`decode(chunks=...)` 对 `StreamBatch` 和原始批次字典使用相同校验，再进入状态机。
-
-校验函数也可从 `my_llm.middleware` 导入：`validate_content`、`validate_messages`、`validate_tools`、
-`validate_operations`（接收批次列表）、`validate_events`；这些函数只校验，不复制或转换输入，
-返回 `None`，可用 `path` 指定错误路径前缀。
+`encode(chunks=...)` 对完整原生流完成累积与 EOF 校验后返回 `MessageEvent`；
+`decode(chunks=...)` 接受完整公开中间事件，不接受内部 `StreamBatch`。
 
 ## 配置接口
 
@@ -386,9 +334,8 @@ Provider 与 Model 共享以下覆盖项，均默认 `None`，表示继承：
 
 `resolve_profiles(provider, model, *, defaults_for=None) -> ResolvedProfile` 按协议默认值、Provider、Model 顺序解析，
 返回独立配置快照。无效声明或值抛出 `ConfigurationError`，不可用协议抛出 `UnsupportedProviderError`。
-直接集成时再调用 `MyCodec.validate_profile(resolved)` 检查协议约束；MyLLM 自动完成这些检查。
-`defaults_for(protocol)` 可提供已有实例的 ProtocolDefaults；MyLLM 使用自身 MyCodec.defaults，
-与后续验证和请求共用同一个协议组件实例。省略时独立创建所选注册 codec 读取默认声明。
+生成和翻译入口负责各自需要的协议约束检查，调用方无需单独执行内部验证步骤。
+`defaults_for(protocol)` 可提供自定义的 ProtocolDefaults；省略时读取所选注册协议的默认声明。
 
 | 属性 / 方法 | 含义 |
 | --- | --- |
@@ -463,8 +410,7 @@ Chat 上游将同一 assistant 的工具结果按到达顺序集中到其 `tool_
 ## 语义损失与 usage
 
 `MyLLM` 构造接收 `semantic_loss_protocol="raise" | "ignore" | "hook"` 及
-`input_semantic_loss_hook` / `output_semantic_loss_hook`，实例上可用同名参数调用
-`set_semantic_loss_policy()` 二次设置。hook 接收 `(draft, losses, context)` 并原位修改，
+`input_semantic_loss_hook` / `output_semantic_loss_hook`，也可通过 `set_semantic_loss_policy()` 更新生成配置。hook 接收 `(draft, losses, context)` 并原位修改，
 请求 hook 可以异步执行，准备阶段会等待其完成；离线转换与输出 hook 仍为同步函数，
 具体值和示例见[迁移指南](../guides/semantic-loss.md)。
 
@@ -510,86 +456,36 @@ assert converted["messages"] == [{"role": "user", "content": [{"type": "text", "
 | `convert(messages=None, tools=None, *, input_format, target_format, profile=None, chunks=None, **parameters)` | 标准协议直接转换为目标标准协议 |
 | `encode(messages=None, tools=None, *, input_format, profile=None, chunks=None, **parameters)` | 将标准值转换为具体的 ProtocolMiddleWare 及其类型化模型 |
 | `decode(messages=None, tools=None, *, target_format, profile=None, chunks=None, **parameters)` | 将中间值转换为目标标准值 |
-| `result(messages, *, target_format)` | 将中间消息列表转换为完整结果：单个消息字典，或 Responses items 列表 |
 
 `convert`、`decode` 返回只包含本次转换集合的字典；`encode` 返回 `ProtocolMiddleWare`，
-其 `.messages`、`.tools`、`.stream` 为具体模型列表。
+其 `.messages`、`.tools`、`.stream` 为具体模型列表；`.stream` 是累积完成的 `MessageEvent` 列表。
 字典投影只包含传入的 `messages`、`tools`、`chunks`；参数为 `None` 时省略，空列表仍保留。
 `profile=None` 表示标准字段行为；`convert` 的 profile 和额外选项作用于目标转换。
 额外选项由目标协议支持情况决定，例如事件中的 `model`。
 
-`convert(chunks=完整事件列表, ...)` 支持离线转换完整响应流。
+`encode(chunks=完整原生事件列表, ...)` 返回累积、校验后的公开中间事件；
+`decode(chunks=完整中间事件列表, ...)` 将它们翻译为目标协议。
+`convert(chunks=完整原生事件列表, ...)` 在一次调用中完成上述过程。
+各入口可单独使用，返回的中间事件可经 `to_wire()` 和 JSON 保存后交给 `decode()`。
 实时响应请使用 `MyLLM.generate(stream=True)`；转换器不记住前一次调用的流片段。
 中间模型也可作为应用对话历史：显式设置 `stdio_protocol="middleware"`，然后将
-`ProtocolMiddleWare.messages` / `.tools` 属性直接传给生成方法。`decode()` / `result()`
+`ProtocolMiddleWare.messages` / `.tools` 属性直接传给生成方法。`decode()`
 输出到 `target_format="middleware"` 时还须提供原生来源 `input_format`；无需目标 decoder。
 
-### 验证、注册和高级调用
+### 协议注册与内部实现边界
 
-| 方法 / 属性 | 契约 |
-| --- | --- |
-| `codecs` | 构造时可用的协议名到 BaseCodec 的映射，按只读使用 |
-| `MyCodec.register(CodecFactory)` | 注册返回独立 BaseCodec 及组件的零参数工厂；须早于使用它的 MyCodec / MyLLM 创建；重名或无效实现抛出 `ConfigurationError` |
-| `match_protocol(messages_or_tools)` | 整批输入唯一匹配时返回协议名，否则为 `None` |
-| `validate_input(protocol, messages, tools=None)` | 验证指定协议的输入，失败抛出 `MessageValidationError` |
-| `validate_profile(profile)` | 验证已解析配置的协议约束，失败抛出配置或能力异常 |
-| `decoder(protocol)` / `transport(protocol)` | 获取指定协议的 BaseDecoder / BaseTransport |
-| `defaults(protocol)` | 只读借用本实例所选协议的 ProtocolDefaults，供配置解析使用 |
-| `bind_input(inputs, protocol)` | 返回显式协议或从 messages/tools 唯一推断；推断时更新传入字典的这两个值；不记住协议 |
-| `client_parameters(profile)` | 返回连接参数字典 |
-| `await prepare(inputs, profile, *, input_format, client)` | 异步准备完整调用并等待请求 hook，返回 `client`、`request`、`local` 三个字典；inputs 需包含 messages、tools、stream 和使用的生成选项 |
-| `request(intermediate, profile, **parameters)` | 从 encode 返回的消息与可选工具构造原生请求参数字典 |
-| `upstream(client, request, profile)` | 返回异步上下文管理器，迭代原生事件；退出时关闭响应，由调用者管理 client |
+`MyCodec.register(CodecFactory)` 注册返回独立 codec 及组件的零参数工厂，须早于使用它的
+`MyCodec` / `MyLLM` 创建；重名或无效实现抛出 `ConfigurationError`。
+内置协议在对应 SDK 可用时自动注册，无需手动创建或注册内置 codec。
 
-`prepare` 的 `client` 参数来自 `client_parameters`。返回值中 `client` 是 SDK 构造参数，
-`request` 是 SDK 调用参数，`local` 包含 `stream`。
-参数准备接口不创建模型客户端或发出上游模型请求；显式注册的异步请求 hook 可以执行图片下载等 I/O。
-新增注册仅对后续创建的实例可见；实现要求和完整接入示例见[协议接入指南](../guides/adding-protocol.md)。
+业务代码通过 `MyLLM.generate` 执行调用，通过 `MyCodec.encode` / `decode` / `convert` 翻译。
+请求准备、协议识别、组件访问、结果组装和上游执行均为内部步骤，不作为独立公开入口。
+内部方法和内部批次不保证单独调用时的正确性。
 
-四个内置 Codec 类从 `my_llm.codec` 导入，均无需构造参数，提供 BaseCodec 接口：
-
-| 类 | 协议名 | 所需可选依赖 |
-| --- | --- | --- |
-| `ChatCompletionsCodec` | `openai_chat` | `my-llm-py[openai]` |
-| `ResponsesCodec` | `openai_responses` | `my-llm-py[openai]` |
-| `AnthropicCodec` | `anthropic` | `my-llm-py[anthropic]` |
-
-内置协议在对应依赖可用时自动注册，无需再次手动注册。
-
-## 协议扩展接口
-
-以下接口供自定义协议集成使用。具体字段定义与实现示例见[协议接入指南](../guides/adding-protocol.md)，
-各方法的完整签名可通过 docstring 或 IDE 查看。
-
-| 类型 | 公开契约 |
-| --- | --- |
-| `BaseCodec` | 抽象协议接口；提供 protocol_or_api_style、defaults、encoder、decoder、transport 属性 |
-| `BaseEncoder` | 将原生消息、工具和事件转换为中间值；协议名、消息及工具 schema 由子类声明 |
-| `BaseDecoder` | 将中间值转换为原生值，验证配置并构造原生请求参数 |
-| `BaseTransport` | 创建、关闭 SDK 客户端并提供原生异步响应事件 |
-| `ProtocolDefaults` | 协议默认配置，可变且仅限关键字参数；必填 should_feedback_reasoning_item，其余为标准参数与能力默认值 |
-| `PreparedOptions` | 已验证的生成控制值，通常由 BaseDecoder.validate_parameters 返回 |
-
-`BaseCodec` 提供 `encode_messages` / `decode_messages`、`encode_tools` / `decode_tools`、
-`encode_chunks` / `decode_chunks`，签名均为 `(values, profile=None, **parameters)`。
-编码分别返回 `Message`、`FunctionTool`、`StreamBatch` 模型列表，解码返回原生字典列表。
-`match_protocol(values)` 返回本协议名或 `None`；`validate_input`、`validate_profile` 和 `request`
-分别验证输入、验证配置、返回原生请求参数。
-
-BaseEncoder / BaseDecoder 的 `messages`、`tools`、`chunks` 采用相同参数约定，分别执行对应方向的转换；
-`usage(value)` 转换用量数据，缺失时返回 `None`。
-BaseEncoder 还提供 `matches` / `match_item`、`validate_input`、`validate_values`、
-`parameter_value`、`parameter_matches_event` 和 `request`。BaseDecoder 提供请求准备、过滤、验证及连接选项的扩展方法；
-覆写要求见接入指南与对应方法 docstring。
-
-BaseTransport 的 `create_client(parameters)` 返回调用者拥有的 SDK 客户端；
-`await close_client(client)` 释放客户端；`upstream(client, request)` 提供异步事件上下文。
-退出响应上下文后再关闭客户端。
-
-`PreparedOptions` 的字段为 `tokens`、`headers`、`body`、`effort`、`explicit_tokens=False`、`losses=()`，
-分别表示已解析 token 控制、请求头、原生选项、映射后的强度或 `None`、是否显式传入 token 控制，
-以及待 Decoder 完成请求草稿后统一处理的不支持控制项。
-其构造参数可按字段顺序或名称传入；嵌套字典按只读使用。
+自定义协议继承 `my_llm.codec.base` 下的 `BaseCodec`、`BaseEncoder`、`BaseDecoder`、
+`BaseTransport`；这些类型是扩展实现契约，不从包根或 `my_llm.codec` 聚合导出。
+`PreparedOptions` 和 `StreamBatch` 属内部调用数据，不从公开包导出。
+扩展约束与实现示例见[协议接入指南](../guides/adding-protocol.md)。
 
 ## 异常
 

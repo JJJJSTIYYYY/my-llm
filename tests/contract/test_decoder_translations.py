@@ -16,7 +16,7 @@ def test_builtin_decoder_hooks_and_public_methods_return_plain_lists(protocol, k
     converter = MyCodec()
     native = history(protocol) if kind == "messages" else tools(protocol)
     values = converter.encode(input_format=protocol, **{kind: native})[kind]
-    decoder = converter.decoder(protocol)
+    decoder = converter._decoder(protocol)
     before = deepcopy(values)
 
     assert type(getattr(decoder, f"_{kind}")(values)) is list
@@ -73,7 +73,7 @@ def test_parameter_translation_does_not_rewrite_standard_chunk_output(
     )
     result = (
         MyCodec()
-        .decoder(protocol)
+        ._decoder(protocol)
         .chunks(
             [{"type": "delta", "field": field, "value": value}],
             profile,
@@ -115,7 +115,7 @@ def test_encoder_missing_text_uses_default_at_standard_and_custom_paths(
         )
     }
     profile = profile_factory(protocol, **overrides)
-    codec = MyCodec().codecs[protocol]
+    codec = MyCodec()._codecs[protocol]
     event = codec.decoder.chunks(
         [{"type": "delta", "field": field, "value": "original"}],
         source_protocol=protocol,
@@ -151,7 +151,7 @@ def test_encoder_keeps_supported_text_when_a_binding_is_omitted(
 
     overrides = {semantic: omit}
     profile = profile_factory(protocol, **overrides)
-    codec = MyCodec().codecs[protocol]
+    codec = MyCodec()._codecs[protocol]
     event = codec.decoder.chunks(
         [{"type": "delta", "field": field, "value": "remove me"}],
         source_protocol=protocol,
@@ -178,7 +178,7 @@ def test_responses_known_item_header_does_not_copy_unknown_metadata():
     item = OnlyKnownKeys(type="message", id="message_1", role="assistant", vendor=object())
     result = (
         MyCodec()
-        .decoder("openai_responses")
+        ._decoder("openai_responses")
         .chunks(
             [
                 {
@@ -231,7 +231,7 @@ def test_terminal_events_do_not_append_missing_text_defaults(
         set_path(event, "$.vendor.answer" if custom_path else DELTA_PATHS[protocol][0], "last")
     operations = [
         op
-        for batch in MyCodec().codecs[protocol].encoder.chunks([event], profile)
+        for batch in MyCodec()._codecs[protocol].encoder.chunks([event], profile)
         for op in batch["events"]
     ]
     payloads = [op["value"] for op in operations if op["type"] == "block_delta"]
@@ -256,7 +256,7 @@ def test_present_null_response_does_not_use_configured_text_default(
         path="$.vendor.payload" if custom_path else None,
     )
     profile = profile_factory(protocol, **{semantic: declaration})
-    codec = MyCodec().codecs[protocol]
+    codec = MyCodec()._codecs[protocol]
     native = codec.decoder.chunks(
         [{"type": "delta", "field": field, "value": "native"}], source_protocol=protocol
     )[0]

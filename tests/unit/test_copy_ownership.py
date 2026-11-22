@@ -42,7 +42,7 @@ def native_values(protocol, kind):
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 @pytest.mark.parametrize("kind", ["messages", "tools"])
 def test_public_encoder_owns_nested_output(protocol, kind):
-    codec = MyCodec().codecs[protocol]
+    codec = MyCodec()._codecs[protocol]
     values = native_values(protocol, kind)
     before = deepcopy(values)
 
@@ -55,7 +55,7 @@ def test_public_encoder_owns_nested_output(protocol, kind):
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 @pytest.mark.parametrize("kind", ["messages", "tools"])
 def test_public_encoder_captures_nested_input(protocol, kind):
-    codec = MyCodec().codecs[protocol]
+    codec = MyCodec()._codecs[protocol]
     values = native_values(protocol, kind)
     converted = getattr(codec, f"encode_{kind}")(values)
     before = deepcopy(converted)
@@ -73,7 +73,7 @@ def test_public_decoder_owns_nested_output(source, target, kind):
     intermediate = codec.encode(**{kind: native_values(source, kind)}, input_format=source)[kind]
     before = deepcopy(intermediate)
 
-    converted = getattr(codec.codecs[target], f"decode_{kind}")(intermediate)
+    converted = getattr(codec._codecs[target], f"decode_{kind}")(intermediate)
     edit_containers(converted)
 
     assert intermediate == before
@@ -85,7 +85,7 @@ def test_public_decoder_owns_nested_output(source, target, kind):
 def test_public_decoder_captures_nested_input(source, target, kind):
     codec = MyCodec()
     intermediate = codec.encode(**{kind: native_values(source, kind)}, input_format=source)[kind]
-    converted = getattr(codec.codecs[target], f"decode_{kind}")(intermediate)
+    converted = getattr(codec._codecs[target], f"decode_{kind}")(intermediate)
     before = deepcopy(converted)
 
     assert edit_containers(intermediate) > 0
@@ -103,13 +103,13 @@ def test_repeated_public_requests_do_not_share_mutable_input(profile_factory, pr
         supports_function_calling=config(True),
     )
     before = deepcopy(intermediate)
-    first = codec.request(intermediate, profile)
+    first = codec._request(intermediate, profile)
     expected = deepcopy(first)
 
     edit_containers(first)
 
     assert intermediate == before
-    assert codec.request(intermediate, profile) == expected
+    assert codec._request(intermediate, profile) == expected
 
 
 def test_expanded_binding_owns_native_sdk_option_model(profile_factory):
@@ -165,7 +165,7 @@ def test_encoder_captures_open_tool_schema_once(protocol):
     else:
         values[0]["input_schema" if protocol == "anthropic" else "parameters"] = schema
 
-    converted = MyCodec().codecs[protocol].encoder.tools(values)
+    converted = MyCodec()._codecs[protocol].encoder.tools(values)
 
     assert len(schema.copies) <= 1
     assert converted[0].parameters == schema
@@ -178,7 +178,7 @@ def test_decoder_captures_open_tool_schema_once(protocol):
     schema = TrackedJSON({"type": "object", "properties": {"value": {"type": "string"}}})
     intermediate = [{"functions": [{"name": "lookup", "parameters": schema}]}]
 
-    converted = MyCodec().decoder(protocol).tools(intermediate)
+    converted = MyCodec()._decoder(protocol).tools(intermediate)
 
     assert len(schema.copies) == 1
     edit_containers(converted)
@@ -191,7 +191,7 @@ def test_encoder_captures_native_argument_object_once(protocol):
     values = history(protocol)
     values[1]["content"][1]["input"] = payload
 
-    converted = MyCodec().codecs[protocol].encoder.messages(values)
+    converted = MyCodec()._codecs[protocol].encoder.messages(values)
 
     assert len(payload.copies) == 1
     edit_containers(converted)
@@ -203,7 +203,7 @@ def test_responses_decoder_captures_native_response_metadata_once():
 
     converted = (
         MyCodec()
-        .decoder("openai_responses")
+        ._decoder("openai_responses")
         .chunks(
             [{"type": "start"}],
             source_protocol="openai_responses",
@@ -242,7 +242,7 @@ def test_text_projection_does_not_copy_unrecognized_annotation_fields(protocol):
         }
     ]
 
-    converted = MyCodec().decoder(protocol).messages(messages)
+    converted = MyCodec()._decoder(protocol).messages(messages)
 
     assert "https://example.com" not in str(converted)
     assert "vendor_unconfigured" not in str(converted)
@@ -286,7 +286,7 @@ def test_anthropic_tool_cache_control_is_outside_the_supported_fields(
         messages=[{"role": "user", "content": "hello"}], tools=source, input_format="anthropic"
     )
 
-    request = codec.request(
+    request = codec._request(
         intermediate,
         profile_factory(
             "anthropic",
@@ -311,7 +311,7 @@ def test_anthropic_tool_cache_control_only_addresses_known_fields(direction):
     function = AddressedFieldsOnly(
         name="lookup", cache_control=cache_control, vendor_unconfigured=UnreadableExtension()
     )
-    component = getattr(MyCodec().codecs["anthropic"], direction)
+    component = getattr(MyCodec()._codecs["anthropic"], direction)
     if direction == "encoder":
         function["input_schema"] = {"type": "object"}
         result = component.tools([function])[0]["functions"][0]
@@ -356,7 +356,7 @@ def test_encoder_only_addresses_recognized_fields(protocol, kind):
     from tests.helpers.protocols import stream_events
 
     source = stream_events(protocol) if kind == "chunks" else native_values(protocol, kind)
-    encoder = MyCodec().codecs[protocol].encoder
+    encoder = MyCodec()._codecs[protocol].encoder
     expected = getattr(encoder, kind)(source)
 
     assert getattr(encoder, kind)(guarded_protocol(source)) == expected
@@ -389,7 +389,7 @@ def test_encoder_does_not_serialize_sdk_models(protocol):
                 }
             )
         )
-    encoder = MyCodec().codecs[protocol].encoder
+    encoder = MyCodec()._codecs[protocol].encoder
 
     assert encoder.chunks(objects) == encoder.chunks(source)
 
@@ -410,7 +410,7 @@ def test_encoder_profile_routes_are_sdk_root_paths(protocol, profile_factory):
         protocol, content=parameter("content", protocol=protocol, path="$.vendor.answer")
     )
 
-    batches = MyCodec().codecs[protocol].encoder.chunks([event], profile)
+    batches = MyCodec()._codecs[protocol].encoder.chunks([event], profile)
     operations = [op for batch in batches for op in batch["events"]]
     text = [
         op["value"] if op["type"] == "block_delta" else op["block"]["text"]
@@ -430,7 +430,7 @@ def test_decoder_only_addresses_recognized_fields(source, target, kind):
     codec = MyCodec()
     native = native_values(source, kind)
     intermediate = codec.encode(input_format=source, **{kind: native})[kind]
-    decoder = codec.codecs[target].decoder
+    decoder = codec._codecs[target].decoder
     expected = getattr(decoder, kind)(intermediate)
 
     assert getattr(decoder, kind)(guarded_protocol(intermediate)) == expected
@@ -519,7 +519,7 @@ def test_sdk_view_cache_is_local_to_each_public_translation():
             raise AssertionError("serialized a complete SDK model")
 
     message = CompatibleMessage(content="first", vendor_unconfigured=UnreadableExtension())
-    encoder = MyCodec().codecs["openai_chat"].encoder
+    encoder = MyCodec()._codecs["openai_chat"].encoder
     first = encoder.messages([message])
     message.content = "second"
     second = encoder.messages([message])
@@ -533,7 +533,7 @@ def test_sdk_view_cache_is_local_to_each_public_translation():
 def test_public_stream_encoder_owns_events(protocol, edit_input):
     values = stream_events(protocol, tool=True)
     before = deepcopy(values)
-    converted = MyCodec().codecs[protocol].encoder.chunks(values)
+    converted = MyCodec()._codecs[protocol].encoder.chunks(values)
     expected = deepcopy(converted)
 
     edit_containers(values if edit_input else converted)
@@ -549,11 +549,11 @@ def test_public_stream_decoder_owns_events_and_parameters(source, target, edit_i
 
     codec = MyCodec()
     state = StreamState("ownership")
-    operations = state.feed(codec.codecs[source].encoder.chunks(stream_events(source, tool=False)))
+    operations = state.feed(codec._codecs[source].encoder.chunks(stream_events(source, tool=False)))
     operations.extend(state.finish())
     parameters = {"source_protocol": source, **state.metadata}
     before = deepcopy((operations, parameters))
-    converted = codec.decoder(target).chunks(operations, **parameters)
+    converted = codec._decoder(target).chunks(operations, **parameters)
     assert converted
     expected = deepcopy(converted)
 
@@ -623,7 +623,7 @@ def test_stream_hooks_capture_recognized_mutable_leaves(
     values = incoming if direction == "encoder" else operations
     parameters = {} if direction == "encoder" else {"source_protocol": protocol, **parameters}
     before = deepcopy((values, parameters))
-    converted = getattr(MyCodec().codecs[protocol], direction).chunks(values, **parameters)
+    converted = getattr(MyCodec()._codecs[protocol], direction).chunks(values, **parameters)
     assert converted
     expected = deepcopy(converted)
 

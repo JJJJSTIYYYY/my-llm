@@ -12,7 +12,7 @@ def encode_request(profile, messages=None, tools=None, *, tools_format="openai_c
     )
     if tools is not None and not isinstance(tools, Omit):
         intermediate.tools = codec.encode(tools=tools, input_format=tools_format).tools
-    return codec.request(intermediate, profile, **parameters)
+    return codec._request(intermediate, profile, **parameters)
 
 
 def codec(profile):

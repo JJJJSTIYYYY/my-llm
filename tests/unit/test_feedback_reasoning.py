@@ -67,7 +67,7 @@ async def test_feedback_selects_history_without_semantic_loss(
 
     async def prepare():
         return (
-            await codec.prepare(
+            await codec._prepare(
                 {"messages": messages, "tools": omit, "stream": False, "max_tokens": 128},
                 profile,
                 input_format="middleware",
@@ -149,7 +149,7 @@ async def test_tool_feedback_keeps_split_responses_reasoning_and_native_item_ids
     before = deepcopy(messages)
     codec = MyCodec("ignore") if target != "openai_responses" else MyCodec()
     draft = (
-        await codec.prepare(
+        await codec._prepare(
             {"messages": messages, "tools": omit, "stream": False, "max_tokens": 128},
             profile_factory(
                 target,
@@ -172,7 +172,7 @@ async def test_tool_feedback_keeps_split_responses_reasoning_and_native_item_ids
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_feedback_policy_does_not_filter_generated_reasoning(profile_factory, protocol):
-    result = MyCodec().result(
+    result = MyCodec()._result(
         [reasoning_history(protocol)[0]],
         input_format=protocol,
         target_format=protocol,
@@ -203,7 +203,7 @@ async def test_feedback_cache_commits_filtered_history_without_hook_edits(profil
     for _ in range(2):
 
         async def prepare():
-            return await codec.prepare(
+            return await codec._prepare(
                 inputs,
                 profile,
                 input_format="middleware",
@@ -233,7 +233,7 @@ def test_native_scalar_reasoning_feedback_matches_message_policy(
         ]
     request = {"messages": [message]}
     before = deepcopy(request)
-    decoder = MyCodec().decoder(protocol)
+    decoder = MyCodec()._decoder(protocol)
     profile = profile_factory(
         protocol,
         should_feedback_reasoning_item=config(mode),
@@ -266,7 +266,7 @@ async def test_empty_reasoning_feedback_depends_on_history_policy_not_generation
         supports_function_calling=config(True),
     )
     request = (
-        await codec.prepare(
+        await codec._prepare(
             {"messages": messages, "tools": omit, "stream": False, "reasoning": reasoning},
             profile,
             input_format="middleware",
@@ -296,7 +296,7 @@ def test_native_tool_messages_get_empty_reasoning_without_a_generation_reasoning
         should_feedback_reasoning_item=config("when_tool_calls"),
         supports_function_calling=config(True),
     )
-    assert MyCodec().decoder(protocol).native_request(request, profile)["messages"][0][field] == ""
+    assert MyCodec()._decoder(protocol).native_request(request, profile)["messages"][0][field] == ""
     assert request == before
 
 
@@ -311,7 +311,7 @@ async def test_empty_reasoning_is_not_injected_when_reasoning_is_unsupported(
         reasoning_enable=parameter("reasoning_enable", protocol=protocol, supports=False),
     )
     request = (
-        await MyCodec().prepare(
+        await MyCodec()._prepare(
             {
                 "messages": [AssistantMessage("assistant", [ToolCall("c", "f")])],
                 "tools": omit,
@@ -344,7 +344,7 @@ async def test_unsupported_reasoning_is_loss_regardless_of_feedback(
 
     async def prepare():
         return (
-            await codec.prepare(
+            await codec._prepare(
                 {"messages": messages, "tools": omit, "stream": False, "max_tokens": 128},
                 profile,
                 input_format="middleware",
@@ -378,7 +378,7 @@ def test_unsupported_reasoning_output_uses_output_hook(profile_factory, protocol
     messages = [reasoning_history(protocol)[0]]
     observed = []
     codec = MyCodec("hook", output_semantic_loss_hook=lambda *args: observed.append(args))
-    result = codec.result(
+    result = codec._result(
         messages,
         input_format=protocol,
         target_format=protocol,
@@ -406,7 +406,7 @@ def test_native_scalar_unsupported_reasoning_is_loss(profile_factory, protocol, 
         reasoning_enable=parameter("reasoning_enable", protocol=protocol, supports=False),
     )
     with pytest.raises(SemanticLossError) as caught:
-        MyCodec().decoder(protocol).native_request(request, profile)
+        MyCodec()._decoder(protocol).native_request(request, profile)
     assert caught.value.losses.items[0].origin_path == f"$.messages[0].{field}"
     assert caught.value.losses.items[0].origin_value == "reasoning"
     assert "not support reasoning" in caught.value.losses.items[0].reason
@@ -447,7 +447,7 @@ def test_native_block_reasoning_uses_capability_and_feedback_separately(
     if protocol == "anthropic":
         request["max_tokens"] = 128
     before = deepcopy(request)
-    decoder = MyCodec().decoder(protocol)
+    decoder = MyCodec()._decoder(protocol)
     profile = profile_factory(
         protocol,
         should_feedback_reasoning_item=config(mode),
@@ -501,7 +501,7 @@ def test_unsupported_reasoning_stream_records_loss_and_keeps_text(profile_factor
         {"type": "delta", "field": "text", "value": "answer"},
     ]
     with pytest.raises(SemanticLossError) as caught:
-        MyCodec().decoder(protocol).chunks(
+        MyCodec()._decoder(protocol).chunks(
             events, semantic_profile=profile, source_protocol=protocol
         )
     assert len(caught.value.losses) == 1
@@ -526,7 +526,7 @@ async def test_history_tool_calls_and_results_are_losses_without_tool_definition
 
     async def prepare():
         return (
-            await codec.prepare(
+            await codec._prepare(
                 {"messages": messages, "tools": omit, "stream": False, "max_tokens": 128},
                 profile_factory(protocol, supports_function_calling=config(False)),
                 input_format="middleware",
@@ -580,7 +580,7 @@ def test_native_images_are_loss_when_vision_is_disabled(profile_factory, protoco
         }
     before = deepcopy(request)
     with pytest.raises(SemanticLossError) as caught:
-        MyCodec().decoder(protocol).native_request(
+        MyCodec()._decoder(protocol).native_request(
             request, profile_factory(protocol, supports_vision=config(False))
         )
     assert len(caught.value.losses) == 1
@@ -621,7 +621,7 @@ def test_native_history_tools_are_loss_when_function_calling_is_disabled(profile
         request = {"input": [call, result, {"role": "user", "content": "tail"}]}
     before = deepcopy(request)
     with pytest.raises(SemanticLossError) as caught:
-        MyCodec().decoder(protocol).native_request(
+        MyCodec()._decoder(protocol).native_request(
             request, profile_factory(protocol, supports_function_calling=config(False))
         )
     assert len(caught.value.losses) == 2
@@ -638,7 +638,7 @@ def test_unsupported_function_call_output_is_handled_by_output_hook(profile_fact
     call = ToolCall("c", "f", {"x": 1})
     messages = [AssistantMessage("assistant", [call, TextContent("answer")])]
     observed = []
-    result = MyCodec("hook", output_semantic_loss_hook=lambda *args: observed.append(args)).result(
+    result = MyCodec("hook", output_semantic_loss_hook=lambda *args: observed.append(args))._result(
         messages,
         input_format=protocol,
         target_format=protocol,
@@ -664,7 +664,7 @@ def test_unsupported_tool_stream_event_is_loss_with_complete_text_draft(profile_
         {"type": "delta", "field": "text", "value": "answer"},
     ]
     with pytest.raises(SemanticLossError) as caught:
-        MyCodec().decoder(protocol).chunks(
+        MyCodec()._decoder(protocol).chunks(
             events,
             source_protocol=protocol,
             semantic_profile=profile_factory(protocol, supports_function_calling=config(False)),

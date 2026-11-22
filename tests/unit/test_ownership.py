@@ -20,8 +20,8 @@ def test_profile_and_request_snapshots_are_independent():
     body["nested"]["value"] = "changed"
     assert llm.provider.extra_body.default_value["nested"]["value"] == "original"
     assert llm.resolved_profile.get("extra_body")["nested"]["value"] == "original"
-    decoder = llm.codec.decoder(llm.resolved_profile.protocol)
-    options = llm.codec.decoder(llm.resolved_profile.protocol).validate_parameters(
+    decoder = llm._codec._decoder(llm.resolved_profile.protocol)
+    options = llm._codec._decoder(llm.resolved_profile.protocol).validate_parameters(
         llm.resolved_profile
     )
     request = decoder.request_parameters(llm.resolved_profile, options)
@@ -68,7 +68,7 @@ def test_converter_never_mutates_input_or_profile():
         ProviderProfile(protocol=Config(default_value="openai_chat")),
         ModelProfile(model=Attribute(default_value="demo")),
     )
-    for protocol in codec.codecs:
+    for protocol in codec._codecs:
         converted = codec.convert(
             messages, input_format="openai_chat", target_format=protocol, profile=profile
         )

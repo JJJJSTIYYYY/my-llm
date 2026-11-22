@@ -105,7 +105,7 @@ async def test_presets_retry_after_cache_extension_failure(monkeypatch, target):
 async def test_expiring_cache_allows_same_input_to_be_handled_again(target):
     llm = configured_llm(target, cached=True)
     first = await prepare(llm, picture_history())
-    llm.codec.expire_message_cache(llm._message_cache_key)
+    llm._codec._expire_message_cache(llm._message_cache_key)
     following = await prepare(llm, picture_history())
     key = "messages"
     assert without_image_ids(first[key]) == without_image_ids(following[key])

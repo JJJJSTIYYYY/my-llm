@@ -20,7 +20,7 @@ from my_llm.middleware.models import (
     ToolCall,
     ToolMessage,
 )
-from my_llm.middleware.stream import StreamBatch, Usage
+from my_llm.middleware.stream import MessageEvent, Usage
 from my_llm.middleware.validation import RESULT_CONTENT_TYPES
 from my_llm.profile.types import Omit
 
@@ -29,7 +29,7 @@ from my_llm.profile.types import Omit
 class ProtocolMiddleWare(ProtocolValue):
     messages: list[Message] | None = None
     tools: list[FunctionTool] | None = None
-    stream: list[StreamBatch] | None = None
+    stream: list[MessageEvent] | None = None
     usage: Usage | None = None
 
     def __iter__(self):

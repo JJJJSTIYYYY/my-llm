@@ -41,3 +41,16 @@ assert not MyCodec().codecs
 [专项审计](2026-11-22-codec-audit.md)的 A01—A05 均不修复，本轮只保留事实与范围，不重新列为待办。
 
 文档编写与分类要求已写入 [AGENTS.md](../../AGENTS.md)。
+
+## 后续 CI 修复
+
+2026-11-23 收到 CI 失败后，修复范围扩展到示例和工作流。此前“未改 CI”描述的是文档整理阶段。
+根因是收窄公开业务接口时，未同步所有消费者：`examples/local_demo.py` 仍遍历 `codec.codecs`，
+CI 的隔离安装步骤也读取该属性及顶层 `my_llm.generate`。常规 pytest 未执行这个本地示例及完整 CI shell 步骤，
+因此测试通过没有暴露这些遗留引用。
+
+示例现在显式演示三种内置协议并调用公开 `convert`。CI 的核心安装检查通过公开 `encode` 验证缺失 SDK 的错误，
+安装全部 SDK 后检查 `MyLLM.generate` 和三协议 `encode` 行为。没有恢复旧导出，也没有改为访问 `_codecs`。
+
+本地示例、2767 项既有测试及 Ruff 检查通过；发行包隔离验证使用从工作流提取的 shell 步骤，
+只将 wheel 路径和临时目录改为本机位置。远程 CI 的最终状态需由推送后的运行确认。

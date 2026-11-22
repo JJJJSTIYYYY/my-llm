@@ -9,7 +9,7 @@ from my_llm import MyCodec
 def main():
     codec = MyCodec()
     messages = [{"role": "user", "content": "Hello"}]
-    for protocol in codec.codecs:
+    for protocol in ("openai_chat", "openai_responses", "anthropic"):
         converted = codec.convert(messages, input_format="openai_chat", target_format=protocol)
         restored = codec.convert(**converted, input_format=protocol, target_format="openai_chat")
         assert restored["messages"][0]["role"] == "user"

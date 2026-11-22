@@ -62,7 +62,13 @@ jobs:
           "$RUNNER_TEMP/my-llm-py-wheel/bin/python" -I -c '
           from my_llm import MyCodec
 
-          assert not MyCodec().codecs
+          try:
+              MyCodec().encode(messages=[], input_format="openai_chat")
+          except ModuleNotFoundError as exc:
+              assert exc.name == "openai"
+              assert "my-llm-py[openai]" in str(exc)
+          else:
+              raise AssertionError("core-only installation unexpectedly includes the OpenAI SDK")
           '
 
           uv pip install --python "$RUNNER_TEMP/my-llm-py-wheel/bin/python" "${wheels[0]}[all]"
@@ -71,12 +77,10 @@ jobs:
           from importlib.metadata import version
 
           assert my_llm.__version__ == version("my-llm-py")
-          assert callable(my_llm.generate)
-          assert set(my_llm.MyCodec().codecs) == {
-              "openai_chat",
-              "openai_responses",
-              "anthropic",
-          }
+          assert callable(my_llm.MyLLM.generate)
+          codec = my_llm.MyCodec()
+          for protocol in ("openai_chat", "openai_responses", "anthropic"):
+              assert codec.encode(messages=[], input_format=protocol).messages == []
           '
       - uses: actions/upload-artifact@v7
         with:

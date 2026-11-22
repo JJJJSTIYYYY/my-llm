@@ -32,9 +32,9 @@ Python 3.12 另运行 Ruff 与格式检查。
 构建任务依赖测试任务，随后构建、执行 `twine check --strict`、隔离安装 wheel，
 并将发行文件保存为保留七天的 `python-distributions` artifact。
 
-这些步骤描述配置意图，不表示当前 CI 已通过。2026-11-22 核对发现 wheel 导入步骤仍检查已移除的
-`my_llm.generate` 和 `MyCodec.codecs`；本轮不改 CI，差异记录见[审查文档](../reviews/README.md)。
-本地应按[发行包验证](../testing/packaging.md)检查当前公开入口。
+wheel 导入步骤通过 `MyLLM.generate` 和 `MyCodec.encode` 的公开行为检查安装结果，
+不读取内部组件映射。旧接口引用的修复见[审查记录](../reviews/2026-11-23-documentation-alignment.md#后续-ci-修复)。
+本地验证步骤见[发行包验证](../testing/packaging.md)。
 
 配置依据为 [PyPA 的 pyproject.toml 指南](https://packaging.python.org/en/latest/guides/writing-pyproject-toml/)、
 [Hatch 构建配置](https://hatch.pypa.io/latest/config/build/)及

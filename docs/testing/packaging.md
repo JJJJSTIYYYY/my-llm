@@ -59,13 +59,12 @@ PYTHON
 可选依赖的独立回归还可运行 `tests/integration/test_optional_sdks.py`。
 这些命令验证安装与导入，不调用远程模型。
 
-## 当前 CI 的范围与差异
+## 当前 CI 的范围
 
 [ci.yml](../../.github/workflows/ci.yml) 在 push 和 Pull Request 时运行 Python 3.12、3.13、3.14
 的 pytest 与本地示例，3.12 额外运行 Ruff。构建任务等待测试通过后构建、运行严格 Twine 检查、
 在隔离环境先安装核心包再安装 `[all]`，并保留发行产物 7 天。
 
-2026-11-23 核对时，CI 仍检查已移除的 `MyCodec().codecs`，安装 `[all]` 后还检查 `my_llm.generate`；
-当前业务入口是 `MyLLM.generate` 和 `MyCodec.encode` / `decode` / `convert`。因此此处不能宣称
-当前 CI 已与公开接口完全对齐；本次仅整理文档，未修改 CI 或测试。
-本页手工命令使用当前公开接口，CI 差异见 [文档对齐审查记录](../reviews/2026-11-23-documentation-alignment.md)。
+CI 已改用当前公开接口：核心安装验证缺少 SDK 时的明确错误，安装 `[all]` 后验证
+`MyLLM.generate` 可调用，以及三协议的 `MyCodec.encode` 可用。
+旧接口引用的根因与修复见[审查记录](../reviews/2026-11-23-documentation-alignment.md#后续-ci-修复)。

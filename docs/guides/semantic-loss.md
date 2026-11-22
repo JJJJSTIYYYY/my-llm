@@ -1,4 +1,4 @@
-# 中间协议与语义损失迁移
+# 语义损失处理
 
 `MyCodec.encode()` 返回 SDK 无关的 `ProtocolMiddleWare`。通过 `.messages`、`.tools`、
 `.stream`、`.usage` 访问具体模型；`.stream` 是完整流累积后的 `MessageEvent` 列表。
@@ -32,7 +32,15 @@ Chat 在回传策略启用且 assistant 含工具调用时，如果缺少思考�
 `reasoning_content=""`，不依赖本次生成是否开启 reasoning。
 `none`、`omit` 或模型声明不支持 reasoning 时不补。Anthropic 仍要求真实原生签名，不伪造空签名。
 
-创建 `MyLLM` 时选择策略，也可以在实例上二次设置：
+## 选择策略
+
+| 策略 | 行为 |
+| --- | --- |
+| `raise`（默认） | 抛出包含完整 draft 和本批损失的 `SemanticLossError` |
+| `ignore` | 接受已完成的目标转换，放弃目标无法表达的值 |
+| `hook` | 调用处理器，由应用决定如何修改或拒绝目标结果 |
+
+创建 `MyLLM` 或 `MyCodec` 时传入 `semantic_loss_protocol`。生成实例也可二次设置：
 
 ```python
 llm.set_semantic_loss_policy(semantic_loss_protocol="ignore")
@@ -44,6 +52,9 @@ llm.set_semantic_loss_policy(
 ```
 
 `ignore` 不保留损失历史或输出日志；`hook` 未提供函数时使用空函数。
+
+## 自定义 hook
+
 hook 接收 `(draft, losses, context)`，返回值忽略。请求 hook 可以是同步或异步函数，
 `MyLLM.generate()` 会直接等待它完成；离线转换及输出 hook 使用同步函数。
 hook 可以原地修改、抛错、
@@ -107,12 +118,11 @@ user 消息，并保留此前缓存的系统指令、历史及当前输入 finge
 继续携带这些内容；连续重发相同批次（包括尚未消费的流）保持相同 ID，不会重复修复；
 不同工具回合即使图片数据相同也分别生成 ID。关闭缓存时，每次准备请求重新生成 ID。
 
-占位消息也遵循相同的缓存与重试规则。各协议的 `prebuilt` 自己记录已处理的批次，
-通过上下文中缓存批次的 `message_cache.replace(messages)` 同步完整的修复后历史；
+占位消息也遵循相同的缓存与重试规则。预设通过上下文中缓存批次的
+`message_cache.replace(messages)` 同步完整的修复后历史；
 自定义 hook 仍可用 `message_cache.extend(messages)` 仅追加消息。
 `message_cache.identity` 是连续重试共享的弱引用标识，新输入批次使用新标识；
-预设使用弱集合记录处理状态，缓存过期、清空或进入新批次后，旧状态可随之释放。
-缓存不保存 hook 状态，也不对补写消息去重；何时补写、是否重试均由 hook 负责。
+自定义 hook 须自行判断何时补写缓存，避免连续重试重复追加。
 预设只用于请求阶段，不补偿离线 `convert()` 或输出阶段的损失。
 普通 hook 修改仍不会自动回写缓存，必须显式调用上述缓存接口。
 
@@ -124,6 +134,8 @@ Chat 的相关损失项通过 `loss.target` 提供 `SemanticLossTarget`：`messa
 这些预设是显式启用的补偿行为，不会再次翻译 hook 已修改的原生 draft。
 交给 transport、交付事件以及最终结果使用该 draft；`MessageStream.result`
 重复读取返回本次最终结果本身。修改结果不影响其他调用或输入历史。
+
+## 工具与用量
 
 工具参数仍可从上游逐片到达，但仅在成功读取完整响应后以完整调用输出。
 Chat 的并行工具调用出现在一个最终 `tool_calls` 列表；Anthropic / Responses
@@ -138,7 +150,5 @@ usage 不出现在公开事件或非流式结果中。流成功结束后，`llm.
 无法解析的 usage 样本返回空；非法计数、嵌套计数结构和辅助元数据不会中断有效回复。
 未知计数保持未知，不补造 token 数。元数据更新失败时整次更新丢弃，不保留部分写入。
 
-自定义 codec 现在注册工厂：`MyCodec.register(CustomCodec)`。工厂必须每次创建独立的
-codec、encoder、decoder 和 transport，并调用 `BaseCodec.__init__()`。
-已有实例保留注册快照；组件可以持有实例状态。只按需构造使用的协议，损失策略与 SDK
-客户端均属于 `MyLLM` 实例；共享的有界缓存只保存类型与校验规则。
+自定义协议的注册和损失报告责任见[接入协议指南](adding-protocol.md)，
+请求状态、SDK 客户端和缓存的设计取舍见[架构文档](../design/architecture.md)。

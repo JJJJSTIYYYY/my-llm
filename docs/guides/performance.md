@@ -1,7 +1,8 @@
 # generate 性能测试
 
-[性能测试记录](../performance/README.md)汇总近期变化折线图、历史结论及最新完整结果。
-最新的消息缓存深拷贝对照（2026-11-06）仅移除过滤前的全量历史深拷贝，保留原有循环和校验流程。
+[性能测试记录](../testing/performance/README.md)保存截至 2026-11-06 的历史对照与原始样本。
+本页按当前三协议实现描述复测方法；历史结果不能作为当前版本性能保证。
+准备阶段基准会直接调用内部 `MyCodec._prepare`，用于定位成本，不构成额外的公开业务接口。
 
 ## 编译规则缓存与每次重新编译
 
@@ -11,7 +12,7 @@
 
 三种协议使用默认复杂原生负载，测量实际 `MyCodec._prepare()`：一组复用编译规则，另一组
 绕过五类规则 LRU，调用相同编译器。两组均关闭消息缓存，逐对核对完整请求一致与输入不变。
-按缓存/重编译、重编译/缓存交替采样；编译器切换、夹具、实例构造、断言及关闭不计时。
+按缓存/重编译、重编译/缓存交替采样；编译器切换、夹具、实例构造和断言不计时。
 保留正常 GC，记录逐样本墙钟、CPU、GC 次数、源码指纹及 SDK 版本。
 
 计时包含输入校验、翻译和最终 SDK 请求过滤校验，不创建 SDK 客户端，不含网络或模型推理。
@@ -73,12 +74,13 @@ uv run --no-sync python -m tests.performance.middleware --iterations 15 --warmup
 同一源码中比较原生 stdio 与 `stdio_protocol="middleware"`：三种上游分别覆盖聚合和流式，
 共六组成对场景，按 N/M、M/N 交替顺序采样。输入包含相同历史、图片、工具 Schema、调用、
 结果和原生思维；中间夹具在计时外生成并移除 encoder 来源引用，模拟直接构造模型的调用者。
-每一对必须发出完全相同的 SDK 请求字节，响应字节及 HTTP 分块一致。
+两种输入使用相同响应字节和 HTTP 分块，基准核对两者最终采样的 SDK 请求字节摘要一致。
 结果分别按公开格式提取文本、思维和工具参数验证；事件数量因输出格式不同而分别记录。
 
 计时包括公开 generate 调用、输入检查与隔离、真实 SDK 解析、完整消费、响应关闭和结果读取。
-夹具构造、断言、实例构造/关闭不计时。内存和缓存探测单独执行，四路响应屏障证明真实请求重叠。
-预热后的 tracemalloc 数值包含结果和 HTTP 观测，不含夹具及客户端构造，不是进程 RSS。
+夹具构造、断言与 MyLLM 实例构造不计时；每次 SDK 客户端创建和关闭包含在 generate 计时内。
+内存和缓存探测单独执行，四路响应屏障证明真实请求重叠。预热后的 tracemalloc 数值包含
+当次 SDK 客户端创建与关闭、结果和 HTTP 观测，排除预制夹具，不是进程 RSS。
 此对照衡量直接中间输入输出的调用成本，不包含应用先从原生协议转成中间模型的成本，
 也不表示网络请求或模型推理会获得相同比例的提速。
 
@@ -94,7 +96,7 @@ uv run --no-sync python -m tests.performance --json /tmp/my-llm-performance.json
 ```
 
 测试真实 `MyLLM.generate()` 调用及官方 SDK。HTTPX MockTransport 立即返回预先构建的内存字节流，
-没有 socket 连接、网络等待、模型推理或模拟 sleep。保留 SDK 请求序列化、SSE / NDJSON 解析、
+没有 socket 连接、网络等待、模型推理或模拟 sleep。保留 SDK 请求序列化、SSE 解析、
 协议转换、流状态累积、工具 JSON 拼接、响应关闭和结果交付的实际执行成本。
 
 ## 计时边界
@@ -108,7 +110,8 @@ uv run --no-sync python -m tests.performance --json /tmp/my-llm-performance.json
 | cold | 在新 MyLLM 实例上的首次调用，包含 generate 内部的 SDK 客户端延迟创建。 |
 | warm | 完成 cold 和额外预热后，在同一实例上复用类型规则缓存的测量样本；仍包含每次客户端创建和关闭。 |
 
-MyLLM 构造、实例最终关闭、负载 / 响应字节准备及验证断言均位于计时之外。
+MyLLM 构造、负载 / 响应字节准备及验证断言位于计时之外；MyLLM 实例无需关闭。
+每次 generate 独立创建并关闭 SDK 客户端，cold 与 warm 都包含这项成本。
 计时前先完成一轮独立实例的协议预检，所以 cold 表示首次 SDK 客户端调用，
 不表示全新 Python 进程、首次模块导入或首次 Schema 缓存初始化。
 保留 Python 默认 GC 行为；进程 CPU 时间与墙钟时间同时输出。
@@ -122,7 +125,7 @@ P95 使用 nearest-rank；requests/s 是样本数除以样本总耗时，不是�
 
 ## 复杂负载与覆盖
 
-默认运行 40 个场景：
+默认运行 24 个场景：
 
 - native：三协议分别使用自己的复杂原生请求，覆盖流式与聚合，共 6 个场景。
 - cross：三种上游 × 三种输入输出协议，覆盖流式与聚合，共 18 个场景；请求和响应采用各协议都能表达的文本、图片与工具特性，不含跨协议思维链。
@@ -148,6 +151,9 @@ P95 使用 nearest-rank；requests/s 是样本数除以样本总耗时，不是�
 工具调用参数仍在上游分片传输，公开流的完整工具调用只在结束时输出，usage 只记录。
 语义损失及 hook 行为由契约测试覆盖，避免把有损与无损调用混为同一项性能比较。
 
+两个 suite 的同协议组合使用不同负载：native 含原生思维与签名，cross 只用各协议都能表达的内容。
+Middleware stdio 不包含在这 24 项中，由上面的成对基准单独覆盖。
+
 ## 调整规模
 
 每个场景默认额外预热 2 次、测量 10 次。单测环境与专门的性能测量分开运行，避免其他测试争用 CPU。
@@ -163,7 +169,7 @@ uv run --no-sync python -m tests.performance --suite cross --upstream openai_res
 uv run --no-sync python -m tests.performance --suite native --rounds 32 --tools 32 --parallel-calls 8 --text-chars 4096 --output-chars 16384 --argument-items 16 --schema-depth 4 --fragment-chars 32 --wire-chunk-bytes 256 --json /tmp/stress-performance.json
 ```
 
-普通 pytest 使用小规模负载检查全部 40 条路径、无网络保证、计时边界和数据完整性，
+普通 pytest 使用小规模负载检查全部 24 条路径、无网络保证、计时边界和数据完整性，
 不设置依赖机器速度的绝对耗时门槛：
 
 ```sh
@@ -183,7 +189,7 @@ uv run --no-sync pytest -q tests/performance
 python -m tests.performance.request_chain --iterations 9 --concurrency 4 --json /tmp/request-chain.json
 ```
 
-该入口沿用上述 40 个场景、默认复杂负载、1024 字节 HTTP 分块和 benchmark/measure 的计时边界。
+该入口沿用上述 24 个场景、默认复杂负载、1024 字节 HTTP 分块和 benchmark/measure 的计时边界。
 每个场景包含串行 cold、2 次预热和 9 次采样，以及四路并发的 2 批预热和 9 批采样。
 每份响应体在首个字节前经过 asyncio.Barrier，断言 peak_active=4，证明请求实际重叠。
 四路请求携带不同 x-request 头，并验证无串扰、结果完整及每个响应体关闭。

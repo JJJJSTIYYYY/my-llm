@@ -51,7 +51,7 @@ reply = await llm.generate(messages=middle.messages, tools=middle.tools)
 
 ## 模型与工具回合
 
-所有具体模型及其字段类型均从包根导出，完整字段见[中间协议契约](../design/protocol-middleware.md)。
+所有具体模型及其字段类型均从包根导出，完整字段见[API 模型参考](../reference/api.md#中间协议模型)。
 
 | 用途 | 公开类型 |
 | --- | --- |
@@ -101,11 +101,9 @@ history = [
 - 全部消息被丢弃且没有可用缓存时抛出 `MessageValidationError`，不补造 user 消息；已有缓存时复用历史。
 
 修复不修改传入模型。启用消息缓存时仅修复当前增量批次，完整工具回合应放在同一批，
-不会重新解析缓存前缀。独立的严格工具关联验证仍可用于检查历史。
+不会重新解析缓存前缀。
 工具结果必须携带明确 ID。使用 middleware stdio 时保存 `ToolCall.call_id`，
 再原样填入 `ToolMessage.call_id`；不会仅凭名称关联。
-修复通过原有消息、内容及结果部件校验循环收集，最终检查不扫描工具表或重建消息列表；
-翻译在既有循环中惰性读取有效消息及必要的空结果。回传思维链补空规则共用同一实现。
 `ToolCall.arguments` 是完整 JSON 对象，结果对象/数组应先序列化为 `TextContent`，图片使用 `ImageContent`。
 图片支持用户消息及工具结果；指令为文本，思维和工具调用属于 assistant。
 思维的 `feedback_item` 保存原生回传值，归属由消息的 `protocol` 或流批次协议确定；跨协议时丢弃并记录语义损失。
@@ -184,13 +182,12 @@ raise / ignore / hook 处理；请求 hook 收到完整原生 SDK 请求，返�
 `encode(chunks=...)` 接受完整原生响应流，`decode(chunks=...)` 接受完整公开中间事件。
 公开转换方法不会跨调用记住流片段；实时消费通过 `MyLLM.generate(stream=True)` 完成。
 
-请求直接进入上游现有 `Decoder.prepare()`，跳过源 encoder。返回由上游现有 encoder 和
-同一个请求状态机生成具体模型，跳过目标 decoder。没有注册名为 `middleware` 的 codec，
-也没有增加 encoder、decoder 或 transport；该名称保留给 stdio。
-SDK 客户端属于本次生成调用；Schema 缓存仅保存有界类型规则，中间输入、结果和来源不进入全局缓存。
+每次生成独立管理 SDK 客户端，响应成功结束、关闭或失败时释放；MyLLM 实例无需关闭。
+中间 stdio 的内部路径及缓存取舍见[中间协议设计](../design/protocol-middleware.md)。
 
 离线 `MyCodec.convert(..., input_format=<原生协议>, target_format="middleware")`
-也可得到具体消息、工具和完整公开事件。直接调用 `decode()` 输出中间模型时，
-须额外传入 `input_format=<原生来源>`，用于语义损失上下文。
+也可得到具体消息、工具和完整公开事件。直接调用 `decode()` 输出中间模型时，消息或工具转换须额外传入
+`input_format=<原生来源>`；完整事件已经携带来源，无须重复指定。
 
-性能方法与结果见[性能指南](performance.md#中间协议直接输入输出)。
+应用展示可见思维时读取 `ReasoningContent.reasoning`；下一轮回传应保存完整模型，
+保留 `feedback_item`，不要用展示文字重新组装原生推理项。

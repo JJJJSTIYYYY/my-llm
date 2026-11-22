@@ -1,28 +1,51 @@
 # 项目文档
 
-## 使用与配置
+文档按读者和目的分为四部分。使用页说明接口怎么调用，开发页解释为什么这样设计，
+测试页保存复现步骤和结果，审查页记录根因、修复与处理决定。
 
-- [直接使用中间协议](guides/middleware-io.md)：显式 middleware stdio、具体模型历史、工具回合和公开流事件。
-- [中间协议与语义损失迁移](guides/semantic-loss.md)：固定支持集合、默认损失错误、双向 hook、私有 usage 与工厂注册。
-- [API 使用指南](reference/api.md)：调用、流式消费、工具回合和独立格式转换。
-- [配置参考](reference/configuration.md)：ProviderProfile、ModelProfile 与覆盖规则。
-- [SenseNova 接入与端到端测试](guides/sensenova.md)：三种上游、四种输入/输出格式的真实服务验证与失败说明。
-- [三协议请求与返回模板](reference/schema/README.md)：固定来源的 Schema、请求、返回及流事件。
+## 使用文档
 
-## 开发与设计
+面向 `my-llm-py` 包的使用者。从[项目快速开始](../README.md#快速开始)进入，
+业务调用使用 `MyLLM.generate`，离线翻译使用 `MyCodec.encode` / `decode` / `convert`。
 
-- [本地开发规范](guides/development.md)：目录职责、导入、测试辅助代码与结构验证。
-- [generate 性能测试](guides/performance.md)：增量消息缓存、复杂协议负载、无网络 SDK 路径与复测方法。
-- [性能测试记录](performance/README.md)：近期变化折线图、历史结论、最新完整结果与原始样本。
-- [接入新的协议](guides/adding-protocol.md)：Encoder / Decoder 必需接口、固定流程与注册验证。
-- [构建与发行包验证](guides/building.md)：安装、构建和 CI。
-- [完整中间协议](design/protocol-middleware.md)：具体模型、源位置、损失 draft、实例生命周期与缓存边界。
-- [架构与职责边界](design/architecture.md)：当前代码目录、组件职责、请求和返回路径。
-- [流状态设计](design/stream-state.md)：块身份、累积操作和终态约束。
-- [Schema 过滤计划缓存](design/schema-filter-cache.md)：缓存的实际对象、类型计划图、两次请求的执行过程与可运行示例。
-- [翻译字段边界](design/translation-boundaries.md)：已识别字段、开放字典与 Profile 兼容配置的范围。
-- [SDK 客户端生命周期](design/client-lifecycle.md)：逐请求客户端创建、资源隔离和显式关闭。
+- [API 使用指南](reference/api.md)：调用参数、返回值、流式消费、工具回合、消息缓存和独立翻译。
+- [配置参考](reference/configuration.md)：连接与模型 Profile、覆盖规则、能力声明和参数路径。
+- [直接使用中间协议](guides/middleware-io.md)：类型化消息、工具结果、公开事件和保存后的流翻译。
+- [语义损失处理](guides/semantic-loss.md)：支持边界、默认错误、忽略策略和双向 hook。
+- [SenseNova 接入](guides/sensenova.md)：用现有 Profile 配置三种上游接口。
+- [原生协议模板](reference/schema/README.md)：固定来源的请求、返回、流事件与 Schema；模板范围不等于本包的翻译支持范围。
 
-reference 保存接口、配置与协议模板；guides 保存操作及验证步骤；design 保存实现约束。
-常规测试与性能结果保存在本机输出目录，专项报告见对应条目；复测方法见[开发指南](guides/development.md#验证)和
-[性能指南](guides/performance.md)。
+## 开发文档
+
+面向本项目开发者，解释当前设计、取舍、组件职责和扩展契约。
+
+- [本地开发规范](guides/development.md)：模块划分、依赖方向与导入约定。
+- [架构与职责边界](design/architecture.md)：公开业务入口、请求准备、返回转换与状态所有权。
+- [中间协议设计](design/protocol-middleware.md)：消息身份、原生回放、内部流与公开事件的区别。
+- [流状态设计](design/stream-state.md)：块身份、工具参数累积、成功终态与失败处理。
+- [翻译字段边界](design/translation-boundaries.md)：Encoder 投影与 Decoder 语义损失的不同职责。
+- [Schema 过滤计划缓存](design/schema-filter-cache.md)：可复用的类型计划与每次仍需执行的数据过滤。
+- [SDK 客户端生命周期](design/client-lifecycle.md)：逐请求资源所有权和流关闭顺序。
+- [接入新的协议](guides/adding-protocol.md)：四个抽象基类、默认声明、工厂注册与扩展要求。
+- [构建与发行](guides/building.md)：版本来源、产物组成和发行流程。
+
+## 测试文档
+
+面向复现与验证。先看[测试入口](testing/README.md)，其中区分常规离线测试、真实服务 E2E、
+性能基准和发行包验证。结果页记录对应日期与基线，不能替代当前版本复测。
+
+- [输入修复与推理回传 E2E](testing/input-e2e.md)：独立原生输入、对照、工具图片和下一轮 HTTP 回传判据。
+- [SenseNova E2E](testing/sensenova.md)：运行范围、离线检查、真实服务调用和补跑方法。
+- [generate 性能测试](guides/performance.md)：负载、计时边界、复测和比较约束。
+- [性能结果与原始样本](testing/performance/README.md)：保留日期、环境和原始数据的历史测量。
+- [发行包验证](testing/packaging.md)：源码包、wheel、元数据、隔离安装与当前 CI 差异。
+- [测试结果目录](testing/results/README.md)：按日期查看常规验证和供应商 E2E 汇总。
+
+## 审查文档
+
+面向审查者和维护者。根因、修复记录与明确不修复的决定统一从[审查目录](reviews/README.md)进入。
+
+- [公开流翻译与业务入口修复](reviews/2026-11-22-public-stream-fix.md)：PR #2 报告的问题、独立实现及验证范围。
+- [协议转换与公开接口审计](reviews/2026-11-22-codec-audit.md)：A01—A05 的证据、业务影响与不修复决定。
+- [空推理字符串修复记录](reviews/2026-11-06-empty-reasoning.md)：原始反馈与空文本的处理边界。
+- [文档对齐审查](reviews/2026-11-23-documentation-alignment.md)：本轮文档修正与保留的 CI 入口差异。

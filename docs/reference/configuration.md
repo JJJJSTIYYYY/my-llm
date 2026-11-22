@@ -1,10 +1,10 @@
 # 配置指南
 
 `ProviderProfile` 描述连接和上游 API，`ModelProfile` 描述模型及覆盖项。
-MyLLM 构造时按 `Codec.defaults → provider → model` 解析为独立的 `ResolvedProfile`。
+MyLLM 构造时按“协议默认值 → provider → model”解析为独立的 `ResolvedProfile`。
 先按 `Model.protocol > Provider.protocol` 选择上游协议，再使用该协议的 Codec 默认值。
 Model 的 `protocol=None` 继承 Provider；Model 明确配置协议时，Provider 可以不设置 `protocol`。
-协议默认值由各协议的 `ProtocolDefaults` 声明；新协议先注册，再创建 MyLLM。
+使用自定义协议时，先注册，再创建 MyLLM。协议实现见[开发指南](../guides/adding-protocol.md)。
 generate 可通过 api_key 覆盖本次调用的密钥，不接受动态 provider/model 或其他连接参数。
 
 ```python
@@ -61,9 +61,8 @@ assert responses.parameter("max_tokens").path == "$.max_output_tokens"
 | `Omit` / `omit` | 显式省略标记 | 不依赖任何 SDK 的 Omit，复制保持标记身份 |
 
 `Parameter.name`、`Parameter.source` 和 `Config.name` 不接受构造参数。
-Profile 的 `@set_attr` 在初始化时检查并绑定字段名；source 由 InputParameter / OutputParameter 类型固定，无需 metadata。
-各层的同名参数必须保持相同 source/scope；解析时也会检查身份是否已正确绑定。
-已有同一身份的 wrapper 可复用，不会重新赋值；不能把已绑定 wrapper 换到另一个字段。
+Profile 初始化时绑定字段名；source 由 InputParameter / OutputParameter 类型固定。
+同名参数在各层须保持相同方向和作用范围，不能把已绑定的包装对象移用到另一个字段。
 `comment` 可用于展示说明。Parameter 与 Config 的 default_value 都支持 None 和 omit。
 Attribute 的 default_value 按声明的类型校验，不参与各层配置合并；通过 `.default_value` 读取其数据。
 `Parameter(supports=False, ...)` 会将 default_value 强制设为 omit，并停止自动读取或写入（包括块起始和最终快照中的可见字段）。
@@ -101,8 +100,7 @@ assert model.get_attributes()["model"].default_value == "demo"
 | `input` | 将中间态或生成选项翻译为接口请求，在指定位置应用参数 | max_tokens、reasoning_enable、reasoning_effort |
 
 output 参数不会注入请求；input 参数不会被用来读取响应。
-`Parameter` 声明字段位置，不会自动实现新的消息语义。自定义 Encoder 通过基类的
-`parameter_value()` 读取声明参数，再将它映射到明确支持的中间态语义。
+`Parameter` 声明字段位置，不会自动实现新的消息语义；新增消息语义需要开发对应协议实现。
 
 ## 继承、默认值和省略
 
@@ -169,7 +167,6 @@ assert resolved.parameter("max_tokens").path == "$.max_completion_tokens"
 
 `ResolvedProfile.get(field)` 返回声明的 default_value，保留实际 None；缺失或 omit 使用调用时的默认值。
 `parameter(field, source=...)` 返回对应 Parameter，字段被禁用、supports=False 或来源不符时返回 None。
-不再维护与值分离的 parameter_paths，也不提供 ParameterPath / ParameterDefaultV 别名。
 
 ## 统一参数路径
 
@@ -195,9 +192,6 @@ provider = ProviderProfile(
     ),
 )
 ```
-
-自定义 Encoder 在 `_chunks()` 中用 `parameter_matches_event(event, profile, name, native=...)`
-选择字段事件，再调用 `parameter_value()` 提取值；对于本来就会遍历的事件，可传 `event=True` 过滤非匹配类型。
 
 | 协议 | max_tokens（input） | content（output） | reasoning_content（output） |
 | --- | --- | --- | --- |
@@ -282,7 +276,6 @@ header_key = ProviderProfile(
 generate 的 extra_headers 继续按现有规则覆盖。
 省略密钥不会改变 SDK 自身的环境变量读取与认证要求。
 例如 Anthropic SDK 的 header 认证检查使用 `Authorization` 或 `X-Api-Key`，应按该大小写配置。
-原先的 `api_key=Config(...)` 需改为 `InputParameter(...)`，并显式提供 path。
 
 ## Provider / Model 共享覆盖项
 
@@ -297,7 +290,7 @@ generate 的 extra_headers 继续按现有规则覆盖。
 | `reasoning_content` | OutputParameter；思考内容位置及缺失时默认值，标准缺失默认值 omit |
 | `reasoning_enable` | InputParameter；开启思考的参数位置及缺失时默认值 |
 | `reasoning_effort` | InputParameter；强度位置及缺失时默认值 |
-| `reasoning_effort.supports` | Parameter；Responses 默认 True，其他默认 False，替代 supports_reasoning_effort |
+| `reasoning_effort.supports` | Parameter；Responses 默认 True，其他默认 False |
 | `reasoning_effort_mapping` | Config；none/low/medium/high/xhigh/max 的映射，映射项 None/omit 禁用对应级别 |
 | `feedback_reasoning_item` | OutputParameter[Any]；各协议自主定义默认提取路径，保存原始回传项；None 继承，omit 禁用 |
 | `should_feedback_reasoning_item` | Config[Literal["when_tool_calls", "always", "none"]]；所有内置协议默认 always；回传工具调用消息中的思考、全部历史思考或不回传；omit 等同 none |
@@ -319,9 +312,8 @@ reasoning_enable.supports=False 才表示模型不支持 reasoning，请求开�
 Anthropic 使用 enabled 与 budget_tokens=1024。
 Anthropic 的预算必须小于 max_tokens。模型支持的强度由具体协议和配置决定。
 
-## 兼容配置迁移示例
+## 兼容服务配置
 
-原先分开的路径与默认值改为同一 Parameter；行为开关改用 Config 包装。
 下面的兼容 Chat 服务将启用思考的参数发往 extra_body.thinking，
 从响应 delta.vendor_reasoning 读取思考内容，并将输出上限发往旧式 max_tokens：
 
@@ -355,8 +347,7 @@ ProviderProfile、ModelProfile、ProtocolDefaults 均支持 dataclass 继承扩�
 新增参数字段通过 InputParameter / OutputParameter 固定 source；若重写 __post_init__，须调用 super().__post_init__() 完成身份绑定。
 新业务参数声明 `InputParameter[T] | Omit | None` 或 `OutputParameter[T] | Omit | None`，新分支控制声明 `Config[T] | Omit | None`。
 只供应用或 Profile 使用的数据声明为 `Attribute[T]`，例如展示名称或标签；
-解析器按类型标记区分职责，不再按字段名排除元数据。
-解析器自动发现继承字段并检查类型、路径和 source，不需要路径字段配对或中央参数清单。
+扩展字段按声明类型参与解析，解析时检查类型、路径和 source。
 
 ```python
 from dataclasses import dataclass, field
@@ -381,9 +372,8 @@ class CompatibleProvider(ProviderProfile):
 provider = CompatibleProvider()  # 使用扩展类声明的预算配置
 ```
 
-BaseDecoder 的统一请求流程应用所有 input 参数，以上 vendor_budget 无需在协议中另写默认值注入。
-output 参数由 BaseEncoder.parameter_value() 统一读取，再由协议钩子完成对应消息语义。
-Config 的含义由需要它的 Encoder / Decoder / Transport 实现，不会自动产生业务功能。
+以上 `vendor_budget` 按路径进入请求，不需要另外编写默认值注入逻辑。
+新增 output 参数或 Config 只声明取值或行为选项，其业务含义仍须由协议实现支持。
 Model 不必重复声明 Provider 的扩展字段即可继承其解析结果；ProtocolDefaults 子类的新字段也自动加入解析。
 
 连接 Parameter 通过 dataclass 字段 metadata 声明 scope="client"；内置 `api_key` 已设置。
@@ -414,7 +404,7 @@ class HeaderProvider(ProviderProfile):
 
 ## SDK 参数与协议字段
 
-所有原生请求在翻译后保持字典，经 Decoder 统一过滤，再通过 `**parameters` 传给官方 SDK。
+翻译后的请求按协议字段规则过滤，再传给官方 SDK。
 `$` 根参数必须符合 SDK 方法签名；兼容字段使用 SDK 已提供的 extra_body 等正式扩展入口，
 声明一个路径不会为 SDK 增加新的调用参数。
 路径声明也不会新增原生 Codec / Decoder 的结构变体。例如将 Anthropic 的 thinking.type 改为 vendor，
@@ -424,7 +414,7 @@ SDK 正式 extra_body 等开放字典可以承载自定义数据。
 Profile.extra_body 在 Chat / Responses 中对应 SDK extra_body；Anthropic 使用原生请求参数。
 SDK 不提供的扩展入口不能通过虚构根参数补出。
 
-Decoder 按声明的消息、工具路径及官方 SDK 类型处理结构：
+各协议的消息和工具对应以下请求字段：
 
 | 协议 | 消息路径 | 工具路径 |
 | --- | --- | --- |

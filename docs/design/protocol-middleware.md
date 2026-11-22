@@ -1,14 +1,14 @@
 # 中间协议与语义损失契约
 
-本文定义中间层的固定支持集合与转换边界。`strict` 按用户确认：
-Chat、Responses、Anthropic 均保留。
+本文说明中间层支持集合、显式投影和损失处理的设计契约。
+应用如何构造模型见[中间协议使用指南](../guides/middleware-io.md)，接口用法见[API 指南](../reference/api.md)。
 
 ## 支持集合
 
 `ProtocolMiddleWare` 及其消息、工具、结果模型独立于 SDK。模型表达固定支持语义，
 同时明确保留少量同协议回放所需的可选字段；这些字段的归属如下。
 encoder 负责原生投影，decoder 负责目标表达，Transport 只执行 SDK 调用。
-所有模型按调用创建，不进入全局缓存。
+请求与响应模型不进入进程级类型缓存；启用的消息缓存仅保存实例会话的已翻译输入历史。
 
 | 模型 | 完整字段 | 语义与归属 |
 | --- | --- | --- |
@@ -24,7 +24,7 @@ encoder 负责原生投影，decoder 负责目标表达，Transport 只执行 SD
 | `ImageSource` | `type`、`url`、`data`、`media_type` | 通用；`type=url` 使用 URL，`type=base64` 使用数据与媒体类型；不下载 URL |
 | `ReasoningContent` | `reasoning`、`feedback_item`、`item`、`origin`、`type` | `reasoning: str \| None` 保存可见思维；`feedback_item: Any \| None` 保存原生回传值；固定 `type=thinking`，来源协议由消息或公开流事件标识 |
 | `ToolCall` | `call_id`、`name`、`arguments`、`origin`、`type`、`item` | 通用完整调用，`type=tool_use`、`arguments: JsonObject`；`item` 当前保留 Responses 项身份 |
-| `FunctionTool` | `name`、`description`、`parameters`、`strict`、`origin` | 通用函数声明；`parameters: JsonObject` 保留应用 Schema；`strict` 按上文协议集合处理 |
+| `FunctionTool` | `name`、`description`、`parameters`、`strict`、`origin` | 通用函数声明；`parameters: JsonObject` 保留应用 Schema；三种内置协议均保留 `strict` |
 | `StreamBlock` | `index`、`block`、`source_ref` | 终态内容块及源引用，由公开完成事件携带 |
 | `MessageEvent` | `type`、`index`、`source_ref`、`block`、`tool_index`、`field`、`value`、`reason`、`messages`、`protocol`、`metadata`、`output_blocks` | 通用公开事件；工具调用完整，终态携带具体消息模型；各类型的有效字段见[使用指南](../guides/middleware-io.md#流式输出) |
 | `Usage` | `input`、`output`、`total`、`cached`、`reasoning` | 通用可选整数；缺失不填零；附加计数由 encoder 归入对应总量 |
@@ -38,6 +38,8 @@ Responses decoder 按内容项边界分组，内容未提供身份时使用消�
 共享分组函数内部识别连续的 Responses 来源 assistant 项，无需 decoder 传入分组协议。
 Chat、Anthropic 合并组内内容；Responses 保留独立项与身份，但按组判断工具调用所需的推理回传；其他来源消息逐条处理。
 公共消息模型不携带合并指令；角色或来源协议变化即结束分组。
+该内部来源分组是当前接受的设计取舍，不要求各目标 Decoder 解析其他协议的原生结构，
+也不为其在公共模型新增协议专用的兼容字段，详见[设计取舍](architecture.md#设计取舍)。
 
 图片仅支持用户消息和工具结果。工具结果中的对象 / 数组可以序列化为文本；图片不能
 序列化成工具文本。audio、file、refusal、citations、用户 metadata、cache_control 等
@@ -94,6 +96,7 @@ codec 依赖这些内部校验函数；需要先校验再做能力过滤时，�
 内部事件片段按各类型规则检查，结构字段只能用于对应事件种类。公开 `MyCodec.decode`
 还会验证完整流：非空事件列表必须以唯一的 `finish` 结束，且终态必须包含
 `reason`、`messages` 和 `output_blocks`。
+这些检查不承诺检测应用主动破坏有效数据的所有方式，也不保证删除生命周期事件或单独改写一份终态快照后的行为。
 
 显式投影会借用嵌套应用字典、原生回传值及内部操作，不能把 `to_wire()` 视作独立深拷贝。
 输入在准备 SDK 请求时完成隔离；公开生成结果和各公开事件拥有自己的可变数据，
@@ -149,14 +152,13 @@ transport、adaptor；注册快照不受后续注册影响。stdio / upstream �
 损失收集器、draft、流状态和 usage 均属于调用；并发调用不共享这些可变数据。
 
 允许共享的缓存仅包括有界的 SDK 类型分析、过滤 / 校验计划、声明路径与不可变规则。
-不缓存消息、图片、工具参数、原始响应、损失、hook、Profile 或 SDK 客户端。
+进程级缓存不保存消息、图片、工具参数、原始响应、损失、hook、Profile 或 SDK 客户端。
+可选消息缓存单独按实例持有已翻译历史，不改变这一进程级规则。
 SDK 客户端由每次生成调用独立持有，响应正常结束、提前关闭、异常或取消后释放。
 `get_last_usage()` 返回最后完成的流式调用的独立 usage 副本；非流式结果不携带 usage。
 
-## 验收与性能比较
+## 验证依据
 
-验收覆盖三协议请求 / 响应转换、三种损失策略、完整 draft 与原位 hook、签名回放、
-工具图片、未知字段删除、完整工具调用、usage、工厂隔离、并发与资源关闭。
-比较使用同一解释器、依赖、基准代码和双方均支持的负载；旧版源码单独快照。
-协议行为变化造成的事件数变化单独报告。时间测量不启用 tracemalloc；内存、缓存和
-真实重叠并发独立探测，保留原始样本、源码摘要与可复现命令。
+支持集合、损失策略、签名回传和生命周期的复现入口见[测试文档](../testing/README.md)。
+性能方法见[性能测试指南](../guides/performance.md)；历史样本只证明其记录的版本与环境，
+不作为当前实现的性能保证。审查与不修复范围见[审查文档](../reviews/README.md)。

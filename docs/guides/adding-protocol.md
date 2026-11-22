@@ -47,7 +47,7 @@ Decoder.result 默认返回首条消息；Responses 等协议可覆盖为列表�
 Decoder.prepare(intermediate, client) 返回 {client, request, local} 三部分字典：
 client 是 SDK 构造参数，request 是 SDK 调用参数，local 包含 stream。
 完整准备路径每次只调用一次 validate_parameters 返回 PreparedOptions，再交给 request。
-离线 Decoder.request 可自行准备一次 options；已提供 options 时直接复用。
+内部 Decoder.request 未收到 options 时准备一次；已提供时直接复用。
 
 request 依次翻译消息／工具、request_parameters、assemble_request、native_request。
 `_messages` 接收已验证的 `Iterable[dict]`，在原有循环中读取即可；不要预先转成列表或重复消费。
@@ -86,7 +86,7 @@ message_transform、缓存和扩展 Decoder 产生的消息都经过该循环；
 usage_mode 是开放字符串，接受的具体值由 Decoder.usage_modes 声明。
 不支持的非空模式不在构造期拒绝，而在准备请求时记录语义损失；空字符串或错误类型仍是配置错误。
 
-BaseEncoder.parameter_value(value, profile, field_id, default_path, default=None, *, use_default=True)
+BaseEncoder.parameter_value(value, profile, name, default_path, default=None, *, use_default=True)
 统一读取 encode 参数。协议钩子先识别事件语义，再读取指定字段；不枚举未知返回字段。
 例如：
 
@@ -219,4 +219,4 @@ MyCodec / MyLLM 实例保留创建时的注册快照；注册新协议后需创�
 
 组件与依赖约束见[契约测试](../../tests/unit/test_native_codecs.py)和[边界测试](../../tests/contract/test_codec_boundaries.py)。
 独立扩展协议的注册、默认值、请求与流集成示例见[注册测试](../../tests/integration/test_protocol_registration.py)。
-构建及完整验证命令见[开发规范](development.md)。
+测试复现命令见[测试指南](../testing/README.md)，构建流程见[构建指南](building.md)。

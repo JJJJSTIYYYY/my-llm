@@ -86,88 +86,9 @@ SDK 自动重试关闭。补跑保留已通过项和 `previous_attempts`，并�
 
 协议说明用于构造对照；是否报错以当前 API 的真实响应为准。
 
-## 2026-11-05 DeepSeek 实测
+## 结果记录
 
-`deepseek-flash` 的新增矩阵 **34/34 通过，98 次真实请求**。默认输出损失策略为
-`ignore`，图片用例为显式预置 `hook`；每项均完成汇总与流式调用。
+本页只描述复现方法与判据。既有实测结果单独保存：
 
-| 原生 API 对照 | Chat | Responses | Anthropic |
-| --- | --- | --- | --- |
-| 思考模式下缺少 `reasoning_content` | 400 | 不属于 Chat 字段补齐用例 | 不属于 Chat 字段补齐用例 |
-| 思考模式下 `reasoning_content=null` | 400 | — | — |
-| 思考模式下 `reasoning_content=""` | 接受 | — | — |
-| 缺少工具结果 | 400 | 400 | 400 |
-| 结果引用不存在的调用 ID | 400 | 400 | 400 |
-
-因此，“空思维会报错”需要区分字段缺失、`null` 与空字符串；MyLLM 当前补的是空字符串，
-并非生成或恢复原始思维正文。修复后的请求全部通过本轮 API 调用。
-
-额外使用 `raise` 冒烟时，曾有一次 `reasoning_null` 场景在输出转换阶段触发
-`target protocol cannot preserve feedback_item alongside visible reasoning`。
-这与输入字段补齐是不同的检查；当时默认策略通过，严格检查仍有上述失败。
-
-## 2026-11-05 SenseNova 实测
-
-`sensenova-6.8-flash-lite` 的新增矩阵最终 **34/34 通过**。首轮 22 项通过、12 项触发
-RPM 限流；将请求间隔从 0.5 秒增至 4 秒后，仅补跑失败项并全部通过。
-最终成功项包含 98 次请求，加上保留的失败尝试共 **122 次请求**。
-两种图片来源的真实搬移和不支持视觉时的占位场景均通过汇总、流式调用。
-
-| 原生 API 对照 | Chat | Responses | Anthropic |
-| --- | --- | --- | --- |
-| 思考模式下缺少 / `null` / 空字符串推理 | 接受 | 本轮未测试此类字段补齐 | 本轮未测试此类字段补齐 |
-| 缺少工具结果 | 接受 | 接受 | 接受 |
-| 结果引用不存在的调用 ID | 接受 | 400 | 接受 |
-
-这些是本轮指定模型、配置和输入下的实际行为，不应将其他协议的拒绝规则套用到全部接口。
-即使原生 API 接受异常历史，仍单独断言 MyLLM 准备后的补齐、丢弃、ID 配对及调用成功。
-原生 API 接受不表示服务端保证了输入语义完整性。
-
-本机报告为 `/tmp/myllm-deepseek-live-inputs.json` 与
-`/tmp/myllm-sensenova-live-inputs.json`；SenseNova 报告保留首轮限流的 `previous_attempts`。
-密钥未写入报告。完整离线回归为 **2560 passed**，包括官方 SDK HTTP 边界、错误分类、
-失败证据保留、脱敏与补跑模式隔离检查。
-
-## 2026-11-06 空推理字符串修复
-
-Chat 流式 encoder 现在保留上游显式返回的 `reasoning_content=""`，与回传数据的读取保持一致。
-默认配置下，中间层得到 `ReasoningContent(reasoning="", feedback_item="")`，
-不再因 `None != ""` 在严格输出转换时误报语义损失。字段缺失或为 `null` 时仍不创建推理块。
-
-回归通过本地 HTTP transport 驱动官方 SDK，覆盖严格 `raise` 策略、Chat / Middleware 输出、
-流式 / 汇总调用，以及只有空字符串和空片段与非空片段混合的响应；真实 API 复跑结果见下文。
-真正不同的非空回传文本和无法表达的反馈对象仍受语义损失检查约束。
-此前真实失败未保留原始 SSE；本次修复针对已稳定复现的空值路径。
-
-推理回传测试还补齐了 SenseNova Chat 的 `feedback_reasoning_item` Profile 路径，使其与可见推理
-一同读取服务返回的 `reasoning`。标准 Chat 结果再次读入时，如果自定义回传字段未提供，
-encoder 保留结果已有的原生 `reasoning_content`；显式的自定义值或 `null` 仍按 Profile 读取。
-这不会生成推理或用空字符串替代原文。Anthropic 开启思考的 Profile 声明
-`budget_tokens=1024`，对应输出上限为 2048，满足官方 SDK 的参数结构要求。
-
-## 2026-11-06 真实 API 复跑与回传一致性
-
-修正上述问题后，两家服务都重新完整执行了 34 个输入修复场景和 6 个推理回传场景，
-下表中的完整运行均一次通过，无需补跑。
-
-| 服务与模型 | 完整矩阵 | 真实请求 | 其中严格推理回传 |
-| --- | --- | --- | --- |
-| DeepSeek `deepseek-flash` | 40/40 | 122 | 6/6 |
-| SenseNova `sensenova-6.8-flash-lite` | 40/40 | 122 | 6/6 |
-
-每家服务的六个回传场景包含十二次完整两轮调用，覆盖 Chat、Responses、Anthropic 上游的
-同协议与 Middleware 输出，以及流式和汇总模式。全部要求源推理非空，且原始响应、交付结果、
-下一轮准备结果及下一轮实际 HTTP 回传逐项相等；不存在用补空结果通过一致性检查的情况。
-
-DeepSeek 另外以 `raise` 复测 `reasoning_missing`、`reasoning_null`、`reasoning_empty`，
-**3/3 通过，共 9 次请求**；缺失和 `null` 的原生对照仍返回 400，空字符串对照仍被接受，
-MyLLM 修复后的汇总、流式调用均成功，未再出现此前的空值语义损失误报。
-
-完整离线回归为 **2594 passed**，Ruff 与格式、diff 检查通过。
-预检发现的 Profile 配置问题及其失败尝试保留在独立 replay 报告中；最终完整运行的报告分别为：
-
-- `/tmp/myllm-deepseek-e2e-2026-11-06.json`
-- `/tmp/myllm-sensenova-e2e-2026-11-06.json`
-- `/tmp/myllm-deepseek-strict-2026-11-06.json`
-
-密钥仅通过隐藏输入传入进程，未写入源码或报告。
+- [2026-11-05／06 输入修复与推理回传结果](results/2026-11-input-e2e.md)。
+- [2026-11-22 SenseNova 验证结果](results/2026-11-22-sensenova.md)。

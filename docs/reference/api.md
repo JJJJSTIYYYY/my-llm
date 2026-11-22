@@ -1,4 +1,4 @@
-# API 参考
+# API 使用指南
 
 本文介绍 `my_llm` 的公开接口、参数、返回值和使用约束。
 业务执行入口为 `MyLLM.generate`，独立翻译入口为 `MyCodec.encode` / `decode` / `convert`。
@@ -107,7 +107,7 @@ Anthropic 已有普通消息缓存时，可以单独追加 system 消息。
 格式或请求校验失败不会写入缓存；此后的 raise 策略、hook 或网络调用抛错不会撤销已保存的输入。
 hook 修改只影响本次请求，不会自动回写消息缓存。使用者负责 hook 的全部行为，
 包括修改翻译结果后需要进行的缓存维护。显式导入的工具图片预设已同步处理缓存与重试，
-见[预设工具图片 hook](../guides/semantic-loss.md#预设工具图片-hook)。
+见[预设工具图片 hook](../guides/semantic-loss.md#chat-预设-hook)。
 流尚未消费或调用失败后，连续重发相同消息批次会复用已有历史，不再追加一次。
 每次重发仍执行翻译和语义损失处理，发送时使用本次请求选项、消息历史和本次 hook 的修改。
 例如，丢弃尚未消费的流后，可以修改输出上限并重试：
@@ -126,7 +126,7 @@ async def retry_unconsumed(llm):
 `A` 仍会追加。连续相同批次统一视为重试；继续对话时，应把上次 assistant 回复加入下一批增量。
 消息含无法稳定序列化的非标准扩展对象时，沿用原有转换规则，该批不做哈希去重。
 完整历史不会被自动识别为增量。
-缓存按实例隔离，`aclose()` 时释放；
+缓存按实例隔离，调用 `llm.clear_cache()` 或释放实例时清理；
 启用缓存时不能同时设置非空的 `previous_response_id`，`None` / `omit` 仍可使用。
 
 **启用消息缓存后，同一 `MyLLM` 实例不支持并发生成。** 调用方必须先完成或关闭前一条流，再发起
@@ -161,7 +161,7 @@ MyLLM 无需关闭或使用上下文管理器。消息翻译缓存由 `clear_cac
 
 ## `MessageStream`
 
-通过 `await llm.generate(..., stream=True)` 或模块函数获取，使用 `async with` 管理生命周期：
+通过 `await llm.generate(..., stream=True)` 获取，使用 `async with` 管理生命周期：
 
 ```python
 async def print_stream(llm, prompt):
@@ -412,7 +412,7 @@ Chat 上游将同一 assistant 的工具结果按到达顺序集中到其 `tool_
 `MyLLM` 构造接收 `semantic_loss_protocol="raise" | "ignore" | "hook"` 及
 `input_semantic_loss_hook` / `output_semantic_loss_hook`，也可通过 `set_semantic_loss_policy()` 更新生成配置。hook 接收 `(draft, losses, context)` 并原位修改，
 请求 hook 可以异步执行，准备阶段会等待其完成；离线转换与输出 hook 仍为同步函数，
-具体值和示例见[迁移指南](../guides/semantic-loss.md)。
+具体值和示例见[语义损失指南](../guides/semantic-loss.md)。
 
 Chat 提供 `prebuilt.chat_semantic_loss_hook`，统一调用 `reasoning_content_feedback` 和
 `move_tool_images_to_user_message`，三者均可显式导入。推理预设将无法回放的原生反馈降级为
@@ -429,7 +429,7 @@ Chat 相关损失项的可选 `target: SemanticLossTarget` 提供目标 `message
 对应的中间层 `source_value`，供请求 hook 精确修复；原始来源仍由 `origin_value` / `origin_path` 表示。
 
 流事件过滤接口返回的 usage；成功结束后调用 `get_last_usage()` 获取独立的 `Usage`。
-未报告字段为 `None`，非流式结果不含 usage。关闭消息缓存后的并发调用中，该接口代表最后完成的流式调用。
+未报告字段为 `None`，非流式结果不含 usage。关闭消息缓存后的并发调用中，该接口代表最后成功完成的调用；两种返回模式均消费上游流。
 无法解析的 usage 样本和辅助元数据静默忽略，不影响正文生成；没有可用用量时返回空。
 
 ## `MyCodec` 协议转换
@@ -468,9 +468,32 @@ assert converted["messages"] == [{"role": "user", "content": [{"type": "text", "
 `convert(chunks=完整原生事件列表, ...)` 在一次调用中完成上述过程。
 各入口可单独使用，返回的中间事件可经 `to_wire()` 和 JSON 保存后交给 `decode()`。
 实时响应请使用 `MyLLM.generate(stream=True)`；转换器不记住前一次调用的流片段。
+
+下面将完整 Chat 流转换为公开中间事件，经 JSON 保存后由独立转换器输出 Responses 事件：
+
+```python
+import json
+
+from my_llm import MyCodec
+
+
+def translate_saved_stream(native_chunks):
+    middle = MyCodec().encode(chunks=native_chunks, input_format="openai_chat")
+    saved = json.dumps([event.to_wire() for event in middle.stream])
+    return MyCodec().decode(
+        chunks=json.loads(saved),
+        target_format="openai_responses",
+    )["chunks"]
+```
+
+`native_chunks` 须包含成功终态；公开中间事件须保留全部事件和终态内容。
+应用展示使用文本增量；下一轮历史使用完整返回消息或 `stream.result`，保留原生推理回传数据。
+外部主动删除事件、改坏字段，或分别修改同一终态的多份快照后，行为不在保障范围。
+
 中间模型也可作为应用对话历史：显式设置 `stdio_protocol="middleware"`，然后将
-`ProtocolMiddleWare.messages` / `.tools` 属性直接传给生成方法。`decode()`
-输出到 `target_format="middleware"` 时还须提供原生来源 `input_format`；无需目标 decoder。
+`ProtocolMiddleWare.messages` / `.tools` 属性直接传给生成方法。
+`decode()` 输出到 `target_format="middleware"` 时，消息或工具转换须额外提供
+`input_format=<原生来源协议>`；完整事件自带来源上下文，无须重复指定。
 
 ### 协议注册与内部实现边界
 

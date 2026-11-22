@@ -18,10 +18,12 @@
 同实例并发调用拥有独立客户端和流状态。关闭消息缓存时支持同实例并发；
 启用 `enable_message_cache=True` 后，应先完成或关闭前一条流再调用下一次生成。
 实例复用和跨会话缓存隔离由应用层负责；开始新会话前可调用 `clear_cache()`。
-`compare(new_provider, new_model, new_stdio_protocol)` 只比较标识字符串，不检查配置等价性。
 
 MyLLM 实例没有关闭状态，也不需要上下文管理器。消息缓存通过 `clear_cache()` 主动清理，或随实例释放。
-独立函数 generate 的流式返回值同样应通过 `async with` 或 `aclose()` 管理。
+`MyLLM.generate(stream=True)` 返回的流通过 `async with` 或 `aclose()` 管理；包根不提供独立 `generate` 函数。
+
+逐请求客户端让调用级密钥、响应状态和关闭顺序具有明确所有者，避免共享连接身份与实例关闭状态互相约束。
+其成本是每次创建客户端；应用复用的是 MyLLM 配置和可选历史，而不是底层 SDK 客户端。
 
 ## 协议边界
 

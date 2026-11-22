@@ -1,7 +1,7 @@
 # 项目架构与职责边界
 
-2026-11-22 更新。一次 `MyLLM.generate(messages=..., stream=True, max_tokens=1024)` 将完整调用参数
-打包为字典，连同已解析 Profile 进入 Codec。Encoder 先投影支持字段、验证输入协议并生成类型化中间协议；
+本页说明当前职责划分与设计取舍。一次 `MyLLM.generate(messages=..., stream=True, max_tokens=1024)` 将完整调用参数
+打包为字典，连同已解析 Profile 进入 Codec。Encoder 先投影支持字段、验证输入协议并生成中间数据；
 Decoder 应用参数路径、默认值、覆盖规则及目标 SDK Schema，输出三个明确的目的地：
 
 ```python
@@ -37,7 +37,10 @@ src/my_llm/
 ├── middleware/                 # SDK 无关的固定中间协议
 │   ├── models.py               # 消息、内容、工具及其 wire 投影
 │   ├── stream.py               # 流操作、公开事件、条目身份与用量
-│   └── protocol.py             # 完整容器与类型化生成输入校验
+│   ├── protocol.py             # 完整容器与类型化生成输入
+│   ├── validation.py           # 结构校验与公开完整流边界
+│   ├── history.py              # 工具调用关联与历史归一化
+│   └── usage.py                # 用量累积
 ├── profile/                    # 配置分层、声明分类、校验及实例快照
 ├── runtime/                    # 响应流与每次调用的状态
 │   ├── message_stream.py       # 公开异步流与关闭回调
@@ -51,6 +54,8 @@ src/my_llm/
     │   └── transport.py        # SDK 执行契约及共用响应关闭辅助
     ├── shared/
     │   ├── conversion.py       # 消息、媒体、工具转换及独立历史关联检查入口
+    │   ├── input.py            # 输入能力策略、回传与内部项分组
+    │   ├── capabilities.py     # 支持能力判断与损失记录
     │   ├── options.py          # 请求选项、参数路径及优先级
     │   ├── output.py           # 原生与中间输出共用的能力过滤
     │   └── stream.py           # 流操作、块身份及用量
@@ -63,7 +68,7 @@ src/my_llm/
 | BaseDecoder | 请求选项解析、参数映射、默认值与覆盖、工具关联及能力验证、目标 Schema 过滤和验证、最终字典及结果形状。 |
 | BaseTransport | create_client(parameters)、upstream(client, request)、close_client(client)；不接收 Profile 或原始生成参数。 |
 | BaseCodec | 声明身份及 ProtocolDefaults，组合 Encoder / Decoder / Transport；在调用损失 adaptor 前发布消息翻译缓存。 |
-| MyCodec | 注册快照、输入协议绑定、内部 _prepare 路由；持有实例独立的 MessageCache。 |
+| MyCodec | 公开 encode / decode / convert、注册快照、输入协议识别、内部 _prepare 路由；持有实例独立的 MessageCache。 |
 | CompiledCache / MessageCache | 分别保存进程级类型规则和按实例键隔离的已翻译输入历史，集中管理缓存操作与快照。 |
 | Profile / resolve_profiles | 分层合并、声明分类、通用字段验证、连接参数解析及独立配置快照。 |
 | MyLLM | 固定实例配置、uuid4 消息缓存键、已准备连接字典、延迟请求客户端生命周期、生成和输出编排。 |
@@ -78,8 +83,8 @@ Encoder / Decoder 不创建 SDK 客户端，也不相互导入。官方类型与
 例如 anthropic/content.py；单个模块不额外套 utils 目录。
 包初始化文件仅聚合公开类型与必要扩展契约；公共执行逻辑不按具体协议名分支。
 
-目录按责任边界分组，不按方法数量拆分。中间协议只设三个实现模块；消息模型与 wire
-解析相邻，流模型与事件投影相邻，完整输入校验与容器相邻。MyLLM、MyCodec、各协议
+目录按责任边界分组，不按方法数量拆分。消息模型与 wire 解析相邻，流模型与事件投影相邻；
+校验、历史归一化及用量累积有各自的内部模块。MyLLM、MyCodec、各协议
 Encoder / Decoder 的完整调用流程仍集中在所属类中。初始化文件只声明包归属或公开导出；运行时内部
 直接导入定义模块。`from my_llm import ...` 和 `from my_llm.middleware import ...`
 继续提供同一组协议模型。MyLLM 执行编排位于顶层 my_llm.py；
@@ -98,7 +103,7 @@ Encoder / Decoder 的完整调用流程仍集中在所属类中。初始化文�
       → await BaseCodec.prepare → 上游 Decoder.prepare
           → validate_parameters（每次一次）
           → request → 当前批工具关联验证 → 消息翻译
-          → 启用缓存时：按批次哈希合并消息列表，取得独立快照
+          → 启用缓存时：按批次哈希暂存并只读借用完整已翻译历史
           → 参数路径及默认值 → assemble_request
           → native_request → Schema 过滤、能力及原生结构验证
           → {client, request, local}
@@ -112,7 +117,8 @@ Encoder / Decoder 的完整调用流程仍集中在所属类中。初始化文�
 先按 `ModelProfile.protocol > ProviderProfile.protocol` 选择上游，再加载该协议的 Codec 默认值；
 Model 未设置协议时继承 Provider。`stdio_protocol` 选择业务输入输出。
 未设置 stdio_protocol 时，仅整批输入唯一匹配才绑定；零匹配和多匹配报 MessageValidationError。
-绑定与准备没有 await；准备完成后修改调用方历史、body、headers 不会改变待消费请求。
+输入绑定及 Decoder 的同步准备阶段没有 await；BaseCodec 随后可等待异步请求损失 hook。
+完整准备结束后修改调用方历史、body、headers 不会改变待消费请求。
 同协议和跨协议均经过 Encoder / Decoder；收集式调用消费同一个 MessageStream。
 
 显式 `stdio_protocol="middleware"` 使用公开具体模型，不参与协议推断：请求略过输入 Encoder，
@@ -126,6 +132,29 @@ AssistantMessage / MessageEvent，略过 stdio Decoder。该 stdio 名称不注�
 请求准备、组件访问和结果组装均为内部步骤，不作为可独立使用的公开业务接口。
 公开翻译入口为 `MyCodec.encode` / `decode` / `convert`；非空流翻译以完整响应为一次调用单位，
 公开中间态统一为 `MessageEvent`，内部 `StreamBatch` 仅用于实时累积和组件协作。
+
+## 设计取舍
+
+**固定支持集合，而非原生对象透传。** Encoder 只投影中间层能表达的字段；未支持的原生字段被丢弃。
+Decoder 对中间层已表达、目标不能保留的语义记录损失。这使语义损失有明确归属，
+也意味着同协议转换不保证恢复任意原始字段，跨协议往返更不保证字节相同。
+
+**原生差异由 codec 负责，基础类组装流程。** Encoder 不接收目标协议；Decoder 只构造自己的目标格式。
+Transport 只执行 SDK，不承担转换。共享机制只抽取语义一致的行为，避免在公共入口按厂商追加例外。
+当前有两项明确接受的内部规则：自动识别根据各协议特征排除错误候选；
+`shared/input.py` 将连续 Responses 来源 assistant 项视作同一回合，统一判断推理回传，
+再由目标 Decoder 决定是否合并。后者保留了必要的回合语义，同时避免在公共消息上增加合并指令或专用兼容开关。
+这些规则不把其他协议的原生结构交给目标 Decoder 解析。
+
+**完整流是公开翻译单位。** 实时片段通过请求状态机协作；离线 `MyCodec` 交付包含终态块和来源上下文的公开事件。
+这样 `decode` 可以在新实例、JSON 保存后独立使用，不依赖上次编码的隐藏状态。
+代价是终态事件同时包含消息与带索引的块快照；应用主动改坏其中一份、删除生命周期事件后不保证行为。
+可见思维服务展示，原生 `feedback_item` 服务同协议回传；Responses 多段摘要可显示为合并文本，
+下一轮请求继续使用完整原生 item，不从展示文本反推原生结构。
+
+**缓存规则与会话数据分开。** 类型计划可以进程共享；翻译历史按实例隔离并要求串行使用。
+最终请求仍逐值过滤和验证，缓存命中不构成跳过正确性边界的理由。
+SDK 客户端不复用到下一次生成，使请求鉴权和资源释放有单一所有者。
 
 ## 参数分类与优先级
 
@@ -182,7 +211,7 @@ cache/compiled_cache.py 集中管理 SDK 类型分析、计划编译、过滤与
 由 `BaseCodec.prepare` 管理对应消息批次的发布。
 以上游 OpenAI Chat 为例：首次提交 `[system, user]`，下次提交 `[assistant, user]`，两批分别走原有翻译流程；
 MessageCache 按原始输入哈希判断是否追加当前消息翻译列表，
-返回包含四条消息的独立快照供 Decoder 组装本次请求。
+只读借用包含四条消息的缓存历史供 Decoder 组装；最终过滤产生本次请求独立拥有的字典。
 增量可以包含 system、user、assistant 或完整工具调用与结果批次；只修复当前批的工具关联，
 旧缓存中的对应关系不重复解析或修复。system 消息也保留在消息列表里，
 Decoder 组装请求时将其放入 Anthropic 的 system 等原生位置。

@@ -24,7 +24,7 @@ OpenAI Chat 格式输入 → 任意协议 API → OpenAI Chat 格式输出
 业务调用使用 `MyLLM.generate`；离线翻译使用 `MyCodec.encode` / `decode` / `convert`，各自可独立使用。
 请求准备和原生协议组件属于内部实现，不作为独立业务入口。
 
-## 主要功能与亮点
+## 主要功能
 
 | 功能 | 说明 |
 | --- | --- |
@@ -158,23 +158,14 @@ print(converted["messages"])
 
 同一实例的消息与工具使用同一种输入输出协议。
 
-### 已通过端到端验证的协议组合
+### 验证范围
 
-**3×4 十二条真实 API 路径验证（2026-10-25），补跑后 36 个场景全部通过。**
+常规测试使用官方 SDK 与本地模拟 HTTP/SSE，不请求真实模型。
+真实服务 E2E 单独覆盖三种上游与四种输入/输出格式的文本、工具回合、能力处理和推理回传。
+汇总调用也通过上游 SSE 执行，结果不能证明供应商的 HTTP 非流式接口行为。
 
-| 输入/输出协议 ↓ \ 上游 API → | Chat Completions | Responses | Anthropic Messages |
-| --- | --- | --- | --- |
-| `openai_chat` | ✅ 已验证 | ✅ 已验证 | ✅ 已验证 |
-| `openai_responses` | ✅ 已验证 | ✅ 已验证 | ✅ 已验证 |
-| `anthropic` | ✅ 已验证 | ✅ 已验证 | ✅ 已验证 |
-| `middleware` | ✅ 已验证 | ✅ 已验证 | ✅ 已验证 |
-
-每条路径覆盖文本汇总、流式增量与汇总一致性，以及工具调用、参数组装和工具结果回传。
-汇总模式也通过上游 SSE 执行，本轮未单独验证供应商的 HTTP 非流式响应。
-实测中 Chat、Anthropic 的关闭思考参数未完全阻止返回思考块。脚本默认 `ignore`，
-目标无法表达的思维或签名按损失策略处理，思维不混入正文；正文和完整流式正文要求精确匹配。
-
-接入配置、复跑方法、失败说明及补跑结果见 [SenseNova 端到端测试指南](docs/guides/sensenova.md)。
+运行方法见[测试文档](docs/testing/README.md)，按日期记录的通过项、失败项和验证限制见
+[测试结果目录](docs/testing/results/README.md)。历史结果不作为当前模型或服务行为的保证。
 
 ## 安装最新的开发版本 (main 分支)
 
@@ -191,10 +182,11 @@ uv build
 
 ## 文档
 
-- [API 使用指南](docs/reference/api.md)：生成、流式消费、工具回合与格式转换。
-- [配置指南](docs/reference/configuration.md)：连接、模型、思考参数与兼容服务。
-- [协议模板](docs/reference/schema/README.md)：三种协议的请求、返回和流事件。
-- [扩展协议](docs/guides/adding-protocol.md) · [本地开发](docs/guides/development.md) · [构建验证](docs/guides/building.md)
-- [全部文档](docs/README.md)
+文档分为四部分，完整导航见[项目文档](docs/README.md)。
+
+- [使用文档](docs/README.md#使用文档)：公开接口、配置、中间模型、语义损失和服务接入。
+- [开发文档](docs/README.md#开发文档)：设计取舍、职责边界、协议扩展和构建。
+- [测试文档](docs/testing/README.md)：测试复现、结果汇总、性能与发行包验证。
+- [审查文档](docs/reviews/README.md)：代码审查、根因、修复记录和不修复决定。
 
 项目采用 [Apache License 2.0](LICENSE)。

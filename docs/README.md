@@ -36,6 +36,7 @@
 
 - [输入修复与推理回传 E2E](testing/input-e2e.md)：独立原生输入、对照、工具图片和下一轮 HTTP 回传判据。
 - [连续请求前缀矩阵](testing/history-prefix.md)：四输入 × 三上游、缓存开关、finish 消息回填与请求前缀一致性。
+- [SenseNova 真实缓存命中](testing/sensenova-cache.md)：四输入 × 三上游多轮调用、服务端 usage 与条件限额观察。
 - [SenseNova E2E](testing/sensenova.md)：运行范围、离线检查、真实服务调用和补跑方法。
 - [generate 性能测试](guides/performance.md)：负载、计时边界、复测和比较约束。
 - [性能结果与原始样本](testing/performance/README.md)：保留日期、环境和原始数据的历史测量。

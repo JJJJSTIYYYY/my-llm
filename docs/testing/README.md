@@ -7,6 +7,7 @@
 | --- | --- | --- |
 | 常规回归、协议契约、文档与离线示例 | 本页 | 否 |
 | 开关消息缓存的四输入 × 三上游连续请求前缀 | [前缀矩阵](history-prefix.md) | 否，官方 SDK 配本地 HTTP transport |
+| SenseNova 四输入 × 三上游多轮真实缓存命中 | [真实缓存矩阵](sensenova-cache.md) | 是，统计服务端 usage |
 | 发行包内容、安装与导入 | [发行包验证](packaging.md) | 构建或安装可能下载依赖，不调用模型 |
 | SenseNova 正文、工具与能力策略 | [SenseNova E2E](sensenova.md) | 真实模式会调用服务；`--validate` 离线 |
 | 输入历史、工具图片与推理回传 | [输入 E2E](input-e2e.md) | 真实模式会调用服务；推理回传仅支持真实响应 |

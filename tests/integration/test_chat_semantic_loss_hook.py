@@ -25,7 +25,6 @@ from tests.helpers.tool_images import (
     history,
     image_references,
     prepare,
-    without_image_ids,
 )
 from tests.performance.transport import LocalSDK, wire_frames
 
@@ -134,9 +133,8 @@ async def test_combined_repairs_preserve_reasoning_images_and_cache_on_actual_wi
             if cached:
                 assert llm._codec._message_cache.get(llm._message_cache_key) == messages
                 assert messages[0]["content"] == "cached prefix"
-        assert without_image_ids(requests[0]) == without_image_ids(requests[1])
+        assert requests[0] == requests[1]
         if cached:
-            assert requests[0] == requests[1]
             await llm.generate(messages=[user_message(source, "next")])
             following = json.loads(sdk.requests[-1].content)["messages"]
             assert following[:-1] == requests[0]
@@ -188,7 +186,7 @@ async def test_combined_hook_retries_after_either_cache_write_fails(monkeypatch,
     assert attempts == 3
 
 
-async def test_new_cached_round_retains_prior_repairs_and_gets_new_image_ids():
+async def test_new_cached_round_retains_prior_repairs_and_reuses_image_hashes():
     llm = configured_llm("openai_chat", "anthropic", True)
     first = await prepare(llm, reasoning_history("anthropic"))
     before = deepcopy(first["messages"])
@@ -207,7 +205,7 @@ async def test_new_cached_round_retains_prior_repairs_and_gets_new_image_ids():
     assert (
         next(m for m in current if m.get("tool_calls"))["reasoning_content"] == "tool one\ntool two"
     )
-    assert set(image_references(current[-1])).isdisjoint(image_references(before[-1]))
+    assert image_references(current[-1]) == image_references(before[-1])
     assert (await prepare(llm, deepcopy(batch)))["messages"] == following["messages"]
     assert_chat_tool_sequence(following["messages"])
 

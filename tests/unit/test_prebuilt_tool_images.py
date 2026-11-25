@@ -24,6 +24,7 @@ from tests.helpers.sdk import MESSAGE_TYPES, assert_input_native
 from tests.helpers.tool_images import (
     DATA,
     HOOKS,
+    REFERENCES,
     URL,
     configured_llm,
     expected_image_message,
@@ -31,7 +32,6 @@ from tests.helpers.tool_images import (
     image_references,
     picture_history,
     prepare,
-    without_image_ids,
 )
 from tests.performance.workloads import PNG, profiles
 
@@ -49,12 +49,10 @@ async def test_presets_move_images_without_mutating_inputs_and_preserve_retries(
     retry = await prepare(llm, messages)
     key = "messages"
     references = image_references(first[key][-1])
-    assert len(references) == len(set(references)) == 2
+    assert references == REFERENCES
     expected = expected_image_message(target, references)
     assert first[key][-1] == expected
-    assert without_image_ids(first[key]) == without_image_ids(retry[key])
-    if cached:
-        assert first[key] == retry[key]
+    assert first[key] == retry[key]
     if target == "openai_chat":
         assert_chat_tool_sequence(first[key])
         assert_chat_tool_sequence(retry[key])
@@ -108,8 +106,7 @@ async def test_expiring_cache_allows_same_input_to_be_handled_again(target):
     llm._codec._expire_message_cache(llm._message_cache_key)
     following = await prepare(llm, picture_history())
     key = "messages"
-    assert without_image_ids(first[key]) == without_image_ids(following[key])
-    assert first[key] != following[key]
+    assert first[key] == following[key]
     assert following[key][-1] == expected_image_message(
         target, image_references(following[key][-1])
     )
@@ -209,6 +206,41 @@ async def test_repeated_image_values_are_not_deduplicated_inside_one_tool_result
         f"data:image/png;base64,{DATA}",
     ]
     references = image_references(request["messages"][-1])
-    assert len(references) == len(set(references)) == 3
+    assert references == [REFERENCES[0], REFERENCES[0], REFERENCES[1]]
     tool = next(message for message in request["messages"] if message["role"] == "tool")
     assert tool["content"] == "before" + "".join(references) + "after"
+
+
+@pytest.mark.parametrize("source", ["anthropic", "openai_responses", "middleware"])
+@pytest.mark.parametrize("vision", [False, True])
+async def test_image_hashes_match_across_instances_and_vision_capabilities(source, vision):
+    requests = []
+    for _ in range(2):
+        llm = configured_llm("openai_chat", source, supports_vision=Config(default_value=vision))
+        request = await prepare(llm, history(source))
+        assert image_references(request["messages"][-1]) == REFERENCES
+        assert str(request).count("[Unsupported Image]") == (0 if vision else 2)
+        requests.append(request)
+    assert requests[0] == requests[1]
+
+
+@pytest.mark.parametrize(
+    "image_index,field,value",
+    [
+        (1, "url", "https://example.com/b.png"),
+        (2, "data", "b3RoZXI="),
+        (2, "media_type", "image/jpeg"),
+    ],
+)
+async def test_changing_image_source_changes_only_its_hash(image_index, field, value):
+    llm = configured_llm("openai_chat", "middleware")
+    messages = history("middleware")
+    first = await prepare(llm, messages)
+    setattr(messages[1].content[image_index].source, field, value)
+    second = await prepare(llm, messages)
+    first_refs = image_references(first["messages"][-1])
+    second_refs = image_references(second["messages"][-1])
+    changed = image_index - 1
+    assert first_refs == REFERENCES
+    assert first_refs[changed] != second_refs[changed]
+    assert first_refs[1 - changed] == second_refs[1 - changed]

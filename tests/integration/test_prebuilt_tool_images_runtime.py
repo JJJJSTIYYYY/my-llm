@@ -13,10 +13,8 @@ from tests.helpers.schema import validate_request
 from tests.helpers.tool_images import (
     HOOKS,
     consume,
-    image_references,
     request_history,
     responses_history,
-    without_image_ids,
 )
 from tests.performance.transport import LocalSDK, wire_frames
 from tests.performance.workloads import profiles
@@ -81,10 +79,7 @@ async def test_relocated_images_survive_retry_and_incremental_requests(target, s
                 item["call_id"] = "second-call"
         await generate(next_batch, streaming=stream)
         final = json.loads(sdk.requests[-1].content)
-        assert without_image_ids(request_history(final)[-1]) == without_image_ids(image_message)
-        assert set(image_references(request_history(final)[-1])).isdisjoint(
-            image_references(image_message)
-        )
+        assert request_history(final)[-1] == image_message
         assert str(request_history(final)).count("aW1hZ2U=") == 2
         assert batch == before
         for request in sdk.requests:

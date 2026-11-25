@@ -35,6 +35,7 @@
 性能基准和发行包验证。结果页记录对应日期与基线，不能替代当前版本复测。
 
 - [输入修复与推理回传 E2E](testing/input-e2e.md)：独立原生输入、对照、工具图片和下一轮 HTTP 回传判据。
+- [无消息缓存连续请求矩阵](testing/history-prefix.md)：四输入 × 三上游、finish 消息回填与请求前缀一致性。
 - [SenseNova E2E](testing/sensenova.md)：运行范围、离线检查、真实服务调用和补跑方法。
 - [generate 性能测试](guides/performance.md)：负载、计时边界、复测和比较约束。
 - [性能结果与原始样本](testing/performance/README.md)：保留日期、环境和原始数据的历史测量。

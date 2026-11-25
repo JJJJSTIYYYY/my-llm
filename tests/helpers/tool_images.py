@@ -1,6 +1,5 @@
 """Independent native image fixtures and opt-in preset request helpers."""
 
-import json
 import re
 from dataclasses import replace
 
@@ -21,16 +20,15 @@ from tests.performance.workloads import profiles
 HOOKS = {"openai_chat": chat_hook}
 URL = "https://example.com/a.png"
 DATA = "aW1hZ2U="
-IMAGE_REFERENCE = re.compile(r"\[Image: image_[0-9a-f]{32}\]")
+IMAGE_REFERENCE = re.compile(r"\[Image: image_[0-9a-f]{64}\]")
+REFERENCES = [
+    "[Image: image_c4ceecc2a6a51c495dd6f21eda45173e30be2115db57ef7ab67c75329200f1d1]",
+    "[Image: image_a9c7e8d9437708942fac41a6a556f51261afc865fa12f8a6bf4fe30eb1f3e69a]",
+]
 
 
 def image_references(message):
     return IMAGE_REFERENCE.findall(str(message["content"]))
-
-
-def without_image_ids(value):
-    """Compare independent preparations without requiring their UUIDs to repeat."""
-    return IMAGE_REFERENCE.sub("[Image: generated]", json.dumps(value, sort_keys=True))
 
 
 def picture_history():

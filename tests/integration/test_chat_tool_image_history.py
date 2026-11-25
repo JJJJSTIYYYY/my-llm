@@ -15,7 +15,6 @@ from tests.helpers.tool_images import (
     configured_llm,
     consume,
     image_references,
-    without_image_ids,
 )
 from tests.performance.transport import LocalSDK, wire_frames
 
@@ -134,9 +133,7 @@ async def test_hook_preserves_complete_parallel_tool_groups_on_wire_and_cached_r
         if attempt == 0:
             first = body["messages"]
         else:
-            assert without_image_ids(body["messages"]) == without_image_ids(first)
-            if cached:
-                assert body["messages"] == first
+            assert body["messages"] == first
     await llm.generate(messages=[{"role": "user", "content": "next"}])
     following = wire_request(chat_sdk)["messages"]
     assert_chat_tool_sequence(following)
@@ -298,9 +295,7 @@ async def test_tool_results_stay_contiguous_when_history_contains_ordinary_text(
     messages = wire_request(chat_sdk)["messages"]
     await llm.generate(messages=batch)
     retry = wire_request(chat_sdk)["messages"]
-    assert without_image_ids(retry) == without_image_ids(messages)
-    if cached:
-        assert retry == messages
+    assert retry == messages
     await llm.generate(messages=[{"role": "user", "content": "next"}])
     following = wire_request(chat_sdk)["messages"]
     assert_chat_tool_sequence(following)

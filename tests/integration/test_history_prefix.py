@@ -1,4 +1,4 @@
-"""Measure exact upstream history prefixes across uncached generate calls."""
+"""Measure exact upstream history prefixes with full and cached incremental input."""
 
 import json
 from copy import deepcopy
@@ -129,12 +129,14 @@ def assert_prefix_behavior(upstream, current, previous, unstable):
 @pytest.mark.parametrize("stdio", INPUT_PROTOCOLS)
 @pytest.mark.parametrize("modes", MODES, ids=MODE_IDS)
 @pytest.mark.parametrize("scenario", SCENARIOS)
-async def test_uncached_generate_history_prefix_behavior(upstream, stdio, modes, scenario):
+@pytest.mark.parametrize("cached", [False, True], ids=["uncached", "cached"])
+async def test_generate_history_prefix_behavior(upstream, stdio, modes, scenario, cached):
     provider, model = profiles(upstream)
     if scenario == "reasoning-not-replayed":
         model = replace(model, should_feedback_reasoning_item=config("none"))
     messages = initial_history(stdio, scenario)
-    unstable = scenario == "tool-images" and upstream == "openai_chat" and stdio != "openai_chat"
+    compensate = scenario == "tool-images" and upstream == "openai_chat" and stdio != "openai_chat"
+    unstable = compensate and not cached
     tools = (
         declarations(stdio)
         if scenario
@@ -158,7 +160,7 @@ async def test_uncached_generate_history_prefix_behavior(upstream, stdio, modes,
         expected_ids = [{"openai_chat": "call_1", "anthropic": "call_a"}.get(stdio, "c")]
 
     def compensate_images(draft, losses, context):
-        assert context.message_cache is None
+        assert (context.message_cache is not None) is cached
         assert {loss.reason for loss in losses} == {"Chat tool results cannot represent images"}
         chat_semantic_loss_hook(draft, losses, context)
 
@@ -167,11 +169,11 @@ async def test_uncached_generate_history_prefix_behavior(upstream, stdio, modes,
             provider=provider,
             model=model,
             stdio_protocol=stdio,
-            enable_message_cache=False,
-            semantic_loss_protocol="hook" if unstable else "raise",
-            input_semantic_loss_hook=compensate_images if unstable else None,
+            enable_message_cache=cached,
+            semantic_loss_protocol="hook" if compensate else "raise",
+            input_semantic_loss_hook=compensate_images if compensate else None,
         )
-        assert llm.enable_message_cache is False
+        assert llm.enable_message_cache is cached
         for round_index, streaming in enumerate(modes):
             sdk.frames = wire_frames(upstream, upstream_events(upstream, scenario, round_index), 17)
             before = deepcopy((messages, tools))
@@ -218,7 +220,7 @@ async def test_uncached_generate_history_prefix_behavior(upstream, stdio, modes,
                 assert retry_delta
                 assert retry == request
                 assert (messages, tools) == before
-            assert llm._message_cache_key not in llm._codec._message_cache
+            assert (llm._message_cache_key in llm._codec._message_cache) is cached
             calls = calls_for(scenario, round_index)
             expected_ids.extend(call["id"] for call in calls)
             tail = (
@@ -226,7 +228,7 @@ async def test_uncached_generate_history_prefix_behavior(upstream, stdio, modes,
                 if calls
                 else [user(stdio, f"follow-up-{round_index}")]
             )
-            messages = [*messages, *delta, *tail]
+            messages = [*delta, *tail] if cached else [*messages, *delta, *tail]
         assert len(sdk.requests) == 5
         assert all(original == snapshot for original, snapshot in saved_inputs)
         assert all(body.closed for body in sdk.bodies)
@@ -235,6 +237,7 @@ async def test_uncached_generate_history_prefix_behavior(upstream, stdio, modes,
 
 @pytest.mark.parametrize("stdio", ["middleware", "openai_responses", "anthropic"])
 @pytest.mark.parametrize("modes", MODES, ids=MODE_IDS)
+@pytest.mark.parametrize("cached", [False, True], ids=["uncached", "cached"])
 @pytest.mark.parametrize(
     "hook,scenario",
     [
@@ -245,7 +248,9 @@ async def test_uncached_generate_history_prefix_behavior(upstream, stdio, modes,
         pytest.param(chat_semantic_loss_hook, "both", id="combined-hook-both"),
     ],
 )
-async def test_compensation_from_first_request_to_second_round(stdio, modes, hook, scenario):
+async def test_compensation_from_first_request_to_second_round(
+    stdio, modes, hook, scenario, cached
+):
     provider, model = profiles("openai_chat")
     model = replace(model, should_feedback_reasoning_item=config("always"))
     messages = compensation_history(stdio, scenario)
@@ -265,7 +270,7 @@ async def test_compensation_from_first_request_to_second_round(stdio, modes, hoo
             # The first baseline must already contain the hook's compensation.
             # The second request adds only the first response and a new user turn.
             assert len(sdk.requests) == len(compensated)
-            assert context.message_cache is None
+            assert (context.message_cache is not None) is cached
             assert context.origin_source == "input" and context.stage == "request"
             assert {loss.reason for loss in losses} == expected_losses
             hook(draft, losses, context)
@@ -283,7 +288,7 @@ async def test_compensation_from_first_request_to_second_round(stdio, modes, hoo
             provider=provider,
             model=model,
             stdio_protocol=stdio,
-            enable_message_cache=False,
+            enable_message_cache=cached,
             semantic_loss_protocol="hook",
             input_semantic_loss_hook=compensate,
         )
@@ -295,20 +300,25 @@ async def test_compensation_from_first_request_to_second_round(stdio, modes, hoo
             delta, completed = await generate_delta(llm, messages, None, streaming)
             assert_completion(completed, "text", round_index)
             assert messages == before
-            assert len(compensated) == round_index + 1
-            assert llm._message_cache_key not in llm._codec._message_cache
+            assert len(compensated) == (1 if cached else round_index + 1)
+            assert (llm._message_cache_key in llm._codec._message_cache) is cached
             request = json.loads(sdk.requests[-1].content)
             validate_request("openai_chat", request)
             assert_chat_tool_sequence(request["messages"])
-            assert request["messages"] == compensated[round_index]["messages"]
+            if not cached or round_index == 0:
+                assert request["messages"] == compensated[round_index]["messages"]
             if round_index == 0:
                 first = request
-                messages = [*messages, *delta, user(stdio, "second-input")]
+                tail = [*delta, user(stdio, "second-input")]
+                messages = tail if cached else [*messages, *tail]
             else:
                 assert len(request["messages"]) > len(first["messages"])
-                assert_prefix_behavior("openai_chat", request, first, unstable=has_images)
+                assert_prefix_behavior(
+                    "openai_chat", request, first, unstable=has_images and not cached
+                )
                 assert json.dumps(request, ensure_ascii=False).count("answer-0 / 上海 / 😀") == 1
-        assert len(sdk.requests) == len(compensated) == 2
+        assert len(sdk.requests) == 2
+        assert len(compensated) == (1 if cached else 2)
         assert all(body.closed for body in sdk.bodies)
         assert all(client.is_closed for client in sdk.http_clients)
 
@@ -317,8 +327,9 @@ async def test_compensation_from_first_request_to_second_round(stdio, modes, hoo
 @pytest.mark.parametrize("middleware", [False, True], ids=["native", "middleware"])
 @pytest.mark.parametrize("feedback", ["none", "always", "when_tool_calls"])
 @pytest.mark.parametrize("modes", MODES, ids=MODE_IDS)
-async def test_uncached_reasoning_feedback_uses_completed_messages(
-    upstream, middleware, feedback, modes
+@pytest.mark.parametrize("cached", [False, True], ids=["uncached", "cached"])
+async def test_reasoning_feedback_uses_completed_messages(
+    upstream, middleware, feedback, modes, cached
 ):
     provider, model = profiles(upstream)
     stdio = "middleware" if middleware else upstream
@@ -328,7 +339,7 @@ async def test_uncached_reasoning_feedback_uses_completed_messages(
     observations = []
     with LocalSDK(upstream, ()) as sdk:
         llm = MyLLM(
-            provider=provider, model=model, stdio_protocol=stdio, enable_message_cache=False
+            provider=provider, model=model, stdio_protocol=stdio, enable_message_cache=cached
         )
         for round_index, streaming in enumerate(modes):
             sdk.frames = wire_frames(upstream, reasoned_events(upstream, round_index), 17)
@@ -356,8 +367,8 @@ async def test_uncached_reasoning_feedback_uses_completed_messages(
             tail = (
                 tool_results(stdio, calls) if calls else [user(stdio, f"follow-up-{round_index}")]
             )
-            messages = [*messages, *delta, *tail]
-            assert llm._message_cache_key not in llm._codec._message_cache
+            messages = [*delta, *tail] if cached else [*messages, *delta, *tail]
+            assert (llm._message_cache_key in llm._codec._message_cache) is cached
         assert len(sdk.requests) == 4
         assert all(body.closed for body in sdk.bodies)
         assert all(client.is_closed for client in sdk.http_clients)

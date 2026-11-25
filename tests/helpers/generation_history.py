@@ -1,4 +1,4 @@
-"""Independent histories and upstream responses for uncached conversation tests."""
+"""Independent histories and upstream responses for conversation prefix tests."""
 
 import json
 

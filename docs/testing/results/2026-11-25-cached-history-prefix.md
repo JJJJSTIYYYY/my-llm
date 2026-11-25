@@ -39,3 +39,20 @@ TTL 或命中结果，不能将 100% 解读为真实供应商缓存命中率。
 
 全量 `pytest -q`：**4000 passed**。`ruff check src tests examples`、
 `ruff format --check src tests examples`（203 个文件）、`git diff --check` 均通过。
+
+## 后续核对：使用 result 回填
+
+按后续更正，将流式下一轮回填入口切换为成功耗尽后的 `stream.result`，同时比较旧方法：
+middleware 比较 `[result]` 与 `finish.messages` 的 wire 值；原生 stdio 比较 result 消息列表与
+完整公开事件重新编码得到的 `finish.messages` 转回原生后的值。比较保留全部 ID 和字段。
+
+初次独立复测中，矩阵的 2,808 次流式响应全部一致，改用 result 回填的 1,224 个用例全部通过。
+随后将比较纳入仓库测试。缓存开启时前缀一致率仍为 612/612，关闭时保留已记录的图片位置差异。
+
+正常业务矩阵中两种回填方式一致。空 message 按异常边界单独记录，不作为正常业务不一致问题。
+额外构造的 Responses 异常输出包含两个空 message item 和一个
+带两个文本 part 的 message：result 保留三个 item，仅转换 finish.messages 则只剩文本 item。
+空 item 的完整回放需要终态上下文；原生完整消息应直接使用 result。该差异已加入独立回归测试。
+先前章节的 finish 回填描述保留为原始测量流程，当前运行方法以[测试指南](../history-prefix.md)为准。
+
+切换回填入口并加入空 item 回归后，全量 **4001 passed**，文档检查 24 项通过，Ruff 及 diff 检查通过。

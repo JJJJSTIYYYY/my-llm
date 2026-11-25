@@ -213,3 +213,23 @@ async def test_generate_native_items_use_the_same_addresses_until_completion(fil
     assert {item["id"] for item in completed} == (
         {"empty_before"} if filtered else {"empty_before", "parts"}
     )
+
+
+async def test_result_keeps_empty_native_items_not_carried_by_finish_messages():
+    provider, model = profiles("openai_responses")
+    incoming = native_events(
+        [message("empty_before"), message("parts", "one", "two"), message("empty_after")]
+    )
+    with LocalSDK("openai_responses", wire_frames("openai_responses", incoming, 17)):
+        llm = MyLLM(provider=provider, model=model, stdio_protocol="openai_responses")
+        stream = await llm.generate(messages=[{"role": "user", "content": "hi"}], stream=True)
+        async with stream:
+            events = [event async for event in stream]
+        result = stream.result
+    assert result == events[-1]["response"]["output"]
+    assert {item["id"] for item in result} == {"empty_before", "parts", "empty_after"}
+    finish = MyCodec().encode(chunks=events, input_format="openai_responses").stream[-1]
+    replay = MyCodec().decode(finish.messages, target_format="openai_responses")["messages"]
+    assert replay != result
+    assert [item["id"] for item in replay] == ["parts"]
+    assert [part["text"] for part in replay[0]["content"]] == ["one", "two"]

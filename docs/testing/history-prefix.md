@@ -25,21 +25,26 @@ uv run --no-sync pytest -q tests/integration/test_history_prefix.py -k 'not unca
 
 关闭缓存时每轮提交累计完整历史。开启缓存时首轮提交初始历史，后续只提交上一轮返回消息与
 工具结果或用户消息；工具调用与对应结果放在同一增量批次。不能通过重新提交全部历史来
-验证缓存模式，否则会重复追加旧历史。流式增量同样取 `finish.messages`。
+验证缓存模式，否则会重复追加旧历史。流式增量取成功耗尽后的 `stream.result`。
 
 比较对象是官方 SDK 实际发出的 JSON 请求中的 `messages`，或 Responses 的 `input`。
 每轮与所有前轮比较：`current[:len(previous)] == previous`，并要求历史长度增加。
 Anthropic 独立的 `system` 也必须保持相同。同一历史的重试比较整个请求对象。
 比较保留全部字段、原生 ID、图片引用及内容顺序；JSON 对象的键顺序不作为差异。
 
-流式回填严格使用 `MessageEvent(type="finish").messages`：
+流式回填使用成功耗尽后的 `stream.result`，并对本矩阵样例比较此前的 finish 投影：
 
-- middleware 直接将这些消息追加到调用者历史。
+- middleware 比较 `[stream.result]` 与 `finish.messages` 的 wire 值。
 - 原生 stdio 将完整公开事件经 `MyCodec.encode(chunks=..., input_format=...)` 转成
-  `MessageEvent`，再将 `finish.messages` 经新的 `MyCodec.decode` 转回原生输入。
+  `MessageEvent`，再将 `finish.messages` 经新的 `MyCodec.decode` 转回原生输入，比较它与
+  `stream.result` 规范成列表后的完整值。
 - 非流式回填 `generate` 的完整返回消息；第二轮重试的返回值不追加到历史。
 
-流式路径不读取 `MessageStream.result`，也不通过拼接文本或单个工具事件重建消息。
+实际下一轮回填始终使用 `result`，不通过拼接文本或单个工具事件重建消息。
+这些比较只适用于矩阵中的样例，不保证仅从 `finish.messages` 能重建所有原生输出。
+Responses 的原生空 message item 按异常边界单独记录，不纳入正常业务一致性的判断：`result` 使用终态上下文保留这些 item，
+仅转换 `finish.messages` 会丢失它们。独立回归在 `test_native_stream_projection.py` 中验证。
+必须完整耗尽流；只收到终态事件但提前退出时，`result` 还未发布。
 工具结果由调用者按返回的工具 ID 补充，随后按缓存模式提交完整历史或增量。
 
 ## 场景
@@ -79,7 +84,7 @@ Anthropic 三种输入与四种流式／非流式顺序；这些 hook 的目标�
 
 所有待补偿内容都在第一轮输入中。测试确认 hook 在首轮 HTTP 请求发出前已被调用，
 损失种类符合预期，并在实际发送的消息中验证补偿结果。前缀基线是**首轮补偿后的实际请求**。
-第二轮只追加首轮返回消息和新的用户消息，不新增待补偿内容；流式仍使用 `finish.messages`。
+第二轮只追加首轮返回消息和新的用户消息，不新增待补偿内容；流式使用成功耗尽后的 `result`。
 随后比较 `second.messages[:len(first.messages)]` 与 `first.messages`。
 关闭缓存时，原始历史重新翻译仍可能再次触发 hook；比较不会使用补偿前的草稿。
 

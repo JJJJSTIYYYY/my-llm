@@ -36,7 +36,7 @@ from tests.performance.workloads import profiles
 
 
 async def generate_delta(llm, messages, tools, streaming):
-    """Replay finish.messages, never MessageStream.result, after a streamed call."""
+    """Replay result after exhaustion and compare it with the finish projection."""
     response = await llm.generate(messages=messages, tools=tools, stream=streaming)
     if not streaming:
         native = response if isinstance(response, list) else [response]
@@ -64,7 +64,16 @@ async def generate_delta(llm, messages, tools, streaming):
         if llm.stdio_protocol == "middleware"
         else MyCodec().decode(finish.messages, target_format=llm.stdio_protocol)["messages"]
     )
-    return delta, finish.messages
+    result = response.result
+    assert result is not None
+    completed = result if isinstance(result, list) else [result]
+    if llm.stdio_protocol == "middleware":
+        assert [message.to_wire() for message in completed] == [
+            message.to_wire() for message in finish.messages
+        ]
+    else:
+        assert completed == delta
+    return completed, finish.messages
 
 
 def request_history(protocol, request):

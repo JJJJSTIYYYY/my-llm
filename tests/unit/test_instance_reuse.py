@@ -47,12 +47,37 @@ def test_reused_snapshot_skips_resolution(monkeypatch):
     assert llm.resolved_profile == resolved
 
 
+@pytest.mark.parametrize(
+    "values,expected",
+    [
+        (("openai_chat", "demo", "openai_chat"), True),
+        (("other", "demo", "openai_chat"), False),
+        (("openai_chat", "other", "openai_chat"), False),
+        (("openai_chat", "demo", "anthropic"), False),
+        (("OPENAI_CHAT", "demo", "openai_chat"), False),
+    ],
+)
+def test_compare_matches_all_three_strings(values, expected):
+    provider, model = profiles()
+    llm = MyLLM(provider=provider, model=model, stdio_protocol="openai_chat")
+    assert llm.compare(*values) is expected
+
+
+def test_compare_does_not_bind_an_unspecified_protocol():
+    provider, model = profiles()
+    llm = MyLLM(provider=provider, model=model)
+    assert llm.compare("openai_chat", "demo", "openai_chat") is False
+    assert llm.stdio_protocol is None
+
+
 def test_provider_identity_can_differ_from_protocol():
     provider, model = profiles()
     provider = replace(provider, provider=Attribute(default_value="vendor"))
     llm = MyLLM(provider=provider, model=model, stdio_protocol="openai_chat")
     assert llm.provider.provider.default_value == "vendor"
     assert llm.resolved_profile.protocol == "openai_chat"
+    assert llm.compare("vendor", "demo", "openai_chat") is True
+    assert llm.compare("openai_chat", "demo", "openai_chat") is False
     assert "provider" not in llm.resolved_profile.values
 
 
@@ -78,6 +103,7 @@ def test_provider_identity_defaults_to_final_protocol_when_only_model_selects_it
     assert llm.provider.provider.default_value == "anthropic"
     assert llm.resolved_profile.protocol == "anthropic"
     assert llm.stdio_protocol == "openai_chat"
+    assert llm.compare("anthropic", "demo", "openai_chat") is True
 
 
 def test_precomputed_snapshot_still_validates_protocol():

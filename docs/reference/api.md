@@ -57,6 +57,21 @@ Model 的 `protocol=None` 继承 Provider；Model 明确配置时，Provider 可
 | `resolved_profile` | 已解析的 `ResolvedProfile` |
 | `stdio_protocol` | 绑定的输入输出协议，推断前可为 `None` |
 
+### `MyLLM.compare(new_provider, new_model, new_stdio_protocol) -> bool`
+
+三个参数均为字符串，分别与此实例的 `provider.provider.default_value`、模型 ID 和已绑定的
+`stdio_protocol` 精确比较，全部相同返回 `True`，比较区分大小写。
+Provider 标识默认采用 Provider 协议名；只有 Model 指定协议时，实例采用最终协议名。
+协议尚未推断时，不匹配任何输入协议字符串，也不会因比较而绑定协议。
+本方法不解析或检查完整配置及 API key，不修改实例状态；实例选择和跨会话缓存隔离由调用方管理。
+
+```python
+async def ask_matching_instance(llm, provider_id, model_id, protocol, messages):
+    if llm.compare(provider_id, model_id, protocol):
+        return await llm.generate(messages=messages)
+    return None
+```
+
 ### `MyLLM.clear_cache() -> None`
 
 清除此实例的消息翻译历史和最后批次去重状态，重复调用无副作用，不关闭 SDK 客户端。

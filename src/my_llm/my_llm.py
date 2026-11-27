@@ -127,6 +127,33 @@ class MyLLM:
         """
         self._codec._expire_message_cache(self._message_cache_key)
 
+    def compare(self, new_provider: str, new_model: str, new_stdio_protocol: str) -> bool:
+        """Compare identifiers used by applications to select a reusable instance.
+
+        Args:
+            new_provider: Provider identity, compared with
+                provider.provider.default_value, which defaults to the protocol.
+            new_model: Model ID, compared with model.model.default_value.
+            new_stdio_protocol: Input/output protocol, compared with stdio_protocol.
+
+        Returns:
+            True only when all three strings match exactly, including case.
+            Before protocol inference, an unbound stdio_protocol matches no string.
+
+        This method does not resolve or compare full configurations, inspect API
+        keys, or change instance state. Applications own instance selection and
+        session isolation; clear_cache() starts a new translated history.
+
+        Example:
+            if llm.compare("vendor", "model-id", "openai_chat"):
+                result = await llm.generate(messages=messages)
+        """
+        return (
+            new_provider == self.provider.provider.default_value
+            and new_model == self.model.model.default_value
+            and new_stdio_protocol == self.stdio_protocol
+        )
+
     @property
     def resolved_profile(self) -> ResolvedProfile:
         """Read-only snapshot binding this instance's upstream protocol and model."""

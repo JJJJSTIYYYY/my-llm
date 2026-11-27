@@ -99,7 +99,7 @@ def test_execution_and_translation_helpers_are_not_public_entry_points():
         "match_protocol",
     ):
         assert not hasattr(my_llm.MyCodec, name)
-    for name in ("compare", "resolve_profile", "guess_stdio_protocol"):
+    for name in ("resolve_profile", "guess_stdio_protocol"):
         assert not hasattr(MyLLM, name)
 
 

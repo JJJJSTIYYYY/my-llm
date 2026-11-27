@@ -437,8 +437,8 @@ def test_decoder_only_addresses_recognized_fields(source, target, kind):
 
 
 def test_sdk_view_caches_fields_without_building_children_on_presence_checks(monkeypatch):
-    from my_llm.basic import data
     from my_llm.codec.shared.conversion import select
+    from my_llm.utils import data
 
     reads = {"children": 0, "optional": 0, "missing": 0}
     wrapped = []
@@ -488,8 +488,8 @@ def test_sdk_view_caches_fields_without_building_children_on_presence_checks(mon
 
 
 def test_sdk_view_keeps_explicit_null_and_non_null_defaults():
-    from my_llm.basic.data import dictionaries
     from my_llm.codec.shared.conversion import select
+    from my_llm.utils.data import dictionaries
 
     class Event(BaseModel):
         optional: str | None = None
@@ -639,7 +639,7 @@ def test_stream_hooks_capture_recognized_mutable_leaves(
 def test_translated_json_capture_preserves_aliases_cycles_and_custom_copy_semantics():
     from dataclasses import dataclass
 
-    from my_llm.basic.data import capture
+    from my_llm.utils.data import capture
 
     @dataclass
     class CustomValue:

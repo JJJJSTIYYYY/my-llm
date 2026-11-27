@@ -3,7 +3,6 @@
 from collections.abc import Callable, MutableMapping
 from typing import Any
 
-from my_llm.basic.data import dictionary_views
 from my_llm.basic.exceptions import (
     ConfigurationError,
     MessageValidationError,
@@ -41,6 +40,7 @@ from my_llm.middleware.validation import validate_complete_stream, validate_mess
 from my_llm.profile.configuration import Protocol, ProtocolDefaults
 from my_llm.profile.resolution import ResolvedProfile
 from my_llm.profile.types import Omit
+from my_llm.utils.data import dictionary_views
 
 
 def _public_events(chunks: list[dict], protocol: str, metadata: dict | None) -> list[MessageEvent]:
@@ -291,6 +291,8 @@ class MyCodec:
         client: dict,
         enable_message_cache: bool = False,
         message_cache_key: str | None = None,
+        middleware_tools: list[FunctionTool] | None = None,
+        request_suffix: list[Message] | None = None,
     ) -> dict:
         """Prepare one complete generation call and await registered request hooks.
 
@@ -303,6 +305,8 @@ class MyCodec:
             client: Connection settings from client_parameters(profile).
             enable_message_cache: Append translated incremental input to cached history.
             message_cache_key: Unique instance key required when caching is enabled.
+            middleware_tools: Generated tools replacing source declarations, if supplied.
+            request_suffix: Request-only middleware instructions, excluded from history cache.
 
         Returns:
             Dictionary with client (SDK constructor arguments), request (SDK call
@@ -337,6 +341,10 @@ class MyCodec:
             }
         else:
             intermediate = self._codec(input_format).encoder.request(inputs, profile)
+        if middleware_tools is not None:
+            intermediate["middleware"].tools = middleware_tools
+        if request_suffix is not None:
+            intermediate["request_suffix"] = request_suffix
         target = self._codec(profile.protocol)
         batch = None
         if enable_message_cache:

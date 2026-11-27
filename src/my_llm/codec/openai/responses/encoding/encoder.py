@@ -5,7 +5,6 @@ from typing import Any
 from openai.types.responses import ResponseInputItemParam, ToolParam
 
 import my_llm.codec.openai.responses.constants as constants
-from my_llm.basic.data import capture
 from my_llm.basic.exceptions import ResponseFailedError, ResponseIncompleteError
 from my_llm.basic.semantic_loss import originated
 from my_llm.codec.base.encoder import BaseEncoder
@@ -29,6 +28,7 @@ from my_llm.codec.shared.stream import (
     tool_operations,
 )
 from my_llm.profile.resolution import ResolvedProfile
+from my_llm.utils.data import capture
 
 
 class ResponsesEncoder(BaseEncoder):

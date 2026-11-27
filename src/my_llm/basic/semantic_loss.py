@@ -78,7 +78,7 @@ class Originated(dict):
 
     def __deepcopy__(self, memo):
         """Capture projected payloads while retaining original provenance references."""
-        from my_llm.basic.data import capture
+        from my_llm.utils.data import capture
 
         result = Originated({}, self.origin_path, self.origin_value)
         memo[id(self)] = result

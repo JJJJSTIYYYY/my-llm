@@ -82,3 +82,5 @@ Middleware 场景直接构造 `UserMessage` 与 `FunctionTool`，不通过原生
 - [2026-10 SenseNova 历史结果](results/2026-10-sensenova.md)。
 - [2026-11 输入修复与推理回传历史结果](results/2026-11-input-e2e.md)。
 - [2026-11-22 SenseNova 验证结果](results/2026-11-22-sensenova.md)。
+
+- [2026-11-27 结构化输出专项](results/2026-11-27-generate-json-sensenova.md)：独立临时脚本验证两条 `generate_json` 路径，不属于上述默认脚本场景。

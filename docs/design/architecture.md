@@ -24,16 +24,19 @@ src/my_llm/
 ├── __init__.py                 # 统一公开导出
 ├── _version.py                 # 构建与发行版本
 ├── py.typed                    # 类型标记
-├── my_llm.py                   # MyLLM.generate、请求客户端生命周期、流编排
+├── my_llm.py                   # MyLLM.generate / generate_json、请求客户端生命周期、流编排
 ├── cache/                      # 缓存实现与所有权隔离
 │   ├── __init__.py             # 内部缓存包说明
 │   ├── compiled_cache.py       # CompiledCache、SDK 类型计划编译、过滤与验证
 │   └── message_cache.py        # MessageCache，已翻译增量历史的更新与快照
 ├── basic/                      # 配置、模型与运行时共用的基础能力
-│   ├── data.py                 # 数据捕获与 SDK 字段只读视图
 │   ├── exceptions.py           # 统一异常
 │   ├── semantic_loss.py        # 调用独立损失收集与实例策略
 │   └── protocols.py            # 协议注册、工厂快照与可选 SDK 发现
+├── utils/                      # 全项目通用工具，不承载配置或协议策略
+│   ├── data.py                 # 数据捕获与 SDK 字段只读视图
+│   ├── paths.py                # 路径解析、读取、写入和删除
+│   └── json_schema.py          # 对象 Schema 转换与 JSON 文本提取
 ├── middleware/                 # SDK 无关的固定中间协议
 │   ├── models.py               # 消息、内容、工具及其 wire 投影
 │   ├── stream.py               # 流操作、公开事件、条目身份与用量
@@ -56,7 +59,7 @@ src/my_llm/
     │   ├── conversion.py       # 消息、媒体、工具转换及独立历史关联检查入口
     │   ├── input.py            # 输入能力策略、回传与内部项分组
     │   ├── capabilities.py     # 支持能力判断与损失记录
-    │   ├── options.py          # 请求选项、参数路径及优先级
+    │   ├── options.py          # 请求选项、参数绑定及优先级
     │   ├── output.py           # 原生与中间输出共用的能力过滤
     │   └── stream.py           # 流操作、块身份及用量
     └── <protocol>/             # codec、transport、encoding、decoding 及按需共享模块
@@ -88,7 +91,8 @@ Encoder / Decoder 不创建 SDK 客户端，也不相互导入。官方类型与
 Encoder / Decoder 的完整调用流程仍集中在所属类中。初始化文件只声明包归属或公开导出；运行时内部
 直接导入定义模块。`from my_llm import ...` 和 `from my_llm.middleware import ...`
 继续提供同一组协议模型。MyLLM 执行编排位于顶层 my_llm.py；
-基础能力在 basic，缓存实现在 cache，响应流状态在 runtime。迁移后的内部路径不保留转发文件。
+基础契约在 basic，通用工具在 utils，缓存实现在 cache，响应流状态在 runtime。
+迁移后的内部路径不保留转发文件。
 
 ## 请求与返回路径
 
@@ -244,3 +248,25 @@ hook 修改本次请求不会自动更新缓存，相关维护由使用者负责
 - [相同负载性能基准](../guides/performance.md)：完整请求时间、独立内存探针、缓存和真实重叠并发。
 
 输入输出字段的范围见[翻译边界](translation-boundaries.md)，扩展接口见[接入指南](../guides/adding-protocol.md)。
+
+## 结构化输出
+
+`generate_json` 与 `generate` 共用输入绑定、Codec 请求准备、响应流收集与客户端清理。
+`utils/json_schema.py` 将 JSON Schema 字典或 Pydantic 支持的类型转换为普通 Schema 字典，
+在 Schema 节点展开文档本地 JSON Pointer 引用并移除定义容器；默认值和示例保留为普通数据。
+循环、外部和未解析引用在准备阶段报错，避免向上游发送未展开的工具参数。
+这属于生成前的通用 Schema 归一化，不放入某一种协议的 Codec。
+`generate_json` 负责构造带有指定名称与说明的 `FunctionTool`。
+源 Encoder 仍负责原生消息投影和输入边界；生成工具在中间层注入，交由目标 Decoder 翻译。
+返回统一选择 middleware，业务层只读取 `ToolCall.arguments` 或 `TextContent`。
+
+请求专用输出指令通过 `request_suffix` 进入 Decoder，在消息缓存合并之后单独翻译并附加，
+因此不会污染缓存、改变用户批次指纹或在重试时累积。该内部机制不包含协议分支；
+最终 SDK 参数仍经过原有过滤、验证和语义损失处理。能力选择和错误契约见
+[API 使用指南](../reference/api.md#await-myllmgenerate_json---dictstr-any)。
+
+`generate_json(max_retries=0)` 的 JSON 重试预算与 Profile 的 SDK 连接重试配置独立。
+输入绑定、修复、缓存和请求 hook 只执行一次；每次尝试使用独立 `StreamState` 与客户端。
+业务层只重试 JSON/工具输出验证失败，按字段累加每次状态中实际报告的 `Usage`，
+通过 `get_last_usage()` 暴露，最终解析失败也保留累计值。该累计不读取实例上次用量作为输入，
+避免串入之前的调用或并发任务的用量。缺失值保持未知，不进行估算。

@@ -11,11 +11,13 @@
 - `my_llm.py` 编排生成；`codec/converter.py` 提供独立翻译并路由内部请求准备。
 - `codec/base` 定义组件契约及共同流程。三种协议各自维护 `encoding`、`decoding`、`codec.py` 和 `transport.py`。
   字段映射、事件处理与协议限制由各自实现负责；双向共用辅助放在该协议根目录。
-- `codec/shared` 保存可复用的转换、能力、输入输出策略、流操作及参数路径机制。
+- `codec/shared` 保存可复用的转换、能力、输入输出策略、流操作及生成参数绑定。
   不把不同协议仅在外观上相似的行为强行抽象为同一规则。
 - `middleware/models.py`、`stream.py`、`protocol.py` 定义具体模型、公开事件和容器；
   `validation.py`、`history.py`、`usage.py` 分别负责内部结构检查、工具历史归一化和计数累积。
-- `basic` 保存数据捕获、异常、语义损失策略和协议注册；`profile` 保存配置声明、合并与解析。
+- `basic` 保存异常、语义损失策略和协议注册；`profile` 保存配置声明、合并与解析。
+- `utils` 只保存全项目通用的数据复制与读取、路径操作、JSON Schema 转换和 JSON 提取。
+  不依赖 Profile、中间层消息模型、Codec、缓存实现或生成编排；领域策略留在所属模块。
 - `cache/compiled_cache.py` 保存进程级类型规则；`message_cache.py` 保存实例会话的已翻译历史。
 - `runtime/state.py` 保存每次响应的块状态，`message_stream.py` 管理公开异步流和关闭回调。
   SDK 客户端按请求创建并关闭，详见[生命周期设计](../design/client-lifecycle.md)。
@@ -27,7 +29,7 @@
 
 ## 业务边界与设计约束
 
-业务入口为 `MyLLM.generate` 和 `MyCodec.encode` / `decode` / `convert`；
+业务入口为 `MyLLM.generate` / `generate_json` 和 `MyCodec.encode` / `decode` / `convert`；
 配置类型、模型及流管理方法服务于这些入口。组件方法、准备步骤及内部批次只按完整调用链的前置条件协作，
 不承诺它们可作为独立业务接口使用。
 

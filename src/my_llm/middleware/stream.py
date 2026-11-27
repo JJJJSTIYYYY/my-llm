@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from my_llm.basic.data import capture
 from my_llm.middleware.models import (
     Message,
     MessageContent,
@@ -15,6 +14,7 @@ from my_llm.middleware.models import (
 )
 from my_llm.middleware.usage import normalize_usage
 from my_llm.middleware.validation import validate_events, validate_operations
+from my_llm.utils.data import capture
 
 
 @dataclass(slots=True)

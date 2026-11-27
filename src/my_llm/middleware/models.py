@@ -8,10 +8,10 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import Any, Literal
 
-from my_llm.basic.data import capture
 from my_llm.basic.exceptions import MessageValidationError
 from my_llm.basic.semantic_loss import originated
 from my_llm.middleware.validation import validate_content, validate_messages, validate_tools
+from my_llm.utils.data import capture
 
 type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
 type JsonObject = dict[str, JsonValue]

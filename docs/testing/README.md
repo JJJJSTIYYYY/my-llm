@@ -83,3 +83,20 @@ uv run --no-sync pytest -q tests/performance
 原始运行报告默认留在 `/tmp` 等本机目录；需要入库时只保存已脱敏且可复核的必要证据。
 
 已记录结果见 [测试结果汇总](results/README.md) 和 [性能记录](performance/README.md)。
+
+## 结构化输出
+
+运行 `uv run pytest -q tests/unit/test_generate_json.py tests/unit/test_json_schema.py` 验证结构化生成与 JSON 提取。
+覆盖三种上游 × 四种 stdio × 工具/提示词两种模式、Pydantic/dataclass/TypedDict/字典 Schema、
+JSON 文本提取、非法输出、请求指令的缓存隔离与客户端关闭；
+另覆盖独立 JSON 重试预算、成功提前停止、重试耗尽、非法工具参数、SDK 错误不重试，
+以及所有尝试的 Usage 累计、缺失字段与调用间隔离。
+解析器另覆盖围栏优先级与未闭合围栏、BOM、字符串转义、非法/截断外层、数组嵌套、
+多对象歧义、重复键、非有限数值与解析器递归错误，并验证这些误判不会绕过 JSON 重试。
+
+Schema 引用展开另覆盖 Pydantic 嵌套模型、引用链、路径转义、循环/外部/缺失引用、
+Schema 数据隔离和引用旁约束的验证等价性；请求验证覆盖三上游 × 四输入 × 两模式。
+
+2026-11-27，本地工作区补齐引用展开后，结构化生成与解析器专项 179 项通过，全量离线套件 4197 项通过；
+Ruff、格式与 `git diff --check` 通过。测试使用本地 SDK 模拟，没有真实供应商调用，
+不证明模型一定遵守 Schema 或工具调用指令。接口契约见 [API 使用指南](../reference/api.md)。

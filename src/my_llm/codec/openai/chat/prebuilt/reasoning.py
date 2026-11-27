@@ -2,10 +2,10 @@
 
 from weakref import WeakSet
 
-from my_llm.basic.data import read
 from my_llm.basic.semantic_loss import SemanticLossContext, SemanticLossGroup
 from my_llm.codec.openai.chat.prebuilt.shared import publish_messages, request_messages
 from my_llm.codec.shared.capabilities import supports_content
+from my_llm.utils.data import read
 
 _completed: WeakSet[object] = WeakSet()
 

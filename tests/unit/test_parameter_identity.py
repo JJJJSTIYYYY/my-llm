@@ -166,7 +166,7 @@ def test_profile_overriding_post_init_cannot_silently_skip_identity_binding():
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_omitting_enable_route_preserves_independent_effort_route(protocol):
-    from my_llm.codec.shared.options import path_value
+    from my_llm.utils.paths import path_value
 
     profile = resolve_profiles(
         ProviderProfile(protocol=Config(default_value=protocol)),
@@ -238,7 +238,7 @@ def test_reasoning_capability_is_owned_by_parameter(protocol):
 def test_generated_enable_wins_over_native_body_and_preserves_input(protocol):
     from copy import deepcopy
 
-    from my_llm.codec.shared.options import path_value
+    from my_llm.utils.paths import path_value
 
     profile = resolve_profiles(
         ProviderProfile(protocol=Config(default_value=protocol)),

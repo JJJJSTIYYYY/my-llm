@@ -28,7 +28,7 @@ from my_llm import (
 )
 from my_llm.codec.base.transport import BaseTransport
 from my_llm.codec.openai.chat.prebuilt import chat_semantic_loss_hook
-from my_llm.codec.shared.options import path_value
+from my_llm.utils.paths import path_value
 
 PROTOCOLS = ("openai_chat", "openai_responses", "anthropic")
 STDIO_PROTOCOLS = (*PROTOCOLS, "middleware")

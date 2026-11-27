@@ -1,1 +1,1 @@
-"""Shared protocol definitions, data ownership, errors and registration."""
+"""Shared errors, semantic-loss contracts and protocol registration."""

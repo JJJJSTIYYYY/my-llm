@@ -75,7 +75,11 @@ def test_build_contains_runtime_modules_and_source_tests(tmp_path, version_overr
         assert "my_llm/codec/shared/schema.py" not in names
         assert "my_llm/cache/compiled_cache.py" in names
         assert "my_llm/cache/message_cache.py" in names
-        assert "my_llm/basic/data.py" in names
+        for module in ("__init__", "data", "paths", "json_schema"):
+            assert f"my_llm/utils/{module}.py" in names
+        assert "my_llm/basic/data.py" not in names
+        assert "my_llm/profile/paths.py" not in names
+        assert not any(name.startswith("my_llm/helper/") for name in names)
         for module in ("__init__", "models", "stream", "protocol"):
             assert f"my_llm/middleware/{module}.py" in names
         assert "my_llm/middleware.py" not in names

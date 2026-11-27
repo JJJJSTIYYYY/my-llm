@@ -158,7 +158,8 @@ usage = llm.get_last_usage()
 这些字段只包含中间层已支持的信息，不透传未识别原生字段。
 `output_blocks` 中的 `StreamBlock` 保存终态块及源引用；应用通常只需处理增量和工具事件。
 工具调用及其后续块等到上游成功 EOF 后才集中交付；失败或截断不会泄露未完成调用。
-用量不进入事件或回复，只通过成功流的 `get_last_usage()` 获取。事件、结果和不同调用之间
+用量不进入事件或回复，`generate` 的流成功结束后通过 `get_last_usage()` 获取；
+`generate_json` 的重试累计用量也由此接口提供，详见 [API 指南](../reference/api.md)。事件、结果和不同调用之间
 不共享可变应用内容；`stream.result` 重复读取返回同一结果对象。
 
 ## 错误、所有权与转换边界

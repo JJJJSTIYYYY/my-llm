@@ -21,7 +21,7 @@ OpenAI Chat 格式输入 → 任意协议 API → OpenAI Chat 格式输出
 ```
 
 消息、工具和流事件一并转换。更换上游 API，业务层继续使用原有协议收发数据。
-业务调用使用 `MyLLM.generate`；离线翻译使用 `MyCodec.encode` / `decode` / `convert`，各自可独立使用。
+业务调用使用 `MyLLM.generate` / `generate_json`；离线翻译使用 `MyCodec.encode` / `decode` / `convert`，各自可独立使用。
 请求准备和原生协议组件属于内部实现，不作为独立业务入口。
 
 ## 主要功能

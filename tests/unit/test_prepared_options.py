@@ -6,7 +6,8 @@ from unittest.mock import patch
 import pytest
 
 from my_llm import ConfigurationError, MyCodec, SemanticLossError, omit
-from my_llm.codec.shared.options import path_value, resolve_options
+from my_llm.codec.shared.options import resolve_options
+from my_llm.utils.paths import path_value
 from tests.helpers.profiles import config, parameter
 from tests.helpers.protocols import PROTOCOLS
 from tests.helpers.requests import encode_request

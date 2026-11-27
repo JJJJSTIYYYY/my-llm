@@ -4,15 +4,15 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, final
 
-from my_llm.basic.data import dictionaries, dictionary_views, read
 from my_llm.basic.exceptions import MessageValidationError
 from my_llm.cache.compiled_cache import validate_values
 from my_llm.codec.shared.conversion import match_all
-from my_llm.codec.shared.options import path_value
 from my_llm.middleware.models import FunctionTool, Message, messages_from_wire, tools_from_wire
 from my_llm.middleware.stream import StreamBatch, stream_from_wire
 from my_llm.profile.resolution import ResolvedProfile
 from my_llm.profile.types import Omit, OutputParameter
+from my_llm.utils.data import dictionaries, dictionary_views, read
+from my_llm.utils.paths import path_value
 
 
 @dataclass(slots=True)
@@ -20,7 +20,7 @@ class _RequestValues:
     """Canonical request values retain each source message's repair boundary."""
 
     messages: list[dict]
-    tools: list[dict] | None
+    tools: list[dict] | list[FunctionTool] | None
 
 
 class BaseEncoder(ABC):

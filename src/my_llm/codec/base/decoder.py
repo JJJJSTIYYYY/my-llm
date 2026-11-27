@@ -6,7 +6,6 @@ from dataclasses import replace
 from functools import wraps
 from typing import Any, final
 
-from my_llm.basic.data import capture, dictionary_views
 from my_llm.basic.exceptions import ConfigurationError, MessageValidationError
 from my_llm.basic.semantic_loss import (
     SemanticLossContext,
@@ -29,11 +28,8 @@ from my_llm.codec.shared.input import InputPolicy
 from my_llm.codec.shared.options import (
     PreparedOptions,
     check_protected,
-    delete_path,
-    path_value,
     request_parameters,
     resolve_options,
-    set_path,
     validate_parameter_paths,
 )
 from my_llm.codec.shared.output import output_chunks, output_messages
@@ -44,9 +40,10 @@ from my_llm.middleware.validation import (
     validate_messages,
     validate_tools,
 )
-from my_llm.profile.paths import path_keys
 from my_llm.profile.resolution import ResolvedProfile, client_parameters
 from my_llm.profile.types import Omit, Parameter
+from my_llm.utils.data import capture, dictionary_views
+from my_llm.utils.paths import delete_path, path_keys, path_value, set_path
 
 
 def _collect_translation(method):
@@ -428,6 +425,7 @@ class BaseDecoder(ABC):
         *,
         options: PreparedOptions | None = None,
         message_transform: Callable[[list], list] | None = None,
+        request_suffix: list | None = None,
         **parameters: Any,
     ) -> dict:
         """Return validated native SDK call arguments for intermediate messages/tools.
@@ -438,6 +436,7 @@ class BaseDecoder(ABC):
             profile: Resolved upstream provider/model settings.
             options: Already validated controls, or None to validate parameters here.
             message_transform: Optional transform of translated messages before assembly.
+            request_suffix: Request-only middleware messages translated after cache assembly.
             **parameters: Generation controls and protocol-specific options.
 
         Invalid controls or history raise ConfigurationError or MessageValidationError.
@@ -478,6 +477,11 @@ class BaseDecoder(ABC):
             batch_size = len(native_messages)
             native_messages = message_transform(native_messages)
             offset_loss_targets(len(native_messages) - batch_size)
+        if request_suffix is not None:
+            native_messages = [
+                *native_messages,
+                *self._messages(wire_values(request_suffix), profile, **parameters),
+            ]
         native_tools = self._tools(tools, profile, **parameters) if tools is not None else None
         request = self.assemble_request(
             native_messages,
@@ -507,7 +511,7 @@ class BaseDecoder(ABC):
         parameters = {
             key: value
             for key, value in intermediate.items()
-            if key not in ("profile", "middleware", "message_transform")
+            if key not in ("profile", "middleware", "message_transform", "request_suffix")
         }
         api_key = parameters.pop("api_key", None)
         if api_key is not None:
@@ -521,6 +525,7 @@ class BaseDecoder(ABC):
                 profile,
                 options=options,
                 message_transform=intermediate.get("message_transform"),
+                request_suffix=intermediate.get("request_suffix"),
                 **parameters,
             ),
             "local": {"stream": parameters["stream"]},

@@ -5,7 +5,6 @@ from typing import Any
 from anthropic.types import MessageParam, ToolParam
 
 import my_llm.codec.anthropic.constants as constants
-from my_llm.basic.data import _MISSING, capture, dictionary_views
 from my_llm.basic.exceptions import MessageValidationError, ResponseFailedError
 from my_llm.basic.semantic_loss import originated
 from my_llm.codec.anthropic.content import intermediate_block, native_block
@@ -21,6 +20,7 @@ from my_llm.codec.shared.stream import (
 )
 from my_llm.profile.resolution import ResolvedProfile
 from my_llm.profile.types import OutputParameter, Parameter
+from my_llm.utils.data import _MISSING, capture, dictionary_views
 
 
 class AnthropicEncoder(BaseEncoder):

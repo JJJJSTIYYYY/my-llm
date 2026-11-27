@@ -230,8 +230,9 @@ def test_profiles_do_not_depend_on_codec_or_execution_implementations():
             ("my_llm.codec", "my_llm.my_llm", "my_llm.runtime"),
         ),
         (
-            (ROOT / "basic/data.py",),
+            tuple((ROOT / "utils").glob("*.py")),
             (
+                "my_llm.cache",
                 "my_llm.codec",
                 "my_llm.middleware",
                 "my_llm.my_llm",
@@ -241,7 +242,7 @@ def test_profiles_do_not_depend_on_codec_or_execution_implementations():
         ),
     ],
 )
-def test_protocol_models_and_data_views_do_not_depend_on_higher_layers(paths, forbidden):
+def test_protocol_models_and_utils_do_not_depend_on_higher_layers(paths, forbidden):
     for path in paths:
         for node in ast.walk(ast.parse(path.read_text())):
             for module in imported_modules(node):

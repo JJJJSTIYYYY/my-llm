@@ -8,7 +8,6 @@ from openai.resources.responses import AsyncResponses
 from openai.types.responses import ResponseInputItemParam, ToolParam
 
 import my_llm.codec.openai.responses.constants as constants
-from my_llm.basic.data import capture, dictionary_views
 from my_llm.basic.exceptions import ConfigurationError, ResponseFailedError
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.cache.compiled_cache import _MISSING, _plan, parameter_types
@@ -36,6 +35,7 @@ from my_llm.codec.shared.output import output_chunks
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
 from my_llm.profile.types import Omit
+from my_llm.utils.data import capture, dictionary_views
 
 
 class ResponsesDecoder(BaseDecoder):

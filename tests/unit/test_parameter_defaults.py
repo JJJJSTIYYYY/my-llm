@@ -14,7 +14,8 @@ from my_llm import (
     omit,
     resolve_profiles,
 )
-from my_llm.codec.shared.options import merge_parameters, path_value, set_path
+from my_llm.codec.shared.options import merge_parameters
+from my_llm.utils.paths import path_value, set_path
 from tests.helpers.profiles import config, parameter
 from tests.helpers.requests import encode_request
 

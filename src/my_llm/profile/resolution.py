@@ -13,9 +13,9 @@ from my_llm.basic.protocols import codec_for
 from my_llm.profile.base import Profile, _declarations
 from my_llm.profile.configuration import Protocol, ProtocolDefaults, merge_dicts
 from my_llm.profile.model_profile import ModelProfile
-from my_llm.profile.paths import path_keys
 from my_llm.profile.provider_profile import ProviderProfile
 from my_llm.profile.types import Attribute, Config, InputParameter, Omit, OutputParameter, Parameter
+from my_llm.utils.paths import path_keys
 
 
 @dataclass

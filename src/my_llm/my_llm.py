@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import AsyncExitStack, aclosing
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import fields, replace
 from typing import Any
 from uuid import uuid4
 
-from my_llm.basic.data import _MISSING
-from my_llm.basic.exceptions import ConfigurationError, StreamError
+from my_llm.basic.exceptions import ConfigurationError, MessageValidationError, StreamError
 from my_llm.basic.semantic_loss import LossPolicy, SemanticLossHook
 from my_llm.codec.converter import MyCodec
-from my_llm.middleware.models import Message
+from my_llm.middleware.models import FunctionTool, Message, TextContent, ToolCall, UserMessage
 from my_llm.middleware.stream import MessageEvent, Usage
 from my_llm.profile.configuration import Protocol, ReasoningEffort
 from my_llm.profile.model_profile import ModelProfile
@@ -22,6 +22,8 @@ from my_llm.profile.resolution import ResolvedProfile, resolve_profiles
 from my_llm.profile.types import Attribute, Omit, omit
 from my_llm.runtime.message_stream import MessageStream
 from my_llm.runtime.state import StreamState
+from my_llm.utils.data import _MISSING
+from my_llm.utils.json_schema import object_json_schema, parse_json_object
 
 
 class MyLLM:
@@ -150,10 +152,12 @@ class MyLLM:
         )
 
     def get_last_usage(self) -> Usage | None:
-        """Return independent counters from the last completed streaming call.
+        """Return independent counters from the last stream or JSON generation.
 
-        Unreported fields are None. Non-streaming calls do not expose usage.
-        A stream must finish successfully before replacing the previous record.
+        generate_json sums reported counters across its initial attempt and retries,
+        including failed JSON outputs. Unreported fields remain None. Ordinary
+        generate(stream=False) does not expose usage. A regular stream must finish
+        successfully before replacing the previous record.
         """
         return replace(self._last_usage) if self._last_usage is not None else None
 
@@ -235,15 +239,6 @@ class MyLLM:
         consumes and closes that same stream here before returning its final result.
         """
 
-        if (
-            previous_response_id is not None
-            and previous_response_id is not omit
-            and self.enable_message_cache
-        ):
-            raise ConfigurationError(
-                "previous_response_id is not supported when enable_message_cache is True"
-            )
-
         inputs = dict(
             messages=messages,
             stream=stream,
@@ -256,6 +251,26 @@ class MyLLM:
             extra_body=extra_body,
             previous_response_id=previous_response_id,
         )
+        prepared, protocol = await self._prepare_generation(inputs)
+        return await self._consume(prepared, StreamState(self.resolved_profile.model), protocol)
+
+    async def _prepare_generation(
+        self,
+        inputs: dict,
+        *,
+        middleware_tools: list[FunctionTool] | None = None,
+        request_suffix: list[Message] | None = None,
+    ) -> tuple[dict, Protocol]:
+        """Bind input and prepare one reusable request without starting execution."""
+        if (
+            inputs["previous_response_id"] is not None
+            and inputs["previous_response_id"] is not omit
+            and self.enable_message_cache
+        ):
+            raise ConfigurationError(
+                "previous_response_id is not supported when enable_message_cache is True"
+            )
+
         protocol = self._codec._bind_input(inputs, self.stdio_protocol)
         self._stdio_protocol = protocol
         profile = self.resolved_profile
@@ -266,8 +281,15 @@ class MyLLM:
             client=self._client_parameters,
             enable_message_cache=self.enable_message_cache,
             message_cache_key=self._message_cache_key,
+            middleware_tools=middleware_tools,
+            request_suffix=request_suffix,
         )
-        state = StreamState(profile.model)
+        return prepared, protocol
+
+    async def _consume(
+        self, prepared: dict, state: StreamState, protocol: Protocol
+    ) -> MessageStream | dict | list | Message:
+        """Execute one request with an owned state and consume it when non-streaming."""
         result = MessageStream(self._stream(prepared, state, protocol), state)
         if prepared["local"]["stream"]:
             return result
@@ -361,3 +383,140 @@ class MyLLM:
             except Exception as render_error:
                 exc.add_note(f"Failed to render partial_message: {render_error!r}")
             raise
+
+    async def generate_json(
+        self,
+        *,
+        messages: Sequence[Any],
+        schema: type | dict[str, Any],
+        max_retries: int = 0,
+        api_key: str | Omit | None = None,
+        max_tokens: Any = _MISSING,
+        reasoning: bool | None = None,
+        reasoning_effort: ReasoningEffort = "none",
+        extra_headers: Any = None,
+        extra_body: Any = None,
+        previous_response_id: Any = None,
+    ) -> dict[str, Any]:
+        """Generate a JSON object using a synthetic tool or a JSON-only prompt.
+
+        Args:
+            messages: History in this instance's stdio protocol, following generate's
+                validation, inference and incremental-cache rules.
+            schema: JSON Schema object, or a Pydantic-supported object type (for
+                example a BaseModel, dataclass or TypedDict). The root must describe
+                an object. The schema guides generation; results are not schema-validated.
+            max_retries: Additional attempts after an invalid JSON output, default 0.
+                Must be a nonnegative integer. Independent of the Profile's SDK
+                connection retry setting; the initial attempt is not a retry.
+            api_key: Per-call authentication; None inherits and omit removes it.
+            max_tokens: Output limit, with the same inheritance rules as generate.
+            reasoning: Enable or disable reasoning as in generate.
+            reasoning_effort: Requested reasoning effort as in generate.
+            extra_headers: Headers merged over profile defaults.
+            extra_body: Native options merged over profile defaults.
+            previous_response_id: Responses server history ID; incompatible with
+                the instance message cache, as in generate.
+
+        Returns:
+            The synthetic tool's argument dictionary when function calling is enabled.
+            Otherwise, a JSON object extracted from response text, including fenced
+            JSON or JSON surrounded by prose. Only an unambiguous complete object is
+            accepted; malformed parents, duplicate keys and non-finite numbers are
+            rejected. No tools are executed. Output instructions
+            apply only to this request and are excluded from the message cache.
+            get_last_usage() exposes the sum of reported usage across all attempts,
+            including failed JSON outputs, even when retries are exhausted. Missing
+            counters remain None; known counters are summed without inventing usage.
+
+        Raises:
+            TypeError: schema is neither a dictionary nor a supported Python type.
+            ValueError: The schema cannot be inlined or its root is not an object,
+                the expected tool call is
+                missing or ambiguous, or response text contains no valid JSON object
+                after max_retries additional attempts.
+            ConfigurationError, MessageValidationError, SemanticLossError, StreamError:
+                As for generate. SDK errors retain their original types.
+
+        This method always collects the complete response and closes its resources.
+        Capability selection uses resolved_profile.supports_function_calling; upstream
+        SDK/configuration errors do not trigger JSON retries or switch generation mode.
+        Each attempt owns its response and client. Schema/input errors occur before
+        retry execution and leave the previous usage record unchanged.
+        """
+        if isinstance(max_retries, bool) or not isinstance(max_retries, int) or max_retries < 0:
+            raise ConfigurationError("max_retries must be a non-negative integer")
+        tool = FunctionTool(
+            name="structured_output",
+            description="Return the requested structured output.",
+            parameters=object_json_schema(schema),
+        )
+        use_tool = self.resolved_profile.get("supports_function_calling", False)
+        instruction = (
+            f"Return the requested structured output by calling {tool.name} exactly once. "
+            "Use its arguments for the complete answer."
+            if use_tool
+            else "Return only one JSON object matching this JSON Schema, without commentary "
+            "or Markdown fences:\n" + json.dumps(tool.parameters, ensure_ascii=False)
+        )
+        prepared, _ = await self._prepare_generation(
+            dict(
+                messages=messages,
+                stream=False,
+                tools=omit,
+                api_key=api_key,
+                max_tokens=max_tokens,
+                reasoning=reasoning,
+                reasoning_effort=reasoning_effort,
+                extra_headers=extra_headers,
+                extra_body=extra_body,
+                previous_response_id=previous_response_id,
+            ),
+            middleware_tools=[tool] if use_tool else None,
+            request_suffix=[UserMessage("user", [TextContent(instruction)])],
+        )
+        total_usage: Usage | None = None
+        for attempt in range(max_retries + 1):
+            state = StreamState(self.resolved_profile.model)
+            try:
+                try:
+                    result = await self._consume(prepared, state, "middleware")
+                except MessageValidationError as exc:
+                    # Invalid generated tool arguments fail during response assembly.
+                    error = exc
+                else:
+                    try:
+                        if use_tool:
+                            calls = [
+                                part
+                                for part in result.content
+                                if isinstance(part, ToolCall) and part.name == tool.name
+                            ]
+                            if len(calls) != 1:
+                                raise ValueError(
+                                    f"expected exactly one {tool.name} tool call, got {len(calls)}"
+                                )
+                            return calls[0].arguments
+                        return parse_json_object(
+                            "".join(
+                                part.text
+                                for part in result.content
+                                if isinstance(part, TextContent)
+                            )
+                        )
+                    except ValueError as exc:
+                        error = exc
+            finally:
+                usage = Usage.from_record(state.usage)
+                if usage is not None:
+                    if total_usage is None:
+                        total_usage = usage
+                    else:
+                        for field in fields(Usage):
+                            value = getattr(usage, field.name)
+                            if value is not None:
+                                previous = getattr(total_usage, field.name)
+                                setattr(total_usage, field.name, (previous or 0) + value)
+                self._last_usage = total_usage
+            if attempt == max_retries:
+                raise error

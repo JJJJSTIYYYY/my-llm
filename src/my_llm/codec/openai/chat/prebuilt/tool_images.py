@@ -4,13 +4,13 @@ import json
 from hashlib import sha256
 from weakref import WeakSet
 
-from my_llm.basic.data import read
 from my_llm.basic.semantic_loss import SemanticLossContext, SemanticLossGroup
 from my_llm.codec.openai.chat.decoding.content import render_content
 from my_llm.codec.openai.chat.prebuilt.shared import publish_messages, request_messages
 from my_llm.codec.shared.capabilities import supports_content
 from my_llm.codec.shared.conversion import uri_source
 from my_llm.middleware.models import ImageContent
+from my_llm.utils.data import read
 
 
 def _image(value: object) -> dict | None:

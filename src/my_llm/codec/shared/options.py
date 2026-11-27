@@ -1,16 +1,16 @@
-"""SDK-root parameter paths and request-owned generation controls."""
+"""Request-owned generation controls and declarative parameter bindings."""
 
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-from my_llm.basic.data import _MISSING, plain, read
 from my_llm.basic.exceptions import ConfigurationError
 from my_llm.basic.semantic_loss import SemanticLossItem
 from my_llm.profile.configuration import EFFORTS, merge_dicts
-from my_llm.profile.paths import path_keys
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
 from my_llm.profile.types import Omit, Parameter, omit
+from my_llm.utils.data import _MISSING, plain
+from my_llm.utils.paths import delete_path, path_keys, path_value, set_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,61 +35,6 @@ class PreparedOptions:
     effort: str | None
     explicit_tokens: bool = False
     losses: tuple[SemanticLossItem, ...] = ()
-
-
-def path_value(value: Any, path: str, default: Any = None) -> Any:
-    """Read only the addressed keys; a present None is a value, not absence."""
-    for key in path_keys(path):
-        if isinstance(key, int):
-            if not isinstance(value, (list, tuple)) or key >= len(value):
-                return default
-            value = value[key]
-        else:
-            value = read(value, key, _MISSING)
-        if value is _MISSING:
-            return default
-    return value
-
-
-def set_path(value: dict, path: str, item: Any) -> None:
-    """Write one addressed value, creating only the necessary containers."""
-    keys = path_keys(path)
-    for index, key in enumerate(keys):
-        if isinstance(key, int):
-            if not isinstance(value, list):
-                raise ConfigurationError(f"path requires a list: {path!r}")
-            if key >= len(value):
-                value.extend([None] * (key + 1 - len(value)))
-        elif not isinstance(value, dict):
-            raise ConfigurationError(f"path requires a dictionary: {path!r}")
-        if index == len(keys) - 1:
-            value[key] = item
-            return
-        child = value.get(key) if isinstance(value, dict) else value[key]
-        if child is None:
-            child = [] if isinstance(keys[index + 1], int) else {}
-        elif not isinstance(child, (dict, list)):
-            child = plain(child)
-        value[key] = child
-        value = child
-
-
-def delete_path(value: dict, path: str) -> None:
-    """Delete a present parameter without creating a missing parent."""
-    keys = path_keys(path)
-    for key in keys[:-1]:
-        value = (
-            read(value, key, _MISSING)
-            if isinstance(key, str)
-            else (value[key] if isinstance(value, list) and key < len(value) else _MISSING)
-        )
-        if value is _MISSING or value is None:
-            return
-    key = keys[-1]
-    if isinstance(value, dict) and isinstance(key, str):
-        value.pop(key, None)
-    elif isinstance(value, list) and isinstance(key, int) and key < len(value):
-        del value[key]
 
 
 def merge_parameters(*layers: dict | Omit | None) -> dict:

@@ -11,8 +11,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from my_llm.basic.data import capture, plain
 from my_llm.basic.exceptions import ConfigurationError
+from my_llm.utils.data import capture, plain
 
 
 def _fingerprint_value(value: Any) -> Any:

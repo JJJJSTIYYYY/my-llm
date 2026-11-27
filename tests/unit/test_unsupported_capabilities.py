@@ -127,7 +127,7 @@ def test_unsupported_effort_cannot_use_the_native_reasoning_enable_alias(profile
 
 @pytest.mark.parametrize("protocol", PROTOCOLS)
 def test_unsupported_token_limit_has_a_complete_draft_for_every_protocol(profile_factory, protocol):
-    from my_llm.codec.shared.options import path_value
+    from my_llm.utils.paths import path_value
 
     declaration = parameter("max_tokens", supports=False, protocol=protocol)
     profile = profile_factory(protocol, max_tokens=declaration)
@@ -190,7 +190,7 @@ def test_unsupported_token_limit_removes_public_and_native_values(profile_factor
     ],
 )
 def test_custom_unsupported_parameter_cannot_be_restored_by_native_body(protocol, path, body):
-    from my_llm.codec.shared.options import path_value
+    from my_llm.utils.paths import path_value
 
     @dataclass(kw_only=True)
     class Model(ModelProfile):

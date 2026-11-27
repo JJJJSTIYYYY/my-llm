@@ -6,12 +6,12 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from my_llm.basic.data import capture
 from my_llm.basic.exceptions import IncompleteStreamError
 from my_llm.basic.semantic_loss import Originated
 from my_llm.codec.shared.conversion import arguments, source_protocol
 from my_llm.codec.shared.stream import operations
 from my_llm.middleware.usage import normalize_usage
+from my_llm.utils.data import capture
 
 
 def _located(value: dict, source: dict) -> dict:

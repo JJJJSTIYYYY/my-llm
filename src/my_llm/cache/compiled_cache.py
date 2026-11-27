@@ -21,9 +21,9 @@ from typing import (
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from my_llm.basic.data import capture
 from my_llm.basic.exceptions import MessageValidationError
 from my_llm.basic.semantic_loss import report_loss
+from my_llm.utils.data import capture
 
 P = ParamSpec("P")
 T = TypeVar("T")

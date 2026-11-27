@@ -14,7 +14,6 @@ from anthropic.types import (
 from pydantic import ValidationError
 
 import my_llm.codec.anthropic.constants as constants
-from my_llm.basic.data import capture
 from my_llm.basic.exceptions import ConfigurationError, MessageValidationError, ResponseFailedError
 from my_llm.cache.compiled_cache import _MISSING, _plan, adapter, parameter_types
 from my_llm.codec.anthropic.decoding.content import decode_block, foreign_block
@@ -34,6 +33,7 @@ from my_llm.codec.shared.input import (
 from my_llm.codec.shared.stream import counts, events
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
 from my_llm.profile.types import Parameter
+from my_llm.utils.data import capture
 
 REQUEST_SCHEMA = parameter_types(AsyncMessages.create)
 

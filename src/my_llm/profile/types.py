@@ -8,7 +8,7 @@ from functools import wraps
 from typing import Any, Generic, Literal, TypeVar
 
 from my_llm.basic.exceptions import ConfigurationError
-from my_llm.profile.paths import path_keys
+from my_llm.utils.paths import path_keys
 
 _T = TypeVar("_T")
 

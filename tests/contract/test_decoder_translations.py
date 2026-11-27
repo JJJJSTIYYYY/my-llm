@@ -65,7 +65,7 @@ DELTA_PATHS = {
 def test_parameter_translation_does_not_rewrite_standard_chunk_output(
     protocol, semantic, field, index, value, profile_factory
 ):
-    from my_llm.codec.shared.options import path_value
+    from my_llm.utils.paths import path_value
 
     profile = profile_factory(
         protocol,
@@ -103,7 +103,7 @@ def test_encoder_missing_text_uses_default_at_standard_and_custom_paths(
     custom_path,
     profile_factory,
 ):
-    from my_llm.codec.shared.options import delete_path, set_path
+    from my_llm.utils.paths import delete_path, set_path
 
     native_path = DELTA_PATHS[protocol][index]
     overrides = {
@@ -209,7 +209,7 @@ def test_terminal_events_do_not_append_missing_text_defaults(
     actual_payload,
     profile_factory,
 ):
-    from my_llm.codec.shared.options import set_path
+    from my_llm.utils.paths import set_path
 
     overrides = {
         "content": parameter(
@@ -247,7 +247,7 @@ def test_terminal_events_do_not_append_missing_text_defaults(
 def test_present_null_response_does_not_use_configured_text_default(
     protocol, semantic, field, index, custom_path, profile_factory
 ):
-    from my_llm.codec.shared.options import set_path
+    from my_llm.utils.paths import set_path
 
     declaration = parameter(
         semantic,

@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from my_llm.basic.data import _MISSING, dictionary_views
 from my_llm.basic.exceptions import MessageValidationError
 from my_llm.basic.semantic_loss import report_loss
 from my_llm.middleware.validation import HistoryValidator
+from my_llm.utils.data import _MISSING, dictionary_views
 
 FUNCTIONS = "functions"
 

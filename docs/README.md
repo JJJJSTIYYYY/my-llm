@@ -6,7 +6,7 @@
 ## 使用文档
 
 面向 `my-llm-py` 包的使用者。从[项目快速开始](../README.md#快速开始)进入，
-业务调用使用 `MyLLM.generate`，离线翻译使用 `MyCodec.encode` / `decode` / `convert`。
+业务调用使用 `MyLLM.generate` / `generate_json`，离线翻译使用 `MyCodec.encode` / `decode` / `convert`。
 
 - [API 使用指南](reference/api.md)：调用参数、返回值、流式消费、工具回合、消息缓存和独立翻译。
 - [配置参考](reference/configuration.md)：连接与模型 Profile、覆盖规则、能力声明和参数路径。

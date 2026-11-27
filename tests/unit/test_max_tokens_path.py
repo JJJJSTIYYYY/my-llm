@@ -13,7 +13,7 @@ from my_llm import (
     omit,
     resolve_profiles,
 )
-from my_llm.codec.shared.options import path_value
+from my_llm.utils.paths import path_value
 from tests.helpers.profiles import config, parameter
 from tests.helpers.requests import encode_request
 

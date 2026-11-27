@@ -1,7 +1,7 @@
 # API 使用指南
 
 本文介绍 `my_llm` 的公开接口、参数、返回值和使用约束。
-业务执行入口为 `MyLLM.generate`，独立翻译入口为 `MyCodec.encode` / `decode` / `convert`。
+业务执行入口为 `MyLLM.generate` / `generate_json`，独立翻译入口为 `MyCodec.encode` / `decode` / `convert`。
 配置、数据模型、语义损失 hook、流生命周期和生成状态读取为这些入口提供配套能力。
 除另行注明外，下列类型、函数和异常均可从 `my_llm` 导入。
 完整配置示例见[配置指南](configuration.md)，协议字段见[标准协议参考](schema/README.md)。
@@ -61,6 +61,63 @@ Model 的 `protocol=None` 继承 Provider；Model 明确配置时，Provider 可
 
 清除此实例的消息翻译历史和最后批次去重状态，重复调用无副作用，不关闭 SDK 客户端。
 清理前应完成或关闭活动响应流。跨会话的缓存隔离由应用层负责；开始新会话时可主动调用本接口。
+
+### `await MyLLM.generate_json(...) -> dict[str, Any]`
+
+生成结构化 JSON 对象。`messages` 与 `schema` 必填；其他参数为 `api_key`、`max_tokens`、
+`reasoning`、`reasoning_effort`、`extra_headers`、`extra_body`、`previous_response_id`，
+默认值与下方 `generate` 相同。另有 `max_retries: int = 0`，指定 JSON 输出失败后的额外尝试次数，
+必须为非负整数（不接受 bool），最多发起 `1 + max_retries` 次生成。它不继承或改写
+`resolved_profile` 的 `max_retries`；Profile 中该配置仍用于 SDK 的连接重试。
+本接口收集完整返回，不接受 `stream` 或外部 `tools`。
+
+```python
+from pydantic import BaseModel
+
+
+class Person(BaseModel):
+    name: str
+    age: int
+
+
+async def extract(llm):
+    return await llm.generate_json(
+        messages=[{"role": "user", "content": "小明今年 18 岁。提取姓名和年龄。"}],
+        schema=Person,
+        max_retries=2,
+        max_tokens=512,
+    )  # 返回字典，例如 {"name": "小明", "age": 18}
+```
+
+`schema` 接受 JSON Schema 字典，或 Pydantic 支持的对象类型，例如 `BaseModel`、dataclass、
+`typing_extensions.TypedDict`。根类型须为 object。输入 Schema 中的本地 JSON Pointer 引用
+（例如 `#/$defs/Details`、`#/definitions/Details`）会在构造工具或输出提示词之前递归展开，
+并移除定义容器。引用旁的约束与字段注释保留；默认值、示例等应用数据不参与引用展开。
+循环引用无法展开为有限的无引用 Schema，缺失目标、外部引用和命名锚点也不支持，
+这些情况会在请求之前抛出 `ValueError`，不消耗 JSON 重试次数。
+Schema 用于指导模型生成，接口只保证
+解析结果为字典，不执行完整 Schema 校验；需要严格校验时，调用方可使用 `Person.model_validate(result)`。
+
+解析后的 `supports_function_calling=True` 时，接口发送名为 `structured_output` 的合成工具，
+要求模型调用一次，并直接返回该调用的参数。未返回该工具调用或返回多个同名调用会抛出 `ValueError`。
+能力未开启时，接口通过提示词要求 JSON，再从返回文本中解析对象，支持代码围栏、前后说明、
+嵌套结构、字符串转义及开头的 BOM。优先解析完整 JSON 文档；否则依次选择标记为
+`json` / `application/json` 的围栏、无语言标记的围栏、其他围栏之外的说明文字。
+显式 JSON 围栏中的输出非法时，不回退选取说明文字中的示例对象；其他语言的代码围栏不作为结果。
+在所选区域内按字符串转义和对象/数组边界扫描，只接受唯一的完整对象；多个合法对象视为歧义。
+不会从数组中提取对象，也不会把非法或截断外层中的合法子对象当作结果。
+重复键、`NaN` / `Infinity`、浮点溢出及截断结构均被拒绝。解析失败抛出 `ValueError`，
+不修补非法 JSON、不猜测丢失的数据，也不将文本作为 Python 执行。
+
+消息遵循实例的 `stdio_protocol`、协议推断、工具关联修复与增量缓存规则；返回值始终是字典。
+输出指令只用于当前请求，不进入历史缓存。JSON 文本无法解析、指定工具调用缺失/重复、
+生成的工具参数不是合法 JSON 对象时，按 `max_retries` 重新生成；成功即停止，耗尽后抛出最后的解析错误。
+请求只准备一次，重试使用相同请求，不向缓存追加重复输入；每次尝试独立创建并关闭响应和客户端。
+调用参数错误、语义损失、响应不完整及 SDK 错误遵循 `generate` 的规则，不触发这里的 JSON 重试，也不切换生成模式。
+
+调用 `get_last_usage()` 获取本次 `generate_json` 首次尝试及所有重试的累计 `Usage`，即使最终失败也可读取。
+按字段累加已报告值，没有任何尝试报告的字段保持 `None`；部分尝试缺少用量时，累计值只包含可观测的部分，
+不估算缺失用量。每次 JSON 调用重新累计，不包含上一次调用；输入准备失败则保留之前的记录。
 
 ### `await MyLLM.generate(...)`
 
@@ -429,7 +486,9 @@ Chat 相关损失项的可选 `target: SemanticLossTarget` 提供目标 `message
 对应的中间层 `source_value`，供请求 hook 精确修复；原始来源仍由 `origin_value` / `origin_path` 表示。
 
 流事件过滤接口返回的 usage；成功结束后调用 `get_last_usage()` 获取独立的 `Usage`。
-未报告字段为 `None`，非流式结果不含 usage。关闭消息缓存后的并发调用中，该接口代表最后成功完成的调用；两种返回模式均消费上游流。
+未报告字段为 `None`，非流式结果不含 usage，普通 `generate(stream=False)` 完成后清除用量记录。
+`generate_json` 通过同一接口提供各次尝试的累计用量，细节见上方结构化输出契约。
+关闭消息缓存后的并发调用中，该接口是实例级最近记录，不提供按任务分别查询；各调用模式均消费上游流。
 无法解析的 usage 样本和辅助元数据静默忽略，不影响正文生成；没有可用用量时返回空。
 
 ## `MyCodec` 协议转换

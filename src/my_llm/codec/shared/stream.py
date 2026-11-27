@@ -6,8 +6,8 @@ from functools import wraps
 from math import isfinite
 from typing import NamedTuple
 
-from my_llm.basic.data import capture, dictionary_views
 from my_llm.middleware.usage import normalize_usage
+from my_llm.utils.data import capture, dictionary_views
 
 
 def optional_usage(method):

@@ -18,6 +18,7 @@ Transport 只构造／调用 SDK、关闭客户端及本次响应。扩展基类
 
 | 实现 | 必需接口 |
 | --- | --- |
+| BaseCodec | protocol_or_api_style、defaults、encoder / decoder / transport、to_dict(message) / to_object(message)。 |
 | BaseEncoder | protocol、message_type / tool_type、match_item、_messages / _tools / _chunks、usage。 |
 | BaseDecoder | protocol、request_schema、message_type / tool_type、message_path / tool_path、_messages / _tools / _chunks、usage、assemble_request。 |
 | BaseTransport | create_client(parameters: dict)、upstream(client, request: dict)。 |
@@ -41,6 +42,15 @@ Chat、Anthropic 默认合并组内内容；Responses 传 `merge=False`，仅按
 两个方向的 _chunks 直接构造独立事件，只复制借入的可变叶；不可变文本不需要再次复制。
 修改调用方输入不能改变返回结果，修改结果也不能改变调用方输入。
 Decoder.result 默认返回首条消息；Responses 等协议可覆盖为列表。
+
+`BaseCodec.to_dict` 将一条所属协议的 SDK 消息序列化为字典，包括嵌套内容、调用和显式扩展字段；
+`to_object` 将已经完成翻译与输出策略处理的字典构建为 SDK 消息对象，不额外添加项目级校验或补造响应元数据。
+列表形状由转换器逐项分派，具体 SDK 类型与原生 type 映射属于各自 Codec。
+生成输入直接沿用 Encoder 的按需 SDK 视图，保持损失来源引用，不必先调用 `to_dict` 完整序列化。
+内置实现使用 SDK 模型的 `model_construct` 构建嵌套对象；SDK 内部仍可能检查嵌套 Union。
+显式 `to_dict` 序列化使用
+`model_dump(mode="python", by_alias=True, exclude_unset=True)`，避免把缺失字段作为新值写回历史。
+这两个方法是消息表示的扩展契约；独立协议翻译仍使用 `MyCodec.encode` / `decode` / `convert`。
 
 ## Decoder 的固定请求流程
 
@@ -149,6 +159,7 @@ from my_llm.codec.base import BaseCodec
 
 from your_package.decoding.decoder import ExampleDecoder
 from your_package.encoding.encoder import ExampleEncoder
+from your_package.models import ExampleMessage
 from your_package.transport import ExampleTransport
 
 
@@ -173,6 +184,12 @@ class ExampleCodec(BaseCodec):
     @property
     def defaults(self):
         return self._defaults
+
+    def to_dict(self, message):
+        return message.model_dump(mode="python", by_alias=True, exclude_unset=True)
+
+    def to_object(self, message):
+        return ExampleMessage.model_construct(**message)
 
 
 # 在应用启动时执行一次，早于 Profile 解析及 MyCodec / MyLLM 实例创建。

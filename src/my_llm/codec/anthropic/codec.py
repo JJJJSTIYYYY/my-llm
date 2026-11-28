@@ -1,6 +1,9 @@
 """Instance-owned anthropic protocol facade."""
 
 from copy import deepcopy
+from typing import Any
+
+from anthropic.types import Message
 
 import my_llm.codec.anthropic.constants as constants
 from my_llm.codec.anthropic.decoding.decoder import AnthropicDecoder
@@ -49,3 +52,15 @@ class AnthropicCodec(BaseCodec):
     def defaults(self) -> ProtocolDefaults:
         """Return the protocol defaults owned by this Anthropic codec instance."""
         return self._defaults
+
+    def to_dict(self, message: Message) -> dict[str, Any]:
+        """Serialize explicit Messages fields and nested content without adding metadata."""
+        return message.model_dump(mode="python", by_alias=True, exclude_unset=True)
+
+    def to_object(self, message: dict[str, Any]) -> Message:
+        """Construct a Messages object and typed content from the supplied message fields.
+
+        Role/content history does not contain a complete API response envelope.
+        Missing id, model and usage are left unset rather than synthesized.
+        """
+        return Message.model_construct(**message)

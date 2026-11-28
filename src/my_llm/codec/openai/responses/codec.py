@@ -1,6 +1,15 @@
 """Instance-owned openai_responses protocol facade."""
 
 from copy import deepcopy
+from typing import Any
+
+from openai.types.responses import (
+    ResponseFunctionToolCall,
+    ResponseFunctionToolCallOutputItem,
+    ResponseOutputMessage,
+    ResponseReasoningItem,
+)
+from pydantic import BaseModel
 
 import my_llm.codec.openai.responses.constants as constants
 from my_llm.codec.base.codec import BaseCodec
@@ -9,6 +18,13 @@ from my_llm.codec.openai.responses.encoding.encoder import ResponsesEncoder
 from my_llm.codec.openai.responses.transport import ResponsesTransport
 from my_llm.profile.configuration import ProtocolDefaults
 from my_llm.profile.types import Config, InputParameter, OutputParameter, omit
+
+_OBJECT_TYPES = {
+    "message": ResponseOutputMessage,
+    "reasoning": ResponseReasoningItem,
+    "function_call": ResponseFunctionToolCall,
+    "function_call_output": ResponseFunctionToolCallOutputItem,
+}
 
 
 class ResponsesCodec(BaseCodec):
@@ -47,3 +63,11 @@ class ResponsesCodec(BaseCodec):
     def defaults(self) -> ProtocolDefaults:
         """Return the protocol defaults owned by this Responses codec instance."""
         return self._defaults
+
+    def to_dict(self, message: BaseModel) -> dict[str, Any]:
+        """Serialize one explicit Responses item, including nested SDK content."""
+        return message.model_dump(mode="python", by_alias=True, exclude_unset=True)
+
+    def to_object(self, message: dict[str, Any]) -> BaseModel:
+        """Construct the native SDK variant for one supported Responses output item."""
+        return _OBJECT_TYPES[message.get("type", "message")].model_construct(**message)

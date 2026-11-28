@@ -425,7 +425,7 @@ class BaseDecoder(ABC):
         *,
         options: PreparedOptions | None = None,
         message_transform: Callable[[list], list] | None = None,
-        request_suffix: list | None = None,
+        messages_suffix: list | None = None,
         **parameters: Any,
     ) -> dict:
         """Return validated native SDK call arguments for intermediate messages/tools.
@@ -436,7 +436,7 @@ class BaseDecoder(ABC):
             profile: Resolved upstream provider/model settings.
             options: Already validated controls, or None to validate parameters here.
             message_transform: Optional transform of translated messages before assembly.
-            request_suffix: Request-only middleware messages translated after cache assembly.
+            messages_suffix: Request-only middleware messages translated after cache assembly.
             **parameters: Generation controls and protocol-specific options.
 
         Invalid controls or history raise ConfigurationError or MessageValidationError.
@@ -477,10 +477,10 @@ class BaseDecoder(ABC):
             batch_size = len(native_messages)
             native_messages = message_transform(native_messages)
             offset_loss_targets(len(native_messages) - batch_size)
-        if request_suffix is not None:
+        if messages_suffix is not None:
             native_messages = [
                 *native_messages,
-                *self._messages(wire_values(request_suffix), profile, **parameters),
+                *self._messages(wire_values(messages_suffix), profile, **parameters),
             ]
         native_tools = self._tools(tools, profile, **parameters) if tools is not None else None
         request = self.assemble_request(
@@ -511,7 +511,7 @@ class BaseDecoder(ABC):
         parameters = {
             key: value
             for key, value in intermediate.items()
-            if key not in ("profile", "middleware", "message_transform", "request_suffix")
+            if key not in ("profile", "middleware", "message_transform", "messages_suffix")
         }
         api_key = parameters.pop("api_key", None)
         if api_key is not None:
@@ -525,7 +525,7 @@ class BaseDecoder(ABC):
                 profile,
                 options=options,
                 message_transform=intermediate.get("message_transform"),
-                request_suffix=intermediate.get("request_suffix"),
+                messages_suffix=intermediate.get("messages_suffix"),
                 **parameters,
             ),
             "local": {"stream": parameters["stream"]},
@@ -597,6 +597,12 @@ class BaseDecoder(ABC):
         """Return independent native message dictionaries from intermediate values."""
         values = wire_values(values)
         validate_messages(values)
+        return self._render_messages(values, profile, **parameters)
+
+    def _render_messages(
+        self, values: list, profile: ResolvedProfile | None = None, **parameters: Any
+    ) -> list[dict]:
+        """Filter validated output and capture independently owned native messages."""
         values = output_messages(values, parameters.pop("semantic_profile", None))
         return capture(self._messages(values, profile, **parameters))
 
@@ -629,8 +635,10 @@ class BaseDecoder(ABC):
 
         List-shaped protocols override this method. A completed response may also
         provide its indexed final event and request-owned stream context.
+        These messages are already validated inside the pipeline; public offline
+        conversion uses messages() and retains its structural input checks.
         """
-        return self.messages(messages, **parameters)[0]
+        return self._render_messages(wire_values(messages), **parameters)[0]
 
     @abstractmethod
     def _messages(

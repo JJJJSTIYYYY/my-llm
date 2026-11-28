@@ -190,8 +190,10 @@ def content_from_wire(value: dict, path: str = "$") -> MessageContent:
     return content_from_validated_wire(value, path)
 
 
-def content_from_validated_wire(value: dict, path: str = "$") -> MessageContent:
-    """Project content already checked by validate_content, without revalidation."""
+def content_from_validated_wire(
+    value: dict, path: str = "$", *, borrow: bool = False
+) -> MessageContent:
+    """Project checked content, borrowing mutable leaves only for internal drafts."""
     kind = value["type"]
     origin = Origin.from_value(value, path)
     if kind == "text":
@@ -208,7 +210,9 @@ def content_from_validated_wire(value: dict, path: str = "$") -> MessageContent:
     if kind == "thinking":
         return ReasoningContent(
             reasoning=value["reasoning"],
-            feedback_item=capture(value.get("feedback_item")),
+            feedback_item=value.get("feedback_item")
+            if borrow
+            else capture(value.get("feedback_item")),
             item=_item(value),
             origin=origin,
         )
@@ -216,7 +220,7 @@ def content_from_validated_wire(value: dict, path: str = "$") -> MessageContent:
         return ToolCall(
             value["id"],
             value["name"],
-            capture(value["input"]),
+            value["input"] if borrow else capture(value["input"]),
             origin,
             _item(value),
         )
@@ -296,8 +300,8 @@ def messages_from_wire(values: list) -> list[Message]:
     return messages_from_validated_wire(values)
 
 
-def messages_from_validated_wire(values: list) -> list[Message]:
-    """Project history already checked by validate_messages, without revalidating it."""
+def messages_from_validated_wire(values: list, *, borrow: bool = False) -> list[Message]:
+    """Project checked history, owning leaves unless an internal draft borrows them."""
     result = []
     for index, raw in enumerate(values):
         role = raw["role"]
@@ -327,7 +331,7 @@ def messages_from_validated_wire(values: list) -> list[Message]:
         for offset, block in enumerate(raw["content"]):
             path = f"{origin.path}.content[{offset}]"
             if block["type"] != "tool_result":
-                content.append(content_from_validated_wire(block, path))
+                content.append(content_from_validated_wire(block, path, borrow=borrow))
                 continue
             if content:
                 append_message()

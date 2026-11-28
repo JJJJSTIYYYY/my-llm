@@ -137,12 +137,13 @@ async def run_case(messages, key, protocol, scenario, model, max_tokens):
             for index, message in enumerate(messages, 1)
         )
     try:
-        output = await llm.generate_json(
+        response = await llm.generate_json(
             messages=[*messages, {"role": "user", "content": instruction}],
             schema=Snapshot,
             max_tokens=max_tokens,
             max_retries=1,
         )
+        output = json.loads(response["content"])
         Snapshot.model_validate(output)
     finally:
         transport_type.create_client = original_method

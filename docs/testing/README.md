@@ -89,6 +89,9 @@ uv run --no-sync pytest -q tests/performance
 运行 `uv run pytest -q tests/unit/test_generate_json.py tests/unit/test_json_schema.py` 验证结构化生成与 JSON 提取。
 覆盖三种上游 × 四种 stdio × 工具/提示词两种模式、Pydantic/dataclass/TypedDict/字典 Schema、
 JSON 文本提取、非法输出、请求指令的缓存隔离与客户端关闭；
+业务工具与自定义名称的合成输出工具同时翻译，业务调用按 stdio 协议返回并可续接工具结果，
+结构化回答使用 JSON `TextContent`，并投影为原生协议的文本内容；
+混合调用校验结构化输出并保留业务调用；不支持工具的模型沿用 `raise` / `ignore` / `hook` 语义损失路径。
 另覆盖独立 JSON 重试预算、成功提前停止、重试耗尽、非法工具参数、SDK 错误不重试，
 以及所有尝试的 Usage 累计、缺失字段与调用间隔离。
 解析器另覆盖围栏优先级与未闭合围栏、BOM、字符串转义、非法/截断外层、数组嵌套、
@@ -111,3 +114,32 @@ Ruff、格式与 `git diff --check` 通过。测试使用本地 SDK 模拟，没
 2026-11-28，本地工作区增加结构校验与反馈后，全量离线回归 4222 项通过；
 完善输入 Schema 的正则格式检查后，相关生成、校验、公开导出、文档与 E2E 脚本测试 241 项通过。
 Ruff、格式和 diff 检查通过。上述均为本地测试/SDK 模拟，本轮没有新增真实供应商调用。
+
+### 业务工具与结构化文本回归
+
+运行 `uv run pytest -q tests/unit/test_generate_json.py tests/unit/test_json_generation_validation.py`。
+验收包括工具声明合并、自定义合成工具名称、四种 stdio 的业务工具续接与缓存开关，
+混合响应的对象校验、JSON 文本返回与工具历史复用，以及三种语义损失策略。
+
+2026-11-28，基于 `859374a` 加本轮工作区修改，Python 3.12.12 下执行
+`.venv/bin/python -m pytest -q`，全量 4310 项通过；Ruff、格式与 diff 检查通过。
+这是本地测试与 SDK 模拟结果，没有新增真实供应商或性能验证。
+
+### SDK 消息表示回归
+
+运行 `uv run pytest -q tests/integration/test_message_objects.py tests/integration/test_protocol_registration.py tests/unit/test_native_codecs.py`。
+验收覆盖三上游 × 三原生 stdio、字典／SDK／同协议混合表示、缓存开关和流式／非流式，
+包括 SDK 输入协议推断、嵌套工具调用与工具结果续接、并发调用隔离、JSON 重试、错误中的部分消息，
+以及扩展 Codec 必须实现的 `to_dict` / `to_object`。原生流事件仍为字典，完成后的 `stream.result`
+才随本次输入选择表示；Anthropic 对象不补造缺失的响应信封字段。
+
+2026-11-28，基于 `859374a` 加本轮工作区修改，Python 3.12.12、OpenAI SDK 2.54.0、
+Anthropic SDK 0.125.0 下执行 `.venv/bin/python -m pytest -q`，全量 4462 项通过；
+Ruff、格式与 diff 检查通过。验证使用本地 SDK 模拟，没有新增真实供应商调用或性能测量。
+
+同日补齐输入物化与内部结果所有权回归：SDK 损失来源保留原始内容对象；未支持字段的 serializer
+不会在生成输入路径执行；自动推断后的 JSON 重试保持 SDK 返回表示；输出 hook 的修改生效，
+且 hook 保留的工具参数与最终返回值互不影响。修复后同一环境全量 4476 项通过，Ruff、格式与 diff 检查通过。
+本地计数探针确认：Chat 上游、Anthropic stdio 的 JSON 业务调用轮次只保留一次输入关联结构检查，
+不重复校验内部结果，不复制中间模型叶数据，最终原生结果执行一次隔离拷贝。
+上述是调用计数与行为证据，不是性能耗时测量，也未新增真实供应商调用。

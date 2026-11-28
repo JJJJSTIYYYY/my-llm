@@ -18,8 +18,9 @@ class MessageStream(AsyncIterator[dict[str, Any] | MessageEvent]):
     response. Iteration is single-use; do not consume the same stream concurrently.
 
     Attributes:
-        result: The completed native message, or Responses
-            output items; AssistantMessage for stdio_protocol="middleware".
+        result: The completed native message, or Responses output items. SDK message
+            input selects SDK objects here; dictionary-only input selects dictionaries.
+            Middleware I/O returns AssistantMessage. Stream events keep their format.
             None until successful exhaustion, including after an
             early close. Save this result as conversation history.
     """

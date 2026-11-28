@@ -141,6 +141,28 @@ class BaseCodec(ABC):
         """Official SDK lifecycle and execution, independent of conversion."""
         ...
 
+    @abstractmethod
+    def to_dict(self, message: Any) -> dict[str, Any]:
+        """Serialize one native SDK message, preserving explicitly supplied fields.
+
+        This changes representation within this codec's protocol. It does not
+        translate protocols, filter supported fields or repair tool associations.
+        Nested SDK models must become native dictionaries without adding absent
+        response-envelope fields. The input object must remain unchanged.
+        """
+        ...
+
+    @abstractmethod
+    def to_object(self, message: dict[str, Any]) -> Any:
+        """Construct one native SDK message from an already prepared dictionary.
+
+        Build nested SDK content and call models using the protocol's native
+        message types. Do not add project-side validation after pipeline checks,
+        invent missing response metadata or discard extension fields. The SDK's
+        builder may perform its own nested type checks.
+        """
+        ...
+
     @final
     def validate_profile(self, profile: ResolvedProfile) -> None:
         """Validate construction-time protocol settings through Decoder."""

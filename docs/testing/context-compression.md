@@ -38,7 +38,7 @@ uv run python examples/context_compression_e2e.py \
 1. 原始历史来自外部文件，保持消息顺序和内容，再追加一条场景用户请求。
 2. `supports_function_calling=True`，实际 HTTP 中只发送 `structured_output` 工具，
    工具 Schema 已展开引用，接口输出指令是系统消息。
-3. `generate_json` 返回字典；通过严格 Pydantic 校验：summary 为字符串，
+3. `generate_json` 返回 Chat 助手消息，解析其 JSON 文本得到字典；通过严格 Pydantic 校验：summary 为字符串，
    user_goals、decisions、implemented、pending、constraints、caveats 为列表，
    每项是含 statement 字符串和 source_turns 整数列表的对象，拒绝额外字段。
 4. 可读取 Usage、记录实际 HTTP 请求次数，SDK 客户端关闭。

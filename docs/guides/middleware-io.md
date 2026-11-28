@@ -104,7 +104,9 @@ history = [
 不会重新解析缓存前缀。
 工具结果必须携带明确 ID。使用 middleware stdio 时保存 `ToolCall.call_id`，
 再原样填入 `ToolMessage.call_id`；不会仅凭名称关联。
-`ToolCall.arguments` 是完整 JSON 对象，结果对象/数组应先序列化为 `TextContent`，图片使用 `ImageContent`。
+`ToolCall.arguments` 是完整 JSON 对象，工具结果对象/数组应先序列化为 `TextContent`，图片使用 `ImageContent`。
+`generate_json` 的结构化回答使用 JSON `TextContent`，业务工具调用仍使用 `ToolCall`，
+两者均放在返回的助手消息中，详见 [API 指南](../reference/api.md)。
 图片支持用户消息及工具结果；指令为文本，思维和工具调用属于 assistant。
 思维的 `feedback_item` 保存原生回传值，归属由消息的 `protocol` 或流批次协议确定；跨协议时丢弃并记录语义损失。
 

@@ -9,6 +9,7 @@ from jsonschema import Draft202012Validator
 from my_llm import Attribute, Config, JSONGenerationError, ModelProfile, MyLLM, ProviderProfile
 from my_llm.basic.exceptions import ConfigurationError
 from my_llm.utils.json_schema import json_schema_errors
+from tests.helpers.json_output import structured_object
 from tests.helpers.protocols import chat_event
 from tests.helpers.transport import FakeClient
 
@@ -100,7 +101,13 @@ def setup(monkeypatch, outputs, *, tools=False, cache=False):
 async def test_all_schema_errors_are_recorded_and_sent_back(monkeypatch, tools, cache):
     llm, clients, _ = setup(monkeypatch, [BAD, BAD, GOOD], tools=tools, cache=cache)
     messages = [{"role": "user", "content": "Return a profile"}]
-    assert await llm.generate_json(messages=messages, schema=SCHEMA, max_retries=2) == GOOD
+    assert (
+        structured_object(
+            await llm.generate_json(messages=messages, schema=SCHEMA, max_retries=2),
+            llm.stdio_protocol,
+        )
+        == GOOD
+    )
     failures = llm.get_last_json_failures()
     assert [f["attempt"] for f in failures] == [1, 2]
     for failure in failures:
@@ -181,9 +188,10 @@ async def test_types_are_not_coerced_and_success_clears_history(monkeypatch, out
     with pytest.raises(JSONGenerationError):
         await llm.generate_json(messages=[{"role": "user", "content": "hi"}], schema=schema)
     assert len(llm.get_last_json_failures()) == 1
-    assert await llm.generate_json(messages=[{"role": "user", "content": "hi"}], schema=schema) == {
-        "age": 1
-    }
+    assert structured_object(
+        await llm.generate_json(messages=[{"role": "user", "content": "hi"}], schema=schema),
+        llm.stdio_protocol,
+    ) == {"age": 1}
     assert llm.get_last_json_failures() == []
 
 

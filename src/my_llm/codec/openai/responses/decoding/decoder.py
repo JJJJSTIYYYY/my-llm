@@ -33,6 +33,7 @@ from my_llm.codec.shared.input import (
 )
 from my_llm.codec.shared.output import output_chunks
 from my_llm.codec.shared.stream import counts, events
+from my_llm.middleware.protocol import wire_values
 from my_llm.profile.resolution import ResolvedProfile, validate_max_tokens
 from my_llm.profile.types import Omit
 from my_llm.utils.data import capture, dictionary_views
@@ -581,7 +582,7 @@ class ResponsesDecoder(BaseDecoder):
     def result(self, messages: list, *, final_event: dict | None = None, **parameters: Any) -> list:
         """Render completed indexed output, or canonical messages for a partial result."""
         if final_event is None:
-            return self.messages(messages, **parameters)
+            return self._render_messages(wire_values(messages), **parameters)
         final_event = output_chunks([final_event], parameters.pop("semantic_profile", None))[0]
         parameters.setdefault("stream_indices", {})
         return self._completed_output(final_event, parameters.get("source_protocol"), parameters)

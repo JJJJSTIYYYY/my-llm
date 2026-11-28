@@ -1,6 +1,9 @@
 """Instance-owned openai_chat protocol facade."""
 
 from copy import deepcopy
+from typing import Any
+
+from openai.types.chat import ChatCompletionMessage
 
 import my_llm.codec.openai.chat.constants as constants
 from my_llm.codec.base.codec import BaseCodec
@@ -50,3 +53,11 @@ class ChatCompletionsCodec(BaseCodec):
     def defaults(self) -> ProtocolDefaults:
         """Return the protocol defaults owned by this Chat Completions codec instance."""
         return self._defaults
+
+    def to_dict(self, message: ChatCompletionMessage) -> dict[str, Any]:
+        """Serialize explicit Chat message fields, including nested calls and extensions."""
+        return message.model_dump(mode="python", by_alias=True, exclude_unset=True)
+
+    def to_object(self, message: dict[str, Any]) -> ChatCompletionMessage:
+        """Construct a Chat assistant and nested calls through the SDK model builder."""
+        return ChatCompletionMessage.model_construct(**message)

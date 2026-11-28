@@ -6,6 +6,7 @@ from dataclasses import dataclass, field, replace
 from typing import Annotated
 
 import pytest
+from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from my_llm import (
@@ -41,6 +42,11 @@ PROTOCOL = "independent_test_protocol"
 
 
 class NativeMessage(TypedDict):
+    speaker: str
+    body: str
+
+
+class NativeMessageObject(BaseModel):
     speaker: str
     body: str
 
@@ -242,6 +248,12 @@ class Codec(BaseCodec):
     def defaults(self):
         return self._defaults
 
+    def to_dict(self, message):
+        return message.model_dump(exclude_unset=True)
+
+    def to_object(self, message):
+        return NativeMessageObject.model_construct(**message)
+
 
 @pytest.fixture
 def registered(monkeypatch):
@@ -303,6 +315,23 @@ async def test_new_protocol_reuses_caches_with_unhashable_annotations(registered
     )
     assert sum(instance.streams_closed for instance in Client.created) == 2
     assert client.closed
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_registered_codec_owns_sdk_message_representations(registered, streaming):
+    provider, model = profiles()
+    llm = MyLLM(provider=provider, model=model, stdio_protocol=PROTOCOL)
+    result = await llm.generate(
+        messages=[NativeMessageObject(speaker="user", body="hello")], stream=streaming
+    )
+    if streaming:
+        async with result:
+            async for event in result:
+                assert isinstance(event, dict)
+        result = result.result
+    assert isinstance(result, NativeMessageObject)
+    assert result.speaker == "assistant" and result.body == "hello extension"
+    assert Client.created[-1].closed and Client.created[-1].streams_closed == 1
 
 
 def test_new_protocol_queries_filter_plans_once_per_batch(registered, monkeypatch):

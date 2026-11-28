@@ -125,6 +125,13 @@ Model 未设置协议时继承 Provider。`stdio_protocol` 选择业务输入输
 完整准备结束后修改调用方历史、body、headers 不会改变待消费请求。
 同协议和跨协议均经过 Encoder / Decoder；收集式调用消费同一个 MessageStream。
 
+每次准备输入时，`MyLLM` 记录本轮 `messages` 是否包含 SDK 模型；该决定作为本次执行的参数传递，
+不写入实例、请求参数或消息缓存。原生 SDK 输入沿用 Encoder 的按需只读视图，保留原始来源对象，
+不在过滤前整包调用 `model_dump`；`to_dict` 保留为所属协议的显式表示转换接口。
+完成消息先经过 stdio Decoder 和输出语义损失策略，再由该 Codec 的 `to_object` 构建 SDK 消息及嵌套内容。
+Responses 按 output item 分别构建对象；其他原生协议构建单条助手消息。消息字段缺少的完整响应元数据不补造。
+流事件仍走原有投影，仅最终 result（包括结构化 JSON 助手消息）遵循本次输入的表示选择。
+
 显式 `stdio_protocol="middleware"` 使用公开具体模型，不参与协议推断：请求略过输入 Encoder，
 直接进入同一个上游 Decoder.prepare；返回由上游 Encoder / StreamState 生成
 AssistantMessage / MessageEvent，略过 stdio Decoder。该 stdio 名称不注册协议组件。
@@ -256,14 +263,22 @@ hook 修改本次请求不会自动更新缓存，相关维护由使用者负责
 在 Schema 节点展开文档本地 JSON Pointer 引用并移除定义容器；默认值和示例保留为普通数据。
 循环、外部和未解析引用在准备阶段报错，避免向上游发送未展开的工具参数。
 这属于生成前的通用 Schema 归一化，不放入某一种协议的 Codec。
-`generate_json` 负责构造带有指定名称与说明的 `FunctionTool`。
-源 Encoder 仍负责原生消息投影和输入边界；生成工具在中间层注入，交由目标 Decoder 翻译。
-返回统一选择 middleware，业务层只读取 `ToolCall.arguments` 或 `TextContent`。
+`generate_json` 负责构造由 `fake_tool_name` 命名的 `FunctionTool`。
+源 Encoder 仍负责原生消息、业务工具投影和输入边界；生成工具经 `tools_suffix` 在中间层追加到业务工具之后，
+交由目标 Decoder 翻译。模型不支持业务工具时复用 Decoder 的能力过滤与语义损失策略，
+生成接口不额外校验工具能力。
+响应收集统一选择 middleware，业务层读取合成工具的 `ToolCall.arguments` 或 `TextContent`。
+JSON 输出处理借用本次状态已经验证的中间层草稿，不提前复制工具参数和思维回传数据。
+结构校验成功后，将字典序列化为 JSON `TextContent`，替换合成调用和回答文本，
+再按实例的 `stdio_protocol` 渲染助手消息，复用各协议已有的文本转换。
+内部结果渲染复用已验证结构，只在最终返回时建立独立可变数据；公开 `MyCodec.decode` 仍检查传入结构。
+业务工具调用按同一 stdio 协议返回，交由应用执行并续接历史；仅有业务调用时不进入 JSON 失败重试。
+混合响应仍校验合成输出，将其转换为 JSON 文本并保留业务调用。
 
-请求专用输出指令以 `InstructionMessage(role="system")` 经 `request_suffix` 进入 Decoder，在消息缓存合并之后单独翻译并附加，
+请求专用输出指令以 `InstructionMessage(role="system")` 经 `messages_suffix` 进入 Decoder，在消息缓存合并之后单独翻译并附加，
 因此不会污染缓存、改变用户批次指纹或在重试时累积。该内部机制不包含协议分支；
 最终 SDK 参数仍经过原有过滤、验证和语义损失处理。能力选择和错误契约见
-[API 使用指南](../reference/api.md#await-myllmgenerate_json---dictstr-any)。
+[API 使用指南](../reference/api.md#await-myllmgenerate_json---assistantmessage--dict--list)。
 
 `generate_json(max_retries=0)` 的 JSON 重试预算与 Profile 的 SDK 连接重试配置独立。
 允许重试时先保存输入快照；每次尝试均经过输入绑定、修复、缓存和请求 hook，

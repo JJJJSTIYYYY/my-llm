@@ -57,6 +57,16 @@ Model 的 `protocol=None` 继承 Provider；Model 明确配置时，Provider 可
 | `resolved_profile` | 已解析的 `ResolvedProfile` |
 | `stdio_protocol` | 绑定的输入输出协议，推断前可为 `None` |
 
+#### 固定协议与历史输入
+
+本项目适用于调用方使用固定消息协议的场景。`MyLLM` 根据 `stdio_protocol` 返回对应协议的消息，
+调用方将返回消息按该协议续接到历史中，历史便保持统一协议，不会因调用不同上游 API 而出现混合协议历史。
+本项目不支持混合协议历史输入，也不会逐条识别历史消息所属的不同原生协议。
+
+此约定适用于消息缓存开启和关闭两条路径：关闭缓存时，传入的完整历史必须使用同一协议；
+开启缓存时，每个新增批次也必须沿用实例绑定的 `stdio_protocol`，不能在不同批次间切换输入协议。
+使用 `stdio_protocol="middleware"` 时，调用方统一使用中间层消息模型，不混入其他协议的原生消息。
+
 ### `MyLLM.compare(new_provider, new_model, new_stdio_protocol) -> bool`
 
 三个参数均为字符串，分别与此实例的 `provider.provider.default_value`、模型 ID 和已绑定的
@@ -77,17 +87,23 @@ async def ask_matching_instance(llm, provider_id, model_id, protocol, messages):
 清除此实例的消息翻译历史和最后批次去重状态，重复调用无副作用，不关闭 SDK 客户端。
 清理前应完成或关闭活动响应流。跨会话的缓存隔离由应用层负责；开始新会话时可主动调用本接口。
 
-### `await MyLLM.generate_json(...) -> dict[str, Any]`
+### `await MyLLM.generate_json(...) -> AssistantMessage | dict | list`
 
 生成结构化 JSON 对象。`messages` 与 `schema` 必填；其他参数为 `api_key`、`max_tokens`、
 `reasoning`、`reasoning_effort`、`extra_headers`、`extra_body`、`previous_response_id`，
 默认值与下方 `generate` 相同。另有 `max_retries: int = 0`，指定 JSON 输出失败后的额外尝试次数，
 必须为非负整数（不接受 bool），最多发起 `1 + max_retries` 次生成。它不继承或改写
 `resolved_profile` 的 `max_retries`；Profile 中该配置仍用于 SDK 的连接重试。
-本接口收集完整返回，不接受 `stream` 或外部 `tools`。
+本接口收集完整返回，不接受 `stream`。`tools` 的格式和默认值与 `generate` 相同，
+按实例的 `stdio_protocol` 传入；中间层 I/O 使用 `FunctionTool`。
+`fake_tool_name: str = "structured_output"` 指定合成输出工具名称，用于系统指令和结果识别，
+仅在工具输出模式生效。传入的业务工具经过已有 Codec 管线翻译，再追加合成输出工具。
 
 ```python
+import json
+
 from pydantic import BaseModel
+from my_llm import TextContent, UserMessage
 
 
 class Person(BaseModel):
@@ -96,12 +112,15 @@ class Person(BaseModel):
 
 
 async def extract(llm):
-    return await llm.generate_json(
-        messages=[{"role": "user", "content": "小明今年 18 岁。提取姓名和年龄。"}],
+    # llm 使用 stdio_protocol="middleware"。
+    reply = await llm.generate_json(
+        messages=[UserMessage("user", [TextContent("小明今年 18 岁。提取姓名和年龄。")])],
         schema=Person,
         max_retries=2,
         max_tokens=512,
-    )  # 返回字典，例如 {"name": "小明", "age": 18}
+    )
+    return json.loads("".join(part.text for part in reply.content if isinstance(part, TextContent)))
+    # 例如 {"name": "小明", "age": 18}
 ```
 
 `schema` 接受 JSON Schema 字典，或 Pydantic 支持的对象类型，例如 `BaseModel`、dataclass、
@@ -114,12 +133,27 @@ Schema 同时用于指导生成和校验返回值。解析出的字典必须满�
 包括类型、必填项、嵌套对象、数组元素、额外字段及数值/长度等约束；不执行类型转换。
 校验会收集全部错误，包括 `anyOf` / `oneOf` 等组合约束的各分支原因，不在首个错误处终止。
 采用 Schema 声明的草案（默认 Draft 2020-12）；`format` 默认仅作为注释。
-Python 模型中未表达为 JSON Schema 的自定义 validator 不执行，按需另用 `Person.model_validate(result)`。
+Python 模型中未表达为 JSON Schema 的自定义 validator 不执行，按需另用 `Person.model_validate(json.loads(text))`。
 
-解析后的 `supports_function_calling=True` 时，接口发送名为 `structured_output` 的合成工具，
-要求模型调用一次，校验该调用参数后返回字典。未返回该工具调用或返回多个同名调用视为失败；
+返回形状与 `generate` 一致：中间层 I/O 返回 `AssistantMessage`，Chat / Anthropic 返回助手消息字典，
+Responses 返回 output items 列表；原生 SDK 消息输入时，返回对应 SDK 消息对象或对象列表。
+最终结构化内容序列化为 JSON 文本，在中间层使用
+`TextContent.text` 承载，再由各自 decoder 投影到原生协议的文本字段。
+
+解析后的 `supports_function_calling=True` 时，接口发送名为 `fake_tool_name` 的合成工具，
+要求模型调用一次，校验该调用参数后以 JSON `TextContent` 替换合成调用及回答文本，保留思维等其他内容。
+既无业务调用又未返回合成调用，或返回多个同名合成调用，视为失败；
 多个同名调用的可解析参数会全部校验并记录调用索引。
-能力未开启时，接口通过提示词要求 JSON，再从返回文本中解析对象，支持代码围栏、前后说明、
+如果响应调用了其他工具，按 `stdio_protocol` 返回助手消息，保留全部工具调用与伴随内容，
+不执行工具。仅有业务调用时不计为 JSON 输出失败或继续重试。应用执行业务工具，将助手消息与工具结果
+按实例的 `stdio_protocol` 加入历史，再调用本接口；使用中间层 I/O 时可直接加入该助手消息。
+同一响应同时包含业务调用与合成输出调用时，校验合成输出并替换为 JSON `TextContent`，
+保留业务 `ToolCall` 及伴随内容；合成输出无效时仍进入 JSON 失败诊断与重试。
+`fake_tool_name` 应与业务工具名称区分，以便识别最终输出。
+能力未开启时，接口通过提示词要求 JSON。若仍传入业务工具，已有 decoder 过滤工具定义并记录
+语义损失：默认 `raise` 抛出 `SemanticLossError`，`ignore` 继续使用过滤后的请求，
+`hook` 将完整请求草稿与损失交给已有输入回调。`generate_json` 不重复检查工具能力。
+文本模式从返回文本中解析对象，支持代码围栏、前后说明、
 嵌套结构、字符串转义及开头的 BOM。优先解析完整 JSON 文档；否则依次选择标记为
 `json` / `application/json` 的围栏、无语言标记的围栏、其他围栏之外的说明文字。
 显式 JSON 围栏中的输出非法时，不回退选取说明文字中的示例对象；其他语言的代码围栏不作为结果。
@@ -128,7 +162,8 @@ Python 模型中未表达为 JSON Schema 的自定义 validator 不执行，按�
 重复键、`NaN` / `Infinity`、浮点溢出及截断结构均被拒绝。解析失败计入 JSON 重试，
 不修补非法 JSON、不猜测丢失的数据，也不将文本作为 Python 执行。
 
-消息遵循实例的 `stdio_protocol`、协议推断、工具关联修复与增量缓存规则；返回值始终是字典。
+消息遵循实例的 `stdio_protocol`、协议推断、工具关联修复与增量缓存规则；
+最终结构化内容与业务工具调用都通过助手消息返回。
 输出指令作为系统消息注入，只用于当前请求，不进入历史缓存。JSON 文本无法解析、指定工具调用缺失/重复、
 生成的工具参数不是合法 JSON 对象，或解析后的对象违反 Schema 时，按 `max_retries` 重新生成。
 成功即停止；耗尽后抛出 `JSONGenerationError`（也是 `ValueError`），`failures` 保存全部失败记录。
@@ -258,9 +293,9 @@ async def retry_unconsumed(llm):
 
 | `stdio_protocol` | 消息及工具所用格式 | 非流式返回 / `stream.result` | 流事件 |
 | --- | --- | --- | --- |
-| `openai_chat` | Chat messages / tools | assistant 消息字典 | ChatCompletionChunk 字典 |
-| `openai_responses` | Responses input/output items / tools | output items 列表 | Responses 事件字典 |
-| `anthropic` | Messages role/content / tools | assistant role/content 字典 | Messages 事件字典 |
+| `openai_chat` | Chat messages / tools | assistant 字典或 `ChatCompletionMessage` | ChatCompletionChunk 字典 |
+| `openai_responses` | Responses input/output items / tools | output item 字典列表或 SDK item 对象列表 | Responses 事件字典 |
+| `anthropic` | Messages role/content / tools | assistant role/content 字典或 SDK `Message` | Messages 事件字典 |
 | `middleware` | `Message` / `FunctionTool` 具体模型 | `AssistantMessage` | `MessageEvent` 具体模型 |
 
 `middleware` 是必须显式指定的 stdio 名称，不注册新协议组件，也不能作为上游协议。
@@ -268,6 +303,14 @@ async def retry_unconsumed(llm):
 
 非流式结果直接是消息或 items。流式完成原因通过原生终态事件或中间 `finish` 事件提供，
 用量只通过 `get_last_usage()` 获取。
+返回表示按本次传入的 `messages` 判定：全部为字典时返回字典；包含任意支持的 SDK 消息对象时，
+返回对应 `stdio_protocol` 的 SDK 对象。同一协议的字典和 SDK 对象可以同时出现在历史中；
+这不表示支持混合不同协议。`tools` 的表示不影响返回类型。
+该判定只属于本次调用：缓存开启时只看本轮新增批次，不继承旧批次的返回表示；关闭缓存时看本轮完整历史。
+流事件保持上表的格式，只有完成后的 `stream.result` 随输入表示转换；成功完成前及提前关闭后仍为 `None`。
+输出语义损失 hook 仍先处理原有字典草稿，之后才构建 SDK 对象。`generate_json` 遵循同一表示选择规则。
+SDK 对象仅承载现有消息字段；例如 Anthropic role/content 历史没有完整响应信封，
+构建对象时不会补造 `id`、`model` 或 `usage`，这些字段不应作为完整 API 响应信息使用。
 保存历史时，Responses 使用 `history.extend(result)`，其他协议使用 `history.append(result)`。
 同一历史中的消息与工具必须遵循所选协议。
 

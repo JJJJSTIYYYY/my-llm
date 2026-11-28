@@ -11,6 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from jsonschema.validators import validator_for
+from pydantic import BaseModel
 
 from my_llm.basic.exceptions import (
     ConfigurationError,
@@ -21,6 +22,7 @@ from my_llm.basic.exceptions import (
 from my_llm.basic.semantic_loss import LossPolicy, SemanticLossHook
 from my_llm.codec.converter import MyCodec
 from my_llm.middleware.models import (
+    AssistantMessage,
     FunctionTool,
     InstructionMessage,
     Message,
@@ -275,7 +277,14 @@ class MyLLM:
         extra_headers: Any = None,
         extra_body: Any = None,
         previous_response_id: Any = None,
-    ) -> MessageStream | dict | list | Message:
+    ) -> (
+        MessageStream
+        | AssistantMessage
+        | dict[str, Any]
+        | list[dict[str, Any]]
+        | BaseModel
+        | list[BaseModel]
+    ):
         """Generate a completed message or a closable asynchronous event stream.
 
         Args:
@@ -305,9 +314,12 @@ class MyLLM:
                 semantic loss and omit it. None or omit leaves it out.
 
         Returns:
-            A protocol-native assistant message dictionary, or output items list for
-            openai_responses. With stream=True, a MessageStream yielding dictionaries
-            in the same protocol; its result becomes available after exhaustion.
+            A protocol-native assistant dictionary, or output items list for Responses.
+            If messages contains any official SDK message object, construct the native
+            SDK message(s) instead. Dictionary-only input returns dictionaries. This
+            choice is local to this call, including with caching or concurrent calls.
+            With stream=True, MessageStream still yields native event dictionaries;
+            its result follows the same message representation after exhaustion.
             Middleware I/O returns an AssistantMessage; streaming yields MessageEvent
             models and stores the completed AssistantMessage in stream.result.
 
@@ -352,17 +364,19 @@ class MyLLM:
             extra_body=extra_body,
             previous_response_id=previous_response_id,
         )
-        prepared, protocol = await self._prepare_generation(inputs)
-        return await self._consume(prepared, StreamState(self.resolved_profile.model), protocol)
+        prepared, protocol, return_objects = await self._prepare_generation(inputs)
+        return await self._consume(
+            prepared, StreamState(self.resolved_profile.model), protocol, as_object=return_objects
+        )
 
     async def _prepare_generation(
         self,
         inputs: dict,
         *,
-        middleware_tools: list[FunctionTool] | None = None,
-        request_suffix: list[Message] | None = None,
-    ) -> tuple[dict, Protocol]:
-        """Bind input and prepare one reusable request without starting execution."""
+        tools_suffix: list[FunctionTool] | None = None,
+        messages_suffix: list[Message] | None = None,
+    ) -> tuple[dict, Protocol, bool]:
+        """Prepare a request, its stdio protocol and SDK output choice without execution."""
         if (
             inputs["previous_response_id"] is not None
             and inputs["previous_response_id"] is not omit
@@ -372,8 +386,13 @@ class MyLLM:
                 "previous_response_id is not supported when enable_message_cache is True"
             )
 
+        source_messages = inputs["messages"]
+        return_objects = isinstance(source_messages, (list, tuple)) and any(
+            isinstance(message, BaseModel) for message in source_messages
+        )
         protocol = self._codec._bind_input(inputs, self.stdio_protocol)
         self._stdio_protocol = protocol
+        return_objects = return_objects and protocol != "middleware"
         profile = self.resolved_profile
         prepared = await self._codec._prepare(
             inputs,
@@ -382,16 +401,27 @@ class MyLLM:
             client=self._client_parameters,
             enable_message_cache=self.enable_message_cache,
             message_cache_key=self._message_cache_key,
-            middleware_tools=middleware_tools,
-            request_suffix=request_suffix,
+            tools_suffix=tools_suffix,
+            messages_suffix=messages_suffix,
         )
-        return prepared, protocol
+        return prepared, protocol, return_objects
 
     async def _consume(
-        self, prepared: dict, state: StreamState, protocol: Protocol
-    ) -> MessageStream | dict | list | Message:
-        """Execute one request with an owned state and consume it when non-streaming."""
-        result = MessageStream(self._stream(prepared, state, protocol), state)
+        self,
+        prepared: dict,
+        state: StreamState,
+        protocol: Protocol,
+        *,
+        as_object: bool = False,
+        borrow_result: bool = False,
+    ) -> MessageStream | dict | list | BaseModel | AssistantMessage:
+        """Consume one request; borrow_result is reserved for an internal JSON draft."""
+        result = MessageStream(
+            self._stream(
+                prepared, state, protocol, as_object=as_object, borrow_result=borrow_result
+            ),
+            state,
+        )
         if prepared["local"]["stream"]:
             return result
         # Collected and streaming results share one execution and cleanup path.
@@ -419,7 +449,13 @@ class MyLLM:
         return output
 
     async def _stream(
-        self, prepared: dict, state: StreamState, stdio_protocol: Protocol
+        self,
+        prepared: dict,
+        state: StreamState,
+        stdio_protocol: Protocol,
+        *,
+        as_object: bool = False,
+        borrow_result: bool = False,
     ) -> AsyncGenerator[dict | MessageEvent, None]:
         """Execute one prepared request and accumulate its response in shared state.
 
@@ -428,6 +464,8 @@ class MyLLM:
         operations, then StreamState emits text incrementally and holds tool calls
         until successful finalization. Render those events only for streaming calls;
         both modes render the same completed assistant message.
+        borrow_result lends middleware payload leaves to generate_json, which
+        establishes final result ownership after structured-output processing.
 
         Publish result and usage after upstream cleanup succeeds. StreamError gains
         a rendered partial message when possible; rendering failures become notes
@@ -465,6 +503,8 @@ class MyLLM:
                     origin_source="output",
                     semantic_profile=profile,
                     final_event=final[-1],
+                    as_object=as_object,
+                    borrow=borrow_result,
                     stream_indices=state.stream_indices,
                     **state.metadata,
                 )
@@ -480,6 +520,7 @@ class MyLLM:
                     target_format=stdio_protocol,
                     input_format=profile.protocol,
                     origin_source="output",
+                    as_object=as_object,
                 )
             except Exception as render_error:
                 exc.add_note(f"Failed to render partial_message: {render_error!r}")
@@ -490,6 +531,8 @@ class MyLLM:
         *,
         messages: Sequence[Any],
         schema: type | dict[str, Any],
+        tools: Any = omit,
+        fake_tool_name: str = "structured_output",
         max_retries: int = 0,
         api_key: str | Omit | None = None,
         max_tokens: Any = _MISSING,
@@ -498,7 +541,7 @@ class MyLLM:
         extra_headers: Any = None,
         extra_body: Any = None,
         previous_response_id: Any = None,
-    ) -> dict[str, Any]:
+    ) -> dict | list | BaseModel | AssistantMessage:
         """Generate a JSON object using a synthetic tool or a JSON-only prompt.
 
         Args:
@@ -510,6 +553,12 @@ class MyLLM:
                 coercion. All structural/constraint errors and branch causes are collected;
                 Python-only model validators are not executed. JSON Schema format remains
                 an annotation rather than an additional format assertion.
+            tools: Tool declarations in the instance's stdio protocol, as in generate.
+                They are translated alongside the synthetic output tool. Unsupported
+                tools follow the existing semantic-loss policy. No tools are executed.
+            fake_tool_name: Synthetic output tool name, default "structured_output".
+                Used in the output instruction and to select the structured result;
+                only applies when function calling is enabled.
             max_retries: Additional attempts after JSON parsing, tool selection or Schema
                 validation fails, default 0. Complete failure diagnostics are included
                 as request-only system feedback in the next attempt.
@@ -525,12 +574,23 @@ class MyLLM:
                 the instance message cache, as in generate.
 
         Returns:
-            A Schema-valid dictionary, from the synthetic tool's arguments when
-            function calling is enabled.
-            Otherwise, a JSON object extracted from response text, including fenced
-            JSON or JSON surrounded by prose. Only an unambiguous complete object is
-            accepted; malformed parents, duplicate keys and non-finite numbers are
-            rejected. No tools are executed. Output instructions
+            An assistant result in the instance's stdio protocol, as in generate:
+            AssistantMessage for middleware, a message dictionary for Chat/Anthropic,
+            or an output-items list for Responses. Structured output is carried by
+            TextContent.text as JSON in middleware, and native text in other protocols.
+            SDK message input selects SDK object output as in generate.
+            The validated object replaces synthetic calls or answer text; other
+            content such as reasoning is retained under the usual output loss policy.
+
+            Business calls and accompanying content are retained in the stdio protocol.
+            The caller executes tools, appends the assistant result and tool results,
+            and calls again. A business-only tool turn is successful and does not
+            trigger JSON retries. In mixed responses, validate the synthetic output
+            and replace it with JSON TextContent while retaining the business calls.
+
+            Text mode accepts an unambiguous complete object, including fenced JSON
+            or JSON surrounded by prose; malformed parents, duplicate keys and
+            non-finite numbers are rejected. No tools are executed. Output instructions
             apply only to this request and are excluded from the message cache.
             get_last_usage() exposes the sum of reported usage across all attempts,
             including failed JSON outputs, even when retries are exhausted. Missing
@@ -555,7 +615,7 @@ class MyLLM:
         if isinstance(max_retries, bool) or not isinstance(max_retries, int) or max_retries < 0:
             raise ConfigurationError("max_retries must be a non-negative integer")
         tool = FunctionTool(
-            name="structured_output",
+            name=fake_tool_name,
             description="Return the requested structured output.",
             parameters=object_json_schema(schema),
         )
@@ -578,7 +638,7 @@ class MyLLM:
         inputs = dict(
             messages=messages,
             stream=False,
-            tools=omit,
+            tools=tools,
             api_key=api_key,
             max_tokens=max_tokens,
             reasoning=reasoning,
@@ -605,12 +665,12 @@ class MyLLM:
                         ],
                     )
                 )
-            request, _ = await self._prepare_generation(
-                inputs, middleware_tools=[tool] if use_tool else None, request_suffix=suffix
+            request, _, return_objects = await self._prepare_generation(
+                inputs, tools_suffix=[tool] if use_tool else None, messages_suffix=suffix
             )
-            return request
+            return request, return_objects
 
-        prepared = await prepare([])
+        prepared, return_objects = await prepare([])
         failures: list[dict[str, Any]] = []
         self._last_json_failures = failures
         total_usage: Usage | None = None
@@ -619,20 +679,23 @@ class MyLLM:
             failure = None
             try:
                 try:
-                    result = await self._consume(prepared, state, "middleware")
+                    result = await self._consume(prepared, state, "middleware", borrow_result=True)
                 except MessageValidationError as exc:
                     # Invalid generated tool arguments fail during response assembly.
                     error = exc
                 else:
                     try:
                         if use_tool:
-                            calls = [
-                                part
-                                for part in result.content
-                                if isinstance(part, ToolCall) and part.name == tool.name
-                            ]
+                            calls = []
+                            has_business_calls = False
+                            for part in result.content:
+                                if isinstance(part, ToolCall):
+                                    if part.name == tool.name:
+                                        calls.append(part)
+                                    else:
+                                        has_business_calls = True
                             issues = []
-                            if len(calls) != 1:
+                            if len(calls) != 1 and not (has_business_calls and not calls):
                                 issues.append(
                                     {
                                         "message": f"expected exactly one {tool.name} tool call, got {len(calls)}"
@@ -657,7 +720,29 @@ class MyLLM:
                             stage = "schema"
                         if not issues:
                             self._last_json_failures = failures
-                            return output
+                            if output is not None:
+                                output_content = TextContent(json.dumps(output, ensure_ascii=False))
+                                if use_tool:
+                                    content = [
+                                        output_content
+                                        if isinstance(part, ToolCall) and part.name == tool.name
+                                        else part
+                                        for part in result.content
+                                        if has_business_calls or not isinstance(part, TextContent)
+                                    ]
+                                else:
+                                    content = [
+                                        part
+                                        for part in result.content
+                                        if not isinstance(part, TextContent)
+                                    ] + [output_content]
+                                result = replace(result, content=content)
+                            return self._codec._result(
+                                [result],
+                                target_format=self.stdio_protocol,
+                                input_format=self.resolved_profile.protocol,
+                                as_object=return_objects,
+                            )
                         error = ValueError(
                             "generated output violates the structured-output contract"
                         )
@@ -690,4 +775,4 @@ class MyLLM:
             self._last_json_failures = failures
             if attempt == max_retries:
                 raise JSONGenerationError(failures) from error
-            prepared = await prepare(failures)
+            prepared, _ = await prepare(failures)

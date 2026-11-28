@@ -291,8 +291,8 @@ class MyCodec:
         client: dict,
         enable_message_cache: bool = False,
         message_cache_key: str | None = None,
-        middleware_tools: list[FunctionTool] | None = None,
-        request_suffix: list[Message] | None = None,
+        tools_suffix: list[FunctionTool] | None = None,
+        messages_suffix: list[Message] | None = None,
     ) -> dict:
         """Prepare one complete generation call and await registered request hooks.
 
@@ -305,8 +305,8 @@ class MyCodec:
             client: Connection settings from client_parameters(profile).
             enable_message_cache: Append translated incremental input to cached history.
             message_cache_key: Unique instance key required when caching is enabled.
-            middleware_tools: Generated tools replacing source declarations, if supplied.
-            request_suffix: Request-only middleware instructions, excluded from history cache.
+            tools_suffix: Generated tools appended to source declarations, if supplied.
+            messages_suffix: Request-only middleware instructions, excluded from history cache.
 
         Returns:
             Dictionary with client (SDK constructor arguments), request (SDK call
@@ -341,10 +341,13 @@ class MyCodec:
             }
         else:
             intermediate = self._codec(input_format).encoder.request(inputs, profile)
-        if middleware_tools is not None:
-            intermediate["middleware"].tools = middleware_tools
-        if request_suffix is not None:
-            intermediate["request_suffix"] = request_suffix
+        if tools_suffix is not None:
+            source_tools = intermediate["middleware"].tools
+            intermediate["middleware"].tools = (
+                source_tools + tools_suffix if source_tools is not None else tools_suffix
+            )
+        if messages_suffix is not None:
+            intermediate["messages_suffix"] = messages_suffix
         target = self._codec(profile.protocol)
         batch = None
         if enable_message_cache:
@@ -388,6 +391,8 @@ class MyCodec:
         input_format: Protocol | None = None,
         semantic_profile: ResolvedProfile | None = None,
         final_event: dict | None = None,
+        as_object: bool = False,
+        borrow: bool = False,
         **parameters: Any,
     ):
         """Render intermediate messages as one completed target-protocol result.
@@ -396,6 +401,10 @@ class MyCodec:
         For target_format="middleware", returns a typed AssistantMessage and requires
         input_format identifying the native source for the loss-policy context.
         Use decode when a list of converted messages is required instead.
+        as_object constructs native SDK messages only after output loss handling;
+        middleware results already use their typed message representation.
+        Inputs are completed, internally validated messages. borrow retains shared
+        leaves for an internal middleware draft; public results must own their leaves.
         """
         if target_format == "middleware":
             if input_format is None:
@@ -403,17 +412,18 @@ class MyCodec:
             source = self._codec(input_format)
 
             def render():
-                """Validate canonical result structure and apply output capability filtering."""
+                """Project completed messages with output policy and the required ownership."""
                 values = wire_values(messages)
-                validate_messages(values)
-                return messages_from_validated_wire(output_messages(values, semantic_profile))[0]
+                return messages_from_validated_wire(
+                    output_messages(values, semantic_profile), borrow=borrow
+                )[0]
 
             return source.translate(
                 render,
                 SemanticLossContext(input_format, target_format, origin_source, "result"),
             )
         target = self._codec(target_format)
-        return target.translate(
+        result = target.translate(
             lambda: target.decoder.result(
                 messages,
                 final_event=final_event,
@@ -422,6 +432,13 @@ class MyCodec:
             ),
             SemanticLossContext(input_format, target_format, origin_source, "result"),
         )
+        if as_object:
+            return (
+                [target.to_object(item) for item in result]
+                if isinstance(result, list)
+                else target.to_object(result)
+            )
+        return result
 
     def encode(
         self,

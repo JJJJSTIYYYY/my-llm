@@ -131,6 +131,17 @@ Ruff、格式和 diff 检查通过。上述均为本地测试/SDK 模拟，本�
 同一 Python 3.12.12 环境执行 `.venv/bin/pytest -q`，全量 4524 项通过。
 这些结果来自本地 SDK 模拟，没有新增真实供应商调用。
 
+同日基于 `7eb06dd` 加工作区修改，新增 48 组业务调用保留／替换用例，覆盖四种 stdio、
+缓存开关、跨多次失败复用、新调用整组替换、业务调用单独返回，以及缺少合成调用后的继续重试。
+此前三上游混合调用矩阵也增加最终返回最近业务调用组的断言。
+`.venv/bin/pytest -q` 全量 4572 项通过；Ruff、变更代码格式及 diff 检查通过。
+以上为本地 SDK 模拟，验证重试状态与协议返回契约，不保证真实模型的工具选择行为。
+
+同日 SenseNova Chat、`sensenova-6.8-flash-lite` 补跑：缓存开启时两次真实请求通过，
+首轮业务调用与非法合成输出并存，次轮仅返回合成调用，最终助手消息保留首轮业务调用的 ID、名称与参数。
+缓存关闭的限定补跑中，模型连续三轮未生成工具调用，耗尽后抛出 `JSONGenerationError`，
+未覆盖该场景的成功路径；真实模型行为不稳定，不能将离线矩阵视为真实供应商矩阵通过。
+
 ### SDK 消息表示回归
 
 运行 `uv run pytest -q tests/integration/test_message_objects.py tests/integration/test_protocol_registration.py tests/unit/test_native_codecs.py`。

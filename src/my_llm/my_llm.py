@@ -6,11 +6,11 @@ import json
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import AsyncExitStack, aclosing
 from copy import deepcopy
-from dataclasses import fields, replace
+from dataclasses import dataclass, fields, replace
 from typing import Any
 from uuid import uuid4
 
-from jsonschema.validators import validator_for
+from jsonschema.protocols import Validator
 from pydantic import BaseModel
 
 from my_llm.basic.exceptions import (
@@ -29,6 +29,7 @@ from my_llm.middleware.models import (
     TextContent,
     ToolCall,
     ToolMessage,
+    prepare_json_tool,
 )
 from my_llm.middleware.stream import MessageEvent, Usage
 from my_llm.profile.configuration import Protocol, ReasoningEffort
@@ -39,7 +40,7 @@ from my_llm.profile.types import Attribute, Omit, omit
 from my_llm.runtime.message_stream import MessageStream
 from my_llm.runtime.state import StreamState
 from my_llm.utils.data import _MISSING, capture
-from my_llm.utils.json_schema import json_schema_errors, object_json_schema, parse_json_object
+from my_llm.utils.json_schema import json_schema_errors, parse_json_object
 
 _JSON_TOOL_PROMPT = (
     "Return the requested structured output by calling {tool_name} exactly once. "
@@ -605,6 +606,9 @@ class MyLLM:
             and calls again. A business-only tool turn is successful and does not
             trigger JSON retries. In mixed responses, validate the synthetic output
             and replace it with JSON TextContent while retaining the business calls.
+            Across retries, the latest nonempty business-call group replaces the prior
+            group. A retry without new business calls reuses that group in the final
+            assistant message; groups are never extended across attempts.
             On validation failure, retries retain the assistant turn and send diagnostics
             as synthetic-tool results. Missing business results use the normal history
             repair. These request-only turns do not enter the message cache.
@@ -635,10 +639,8 @@ class MyLLM:
         """
         if isinstance(max_retries, bool) or not isinstance(max_retries, int) or max_retries < 0:
             raise ConfigurationError("max_retries must be a non-negative integer")
-        tool = FunctionTool(
-            name=fake_tool_name,
-            description="Return the requested structured output.",
-            parameters=object_json_schema(schema),
+        tool, validator = prepare_json_tool(
+            schema, fake_tool_name, description="Return the requested structured output."
         )
         use_tool = self.resolved_profile.get("supports_function_calling", False)
         instruction = (
@@ -646,16 +648,6 @@ class MyLLM:
             if use_tool
             else _JSON_TEXT_PROMPT.format(schema=json.dumps(tool.parameters, ensure_ascii=False))
         )
-        validator_class = validator_for(tool.parameters)
-        meta_validator = validator_for(validator_class.META_SCHEMA)(
-            validator_class.META_SCHEMA, format_checker=validator_class.FORMAT_CHECKER
-        )
-        schema_issues = json_schema_errors(meta_validator, tool.parameters)
-        if schema_issues:
-            raise ConfigurationError(
-                "invalid JSON Schema: " + json.dumps(schema_issues, ensure_ascii=False)
-            )
-        validator = validator_class(tool.parameters)
         inputs = dict(
             messages=messages,
             stream=False,
@@ -684,11 +676,12 @@ class MyLLM:
         failures: list[dict[str, Any]] = []
         self._last_json_failures = failures
         total_usage: Usage | None = None
+        business_calls: list[ToolCall] = []
         for attempt in range(max_retries + 1):
             state = StreamState(self.resolved_profile.model)
             failure = None
             result = None
-            calls = []
+            output = None
             try:
                 try:
                     result = await self._consume(prepared, state, "middleware", borrow_result=True)
@@ -697,59 +690,14 @@ class MyLLM:
                     error = exc
                 else:
                     try:
-                        if use_tool:
-                            has_business_calls = False
-                            for part in result.content:
-                                if isinstance(part, ToolCall):
-                                    if part.name == tool.name:
-                                        calls.append(part)
-                                    else:
-                                        has_business_calls = True
-                            issues = []
-                            if len(calls) != 1 and not (has_business_calls and not calls):
-                                issues.append(
-                                    {
-                                        "message": f"expected exactly one {tool.name} tool call, got {len(calls)}"
-                                    }
-                                )
-                            for index, call in enumerate(calls):
-                                for issue in json_schema_errors(validator, call.arguments):
-                                    if len(calls) > 1:
-                                        issue["tool_call_index"] = index
-                                    issues.append(issue)
-                            output = calls[0].arguments if len(calls) == 1 else None
-                            stage = "schema" if len(calls) == 1 else "tool_call"
-                        else:
-                            output = parse_json_object(
-                                "".join(
-                                    part.text
-                                    for part in result.content
-                                    if isinstance(part, TextContent)
-                                )
-                            )
-                            issues = json_schema_errors(validator, output)
-                            stage = "schema"
-                        if not issues:
-                            self._last_json_failures = failures
-                            if output is not None:
-                                output_content = TextContent(json.dumps(output, ensure_ascii=False))
-                                if use_tool:
-                                    content = [
-                                        output_content
-                                        if isinstance(part, ToolCall) and part.name == tool.name
-                                        else part
-                                        for part in result.content
-                                        if has_business_calls or not isinstance(part, TextContent)
-                                    ]
-                                else:
-                                    content = [
-                                        part
-                                        for part in result.content
-                                        if not isinstance(part, TextContent)
-                                    ] + [output_content]
-                                result = replace(result, content=content)
+                        output = JSONOutput.parse(
+                            result, validator, tool.name if use_tool else None
+                        )
+                        if output.business_calls:
+                            business_calls = output.business_calls
+                        if not output.errors:
                             return self._codec._result(
-                                [result],
+                                [output.message(result, business_calls)],
                                 target_format=self.stdio_protocol,
                                 input_format=self.resolved_profile.protocol,
                                 as_object=return_objects,
@@ -757,7 +705,11 @@ class MyLLM:
                         error = ValueError(
                             "generated output violates the structured-output contract"
                         )
-                        failure = {"attempt": attempt + 1, "stage": stage, "errors": issues}
+                        failure = {
+                            "attempt": attempt + 1,
+                            "stage": output.stage,
+                            "errors": output.errors,
+                        }
                     except ValueError as exc:
                         error = exc
             finally:
@@ -791,10 +743,77 @@ class MyLLM:
             )
             if result is not None:
                 retry_messages.append(result)
-            if calls:
+            if output is not None and output.calls:
                 retry_messages.extend(
-                    ToolMessage("tool", [feedback], call_id=call.call_id) for call in calls
+                    ToolMessage("tool", [feedback], call_id=call.call_id) for call in output.calls
                 )
             else:
                 retry_messages.append(InstructionMessage("system", [feedback]))
             prepared, _ = await prepare()
+
+
+@dataclass(slots=True)
+class JSONOutput:
+    """One attempt's structured value, call groups and complete diagnostics."""
+
+    value: dict | None
+    calls: list[ToolCall]
+    business_calls: list[ToolCall]
+    errors: list[dict]
+    stage: str
+
+    @classmethod
+    def parse(
+        cls, result: AssistantMessage, validator: Validator, tool_name: str | None
+    ) -> "JSONOutput":
+        """Validate text or synthetic calls, keeping business-only turns successful."""
+        if tool_name is None:
+            value = parse_json_object(
+                "".join(part.text for part in result.content if isinstance(part, TextContent))
+            )
+            return cls(value, [], [], json_schema_errors(validator, value), "schema")
+        calls = []
+        business_calls = []
+        for part in result.content:
+            if isinstance(part, ToolCall):
+                (calls if part.name == tool_name else business_calls).append(part)
+        errors = []
+        if len(calls) != 1 and not (business_calls and not calls):
+            errors.append(
+                {"message": f"expected exactly one {tool_name} tool call, got {len(calls)}"}
+            )
+        for index, call in enumerate(calls):
+            for issue in json_schema_errors(validator, call.arguments):
+                if len(calls) > 1:
+                    issue["tool_call_index"] = index
+                errors.append(issue)
+        return cls(
+            calls[0].arguments if len(calls) == 1 else None,
+            calls,
+            business_calls,
+            errors,
+            "schema" if len(calls) == 1 else "tool_call",
+        )
+
+    def message(self, result: AssistantMessage, business_calls: list[ToolCall]) -> AssistantMessage:
+        """Compose successful output with the latest nonempty business-call group.
+
+        Current calls retain their position. When this attempt has no business calls,
+        append the retained group without reviving earlier text or reasoning.
+        The final codec rendering establishes independent ownership.
+        """
+        content = result.content
+        if self.value is not None:
+            text = TextContent(json.dumps(self.value, ensure_ascii=False))
+            if self.calls:
+                name = self.calls[0].name
+                content = [
+                    text if isinstance(part, ToolCall) and part.name == name else part
+                    for part in content
+                    if self.business_calls or not isinstance(part, TextContent)
+                ]
+            else:
+                content = [part for part in content if not isinstance(part, TextContent)] + [text]
+        if business_calls and not self.business_calls:
+            content = [*content, *business_calls]
+        return replace(result, content=content)

@@ -486,7 +486,10 @@ async def test_failed_mixed_turns_keep_calls_and_use_normal_missing_results(
         max_retries=2,
         max_tokens=512,
     )
-    assert structured_object(await llm.generate_json(**options), stdio) == {"city": "上海"}
+    result = await llm.generate_json(**options)
+    assert structured_object(result, stdio) == {"city": "上海"}
+    retained = [part for part in assistant_content(result, stdio) if isinstance(part, ToolCall)]
+    assert [(part.call_id, part.name) for part in retained] == [("business_1", "weather")]
     failures = llm.get_last_json_failures()
     for attempt in (1, 2):
         request = clients[attempt].requests[0]
@@ -507,6 +510,74 @@ async def test_failed_mixed_turns_keep_calls_and_use_normal_missing_results(
     await llm.generate_json(**options)
     assert "business_0" not in str(clients[-1].requests[0])
     assert "output_0" not in str(clients[-1].requests[0])
+    assert all(client.closed and client.upstream.closed for client in clients)
+
+
+@pytest.mark.parametrize("stdio", ["middleware", "openai_chat", "openai_responses", "anthropic"])
+@pytest.mark.parametrize("cache", [False, True])
+@pytest.mark.parametrize(
+    "scenario",
+    ["reuse", "replace", "replace_then_reuse", "reuse_across_failure", "business_only", "missing"],
+)
+async def test_retry_returns_latest_nonempty_business_call_group(
+    monkeypatch, stdio, cache, scenario
+):
+    old = [("old_1", "Shanghai"), ("old_2", "Beijing")]
+    new = [("new_1", "Shenzhen")]
+    rounds = {
+        "reuse": [(old, 42), ([], "上海")],
+        "replace": [(old, 42), (new, "上海")],
+        "replace_then_reuse": [(old, 42), (new, 42), ([], "上海")],
+        "reuse_across_failure": [(old, 42), ([], 42), ([], "上海")],
+        "business_only": [(old, 42), (new, None)],
+        "missing": [(old, 42), ([], None), ([], "上海")],
+    }[scenario]
+    llm = make_llm("openai_chat", stdio, cache=cache)
+    clients = []
+    for attempt, (business, city) in enumerate(rounds):
+        calls = [(call_id, "weather", value) for call_id, value in business]
+        if city is not None:
+            calls.append((f"output_{attempt}", "final_answer", city))
+        clients.append(
+            FakeClient(
+                [
+                    chat_event(
+                        content="Current turn",
+                        calls=[
+                            {
+                                "index": index,
+                                "id": call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": name,
+                                    "arguments": json.dumps({"city": value}),
+                                },
+                            }
+                            for index, (call_id, name, value) in enumerate(calls)
+                        ],
+                    ),
+                    chat_event(finish="tool_calls" if calls else "stop"),
+                ]
+            )
+        )
+    install_attempts(monkeypatch, llm, clients)
+    result = await llm.generate_json(
+        messages=inputs(stdio),
+        schema=SCHEMA,
+        tools=business_tools(stdio),
+        fake_tool_name="final_answer",
+        max_retries=len(rounds) - 1,
+    )
+    content = assistant_content(result, stdio)
+    calls = [part for part in content if isinstance(part, ToolCall)]
+    expected = new if scenario in ("replace", "replace_then_reuse", "business_only") else old
+    assert [(part.call_id, part.name, part.arguments) for part in calls] == [
+        (call_id, "weather", {"city": city}) for call_id, city in expected
+    ]
+    if scenario != "business_only":
+        text = "".join(part.text for part in content if isinstance(part, TextContent))
+        assert text.endswith('{"city": "上海"}')
+    assert len(llm.get_last_json_failures()) == len(rounds) - 1
     assert all(client.closed and client.upstream.closed for client in clients)
 
 

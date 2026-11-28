@@ -8,10 +8,14 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import Any, Literal
 
-from my_llm.basic.exceptions import MessageValidationError
+from jsonschema.protocols import Validator
+from jsonschema.validators import validator_for
+
+from my_llm.basic.exceptions import ConfigurationError, MessageValidationError
 from my_llm.basic.semantic_loss import originated
 from my_llm.middleware.validation import validate_content, validate_messages, validate_tools
 from my_llm.utils.data import capture
+from my_llm.utils.json_schema import json_schema_errors, object_json_schema
 
 type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
 type JsonObject = dict[str, JsonValue]
@@ -386,3 +390,38 @@ def tools_from_wire(values: list) -> list[FunctionTool]:
                 )
             )
     return result
+
+
+def prepare_json_tool(
+    schema: type | dict[str, Any], name: str, *, description: str | None = None
+) -> tuple[FunctionTool, Validator]:
+    """Build a middleware function tool and its JSON Schema validator.
+
+    Args:
+        schema: Object JSON Schema or a Pydantic-supported Python type. Document-local
+            references are expanded using object_json_schema.
+        name: Name of the generated function tool.
+        description: Optional tool description, omitted when None.
+
+    Returns:
+        The function tool and a validator for its parameter schema. Validation does
+        not coerce values or fill defaults; format remains an annotation.
+
+    Raises:
+        TypeError: schema is not a dictionary or supported Python type.
+        ValueError: The root is not an object or references cannot be expanded.
+        ConfigurationError: The expanded JSON Schema is invalid.
+    """
+    tool = FunctionTool(
+        name=name,
+        description=description,
+        parameters=object_json_schema(schema),
+    )
+    validator_class = validator_for(tool.parameters)
+    meta_validator = validator_for(validator_class.META_SCHEMA)(
+        validator_class.META_SCHEMA, format_checker=validator_class.FORMAT_CHECKER
+    )
+    issues = json_schema_errors(meta_validator, tool.parameters)
+    if issues:
+        raise ConfigurationError("invalid JSON Schema: " + json.dumps(issues, ensure_ascii=False))
+    return tool, validator_class(tool.parameters)

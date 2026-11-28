@@ -274,6 +274,12 @@ JSON 输出处理借用本次状态已经验证的中间层草稿，不提前复
 内部结果渲染复用已验证结构，只在最终返回时建立独立可变数据；公开 `MyCodec.decode` 仍检查传入结构。
 业务工具调用按同一 stdio 协议返回，交由应用执行并续接历史；仅有业务调用时不进入 JSON 失败重试。
 混合响应仍校验合成输出，将其转换为 JSON 文本并保留业务调用。
+`middleware/models.py` 的 `prepare_json_tool` 根据 Schema 构造中间层工具及验证器，名称和描述由调用方传入；
+纯 Schema 转换与校验仍复用 `utils/json_schema.py`，工具模型不会被通用工具层反向导入。
+`my_llm.py` 内的 `JSONOutput` 负责单轮输出诊断和成功消息组装；
+`MyLLM.generate_json` 保留请求执行、重试反馈与累计 Usage，并保存最近非空的业务调用组。
+新组整组替换旧组，无新调用的轮次沿用旧组，成功消息通过原有 Codec 建立最终所有权。
+这份状态不进入缓存，也不保留旧轮的正文或思维内容。
 
 请求专用输出指令以 `InstructionMessage(role="system")` 经 `messages_suffix` 进入 Decoder。
 后缀使用同一 `HistoryNormalizer` 实现进行工具关联修复，在消息缓存合并之后单独翻译并附加，

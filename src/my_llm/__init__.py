@@ -61,7 +61,7 @@ from my_llm.profile import (
     omit,
     resolve_profiles,
 )
-from my_llm.runtime import MessageStream, MyLLM
+from my_llm.runtime import MessageStream, MyLLM, set__JSON_TEXT_PROMPT, set__JSON_TOOL_PROMPT
 
 __all__ = [
     "ProtocolMiddleWare",
@@ -93,6 +93,8 @@ __all__ = [
     "Attribute",
     "MyCodec",
     "MyLLM",
+    "set__JSON_TOOL_PROMPT",
+    "set__JSON_TEXT_PROMPT",
     "MessageStream",
     "ModelProfile",
     "OverridableProfile",

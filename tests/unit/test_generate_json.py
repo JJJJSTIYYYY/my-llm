@@ -108,6 +108,14 @@ async def test_structured_output_matrix(monkeypatch, protocol, stdio, use_tools)
     request = client.requests[0]
     assert bool(request.get("tools")) is use_tools
     assert "Which city?" in str(request)
+    if protocol == "anthropic":
+        instruction = request["system"]
+        assert all(message["role"] != "system" for message in request["messages"])
+    else:
+        history = request["input" if protocol == "openai_responses" else "messages"]
+        assert history[-1]["role"] == "system"
+        instruction = history[-1]
+    assert ("exactly once" if use_tools else "JSON Schema") in str(instruction)
     if use_tools:
         assert "structured_output" in str(request["tools"])
         assert "city" in str(request["tools"])
@@ -167,6 +175,7 @@ async def test_request_instructions_do_not_enter_history_cache(monkeypatch, prot
     await llm.generate(messages=[{"role": "user", "content": "Next question"}], max_tokens=512)
     history = clients[-1].requests[0]["input" if protocol == "openai_responses" else "messages"]
     assert len(history) == 2
+    assert "system" not in clients[-1].requests[0]
     assert all(
         "JSON Schema" not in str(message) and "exactly once" not in str(message)
         for message in history

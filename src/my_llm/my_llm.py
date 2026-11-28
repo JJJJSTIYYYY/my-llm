@@ -13,7 +13,13 @@ from uuid import uuid4
 from my_llm.basic.exceptions import ConfigurationError, MessageValidationError, StreamError
 from my_llm.basic.semantic_loss import LossPolicy, SemanticLossHook
 from my_llm.codec.converter import MyCodec
-from my_llm.middleware.models import FunctionTool, Message, TextContent, ToolCall, UserMessage
+from my_llm.middleware.models import (
+    FunctionTool,
+    InstructionMessage,
+    Message,
+    TextContent,
+    ToolCall,
+)
 from my_llm.middleware.stream import MessageEvent, Usage
 from my_llm.profile.configuration import Protocol, ReasoningEffort
 from my_llm.profile.model_profile import ModelProfile
@@ -24,6 +30,46 @@ from my_llm.runtime.message_stream import MessageStream
 from my_llm.runtime.state import StreamState
 from my_llm.utils.data import _MISSING
 from my_llm.utils.json_schema import object_json_schema, parse_json_object
+
+_JSON_TOOL_PROMPT = (
+    "Return the requested structured output by calling {tool_name} exactly once. "
+    "Use its arguments for the complete answer."
+)
+_JSON_TEXT_PROMPT = (
+    "Return only one JSON object matching this JSON Schema, without commentary "
+    "or Markdown fences:\n{schema}"
+)
+
+
+def set__JSON_TOOL_PROMPT(prompt: str) -> None:
+    """Replace the global instruction template for tool-based JSON generation.
+
+    Args:
+        prompt: A str.format template. Use {tool_name} to insert the synthetic
+            tool name; escape literal braces as {{ and }}.
+
+    Affects subsequent generate_json calls on all existing and future MyLLM
+    instances. Already prepared requests are unchanged. The template is stored
+    without validation; formatting errors surface when generate_json uses it.
+    """
+    global _JSON_TOOL_PROMPT
+    _JSON_TOOL_PROMPT = prompt
+
+
+def set__JSON_TEXT_PROMPT(prompt: str) -> None:
+    """Replace the global instruction template for prompt-based JSON generation.
+
+    Args:
+        prompt: A str.format template. Use {schema} to insert the JSON-serialized
+            schema with references expanded; escape literal braces as {{ and }}.
+
+    Affects subsequent generate_json calls on all existing and future MyLLM
+    instances when function calling is disabled. Already prepared requests are
+    unchanged. The template is stored without validation; formatting errors
+    surface when generate_json uses it.
+    """
+    global _JSON_TEXT_PROMPT
+    _JSON_TEXT_PROMPT = prompt
 
 
 class MyLLM:
@@ -480,11 +526,9 @@ class MyLLM:
         )
         use_tool = self.resolved_profile.get("supports_function_calling", False)
         instruction = (
-            f"Return the requested structured output by calling {tool.name} exactly once. "
-            "Use its arguments for the complete answer."
+            _JSON_TOOL_PROMPT.format(tool_name=tool.name)
             if use_tool
-            else "Return only one JSON object matching this JSON Schema, without commentary "
-            "or Markdown fences:\n" + json.dumps(tool.parameters, ensure_ascii=False)
+            else _JSON_TEXT_PROMPT.format(schema=json.dumps(tool.parameters, ensure_ascii=False))
         )
         prepared, _ = await self._prepare_generation(
             dict(
@@ -500,7 +544,7 @@ class MyLLM:
                 previous_response_id=previous_response_id,
             ),
             middleware_tools=[tool] if use_tool else None,
-            request_suffix=[UserMessage("user", [TextContent(instruction)])],
+            request_suffix=[InstructionMessage("system", [TextContent(instruction)])],
         )
         total_usage: Usage | None = None
         for attempt in range(max_retries + 1):

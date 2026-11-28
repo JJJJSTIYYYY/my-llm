@@ -260,7 +260,7 @@ hook 修改本次请求不会自动更新缓存，相关维护由使用者负责
 源 Encoder 仍负责原生消息投影和输入边界；生成工具在中间层注入，交由目标 Decoder 翻译。
 返回统一选择 middleware，业务层只读取 `ToolCall.arguments` 或 `TextContent`。
 
-请求专用输出指令通过 `request_suffix` 进入 Decoder，在消息缓存合并之后单独翻译并附加，
+请求专用输出指令以 `InstructionMessage(role="system")` 经 `request_suffix` 进入 Decoder，在消息缓存合并之后单独翻译并附加，
 因此不会污染缓存、改变用户批次指纹或在重试时累积。该内部机制不包含协议分支；
 最终 SDK 参数仍经过原有过滤、验证和语义损失处理。能力选择和错误契约见
 [API 使用指南](../reference/api.md#await-myllmgenerate_json---dictstr-any)。

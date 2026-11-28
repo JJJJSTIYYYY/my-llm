@@ -640,6 +640,7 @@ wheels = [
 name = "my-llm-py"
 source = { editable = "." }
 dependencies = [
+    { name = "jsonschema" },
     { name = "pydantic" },
 ]
 
@@ -658,7 +659,6 @@ openai = [
 [package.dev-dependencies]
 dev = [
     { name = "hatchling" },
-    { name = "jsonschema" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -672,6 +672,7 @@ sdks = [
 requires-dist = [
     { name = "anthropic", marker = "extra == 'all'", specifier = ">=0.76,<1" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.76,<1" },
+    { name = "jsonschema", specifier = ">=4.26,<5" },
     { name = "openai", marker = "extra == 'all'", specifier = ">=2.0,<3" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=2.0,<3" },
     { name = "pydantic", specifier = ">=2.9,<3" },
@@ -681,7 +682,6 @@ provides-extras = ["all", "anthropic", "openai"]
 [package.metadata.requires-dev]
 dev = [
     { name = "hatchling", specifier = ">=1.26" },
-    { name = "jsonschema", specifier = ">=4.26,<5" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "ruff", specifier = ">=0.9" },

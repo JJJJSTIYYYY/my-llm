@@ -3,6 +3,7 @@
 Official SDK transport and HTTP errors retain their original types.
 """
 
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -73,3 +74,25 @@ class ResponseFailedError(StreamError):
 
 class ResponseIncompleteError(IncompleteStreamError):
     """The Responses API reported an incomplete response."""
+
+
+class JSONGenerationError(MyLLMError, ValueError):
+    """JSON generation exhausted its budget; failures contains every failed attempt.
+
+    Each record contains a one-based attempt, stage and errors list. Schema errors
+    include instance/schema JSON Pointers, validator and message. Combined-schema
+    branch errors are included individually. Records contain diagnostic messages,
+    which may include model-generated values; callers own logging and redaction.
+    """
+
+    def __init__(self, failures: list[dict[str, Any]]) -> None:
+        self.failures = deepcopy(failures)
+        super().__init__(
+            f"JSON generation failed after {len(failures)} attempt(s): "
+            + "; ".join(
+                f"attempt {failure['attempt']} [{failure['stage']}] "
+                f"{issue.get('instance_path') or '<root>'}: {issue['message']}"
+                for failure in failures
+                for issue in failure["errors"]
+            )
+        )

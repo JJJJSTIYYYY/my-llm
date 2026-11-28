@@ -4,6 +4,7 @@ from my_llm._version import __version__
 from my_llm.basic.exceptions import (
     ConfigurationError,
     IncompleteStreamError,
+    JSONGenerationError,
     MessageValidationError,
     MyLLMError,
     ResponseFailedError,
@@ -120,5 +121,6 @@ __all__ = [
     "ResponseFailedError",
     "ResponseIncompleteError",
     "StreamError",
+    "JSONGenerationError",
     "UnsupportedProviderError",
 ]

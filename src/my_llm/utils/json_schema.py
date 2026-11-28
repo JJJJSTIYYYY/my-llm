@@ -8,6 +8,7 @@ from math import isfinite
 from typing import Any
 from urllib.parse import unquote
 
+from jsonschema.protocols import Validator
 from pydantic import TypeAdapter
 
 _SCHEMA_MAPS = {"properties", "patternProperties", "dependentSchemas"}
@@ -238,3 +239,22 @@ def parse_json_object(text: str) -> dict[str, Any]:
     if result is None:
         raise ValueError("response contains no valid JSON object")
     return result
+
+
+def json_schema_errors(validator: Validator, value: Any) -> list[dict[str, Any]]:
+    """Collect all instance errors and combined-schema branch causes as JSON records."""
+
+    def pointer(path):
+        return "".join("/" + str(key).replace("~", "~0").replace("/", "~1") for key in path)
+
+    def records(error):
+        yield {
+            "instance_path": pointer(error.absolute_path),
+            "schema_path": pointer(error.absolute_schema_path),
+            "validator": error.validator,
+            "message": error.message,
+        }
+        for child in error.context:
+            yield from records(child)
+
+    return [issue for error in validator.iter_errors(value) for issue in records(error)]

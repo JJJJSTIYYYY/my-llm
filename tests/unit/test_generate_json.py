@@ -18,7 +18,7 @@ from my_llm import (
     Usage,
     UserMessage,
 )
-from my_llm.basic.exceptions import ConfigurationError, MessageValidationError
+from my_llm.basic.exceptions import ConfigurationError, JSONGenerationError, MessageValidationError
 from my_llm.utils.json_schema import object_json_schema, parse_json_object
 from tests.helpers.protocols import chat_event, stream_events
 from tests.helpers.transport import FakeClient
@@ -220,7 +220,9 @@ async def test_retry_succeeds_and_sums_usage(monkeypatch, protocol, use_tools, c
     ) == {"city": "上海"}
     assert len(parameters) == 2
     assert all(p["max_retries"] == 7 for p in parameters)
-    assert clients[0].requests == clients[1].requests
+    assert "Previous structured output attempts failed" in str(clients[1].requests)
+    assert "Which city?" in str(clients[1].requests)
+    assert len(llm.get_last_json_failures()) == 1
     assert all(client.closed and client.upstream.closed for client in clients)
     usage = llm.get_last_usage()
     assert (usage.input, usage.output) == (2, 4)
@@ -267,7 +269,7 @@ async def test_malformed_generated_tool_arguments_retry_with_usage(monkeypatch, 
             messages=inputs("openai_chat"), schema=SCHEMA, max_retries=1
         ) == {"city": "上海"}
     else:
-        with pytest.raises(MessageValidationError, match="function arguments"):
+        with pytest.raises(JSONGenerationError, match="function arguments"):
             await llm.generate_json(messages=inputs("openai_chat"), schema=SCHEMA, max_retries=1)
     assert llm.get_last_usage() == Usage(input=2, output=4, total=6)
 
@@ -331,10 +333,15 @@ async def test_retry_usage_preserves_missing_counters_and_does_not_include_previ
     clients = [FakeClient(batch) for batch in events]
     install_attempts(monkeypatch, llm, clients)
     assert await llm.generate_json(
-        messages=inputs("openai_chat"), schema=SCHEMA, max_retries=1
+        messages=inputs("openai_chat"),
+        schema={"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]},
+        max_retries=1,
     ) == {"ok": True}
     assert llm.get_last_usage() == Usage(input=4, output=2, reasoning=0)
-    assert await llm.generate_json(messages=inputs("openai_chat"), schema=SCHEMA) == {"ok": True}
+    assert await llm.generate_json(
+        messages=inputs("openai_chat"),
+        schema={"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]},
+    ) == {"ok": True}
     assert llm.get_last_usage() is None
 
 
@@ -360,7 +367,9 @@ async def test_retry_usage_sums_all_reported_counters(monkeypatch):
         )
     install_attempts(monkeypatch, llm, clients)
     assert await llm.generate_json(
-        messages=inputs("openai_chat"), schema=SCHEMA, max_retries=1
+        messages=inputs("openai_chat"),
+        schema={"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]},
+        max_retries=1,
     ) == {"ok": True}
     assert llm.get_last_usage() == Usage(input=20, output=40, total=60, cached=7, reasoning=10)
 

@@ -266,7 +266,13 @@ hook 修改本次请求不会自动更新缓存，相关维护由使用者负责
 [API 使用指南](../reference/api.md#await-myllmgenerate_json---dictstr-any)。
 
 `generate_json(max_retries=0)` 的 JSON 重试预算与 Profile 的 SDK 连接重试配置独立。
-输入绑定、修复、缓存和请求 hook 只执行一次；每次尝试使用独立 `StreamState` 与客户端。
-业务层只重试 JSON/工具输出验证失败，按字段累加每次状态中实际报告的 `Usage`，
+允许重试时先保存输入快照；每次尝试均经过输入绑定、修复、缓存和请求 hook，
+通过 request-only 系统消息回填累计失败原因。缓存对相同原始批次去重，反馈不会进入历史。
+每次尝试使用独立 `StreamState` 与客户端。
+业务层收集 JSON Schema 的全部结构/约束错误及组合分支原因，只重试 JSON/工具/Schema 输出验证失败，按字段累加每次状态中实际报告的 `Usage`，
 通过 `get_last_usage()` 暴露，最终解析失败也保留累计值。该累计不读取实例上次用量作为输入，
 避免串入之前的调用或并发任务的用量。缺失值保持未知，不进行估算。
+
+Schema 验证使用运行依赖 `jsonschema`，每次调用准备一个验证器并复用于各次尝试。
+错误在业务层汇总为按尝试分组的结构化记录；成功后可查询，耗尽后由 `JSONGenerationError` 携带。
+转换器仍只负责协议投影与请求准备，不承担返回值的业务 Schema 校验。

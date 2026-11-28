@@ -25,6 +25,7 @@ def test_public_contract_uses_standard_messages_and_one_protocol_field():
         "Usage",
         "MyCodec",
         "MyLLM",
+        "JSONGenerationError",
         "set__JSON_TOOL_PROMPT",
         "set__JSON_TEXT_PROMPT",
         "MessageStream",

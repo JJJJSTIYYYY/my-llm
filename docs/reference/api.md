@@ -110,29 +110,68 @@ async def extract(llm):
 并移除定义容器。引用旁的约束与字段注释保留；默认值、示例等应用数据不参与引用展开。
 循环引用无法展开为有限的无引用 Schema，缺失目标、外部引用和命名锚点也不支持，
 这些情况会在请求之前抛出 `ValueError`，不消耗 JSON 重试次数。
-Schema 用于指导模型生成，接口只保证
-解析结果为字典，不执行完整 Schema 校验；需要严格校验时，调用方可使用 `Person.model_validate(result)`。
+Schema 同时用于指导生成和校验返回值。解析出的字典必须满足其 JSON Schema，
+包括类型、必填项、嵌套对象、数组元素、额外字段及数值/长度等约束；不执行类型转换。
+校验会收集全部错误，包括 `anyOf` / `oneOf` 等组合约束的各分支原因，不在首个错误处终止。
+采用 Schema 声明的草案（默认 Draft 2020-12）；`format` 默认仅作为注释。
+Python 模型中未表达为 JSON Schema 的自定义 validator 不执行，按需另用 `Person.model_validate(result)`。
 
 解析后的 `supports_function_calling=True` 时，接口发送名为 `structured_output` 的合成工具，
-要求模型调用一次，并直接返回该调用的参数。未返回该工具调用或返回多个同名调用会抛出 `ValueError`。
+要求模型调用一次，校验该调用参数后返回字典。未返回该工具调用或返回多个同名调用视为失败；
+多个同名调用的可解析参数会全部校验并记录调用索引。
 能力未开启时，接口通过提示词要求 JSON，再从返回文本中解析对象，支持代码围栏、前后说明、
 嵌套结构、字符串转义及开头的 BOM。优先解析完整 JSON 文档；否则依次选择标记为
 `json` / `application/json` 的围栏、无语言标记的围栏、其他围栏之外的说明文字。
 显式 JSON 围栏中的输出非法时，不回退选取说明文字中的示例对象；其他语言的代码围栏不作为结果。
 在所选区域内按字符串转义和对象/数组边界扫描，只接受唯一的完整对象；多个合法对象视为歧义。
 不会从数组中提取对象，也不会把非法或截断外层中的合法子对象当作结果。
-重复键、`NaN` / `Infinity`、浮点溢出及截断结构均被拒绝。解析失败抛出 `ValueError`，
+重复键、`NaN` / `Infinity`、浮点溢出及截断结构均被拒绝。解析失败计入 JSON 重试，
 不修补非法 JSON、不猜测丢失的数据，也不将文本作为 Python 执行。
 
 消息遵循实例的 `stdio_protocol`、协议推断、工具关联修复与增量缓存规则；返回值始终是字典。
 输出指令作为系统消息注入，只用于当前请求，不进入历史缓存。JSON 文本无法解析、指定工具调用缺失/重复、
-生成的工具参数不是合法 JSON 对象时，按 `max_retries` 重新生成；成功即停止，耗尽后抛出最后的解析错误。
-请求只准备一次，重试使用相同请求，不向缓存追加重复输入；每次尝试独立创建并关闭响应和客户端。
+生成的工具参数不是合法 JSON 对象，或解析后的对象违反 Schema 时，按 `max_retries` 重新生成。
+成功即停止；耗尽后抛出 `JSONGenerationError`（也是 `ValueError`），`failures` 保存全部失败记录。
+重试追加一条系统反馈，包含此前每次失败的全部诊断；不把失败次数或分支错误裁剪为单条。
+原始输入在允许重试时保存独立快照，每次请求通过同一 Codec 管线重新准备，输入 hook 也会再次执行。
+反馈通过中间层系统消息注入，不进入历史缓存，原始批次不会重复追加；每次尝试独立创建并关闭响应和客户端。
 调用参数错误、语义损失、响应不完整及 SDK 错误遵循 `generate` 的规则，不触发这里的 JSON 重试，也不切换生成模式。
 
 调用 `get_last_usage()` 获取本次 `generate_json` 首次尝试及所有重试的累计 `Usage`，即使最终失败也可读取。
 按字段累加已报告值，没有任何尝试报告的字段保持 `None`；部分尝试缺少用量时，累计值只包含可观测的部分，
 不估算缺失用量。每次 JSON 调用重新累计，不包含上一次调用；输入准备失败则保留之前的记录。
+
+### `MyLLM.get_last_json_failures() -> list[dict[str, Any]]`
+
+查询最近一次已完成输入准备的 JSON 调用产生的全部输出失败，后续尝试成功也保留；
+首次成功返回空列表。返回值是独立副本，输入/Schema 准备失败保留上次记录。
+这是实例级状态，并发调用时不提供按任务查询；失败详情可能包含模型生成值，日志脱敏由调用方负责。
+
+每条记录包含 `attempt`（从 1 开始）、`stage` 和 `errors`。
+`stage` 为 `parse`、`tool_call`、`tool_arguments` 或 `schema`；Schema 错误包含：
+
+- `instance_path`：出错值的 JSON Pointer，空字符串表示根对象。
+- `schema_path`：失败约束在展开后 Schema 中的 JSON Pointer。
+- `validator`：失败关键字，例如 `required`、`type`、`minimum`。
+- `message`：完整诊断；组合约束的子分支也逐项记录。
+- `tool_call_index`：存在多个同名调用时的零起始索引。
+
+解析/工具选择错误至少包含 `message`。最终异常的 `failures` 同样提供独立副本，
+`__cause__` 保留最后一次失败原因。SDK 异常保持原类型，不因这一功能转为 JSON 重试。
+
+```python
+from my_llm import JSONGenerationError
+
+
+async def structured(llm, messages, schema):
+    try:
+        return await llm.generate_json(messages=messages, schema=schema, max_retries=2)
+    except JSONGenerationError as error:
+        failures = error.failures  # 每次尝试及其全部错误，可供应用记录
+        raise
+    finally:
+        usage = llm.get_last_usage()  # 包含结构校验失败尝试的用量
+```
 
 ### JSON 提示词模板设置
 

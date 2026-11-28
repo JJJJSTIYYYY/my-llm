@@ -436,7 +436,8 @@ class BaseDecoder(ABC):
             profile: Resolved upstream provider/model settings.
             options: Already validated controls, or None to validate parameters here.
             message_transform: Optional transform of translated messages before assembly.
-            messages_suffix: Request-only middleware messages translated after cache assembly.
+            messages_suffix: Request-only middleware messages with their own tool-association
+                repair, translated after cache assembly and excluded from cached history.
             **parameters: Generation controls and protocol-specific options.
 
         Invalid controls or history raise ConfigurationError or MessageValidationError.
@@ -478,9 +479,11 @@ class BaseDecoder(ABC):
             native_messages = message_transform(native_messages)
             offset_loss_targets(len(native_messages) - batch_size)
         if messages_suffix is not None:
+            suffix_history = HistoryNormalizer()
+            validate_messages(wire_values(messages_suffix), history=suffix_history)
             native_messages = [
                 *native_messages,
-                *self._messages(wire_values(messages_suffix), profile, **parameters),
+                *self._messages(suffix_history.finish(), profile, **parameters),
             ]
         native_tools = self._tools(tools, profile, **parameters) if tools is not None else None
         request = self.assemble_request(

@@ -306,7 +306,8 @@ class MyCodec:
             enable_message_cache: Append translated incremental input to cached history.
             message_cache_key: Unique instance key required when caching is enabled.
             tools_suffix: Generated tools appended to source declarations, if supplied.
-            messages_suffix: Request-only middleware instructions, excluded from history cache.
+            messages_suffix: Request-only middleware messages, with tool associations repaired
+                independently of the input batch; excluded from history cache.
 
         Returns:
             Dictionary with client (SDK constructor arguments), request (SDK call

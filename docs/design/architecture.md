@@ -275,14 +275,17 @@ JSON 输出处理借用本次状态已经验证的中间层草稿，不提前复
 业务工具调用按同一 stdio 协议返回，交由应用执行并续接历史；仅有业务调用时不进入 JSON 失败重试。
 混合响应仍校验合成输出，将其转换为 JSON 文本并保留业务调用。
 
-请求专用输出指令以 `InstructionMessage(role="system")` 经 `messages_suffix` 进入 Decoder，在消息缓存合并之后单独翻译并附加，
-因此不会污染缓存、改变用户批次指纹或在重试时累积。该内部机制不包含协议分支；
+请求专用输出指令以 `InstructionMessage(role="system")` 经 `messages_suffix` 进入 Decoder。
+后缀使用同一 `HistoryNormalizer` 实现进行工具关联修复，在消息缓存合并之后单独翻译并附加，
+因此不会污染缓存或改变用户批次指纹。该内部机制不包含协议分支；
 最终 SDK 参数仍经过原有过滤、验证和语义损失处理。能力选择和错误契约见
 [API 使用指南](../reference/api.md#await-myllmgenerate_json---assistantmessage--dict--list)。
 
 `generate_json(max_retries=0)` 的 JSON 重试预算与 Profile 的 SDK 连接重试配置独立。
 允许重试时先保存输入快照；每次尝试均经过输入绑定、修复、缓存和请求 hook，
-通过 request-only 系统消息回填累计失败原因。缓存对相同原始批次去重，反馈不会进入历史。
+失败轮助手消息保留在 request-only 后缀，通过合成调用对应的 `ToolMessage` 回填累计失败原因；
+业务调用缺失的结果由后缀的公共历史修复流程补齐，`generate_json` 不另行兜底。
+没有可关联合成调用时使用系统反馈。缓存对相同原始批次去重，重试消息不会进入缓存。
 每次尝试使用独立 `StreamState` 与客户端。
 业务层收集 JSON Schema 的全部结构/约束错误及组合分支原因，只重试 JSON/工具/Schema 输出验证失败，按字段累加每次状态中实际报告的 `Usage`，
 通过 `get_last_usage()` 暴露，最终解析失败也保留累计值。该累计不读取实例上次用量作为输入，

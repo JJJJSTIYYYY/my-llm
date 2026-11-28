@@ -44,14 +44,14 @@ EXPECTED = {
 
 def setup(monkeypatch, outputs, *, tools=False, cache=False):
     clients = []
-    for output in outputs:
+    for attempt, output in enumerate(outputs):
         text = json.dumps(output)
         delta = (
             chat_event(
                 calls=[
                     {
                         "index": 0,
-                        "id": "call_1",
+                        "id": f"call_{attempt}",
                         "type": "function",
                         "function": {"name": "structured_output", "arguments": text},
                     }
@@ -118,7 +118,9 @@ async def test_all_schema_errors_are_recorded_and_sent_back(monkeypatch, tools, 
         history = clients[index].requests[0]["messages"]
         assert history[0] == messages[0]
         feedback = history[-1]
-        assert feedback["role"] == "system"
+        assert feedback["role"] == ("tool" if tools else "system")
+        if tools:
+            assert feedback["tool_call_id"] == f"call_{index - 1}"
         diagnostics = json.loads(feedback["content"].split("\n", 1)[1])
         assert diagnostics == failures[:index]
         assert sum(m["role"] == "user" for m in history) == 1

@@ -125,6 +125,12 @@ Ruff、格式和 diff 检查通过。上述均为本地测试/SDK 模拟，本�
 `.venv/bin/python -m pytest -q`，全量 4310 项通过；Ruff、格式与 diff 检查通过。
 这是本地测试与 SDK 模拟结果，没有新增真实供应商或性能验证。
 
+2026-11-28，基于 `2243ad8` 加本轮工作区修改，补齐混合调用校验失败的重试回归：
+三上游 × 四 stdio × 缓存开关 × 调用顺序，连续两轮失败后成功；
+验收失败轮调用保留、合成工具结果携带累计诊断、业务缺失结果复用公共补空，以及后续请求的缓存隔离。
+同一 Python 3.12.12 环境执行 `.venv/bin/pytest -q`，全量 4524 项通过。
+这些结果来自本地 SDK 模拟，没有新增真实供应商调用。
+
 ### SDK 消息表示回归
 
 运行 `uv run pytest -q tests/integration/test_message_objects.py tests/integration/test_protocol_registration.py tests/unit/test_native_codecs.py`。

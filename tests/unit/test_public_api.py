@@ -28,6 +28,7 @@ def test_public_contract_uses_standard_messages_and_one_protocol_field():
         "JSONGenerationError",
         "set__JSON_TOOL_PROMPT",
         "set__JSON_TEXT_PROMPT",
+        "set__JSON_RETRY_PROMPT",
         "MessageStream",
         "ResolvedProfile",
         "OverridableProfile",

@@ -28,6 +28,7 @@ from my_llm.middleware.models import (
     Message,
     TextContent,
     ToolCall,
+    ToolMessage,
 )
 from my_llm.middleware.stream import MessageEvent, Usage
 from my_llm.profile.configuration import Protocol, ReasoningEffort
@@ -86,6 +87,22 @@ def set__JSON_TEXT_PROMPT(prompt: str) -> None:
     """
     global _JSON_TEXT_PROMPT
     _JSON_TEXT_PROMPT = prompt
+
+
+def set__JSON_RETRY_PROMPT(prompt: str) -> None:
+    """Replace the global feedback template for JSON generation retries.
+
+    Args:
+        prompt: A str.format template. Use {failures} to insert the JSON-serialized
+            cumulative failure diagnostics; escape literal braces as {{ and }}.
+
+    Affects subsequent retry preparation on all existing and future MyLLM instances,
+    including calls already in progress. Already prepared requests are unchanged.
+    The template is stored without validation; formatting errors surface when
+    generate_json prepares retry feedback.
+    """
+    global _JSON_RETRY_PROMPT
+    _JSON_RETRY_PROMPT = prompt
 
 
 class MyLLM:
@@ -561,7 +578,8 @@ class MyLLM:
                 only applies when function calling is enabled.
             max_retries: Additional attempts after JSON parsing, tool selection or Schema
                 validation fails, default 0. Complete failure diagnostics are included
-                as request-only system feedback in the next attempt.
+                as request-only tool results for synthetic calls in the next attempt;
+                failures without a synthetic call use system feedback.
                 Must be a nonnegative integer. Independent of the Profile's SDK
                 connection retry setting; the initial attempt is not a retry.
             api_key: Per-call authentication; None inherits and omit removes it.
@@ -587,6 +605,9 @@ class MyLLM:
             and calls again. A business-only tool turn is successful and does not
             trigger JSON retries. In mixed responses, validate the synthetic output
             and replace it with JSON TextContent while retaining the business calls.
+            On validation failure, retries retain the assistant turn and send diagnostics
+            as synthetic-tool results. Missing business results use the normal history
+            repair. These request-only turns do not enter the message cache.
 
             Text mode accepts an unambiguous complete object, including fenced JSON
             or JSON surrounded by prose; malformed parents, duplicate keys and
@@ -650,33 +671,24 @@ class MyLLM:
         if max_retries:
             inputs = capture(inputs, memo={id(_MISSING): _MISSING})
 
-        async def prepare(failures):
-            suffix = [InstructionMessage("system", [TextContent(instruction)])]
-            if failures:
-                suffix.append(
-                    InstructionMessage(
-                        "system",
-                        [
-                            TextContent(
-                                _JSON_RETRY_PROMPT.format(
-                                    failures=json.dumps(failures, ensure_ascii=False)
-                                )
-                            )
-                        ],
-                    )
-                )
+        retry_messages: list[Message] = []
+
+        async def prepare():
+            suffix = [InstructionMessage("system", [TextContent(instruction)]), *retry_messages]
             request, _, return_objects = await self._prepare_generation(
                 inputs, tools_suffix=[tool] if use_tool else None, messages_suffix=suffix
             )
             return request, return_objects
 
-        prepared, return_objects = await prepare([])
+        prepared, return_objects = await prepare()
         failures: list[dict[str, Any]] = []
         self._last_json_failures = failures
         total_usage: Usage | None = None
         for attempt in range(max_retries + 1):
             state = StreamState(self.resolved_profile.model)
             failure = None
+            result = None
+            calls = []
             try:
                 try:
                     result = await self._consume(prepared, state, "middleware", borrow_result=True)
@@ -686,7 +698,6 @@ class MyLLM:
                 else:
                     try:
                         if use_tool:
-                            calls = []
                             has_business_calls = False
                             for part in result.content:
                                 if isinstance(part, ToolCall):
@@ -775,4 +786,15 @@ class MyLLM:
             self._last_json_failures = failures
             if attempt == max_retries:
                 raise JSONGenerationError(failures) from error
-            prepared, _ = await prepare(failures)
+            feedback = TextContent(
+                _JSON_RETRY_PROMPT.format(failures=json.dumps(failures, ensure_ascii=False))
+            )
+            if result is not None:
+                retry_messages.append(result)
+            if calls:
+                retry_messages.extend(
+                    ToolMessage("tool", [feedback], call_id=call.call_id) for call in calls
+                )
+            else:
+                retry_messages.append(InstructionMessage("system", [feedback]))
+            prepared, _ = await prepare()

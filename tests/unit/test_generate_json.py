@@ -11,6 +11,7 @@ from typing_extensions import TypedDict
 from my_llm import (
     AssistantMessage,
     FunctionTool,
+    MyCodec,
     SemanticLossError,
     TextContent,
     ToolCall,
@@ -27,7 +28,7 @@ from tests.helpers.json_output import (
     response_events,
     structured_object,
 )
-from tests.helpers.protocols import chat_event
+from tests.helpers.protocols import chat_event, response_completed
 from tests.helpers.protocols import history as protocol_history
 from tests.helpers.protocols import tools as protocol_tools
 from tests.helpers.transport import FakeClient
@@ -401,6 +402,112 @@ async def test_mixed_calls_validate_output_and_preserve_business_calls(
         assert caught.value.failures[0]["stage"] == "schema"
         assert caught.value.failures[0]["errors"][0]["instance_path"] == "/city"
     assert client.closed and client.upstream.closed
+
+
+@pytest.mark.parametrize("protocol", ["openai_chat", "openai_responses", "anthropic"])
+@pytest.mark.parametrize("stdio", ["middleware", "openai_chat", "openai_responses", "anthropic"])
+@pytest.mark.parametrize("cache", [False, True])
+@pytest.mark.parametrize("business_first", [False, True])
+async def test_failed_mixed_turns_keep_calls_and_use_normal_missing_results(
+    monkeypatch, protocol, stdio, cache, business_first
+):
+    llm = make_llm(protocol, stdio, cache=cache)
+    clients = []
+    for attempt in range(2):
+        calls = [
+            (f"output_{attempt}", "final_answer", {"city": 42}),
+            (f"business_{attempt}", "weather", {"city": "上海"}),
+        ]
+        if business_first:
+            calls.reverse()
+        if protocol == "openai_chat":
+            events = [
+                chat_event(
+                    calls=[
+                        {
+                            "index": index,
+                            "id": call_id,
+                            "type": "function",
+                            "function": {"name": name, "arguments": json.dumps(arguments)},
+                        }
+                        for index, (call_id, name, arguments) in enumerate(calls)
+                    ]
+                ),
+                chat_event(finish="tool_calls"),
+            ]
+        elif protocol == "openai_responses":
+            events = [
+                response_completed(
+                    [
+                        {
+                            "type": "function_call",
+                            "id": f"fc_{call_id}",
+                            "call_id": call_id,
+                            "name": name,
+                            "arguments": json.dumps(arguments),
+                            "status": "completed",
+                        }
+                        for call_id, name, arguments in calls
+                    ]
+                )
+            ]
+        else:
+            events = response_events(protocol, tools=False)[:1]
+            for index, (call_id, name, arguments) in enumerate(calls):
+                events.extend(
+                    [
+                        {
+                            "type": "content_block_start",
+                            "index": index,
+                            "content_block": {
+                                "type": "tool_use",
+                                "id": call_id,
+                                "name": name,
+                                "input": arguments,
+                            },
+                        },
+                        {"type": "content_block_stop", "index": index},
+                    ]
+                )
+            events.extend(response_events(protocol, tools=True)[-2:])
+        clients.append(FakeClient(events))
+    clients.extend(
+        FakeClient(response_events(protocol, tools=True, tool_name="final_answer"))
+        for _ in range(2)
+    )
+    install_attempts(monkeypatch, llm, clients)
+    history = inputs(stdio)
+    before = deepcopy(history)
+    options = dict(
+        messages=history,
+        schema=SCHEMA,
+        tools=business_tools(stdio),
+        fake_tool_name="final_answer",
+        max_retries=2,
+        max_tokens=512,
+    )
+    assert structured_object(await llm.generate_json(**options), stdio) == {"city": "上海"}
+    failures = llm.get_last_json_failures()
+    for attempt in (1, 2):
+        request = clients[attempt].requests[0]
+        native = request["input" if protocol == "openai_responses" else "messages"]
+        messages = MyCodec().encode(native, input_format=protocol).messages
+        tool_results = {m.call_id: m for m in messages if isinstance(m, ToolMessage)}
+        calls = [p for m in messages for p in m.content if isinstance(p, ToolCall)]
+        assert len(calls) == 2 * attempt
+        assert len(tool_results) == 2 * attempt
+        for previous in range(attempt):
+            assert tool_results[f"business_{previous}"].content == [] or all(
+                isinstance(p, TextContent) and p.text == ""
+                for p in tool_results[f"business_{previous}"].content
+            )
+            feedback = "".join(p.text for p in tool_results[f"output_{previous}"].content)
+            assert json.loads(feedback.split("\n", 1)[1]) == failures[: previous + 1]
+    assert history == before
+    await llm.generate_json(**options)
+    assert "business_0" not in str(clients[-1].requests[0])
+    assert "output_0" not in str(clients[-1].requests[0])
+    assert all(client.closed and client.upstream.closed for client in clients)
 
 
 @pytest.mark.parametrize("protocol", ["openai_chat", "openai_responses", "anthropic"])
